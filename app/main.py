@@ -560,9 +560,15 @@ def page_insights(df: pd.DataFrame, bundle: dict):
                 f"""
                 <div style="margin-bottom:16px">
                     <div style="display:flex;justify-content:space-between;
-                                font-size:13px;color:#e2e8f0;margin-bottom:5px">
-                        <span>{d['feature'].replace('_', ' ')}</span>
-                        <span style="color:{rank_colour};font-weight:600">{d['importance_pct']:.1f}%</span>
+                                margin-bottom:5px">
+                        <span style="font-size:13px;font-weight:600;
+                                     color:{rank_colour} !important">
+                            {d['feature'].replace('_', ' ')}
+                        </span>
+                        <span style="font-size:13px;font-weight:700;
+                                     color:{rank_colour} !important">
+                            {d['importance_pct']:.1f}%
+                        </span>
                     </div>
                     <div style="background:#2d3748;border-radius:4px;height:6px">
                         <div style="background:{rank_colour};width:{min(bar_width,100)}%;
