@@ -525,11 +525,12 @@ def page_insights(df: pd.DataFrame, bundle: dict):
             textposition="outside",
             textfont=dict(color="#a0aec0", size=11),
         ))
+        theme = {k: v for k, v in CHART_THEME.items() if k != "yaxis"}
         fig.update_layout(
             height=380,
             xaxis_title="% contribution to prediction",
-            yaxis=dict(autorange="reversed"),
-            **CHART_THEME,
+            yaxis=dict(autorange="reversed", gridcolor="#2d3748", linecolor="#2d3748"),
+            **theme,
         )
         st.plotly_chart(fig, use_container_width=True)
 
