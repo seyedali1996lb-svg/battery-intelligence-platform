@@ -134,9 +134,10 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
 # These are the columns we'll pass to scikit-learn.
 # Keeping this list explicit means you can see exactly what the model "knows".
 FEATURE_COLUMNS = [
-    # Age signals
+    # Age signal — single cycle count; cycle_normalized removed (redundant: it's
+    # just cycle_number / max, so the model would split importance between two
+    # versions of the same signal, making the Insights page misleading).
     "cycle_number",
-    "cycle_normalized",
     # Fade rate signals — HOW FAST is capacity dropping right now?
     "fade_rate_10cy",
     "fade_rate_30cy",
