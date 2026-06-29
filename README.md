@@ -25,7 +25,7 @@ A battery health monitoring and prediction platform built with Python, scikit-le
 
 ## Tech stack
 
-- **Data**: Synthetic data calibrated to the Oxford Battery Degradation Dataset (Birkl et al., 2017)
+- **Data**: Physics-informed synthetic data with injected cell-to-cell stress variation (temperature, C-rate, depth of discharge). 8 cells, each with a distinct operating stress profile derived from published LiCoO₂ degradation models (Arrhenius SEI growth, empirical C-rate power law, Rainflow DoD scaling). **Not real measured data** — loading real Oxford/NASA data is a hard gate before Phase 2 (Fleet) launches.
 - **Model**: Gradient Boosting Regressor (scikit-learn) — interpretable, no deep learning
 - **Dashboard**: Streamlit + Plotly
 - **Data pipeline**: Pandas, NumPy
