@@ -512,6 +512,14 @@ def page_insights(df: pd.DataFrame, bundle: dict):
         st.markdown("<div class='section-header'>Feature Importance — SOH Model</div>", unsafe_allow_html=True)
 
         fi_df = feature_importance_df(bundle, model="soh")
+
+        # Label strategy: show % inside large bars, hide on tiny ones (rely on hover).
+        # Threshold: only label bars that are at least 3% of the max bar width.
+        label_threshold = fi_df["importance_pct"].max() * 0.03
+        labels = fi_df["importance_pct"].apply(
+            lambda v: f"{v:.1f}%" if v >= label_threshold else ""
+        )
+
         fig = go.Figure(go.Bar(
             x=fi_df["importance_pct"],
             y=fi_df["feature"].str.replace("_", " "),
@@ -521,14 +529,23 @@ def page_insights(df: pd.DataFrame, bundle: dict):
                 colorscale=[[0, "#2d3748"], [1, "#63b3ed"]],
                 showscale=False,
             ),
-            text=fi_df["importance_pct"].apply(lambda v: f"{v:.1f}%"),
-            textposition="outside",
-            textfont=dict(color="#a0aec0", size=11),
+            text=labels,
+            textposition="inside",
+            insidetextanchor="end",
+            textfont=dict(color="#ffffff", size=12, family="monospace"),
+            # Full value always visible on hover regardless of bar size.
+            customdata=fi_df["importance_pct"],
+            hovertemplate="<b>%{y}</b><br>Importance: %{customdata:.2f}%<extra></extra>",
         ))
         theme = {k: v for k, v in CHART_THEME.items() if k != "yaxis"}
         fig.update_layout(
             height=380,
             xaxis_title="% contribution to prediction",
+            xaxis=dict(
+                gridcolor="#2d3748", linecolor="#2d3748", zeroline=False,
+                # Add 10% padding on the right so labels don't clip.
+                range=[0, fi_df["importance_pct"].max() * 1.05],
+            ),
             yaxis=dict(autorange="reversed", gridcolor="#2d3748", linecolor="#2d3748"),
             **theme,
         )
