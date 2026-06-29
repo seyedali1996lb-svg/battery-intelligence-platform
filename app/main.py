@@ -2,13 +2,14 @@
 Battery Intelligence Platform — Streamlit Dashboard
 Phase 1 dashboard: Overview, Health, Insights (functional)
 
-Data: physics-informed synthetic data with injected cell-to-cell stress
-variation (temperature, C-rate, depth of discharge). 8 cells, each assigned
-a distinct operating stress profile derived from published LiCoO2 degradation
-models. Model is trained on all 8 cells combined.
+Data:
+  - 8 synthetic cells (Cell1-Cell8): physics-informed, injected cell-to-cell
+    stress variation (temperature, C-rate, DoD). Not real measured data.
+  - 4 NASA cells (B0005-B0018): real LiCoO2 18650 measurements from NASA PCoE
+    Battery Aging dataset (Saha & Goebel, 2007, ~2 Ah, 24 C, 2A discharge).
 
-This is NOT real measured data. Real Oxford/NASA data swap is a hard
-prerequisite before Phase 2 (Fleet) launches — see README.
+Model trained on all 12 cells combined. NASA loader (src/nasa_loader.py) must
+be run once to populate data/raw/ before the app starts.
 """
 
 import sys
@@ -131,55 +132,76 @@ st.markdown(
 # Data + model — cached for the session lifetime
 # ---------------------------------------------------------------------------
 
-@st.cache_resource(show_spinner="Loading 8 cells and training multi-cell model...")
+NASA_CELL_IDS = ["B0005", "B0006", "B0007", "B0018"]
+
+
+def _nasa_cells_available() -> list[str]:
+    """Return which NASA cell CSVs are present in data/raw/."""
+    import os
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
+    return [
+        cid for cid in NASA_CELL_IDS
+        if os.path.exists(os.path.join(data_dir, f"{cid}_summary.csv"))
+    ]
+
+
+@st.cache_resource(show_spinner="Loading cells and training model...")
 def load_everything():
     """
-    Load all 8 cells, build features for each, train on the combined dataset.
+    Load synthetic cells (Cell1-Cell8) and NASA cells (B0005-B0018) separately.
 
-    Training on all cells (not just one) is what makes stress-related features
-    meaningful: two cells at cycle 500 with different temperatures and fade
-    rates will have different SOH, and the model must use those signals to
-    distinguish them.
+    Two separate models are trained — one per data source — because the
+    synthetic and NASA resistance measurements are on incompatible scales
+    (synthetic: 0.15-0.40 ohm internal resistance; NASA: 0.04-0.07 ohm Re
+    from EIS impedance spectroscopy). A combined model confuses the features
+    and produces negative R2. Separate models keep each dataset honest.
+
+    The dashboard selects the correct bundle based on which cell is chosen.
     """
-    battery = build_battery(
-        battery_id="Oxford_B1",
-        cell_ids=list(CELL_STRESS_PROFILES.keys()),
-    )
+    def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
+        all_X, all_y_soh, all_y_rul = [], [], []
+        cell_featured = {}
+        for cell_id, cell in battery_dict.items():
+            df_feat = build_features(cell["cycles"])
+            X, y_soh, y_rul = get_model_matrix(df_feat)
+            all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+            cell_featured[cell_id] = (df_feat, X)
+        X_all = pd.concat(all_X)
+        y_soh_all = pd.concat(all_y_soh)
+        y_rul_all = pd.concat(all_y_rul)
+        bndl = train_models(X_all, y_soh_all, y_rul_all)
+        bndl["metrics"]["n_cells"] = len(battery_dict)
+        bndl["metrics"]["n_rows"]  = len(X_all)
+        featured_dfs, split_cycles = {}, {}
+        for cell_id, (df_feat, X) in cell_featured.items():
+            preds = predict(bndl, X)
+            df_out = df_feat.loc[X.index].copy()
+            df_out["soh_pred"]       = preds["soh_pred"]
+            df_out["rul_pred"]       = preds["rul_pred"]
+            df_out["confidence_tag"] = preds["confidence_tag"]
+            featured_dfs[cell_id] = df_out
+            split_idx = int(len(X) * 0.8)
+            split_cycles[cell_id] = int(X["cycle_number"].iloc[split_idx])
+        return bndl, featured_dfs, split_cycles
 
-    # Build features per cell and combine for training.
-    all_X, all_y_soh, all_y_rul = [], [], []
-    cell_featured = {}
+    # ── Synthetic cells ──
+    synth_ids = list(CELL_STRESS_PROFILES.keys())
+    battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
+    bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
 
-    for cell_id, cell in battery["cells"].items():
-        df_feat = build_features(cell["cycles"])
-        X, y_soh, y_rul = get_model_matrix(df_feat)
-        all_X.append(X)
-        all_y_soh.append(y_soh)
-        all_y_rul.append(y_rul)
-        cell_featured[cell_id] = (df_feat, X)
+    # ── NASA real cells (if present) ──
+    nasa_ids = _nasa_cells_available()
+    bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
+    if nasa_ids:
+        battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
+        bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
 
-    X_all     = pd.concat(all_X)
-    y_soh_all = pd.concat(all_y_soh)
-    y_rul_all = pd.concat(all_y_rul)
+    # Merge cell outputs; keep bundles separate
+    featured_dfs = {**fdfs_synth, **fdfs_nasa}
+    split_cycles = {**sc_synth, **sc_nasa}
+    bundles = {"synth": bundle_synth, "nasa": bundle_nasa}
 
-    bundle = train_models(X_all, y_soh_all, y_rul_all)
-
-    # Run predictions per cell and store enriched DataFrames.
-    featured_dfs = {}
-    split_cycles = {}
-
-    for cell_id, (df_feat, X) in cell_featured.items():
-        preds = predict(bundle, X)
-        df_out = df_feat.loc[X.index].copy()
-        df_out["soh_pred"]       = preds["soh_pred"]
-        df_out["rul_pred"]       = preds["rul_pred"]
-        df_out["confidence_tag"] = preds["confidence_tag"]
-        featured_dfs[cell_id] = df_out
-
-        split_idx = int(len(X) * 0.8)
-        split_cycles[cell_id] = int(X["cycle_number"].iloc[split_idx])
-
-    return featured_dfs, bundle, split_cycles
+    return featured_dfs, bundles, split_cycles
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +226,20 @@ LEGEND_H = dict(
 )
 
 def render_sidebar(cell_ids: list[str]):
+    nasa_available = [c for c in cell_ids if c in NASA_CELL_IDS]
+    n_cells = len(cell_ids)
+    subtitle = f"{n_cells} cells ({8} synthetic"
+    if nasa_available:
+        subtitle += f" + {len(nasa_available)} NASA real)"
+    else:
+        subtitle += ")"
+
     with st.sidebar:
         st.markdown(
-            "<div style='padding:0 4px 20px'>"
-            "<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
-            "<div style='font-size:11px;color:#4a5568;margin-top:2px'>Oxford B1 · 8 cells · multi-cell model</div>"
-            "</div>",
+            f"<div style='padding:0 4px 20px'>"
+            f"<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{subtitle} · multi-cell model</div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -250,26 +280,37 @@ def render_sidebar(cell_ids: list[str]):
             label_visibility="collapsed",
         )
 
-        # Cell stress profile annotation.
-        p  = CELL_STRESS_PROFILES.get(selected, {})
-        sf = _stress_factor(p.get("temp_mean", 25), p.get("c_rate", 1), p.get("dod", 1))
-        st.markdown(
-            f"<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-            f"T={p.get('temp_mean',25):.0f}°C &nbsp; "
-            f"C-rate={p.get('c_rate',1.0):.1f}C &nbsp; "
-            f"DoD={p.get('dod',1.0)*100:.0f}%<br>"
-            f"Stress: {sf:.2f}× baseline"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        # Cell annotation — differ for synthetic vs NASA real cells
+        if selected in NASA_CELL_IDS:
+            st.markdown(
+                "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
+                "Source: NASA PCoE Battery Aging Dataset<br>"
+                "T=24°C &nbsp; C-rate=2A &nbsp; DoD=100%<br>"
+                "<span style='color:#68d391'>Real measured data</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            p  = CELL_STRESS_PROFILES.get(selected, {})
+            sf = _stress_factor(p.get("temp_mean", 25), p.get("c_rate", 1), p.get("dod", 1))
+            st.markdown(
+                f"<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
+                f"T={p.get('temp_mean',25):.0f}°C &nbsp; "
+                f"C-rate={p.get('c_rate',1.0):.1f}C &nbsp; "
+                f"DoD={p.get('dod',1.0)*100:.0f}%<br>"
+                f"Stress: {sf:.2f}× baseline &nbsp; "
+                f"<span style='color:#fc8181'>Synthetic</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
         st.markdown(
             "<div style='font-size:11px;color:#2d3748;padding:0 4px;line-height:1.7'>"
             "Phase 1 · scikit-learn GBRT<br>"
-            "Physics-informed synthetic data<br>"
+            "8 synthetic + 4 NASA real cells<br>"
             "Cell-to-cell stress variation (T, C-rate, DoD)<br>"
-            "<span style='color:#fc8181'>⚠ Not real measured data</span>"
+            "<span style='color:#fc8181'>⚠ Synthetic cells: not real measured data</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -345,8 +386,13 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
         else "<span class='tag-model'>MODEL</span>"
     )
 
-    p  = CELL_STRESS_PROFILES.get(cell_id, {})
-    sf = _stress_factor(p.get("temp_mean",25), p.get("c_rate",1.0), p.get("dod",1.0))
+    is_nasa = cell_id in NASA_CELL_IDS
+    if is_nasa:
+        source_tag = "NASA real · 24°C · 2A discharge"
+    else:
+        p  = CELL_STRESS_PROFILES.get(cell_id, {})
+        sf = _stress_factor(p.get("temp_mean",25), p.get("c_rate",1.0), p.get("dod",1.0))
+        source_tag = f"Synthetic · Stress {sf:.2f}x baseline"
 
     st.markdown(
         f"""
@@ -356,7 +402,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
             <div class="hero-sub">
                 SOH: <strong style="color:#e2e8f0">{current_soh:.1f}%</strong>
                 &nbsp;·&nbsp; Est. {current_rul:.0f} cycles remaining
-                &nbsp;·&nbsp; Stress {sf:.2f}× baseline
+                &nbsp;·&nbsp; {source_tag}
                 &nbsp;·&nbsp; {conf_html}
             </div>
         </div>
@@ -388,9 +434,9 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 <div class="metric-chip-sub">since commissioning</div>
             </div>
             <div class="metric-chip">
-                <div class="metric-chip-label">Stress Factor</div>
-                <div class="metric-chip-value">{sf:.2f}×</div>
-                <div class="metric-chip-sub">vs baseline cell</div>
+                <div class="metric-chip-label">Data Source</div>
+                <div class="metric-chip-value" style="font-size:18px">{"NASA" if is_nasa else f"{sf:.2f}×"}</div>
+                <div class="metric-chip-sub">{"real measured" if is_nasa else "vs baseline (synthetic)"}</div>
             </div>
         </div>
         """,
@@ -554,10 +600,17 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
     top_feature = drivers[0]["feature"]
     top_pct     = drivers[0]["importance_pct"]
 
+    is_nasa_cell = cell_id in NASA_CELL_IDS
+    model_label = (
+        f"NASA real model · {bundle['metrics'].get('n_cells', 4)} cells"
+        if is_nasa_cell
+        else f"Synthetic model · {bundle['metrics'].get('n_cells', 8)} cells"
+    )
+    n_cells_trained = bundle["metrics"].get("n_cells", "—")
     st.markdown(
         f"""
         <div class="hero-card">
-            <div class="hero-label">Why this prediction? · SOH model · trained on 8 cells</div>
+            <div class="hero-label">Why this prediction? · SOH model · {model_label}</div>
             <div class="hero-value hero-blue" style="font-size:32px">
                 {friendly(top_feature)}
             </div>
@@ -565,7 +618,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
                 Explains <strong style="color:#e2e8f0">{top_pct:.0f}%</strong>
                 of the model's SOH prediction across all cells.
                 Internal resistance is a direct proxy for SEI layer growth —
-                the dominant degradation mechanism in LiCoO₂ cells.
+                the dominant degradation mechanism in LiCoO&#x2082; cells.
             </div>
         </div>
         """,
@@ -657,10 +710,12 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
 
     m = bundle["metrics"]
     mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("SOH MAE",  f"{m['soh_mae']:.2f}%",   help="Mean absolute error on held-out test cycles across all 8 cells")
-    mc2.metric("SOH R²",   f"{m['soh_r2']:.3f}",     help="R² > 0.96 — multi-cell training allows the model to generalise across stress conditions")
+    mc1.metric("SOH MAE",  f"{m['soh_mae']:.2f}%",   help="Mean absolute error on held-out test cycles (chronological split)")
+    mc2.metric("SOH R²",   f"{m['soh_r2']:.3f}",     help="Fit quality — multi-cell training lets the model generalise across stress conditions and cell chemistry")
     mc3.metric("RUL MAE",  f"{m['rul_mae']:.0f} cy", help="RUL is harder: exact remaining life depends on future usage, which is unknown")
-    mc4.metric("Training", "8 cells / 8,134 cycles")
+    n_cells = bundle["metrics"].get("n_cells", "—")
+    n_rows  = bundle["metrics"].get("n_rows", 0)
+    mc4.metric("Training", f"{n_cells} cells / {n_rows:,} cycles")
 
     with st.expander("What does resistance explaining 74% of SOH mean physically?"):
         st.markdown(
@@ -755,13 +810,14 @@ def page_coming_soon(key: str):
 # ---------------------------------------------------------------------------
 
 def main():
-    featured_dfs, bundle, split_cycles = load_everything()
+    featured_dfs, bundles, split_cycles = load_everything()
 
     cell_ids     = list(featured_dfs.keys())
     selected     = render_sidebar(cell_ids)
 
     df           = featured_dfs[selected]
     split_cycle  = split_cycles[selected]
+    bundle       = bundles["nasa"] if selected in NASA_CELL_IDS else bundles["synth"]
     page         = st.session_state.get("page", "overview")
 
     if page == "overview":
