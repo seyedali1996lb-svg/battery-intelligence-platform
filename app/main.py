@@ -556,21 +556,19 @@ def page_insights(df: pd.DataFrame, bundle: dict):
         for i, d in enumerate(drivers):
             bar_width = int(d["importance_pct"])
             rank_colour = ["#63b3ed", "#68d391", "#f6e05e", "#f6ad55", "#fc8181"][i]
+            feature_label = d['feature'].replace('_', ' ')
+            pct_label = f"{d['importance_pct']:.1f}%"
             st.markdown(
                 f"""
-                <div style="margin-bottom:16px">
+                <div style="margin-bottom:16px;font-family:sans-serif">
                     <div style="display:flex;justify-content:space-between;
-                                margin-bottom:5px">
-                        <span style="font-size:13px;font-weight:600;
-                                     color:{rank_colour} !important">
-                            {d['feature'].replace('_', ' ')}
-                        </span>
-                        <span style="font-size:13px;font-weight:700;
-                                     color:{rank_colour} !important">
-                            {d['importance_pct']:.1f}%
-                        </span>
+                                margin-bottom:6px;line-height:1">
+                        <p style="margin:0;padding:0;font-size:13px;font-weight:600;
+                                  color:{rank_colour}">{feature_label}</p>
+                        <p style="margin:0;padding:0;font-size:13px;font-weight:700;
+                                  color:{rank_colour}">{pct_label}</p>
                     </div>
-                    <div style="background:#2d3748;border-radius:4px;height:6px">
+                    <div style="background:#2d3748;border-radius:4px;height:6px;overflow:hidden">
                         <div style="background:{rank_colour};width:{min(bar_width,100)}%;
                                     height:6px;border-radius:4px"></div>
                     </div>
