@@ -225,7 +225,7 @@ NAV_ITEMS = [
     ("Insights",        "insights",        True),
     ("Recommendations", "recommendations", False),
     ("Economics",       "economics",       False),
-    ("Fleet",           "fleet",           False),
+    ("Fleet",           "fleet",           True),
     ("Sustainability",  "sustainability",  False),
     ("Reports",         "reports",         False),
     ("Settings",        "settings",        False),
@@ -815,10 +815,248 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
 # Page: Coming Soon
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Page: Fleet
+# ---------------------------------------------------------------------------
+
+def page_fleet(featured_dfs: dict, bundles: dict):
+    st.markdown("# Fleet")
+
+    # ── Build fleet summary row per cell ──
+    rows = []
+    synth_rul_ok = bundles["synth"]["metrics"].get("rul_reliable", False)
+    nasa_rul_ok  = (bundles["nasa"]["metrics"].get("rul_reliable", False)
+                    if bundles["nasa"] else False)
+
+    for cell_id, df in featured_dfs.items():
+        is_nasa   = cell_id in NASA_CELL_IDS
+        rul_ok    = nasa_rul_ok if is_nasa else synth_rul_ok
+        latest    = df.iloc[-1]
+        soh       = latest["soh_pct"]
+        cycle     = int(latest["cycle_number"])
+        fade_30   = latest.get("fade_rate_30cy", float("nan")) * 1000  # mSOH/cy
+        rul       = latest["rul_pred"] if rul_ok else None
+        eol_row   = df[df["is_eol"]]
+        eol_at    = int(eol_row["cycle_number"].iloc[0]) if len(eol_row) else None
+        cycles_to_eol = max(0, eol_at - cycle) if eol_at else None
+
+        status_label, _ = soh_status(soh)
+        rows.append({
+            "cell_id":      cell_id,
+            "source":       "NASA" if is_nasa else "Synthetic",
+            "soh":          soh,
+            "status":       status_label,
+            "cycle":        cycle,
+            "fade_30":      fade_30,
+            "rul":          rul,
+            "rul_ok":       rul_ok,
+            "eol_at":       eol_at,
+            "cycles_to_eol": cycles_to_eol,
+        })
+
+    # Sort: worst SOH first (most urgent)
+    rows.sort(key=lambda r: r["soh"])
+
+    # ── Header metrics ──
+    n_eol       = sum(1 for r in rows if r["status"] == "End of Life")
+    n_degrading = sum(1 for r in rows if r["status"] == "Degrading")
+    n_healthy   = sum(1 for r in rows if r["status"] == "Healthy")
+    worst_soh   = rows[0]["soh"]
+    best_soh    = rows[-1]["soh"]
+
+    st.markdown(
+        f"""
+        <div class="metric-row">
+            <div class="metric-chip">
+                <div class="metric-chip-label">Total Cells</div>
+                <div class="metric-chip-value">{len(rows)}</div>
+                <div class="metric-chip-sub">8 synthetic · {sum(1 for r in rows if r['source']=='NASA')} NASA real</div>
+            </div>
+            <div class="metric-chip">
+                <div class="metric-chip-label">End of Life</div>
+                <div class="metric-chip-value" style="color:#fc8181">{n_eol}</div>
+                <div class="metric-chip-sub">below 80% SOH</div>
+            </div>
+            <div class="metric-chip">
+                <div class="metric-chip-label">Degrading</div>
+                <div class="metric-chip-value" style="color:#f6e05e">{n_degrading}</div>
+                <div class="metric-chip-sub">80–90% SOH</div>
+            </div>
+            <div class="metric-chip">
+                <div class="metric-chip-label">Healthy</div>
+                <div class="metric-chip-value" style="color:#68d391">{n_healthy}</div>
+                <div class="metric-chip-sub">above 90% SOH</div>
+            </div>
+            <div class="metric-chip">
+                <div class="metric-chip-label">Fleet SOH Range</div>
+                <div class="metric-chip-value" style="font-size:20px">{worst_soh:.0f}–{best_soh:.0f}%</div>
+                <div class="metric-chip-sub">worst to best</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Ranking table ──
+    st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
+
+    STATUS_COLOUR = {"Healthy": "#68d391", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
+    SOURCE_STYLE  = {
+        "NASA":      "background:rgba(104,211,145,0.12);color:#68d391;border:1px solid rgba(104,211,145,0.25)",
+        "Synthetic": "background:rgba(74,85,104,0.3);color:#718096;border:1px solid #2d3748",
+    }
+
+    table_rows_html = ""
+    for rank, r in enumerate(rows, 1):
+        sc = STATUS_COLOUR[r["status"]]
+        ss = SOURCE_STYLE[r["source"]]
+        soh_bar = int(max(0, min(100, r["soh"])))
+        bar_colour = sc
+
+        rul_cell = (
+            f"{r['rul']:.0f} cy" if (r["rul"] is not None and r["rul_ok"])
+            else "<span style='color:#4a5568'>—</span>"
+        )
+        eol_cell = (
+            f"<span style='color:#fc8181'>Reached at {r['eol_at']}</span>"
+            if r["eol_at"] and r["cycles_to_eol"] == 0
+            else (f"{r['cycles_to_eol']} cy" if r["cycles_to_eol"] is not None else "—")
+        )
+
+        table_rows_html += f"""
+        <tr style="border-bottom:1px solid #1a202c">
+            <td style="padding:14px 12px;color:#4a5568;font-size:13px">{rank}</td>
+            <td style="padding:14px 12px">
+                <span style="font-weight:600;color:#e2e8f0;font-size:14px">{r['cell_id']}</span>
+                <span style="margin-left:8px;font-size:10px;padding:2px 6px;border-radius:8px;{ss}">{r['source']}</span>
+            </td>
+            <td style="padding:14px 12px">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span style="color:{sc};font-weight:700;font-size:15px;min-width:46px">{r['soh']:.1f}%</span>
+                    <div style="flex:1;background:#1a202c;border-radius:3px;height:6px;min-width:80px">
+                        <div style="background:{bar_colour};width:{soh_bar}%;height:6px;border-radius:3px"></div>
+                    </div>
+                </div>
+            </td>
+            <td style="padding:14px 12px">
+                <span style="font-size:12px;font-weight:600;padding:2px 8px;border-radius:4px;
+                             background:{sc}22;color:{sc};border:1px solid {sc}44">{r['status']}</span>
+            </td>
+            <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{r['cycle']:,}</td>
+            <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{r['fade_30']:.2f} mSOH/cy</td>
+            <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{rul_cell}</td>
+            <td style="padding:14px 12px;font-size:13px">{eol_cell}</td>
+        </tr>
+        """
+
+    st.markdown(
+        f"""
+        <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
+            <thead>
+                <tr style="border-bottom:2px solid #2d3748">
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">#</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cell</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">SOH</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Status</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cycles</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Fade Rate</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows_html}
+            </tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── SOH distribution chart ──
+    st.markdown("<div class='section-header'>SOH Distribution Across Fleet</div>", unsafe_allow_html=True)
+
+    sorted_ids  = [r["cell_id"] for r in rows]
+    sorted_sohs = [r["soh"] for r in rows]
+    bar_colours = [STATUS_COLOUR[r["status"]] for r in rows]
+
+    fig = go.Figure(go.Bar(
+        x=sorted_ids, y=sorted_sohs,
+        marker_color=bar_colours,
+        hovertemplate="<b>%{x}</b><br>SOH: %{y:.1f}%<extra></extra>",
+    ))
+    fig.add_hline(y=80, line_dash="dash", line_color="#fc8181", line_width=1,
+                  annotation_text="EOL (80%)", annotation_position="top right",
+                  annotation_font_color="#fc8181", annotation_font_size=11)
+    fig.add_hline(y=90, line_dash="dot", line_color="#f6e05e", line_width=1,
+                  annotation_text="Degrading (90%)", annotation_position="top right",
+                  annotation_font_color="#f6e05e", annotation_font_size=11)
+    fig.update_layout(
+        height=280,
+        **base_layout(
+            xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+                       zeroline=False, range=[50, 102]),
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Honest copy on cross-type RUL ──
+    st.markdown("<div class='section-header'>About This Ranking</div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        **Ranking method:** Cells are ranked by current SOH %, fade rate (30-cycle rolling average),
+        and EOL proximity. SOH % is directly comparable across all cells — it's always relative
+        to each cell's own initial capacity, so 75% SOH means the same thing for a NASA cell
+        as for a synthetic cell.
+
+        **Why RUL is not ranked across cell types:**
+        Remaining Useful Life (cycles) is predicted by separate models for synthetic vs NASA cells,
+        because the resistance features used for prediction are on incompatible measurement scales
+        (synthesised internal resistance vs EIS electrolyte resistance from impedance spectroscopy).
+        Comparing "300 cycles remaining" from one model to "40 cycles remaining" from another
+        would be a meaningless number — the models aren't measuring the same thing.
+
+        Individual RUL estimates are shown per cell on the Overview and Health pages (drill in
+        via the cell selector in the sidebar).
+        """,
+    )
+
+    with st.expander("Roadmap: Unified Ranking — what would unlock cross-type RUL comparison?"):
+        st.markdown(
+            """
+            **Gate: 8+ real cells with diverse usage histories.**
+
+            The current 4 NASA cells were all tested at identical lab conditions (24°C, 2A discharge).
+            That means the only variation between them is cell-to-cell manufacturing spread —
+            not the operating temperature, C-rate, and DoD variation that would make a combined
+            resistance signal meaningful.
+
+            Once 8 or more real cells are available with varied operating conditions, two changes
+            become worthwhile:
+
+            1. **Replace `resistance_ohm` with `resistance_normalized`** (ratio to each cell's
+               own initial resistance) as the only resistance feature. Both synthetic and real
+               cells start at 1.0 and rise — this is comparable across measurement methods.
+
+            2. **Train one unified model** on the combined dataset. Validate with leave-cell-out
+               to confirm it generalises across both real and synthetic cells.
+
+            Until then, ranking by SOH and fade rate is the honest choice.
+            """
+        )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
-    "fleet":           ("Fleet",           "Multi-battery fleet view with comparative health rankings, clustering, and alerts.\n\nGate: requires real Oxford/NASA data loaded and validated first.", "Phase 2"),
     "sustainability":  ("Sustainability",  "Carbon impact tracking, second-life suitability scoring, and recycling timeline.", "Phase 2"),
     "reports":         ("Reports",         "Exportable PDF/CSV health reports and audit trails for stakeholders.", "Phase 2"),
     "settings":        ("Settings",        "Data source configuration, alert thresholds, and user preferences.", "Phase 2"),
@@ -868,6 +1106,8 @@ def main():
         page_health(df, split_cycle, selected)
     elif page == "insights":
         page_insights(df, bundle, selected)
+    elif page == "fleet":
+        page_fleet(featured_dfs, bundles)
     elif page in COMING_SOON_META:
         page_coming_soon(page)
     else:
