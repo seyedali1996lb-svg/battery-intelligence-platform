@@ -249,12 +249,9 @@ def base_layout(**overrides) -> dict:
         font=dict(color="#a0aec0", size=12),
         margin=dict(l=10, r=10, t=36, b=10),
         hovermode="x unified",
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)",
-            bordercolor="rgba(0,0,0,0)",
-            font=dict(size=11, color="#718096"),
-        ),
     )
+    # legend is intentionally NOT set here — individual charts pass it as
+    # an override so there's no duplicate-key conflict with update_layout().
     # Default axis style — overrides can replace these entirely.
     if "xaxis" not in overrides:
         layout["xaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
@@ -262,6 +259,12 @@ def base_layout(**overrides) -> dict:
         layout["yaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
     layout.update(overrides)
     return layout
+
+
+LEGEND_H = dict(
+    orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+    bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#718096"),
+)
 
 
 def soh_status(soh: float) -> tuple[str, str]:
@@ -394,7 +397,7 @@ def page_overview(df: pd.DataFrame, bundle: dict, split_cycle: int):
 
     fig.update_layout(
         height=340,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=LEGEND_H,
         **base_layout(
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
@@ -469,7 +472,7 @@ def page_health(df: pd.DataFrame, bundle: dict, split_cycle: int):
         ))
         fig2.update_layout(
             height=280,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            legend=LEGEND_H,
             **base_layout(
                 xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
                 yaxis=dict(title="mΩ", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
@@ -500,7 +503,7 @@ def page_health(df: pd.DataFrame, bundle: dict, split_cycle: int):
     ))
     fig3.update_layout(
         height=260,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=LEGEND_H,
         **base_layout(
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(title="mAh lost per cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
