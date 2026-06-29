@@ -174,14 +174,26 @@ def load_everything():
         bndl["metrics"]["n_cells"] = len(battery_dict)
         bndl["metrics"]["n_rows"]  = len(X_all)
 
-        # LCO validation: only way to know if the model generalises to unseen cells.
-        # Results stored in bundle so the UI can gate RUL display on rul_reliable.
+        # LCO validation: only honest generalisation metric for this data structure.
+        # Per-cell fold R² is stored individually — the dataset-average can pass
+        # while a specific cell's fold fails. RUL display is gated per cell.
+        from lco_eval import RUL_RELIABLE_FLOOR
         cell_cycles = {cid: cell["cycles"] for cid, cell in battery_dict.items()}
         lco = run_lco(cell_cycles)
         bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
         bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
-        bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]
+        bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]   # dataset average (for Insights display)
         bndl["metrics"]["lco_per_cell"] = lco["per_cell"]
+
+        # Per-cell reliability: each cell checked against the floor independently.
+        # A cell whose held-out fold R² is below the floor gets rul_reliable=False
+        # even if the dataset-average passes.
+        per_cell_rul_ok = {
+            cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
+            for cid, fold in lco["per_cell"].items()
+        }
+        # Cells with only 1 total cell (no LCO possible) inherit the dataset flag.
+        bndl["metrics"]["per_cell_rul_reliable"] = per_cell_rul_ok
 
         featured_dfs, split_cycles = {}, {}
         for cell_id, (df_feat, X) in cell_featured.items():
@@ -824,13 +836,20 @@ def page_fleet(featured_dfs: dict, bundles: dict):
 
     # ── Build fleet summary row per cell ──
     rows = []
-    synth_rul_ok = bundles["synth"]["metrics"].get("rul_reliable", False)
-    nasa_rul_ok  = (bundles["nasa"]["metrics"].get("rul_reliable", False)
-                    if bundles["nasa"] else False)
+    # Per-cell reliability lookup — must check the individual fold R², not the group average.
+    synth_per_cell = bundles["synth"]["metrics"].get("per_cell_rul_reliable", {})
+    nasa_per_cell  = (bundles["nasa"]["metrics"].get("per_cell_rul_reliable", {})
+                      if bundles["nasa"] else {})
 
     for cell_id, df in featured_dfs.items():
         is_nasa   = cell_id in NASA_CELL_IDS
-        rul_ok    = nasa_rul_ok if is_nasa else synth_rul_ok
+        per_cell  = nasa_per_cell if is_nasa else synth_per_cell
+        # Fall back to dataset-level flag only when this cell had no LCO fold (shouldn't happen).
+        rul_ok    = per_cell.get(
+            cell_id,
+            bundles["nasa"]["metrics"].get("rul_reliable", False) if is_nasa
+            else bundles["synth"]["metrics"].get("rul_reliable", False),
+        )
         latest    = df.iloc[-1]
         soh       = latest["soh_pct"]
         cycle     = int(latest["cycle_number"])
@@ -1098,7 +1117,9 @@ def main():
     bundle       = bundles["nasa"] if selected in NASA_CELL_IDS else bundles["synth"]
     page         = st.session_state.get("page", "overview")
 
-    rul_reliable = bundle["metrics"].get("rul_reliable", True)
+    # Per-cell reliability: use the specific fold R² for this cell, not the group average.
+    per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
+    rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
 
     if page == "overview":
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable)
