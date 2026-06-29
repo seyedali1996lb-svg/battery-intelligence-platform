@@ -537,13 +537,12 @@ def page_insights(df: pd.DataFrame, bundle: dict):
             customdata=fi_df["importance_pct"],
             hovertemplate="<b>%{y}</b><br>Importance: %{customdata:.2f}%<extra></extra>",
         ))
-        theme = {k: v for k, v in CHART_THEME.items() if k != "yaxis"}
+        theme = {k: v for k, v in CHART_THEME.items() if k not in ("xaxis", "yaxis")}
         fig.update_layout(
             height=380,
-            xaxis_title="% contribution to prediction",
             xaxis=dict(
+                title="% contribution to prediction",
                 gridcolor="#2d3748", linecolor="#2d3748", zeroline=False,
-                # Add 10% padding on the right so labels don't clip.
                 range=[0, fi_df["importance_pct"].max() * 1.05],
             ),
             yaxis=dict(autorange="reversed", gridcolor="#2d3748", linecolor="#2d3748"),
