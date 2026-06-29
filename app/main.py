@@ -24,6 +24,7 @@ import plotly.graph_objects as go
 from data_loader import build_battery, get_cell_df, CELL_STRESS_PROFILES, _stress_factor
 from features import build_features, get_model_matrix
 from model import train_models, predict, feature_importance_df, top_drivers
+from lco_eval import run_lco
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +173,16 @@ def load_everything():
         bndl = train_models(X_all, y_soh_all, y_rul_all)
         bndl["metrics"]["n_cells"] = len(battery_dict)
         bndl["metrics"]["n_rows"]  = len(X_all)
+
+        # LCO validation: only way to know if the model generalises to unseen cells.
+        # Results stored in bundle so the UI can gate RUL display on rul_reliable.
+        cell_cycles = {cid: cell["cycles"] for cid, cell in battery_dict.items()}
+        lco = run_lco(cell_cycles)
+        bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
+        bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
+        bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]
+        bndl["metrics"]["lco_per_cell"] = lco["per_cell"]
+
         featured_dfs, split_cycles = {}, {}
         for cell_id, (df_feat, X) in cell_featured.items():
             preds = predict(bndl, X)
@@ -369,7 +380,7 @@ def friendly(name: str) -> str:
 # Page: Overview
 # ---------------------------------------------------------------------------
 
-def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
+def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable: bool = True):
     st.markdown("# Overview")
 
     latest         = df.iloc[-1]
@@ -380,11 +391,18 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
     confidence     = latest["confidence_tag"]
     status_label, status_colour = soh_status(current_soh)
 
+    # RUL display: suppress when model doesn't generalise (LCO R² < floor)
+    # or when early-cycle features haven't stabilised yet.
+    rul_calibrating = (not rul_reliable) or (confidence == "Calibrating")
+    rul_display     = "—" if rul_calibrating else f"{current_rul:.0f}"
+    rul_sub         = "not calibrated" if not rul_reliable else "cycles to 80% SOH"
+
     conf_html = (
         "<span class='tag-calibrating'>CALIBRATING</span>"
-        if confidence == "Calibrating"
+        if rul_calibrating
         else "<span class='tag-model'>MODEL</span>"
     )
+    rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
 
     is_nasa = cell_id in NASA_CELL_IDS
     if is_nasa:
@@ -401,7 +419,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
             <div class="hero-value {status_colour}">{status_label}</div>
             <div class="hero-sub">
                 SOH: <strong style="color:#e2e8f0">{current_soh:.1f}%</strong>
-                &nbsp;·&nbsp; Est. {current_rul:.0f} cycles remaining
+                &nbsp;·&nbsp; {rul_hero}
                 &nbsp;·&nbsp; {source_tag}
                 &nbsp;·&nbsp; {conf_html}
             </div>
@@ -409,6 +427,10 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
         """,
         unsafe_allow_html=True,
     )
+
+    is_nasa_src = cell_id in NASA_CELL_IDS
+    src_val = "NASA" if is_nasa_src else f"{sf:.2f}x"
+    src_sub = "real measured" if is_nasa_src else "vs baseline (synthetic)"
 
     st.markdown(
         f"""
@@ -425,8 +447,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Est. Remaining Life</div>
-                <div class="metric-chip-value">{current_rul:.0f}</div>
-                <div class="metric-chip-sub">cycles to 80% SOH</div>
+                <div class="metric-chip-value">{rul_display}</div>
+                <div class="metric-chip-sub">{rul_sub}</div>
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Capacity Lost</div>
@@ -435,8 +457,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str):
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Data Source</div>
-                <div class="metric-chip-value" style="font-size:18px">{"NASA" if is_nasa else f"{sf:.2f}×"}</div>
-                <div class="metric-chip-sub">{"real measured" if is_nasa else "vs baseline (synthetic)"}</div>
+                <div class="metric-chip-value" style="font-size:18px">{src_val}</div>
+                <div class="metric-chip-sub">{src_sub}</div>
             </div>
         </div>
         """,
@@ -710,11 +732,29 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
 
     m = bundle["metrics"]
     mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("SOH MAE",  f"{m['soh_mae']:.2f}%",   help="Mean absolute error on held-out test cycles (chronological split)")
-    mc2.metric("SOH R²",   f"{m['soh_r2']:.3f}",     help="Fit quality — multi-cell training lets the model generalise across stress conditions and cell chemistry")
-    mc3.metric("RUL MAE",  f"{m['rul_mae']:.0f} cy", help="RUL is harder: exact remaining life depends on future usage, which is unknown")
-    n_cells = bundle["metrics"].get("n_cells", "—")
-    n_rows  = bundle["metrics"].get("n_rows", 0)
+    lco_soh_r2 = m.get("lco_soh_r2", float("nan"))
+    lco_rul_r2 = m.get("lco_rul_r2", float("nan"))
+    rul_ok     = m.get("rul_reliable", True)
+
+    mc1.metric(
+        "SOH MAE (LCO)",
+        f"{m.get('lco_soh_r2', float('nan')):.3f} R²" if not (lco_soh_r2 != lco_soh_r2) else "—",
+        help="Leave-cell-out R² — model trained on N-1 cells, tested on the held-out cell. "
+             "This is the honest generalisation metric, not a row-level split.",
+    )
+    mc2.metric(
+        "SOH MAE",
+        f"{m['soh_mae']:.2f}%",
+        help="Mean absolute SOH error on held-out test cycles (chronological split within training set).",
+    )
+    rul_label = f"{lco_rul_r2:.3f} R²" if rul_ok else f"{lco_rul_r2:.3f} R² — not calibrated"
+    mc3.metric(
+        "RUL (LCO)",
+        rul_label,
+        help="Leave-cell-out R² for RUL. Below 0.30 = model shown as 'Not calibrated' in UI.",
+    )
+    n_cells = m.get("n_cells", "—")
+    n_rows  = m.get("n_rows", 0)
     mc4.metric("Training", f"{n_cells} cells / {n_rows:,} cycles")
 
     with st.expander("What does resistance explaining 74% of SOH mean physically?"):
@@ -820,8 +860,10 @@ def main():
     bundle       = bundles["nasa"] if selected in NASA_CELL_IDS else bundles["synth"]
     page         = st.session_state.get("page", "overview")
 
+    rul_reliable = bundle["metrics"].get("rul_reliable", True)
+
     if page == "overview":
-        page_overview(df, split_cycle, selected)
+        page_overview(df, split_cycle, selected, rul_reliable=rul_reliable)
     elif page == "health":
         page_health(df, split_cycle, selected)
     elif page == "insights":
