@@ -15,7 +15,11 @@ Built as a portfolio project targeting the battery analytics / BMS tooling space
 | **Phase 1 — Core Loop** | SOH/RUL model, leave-cell-out validation, per-cell reliability gating, Overview/Health/Insights pages | Done |
 | **Phase 2 — Fleet** | Multi-cell fleet ranking by SOH + fade rate, honest cross-type RUL copy, roadmap to unified model | Done |
 | **Phase 3 — Copilot** | Template-based AI narration grounded strictly on bundle outputs — no LLM inference, no invented numbers | Done |
-| **Phase 4 — Consequences** | Actionable recommendations, replacement cost modelling, second-life scoring | Done |
+| **Phase 4 — Consequences** | Second-life economics: application fit scoring (Home ESS / UPS / Grid), financial comparison (reuse vs recycle vs replace) with sourced adjustable assumptions, break-even chart, CO₂ and material recovery snapshot. Every financial and environmental figure carries a badge at render time — "Cited estimate" (with source) or "Illustrative — not sourced" (engineering judgment only) — visually distinct from the green "Validated model output" badge on SOH/RUL outputs. | Done |
+
+**Deferred (not scope-crept out, gated on real preconditions):**
+- **Option B — unified fleet RUL model**: requires 8+ real cells with diverse operating conditions. Current 4 NASA cells were all tested at identical lab conditions, making a combined resistance signal meaningless. Gate documented in Fleet roadmap expander.
+- **Phase 5 — Output/Control**: Battery Passport export, PDF/CSV health reports, deeper sustainability lifecycle carbon tracking, second-life market pricing integration. Planned after final scope is confirmed.
 
 ---
 
@@ -26,6 +30,14 @@ Built as a portfolio project targeting the battery analytics / BMS tooling space
 **Dataset-average vs per-cell reliability gate.** The first implementation of the RUL reliability gate computed one boolean per dataset (NASA vs synthetic). B0018 inherited `rul_reliable=True` from the NASA group average (dataset LCO R²=0.68 > floor 0.30) despite its own fold R²=0.22. The fix: compute `per_cell_rul_reliable = {cell_id: fold_r2 >= floor}` as a dict keyed by cell ID, and look up by cell every time RUL is displayed anywhere in the UI. B0018 now shows "not calibrated" consistently across Overview, Fleet, and Copilot.
 
 **Why two separate models exist.** The first attempt trained one GBRT model on all 12 cells (8 synthetic + 4 NASA). Combined R²=−0.49. The problem: synthetic cells have internal resistance in the 0.15–0.40 Ω range (a modelled bulk resistance), while NASA cells have Re (electrolyte resistance from EIS impedance spectroscopy) in the 0.04–0.07 Ω range. Same feature name, physically incompatible scales. The fix is two separate models, each trained and validated on its own data source. The Fleet page ranks by SOH (scale-invariant) rather than RUL (model-dependent) for exactly this reason.
+
+**Assumption transparency audit, Phase 4.** The Consequences page is the first part of the platform that shows financial and environmental figures that are *not* model outputs — they're literature estimates and engineering judgment. The design intent was that every such figure should carry a visible badge at render time, distinct from the green badge on validated outputs. Two rounds of audit caught things the first pass missed:
+
+- *The repack cost deduction was hidden.* The "Reuse" option card showed a "Cited estimate" badge for the $/kWh revenue figure, but `repack_cost` — marked "Illustrative — not sourced" — was deducted from that gross value without its badge appearing on the card. A reader saw one badge on a number produced by two assumptions with different provenance. Fix: the card now shows `after −$10/cell repack [Illustrative — not sourced]` below the main figure.
+
+- *The CO₂ recycling credit had no badge.* `sustainability_snapshot()` computes `co2_recycling_credit = co2_per_cell × 0.15`, where the 15% factor comes from Dunn et al. (2015) and is hardcoded — no slider, no ASSUMPTIONS entry, no badge at render time. The inline text said "per Dunn et al. 2015" but that's prose, not a badge. Fix: added a "Cited estimate" badge inline and explicitly noted "hardcoded, no slider."
+
+- *A datasheet spec got the wrong badge.* The nominal cell capacity (2.7 Wh for NASA cells) fed directly into the Wh-based financial calculations and was initially labelled with `BADGE_VALIDATED` — the green badge — on the reasoning that it came from the NASA PCoE datasheet. That's wrong. "Validated" in this platform means leave-cell-out tested by the pipeline. A datasheet spec is a different kind of trustworthy: authoritative, but not pipeline-validated. Using the same badge for both blurs the one distinction the whole transparency layer was built to protect. Fix: dropped the badge, kept the source citation in plain text.
 
 ---
 
@@ -55,6 +67,18 @@ flowchart TD
 
     CP -->|rul_reliable=False| H[Honest explanation\nnever a cycle count]
     CP -->|rul_reliable=True| V[Validated estimate\nwith provenance]
+
+    RUL --> CN[Consequences page\nSOH + fade rate as validated inputs\nrul_reliable gates cycle-timeline note]
+    NC --> CN
+
+    CN --> AF[Application fit scoring\nHome ESS · UPS · Grid\nSOH band + fade ratio vs fleet median]
+    CN --> FC[Financial comparison\nReuse vs Recycle vs Replace\nbreak-even chart by SOH]
+    CN --> SU[Sustainability snapshot\nCO₂ avoided · material recovery]
+
+    ASM[ASSUMPTIONS dict\n6 figures, each labelled\nCited estimate or Illustrative] --> CN
+    ASM --> AF
+    ASM --> FC
+    ASM --> SU
 ```
 
 ---
@@ -67,15 +91,16 @@ flowchart TD
 - **Data (synthetic)**: 8 cells with injected stress variation (T, C-rate, DoD) via Arrhenius SEI growth, empirical power-law C-rate factor, Rainflow DoD scaling
 - **Dashboard**: Streamlit + Plotly
 - **Copilot**: Template-based narration (`src/copilot.py`) — no LLM API, no external calls, no invented numbers. Every sentence traces to a value in the model bundle.
+- **Consequences**: Literature-grounded assumption layer (`src/consequences.py`) — 6 financial/environmental figures, each sourced or flagged as engineering judgment, badged at render time and adjustable via sliders.
 
 ---
 
 ## Deliberate scope limits (not unfinished work)
 
-- **No unified fleet RUL ranking**: Requires 8+ real cells with diverse operating conditions to make a resistance-normalised combined model meaningful. Gate is documented in the Fleet roadmap expander. Trigger: add more NASA/CALCE/Oxford cells with temperature + C-rate variation.
+- **No unified fleet RUL ranking**: Requires 8+ real cells with diverse operating conditions. The current 4 NASA cells were all tested at identical lab conditions (24°C, 2A discharge) — the only variation between them is cell-to-cell manufacturing spread, not the temperature/C-rate/DoD variation needed to make a combined resistance signal meaningful. Gate documented in Fleet roadmap expander. Trigger: add CALCE/Oxford cells with varied operating conditions.
 - **No resistance normalisation**: `resistance_normalized = R / R_initial` would make synthetic and NASA resistance comparable. Deferred until the unified model gate is met.
-- **Phase 4 (Consequences) not started**: Actionable maintenance recommendations, replacement cost modelling, second-life suitability scoring. Planned after Phase 3 is stable.
 - **No LLM in Copilot**: Deliberate. Template narration enforces the reliability gate mechanically — an LLM can generate confident-sounding text for B0018 even when told not to. The template cannot.
+- **Phase 5 Output/Control deferred**: Battery Passport export, PDF reports, deeper sustainability tracking (lifecycle carbon, recycling market prices). Planned after final scope is confirmed — targeting late 2025.
 
 ---
 
