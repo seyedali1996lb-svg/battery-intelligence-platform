@@ -15,7 +15,7 @@ Built as a portfolio project targeting the battery analytics / BMS tooling space
 | **Phase 1 — Core Loop** | SOH/RUL model, leave-cell-out validation, per-cell reliability gating, Overview/Health/Insights pages | Done |
 | **Phase 2 — Fleet** | Multi-cell fleet ranking by SOH + fade rate, honest cross-type RUL copy, roadmap to unified model | Done |
 | **Phase 3 — Copilot** | Template-based AI narration grounded strictly on bundle outputs — no LLM inference, no invented numbers | Done |
-| **Phase 4 — Consequences** | Actionable recommendations, replacement cost modelling, second-life scoring | Planned |
+| **Phase 4 — Consequences** | Actionable recommendations, replacement cost modelling, second-life scoring | Done |
 
 ---
 

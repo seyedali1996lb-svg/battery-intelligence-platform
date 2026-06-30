@@ -236,7 +236,7 @@ NAV_ITEMS = [
     ("Health",          "health",          True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
-    ("Recommendations", "recommendations", False),
+    ("Consequences",    "consequences",    True),
     ("Economics",       "economics",       False),
     ("Fleet",           "fleet",           True),
     ("Sustainability",  "sustainability",  False),
@@ -1261,6 +1261,244 @@ def page_copilot(
             st.code("\n".join(lines), language=None)
 
 
+# ---------------------------------------------------------------------------
+# Page: Consequences
+# ---------------------------------------------------------------------------
+
+def page_consequences(
+    selected: str,
+    df: pd.DataFrame,
+    featured_dfs: dict,
+    bundles: dict,
+    rul_reliable: bool,
+):
+    from consequences import action_recommendation, cost_model, second_life_score
+
+    st.markdown("# Consequences")
+
+    # ── Pull values from the already-computed feature DataFrame ──
+    latest = df.iloc[-1]
+    soh              = float(latest["soh_pct"])
+    fade_30          = float(latest.get("fade_30_mah_cy", 0.0))
+    rul_pred_raw     = latest.get("rul_pred", None)
+    rul_pred         = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
+    is_nasa          = selected in NASA_CELL_IDS
+    source           = "nasa" if is_nasa else "synth"
+
+    # Fleet fade median — same-source peers only (avoids resistance scale issue)
+    peer_fades = [
+        float(fdf.iloc[-1].get("fade_30_mah_cy", 0))
+        for cid, fdf in featured_dfs.items()
+        if (cid in NASA_CELL_IDS) == is_nasa and cid != selected
+    ]
+    fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
+
+    # ── Section 1: Action recommendation ──
+    rec = action_recommendation(
+        soh=soh,
+        rul_reliable=rul_reliable,
+        rul_pred=rul_pred,
+        fade_30_mah_cy=fade_30,
+        fleet_fade_median=fleet_fade_median,
+    )
+
+    level_colours = {
+        "healthy":  ("#68d391", "#1a2e22"),
+        "degrading": ("#f6e05e", "#2d2a0a"),
+        "eol":      ("#f6ad55", "#2d1f05"),
+        "critical": ("#fc8181", "#2d0f0f"),
+    }
+    fg, bg = level_colours.get(rec["level"], ("#a0aec0", "#1a202c"))
+
+    st.markdown(
+        f"""
+        <div style="background:{bg};border:1px solid {fg}33;border-radius:12px;
+                    padding:28px 32px;margin-bottom:24px">
+            <div style="font-size:11px;font-weight:600;color:{fg}99;
+                        text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">
+                Action Recommendation · {selected}
+            </div>
+            <div style="font-size:22px;font-weight:700;color:{fg};margin-bottom:12px">
+                {rec['title']}
+            </div>
+            <div style="font-size:14px;color:{fg}cc;line-height:1.7">
+                {rec['description']}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if rec["suggestions"]:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:600;color:#4a5568;"
+            "text-transform:uppercase;letter-spacing:0.08em;margin:0 0 10px'>Specific actions</div>",
+            unsafe_allow_html=True,
+        )
+        for s in rec["suggestions"]:
+            st.markdown(
+                f"<div style='background:#1e2a38;border-left:3px solid #4a5568;"
+                f"border-radius:4px;padding:10px 16px;margin-bottom:8px;"
+                f"font-size:13px;color:#a0aec0;line-height:1.6'>→ {s}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ── Section 2: Cost model ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Replacement Economics</div>",
+        unsafe_allow_html=True,
+    )
+
+    col_sl, col_sr = st.columns([1, 2])
+    with col_sl:
+        replacement_cost = st.slider(
+            "Cell replacement cost ($)", min_value=5, max_value=200,
+            value=25, step=5, key="cons_replace_cost",
+        )
+        value_per_cycle = st.slider(
+            "Value per cycle ($)", min_value=0.10, max_value=5.00,
+            value=0.50, step=0.10, key="cons_value_cycle",
+            help="Revenue or service value delivered per charge/discharge cycle.",
+        )
+
+    econ = cost_model(
+        rul_reliable=rul_reliable,
+        rul_pred=rul_pred,
+        replacement_cost=replacement_cost,
+        value_per_cycle=value_per_cycle,
+    )
+
+    with col_sr:
+        if not rul_reliable:
+            st.markdown(
+                "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                "padding:28px;text-align:center;color:#4a5568;font-size:14px'>"
+                "RUL not calibrated for this cell — cost projection requires a validated "
+                "remaining-life estimate.<br><span style='font-size:12px'>Switch to a cell "
+                "with reliable RUL (e.g. B0005, B0006, B0007, or any synthetic cell with "
+                "SOH &lt; 90%) to see projections.</span></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            ec1, ec2, ec3 = st.columns(3)
+            rv   = econ["remaining_value"]
+            cpc  = econ["cost_per_remaining_cycle"]
+            net  = econ["replace_now_net"]
+            rul  = econ["rul_pred"]
+
+            ec1.metric(
+                "Remaining Value",
+                f"${rv:,.0f}",
+                help=f"Est. {int(rul)} cycles × ${value_per_cycle:.2f}/cycle",
+            )
+            ec2.metric(
+                "Cost / Remaining Cycle",
+                f"${cpc:.3f}",
+                help=f"${replacement_cost} replacement ÷ {int(rul)} remaining cycles",
+            )
+            verdict = "worth running to EOL" if net >= 0 else "cheaper to replace now"
+            delta_colour = "normal" if net >= 0 else "inverse"
+            ec3.metric(
+                "Keep vs Replace Now",
+                f"${abs(net):,.0f} {'ahead' if net >= 0 else 'behind'}",
+                delta=verdict,
+                delta_color=delta_colour,
+                help="Remaining value minus cost of replacing today.",
+            )
+
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ── Section 3: Second-life score ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Second-Life Suitability — Stationary Storage</div>",
+        unsafe_allow_html=True,
+    )
+
+    sl = second_life_score(
+        soh=soh,
+        fade_30_mah_cy=fade_30,
+        fleet_fade_median=fleet_fade_median,
+    )
+
+    sl_col1, sl_col2 = st.columns([1, 2])
+
+    with sl_col1:
+        score = sl["score"]
+        if score is None:
+            score_display = "—"
+            bar_pct       = 0
+            score_colour  = "#4a5568"
+        else:
+            score_display = str(score)
+            bar_pct       = score
+            if score >= 70:
+                score_colour = "#68d391"
+            elif score >= 50:
+                score_colour = "#f6e05e"
+            elif score >= 30:
+                score_colour = "#f6ad55"
+            else:
+                score_colour = "#fc8181"
+
+        st.markdown(
+            f"""
+            <div style="background:#1e2a38;border-radius:12px;padding:28px;text-align:center">
+                <div style="font-size:48px;font-weight:700;color:{score_colour};
+                            line-height:1;margin-bottom:8px">{score_display}</div>
+                <div style="font-size:12px;color:#718096;margin-bottom:16px">/ 100</div>
+                <div style="font-size:13px;font-weight:600;color:{score_colour}">
+                    {sl['category']}
+                </div>
+                <div style="background:#2d3748;border-radius:4px;height:6px;
+                            margin-top:16px;overflow:hidden">
+                    <div style="background:{score_colour};width:{bar_pct}%;
+                                height:6px;border-radius:4px;
+                                transition:width 0.4s ease"></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with sl_col2:
+        st.markdown(
+            f"<div style='font-size:14px;color:#a0aec0;line-height:1.8;padding-top:8px'>"
+            f"{sl['description']}</div>",
+            unsafe_allow_html=True,
+        )
+        for note in sl["notes"]:
+            st.markdown(
+                f"<div style='font-size:12px;color:#4a5568;margin-top:12px;"
+                f"line-height:1.6;font-style:italic'>ℹ {note}</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Provenance footer ──
+    with st.expander("Data provenance — what values drove these outputs", expanded=False):
+        fade_median_str = f"{fleet_fade_median:.4f} mAh/cy" if fleet_fade_median else "not available"
+        rul_str         = f"{rul_pred:.0f} cycles" if rul_pred is not None else "not calibrated"
+        st.code(
+            f"cell:               {selected}\n"
+            f"source:             {'NASA PCoE (real)' if is_nasa else 'Synthetic'}\n"
+            f"current_soh:        {soh:.2f}%\n"
+            f"fade_30_mah_cy:     {fade_30:.4f} mAh/cy\n"
+            f"fleet_fade_median:  {fade_median_str}\n"
+            f"rul_reliable:       {rul_reliable}\n"
+            f"rul_pred:           {rul_str}\n"
+            f"replacement_cost:   ${replacement_cost}\n"
+            f"value_per_cycle:    ${value_per_cycle:.2f}\n"
+            f"second_life_score:  {sl['score']}\n"
+            f"second_life_cat:    {sl['category']}",
+            language=None,
+        )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -1317,6 +1555,8 @@ def main():
         page_insights(df, bundle, selected)
     elif page == "copilot":
         page_copilot(cell_ids, featured_dfs, bundles, selected)
+    elif page == "consequences":
+        page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
     elif page == "fleet":
         page_fleet(featured_dfs, bundles)
     elif page in COMING_SOON_META:
