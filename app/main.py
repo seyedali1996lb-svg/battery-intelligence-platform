@@ -1866,18 +1866,19 @@ def _passport_field_row(f: dict) -> str:
         f"<div style='font-size:11px;color:#4a5568;margin-top:3px;line-height:1.5'>{f['note']}</div>"
         if f.get("note") else "<div style='height:0'></div>"
     )
-    return f"""
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;
-                gap:16px;padding:12px 0;border-bottom:1px solid #2d3748">
-        <div style="flex:1;min-width:0">
-            <div style="font-size:12px;color:#718096">{f['label']}</div>
-            <div style="font-size:14px;font-weight:600;color:{value_colour};margin-top:2px;
-                        font-style:{'italic' if muted else 'normal'}">{f['value']}</div>
-            {note_html}
-        </div>
-        <div style="flex-shrink:0;padding-top:2px">{_passport_badge(f['state'])}</div>
-    </div>
-    """
+    font_style = "italic" if muted else "normal"
+    return (
+        f"<div style='display:flex;justify-content:space-between;align-items:flex-start;"
+        f"gap:16px;padding:12px 0;border-bottom:1px solid #2d3748'>"
+        f"<div style='flex:1;min-width:0'>"
+        f"<div style='font-size:12px;color:#718096'>{f['label']}</div>"
+        f"<div style='font-size:14px;font-weight:600;color:{value_colour};margin-top:2px;"
+        f"font-style:{font_style}'>{f['value']}</div>"
+        f"{note_html}"
+        f"</div>"
+        f"<div style='flex-shrink:0;padding-top:2px'>{_passport_badge(f['state'])}</div>"
+        f"</div>"
+    )
 
 
 def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
