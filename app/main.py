@@ -1566,11 +1566,10 @@ def page_consequences(
 
         cell_kwh    = fin["cell_kwh"]
         current_kwh = fin["current_kwh"]
-        src_label   = "NASA PCoE datasheet (~2 Ah)" if is_nasa else "Oxford dataset spec (0.74 Ah)"
+        src_label   = "NASA PCoE datasheet, ~2 Ah" if is_nasa else "Oxford dataset spec, 0.74 Ah"
         kwh_note    = (
             f"Cell: {cell_kwh*1000:.1f} Wh nominal ({src_label}) · "
             f"Current: {current_kwh*1000:.1f} Wh at {soh:.1f}% SOH"
-            f" &nbsp; {BADGE_VALIDATED}"
         )
 
         st.markdown(
@@ -1723,15 +1722,15 @@ def page_consequences(
             rangemode="tozero",
         ),
     ))
-    st.plotly_chart(bev_fig, use_container_width=True)
-
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-top:-8px;margin-bottom:32px'>"
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:12px'>"
         "Reuse net value = (remaining capacity × $/kWh) − repack cost, projected as SOH declines. "
-        "Recycle value is fixed (does not depend on remaining capacity). "
+        "Recycle value is fixed. "
         "All figures are estimates — adjust sliders above to explore scenarios.</div>",
         unsafe_allow_html=True,
     )
+
+    st.plotly_chart(bev_fig, use_container_width=True)
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 3: Sustainability
