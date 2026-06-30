@@ -1398,7 +1398,39 @@ def page_consequences(
         )
         return
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    # ── Validated inputs row (makes the banner concrete) ──
+    rul_display = (
+        f"{rul_pred:.0f} cy" if rul_pred is not None
+        else "not calibrated"
+    )
+    rul_colour  = "#718096" if rul_pred is None else "#e2e8f0"
+    st.markdown(
+        f"""
+        <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:24px">
+            <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
+                        padding:10px 18px;min-width:140px">
+                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">State of Health</div>
+                <div style="font-size:20px;font-weight:700;color:#e2e8f0">{soh:.1f}%</div>
+                <div style="margin-top:6px">{BADGE_VALIDATED}</div>
+            </div>
+            <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
+                        padding:10px 18px;min-width:160px">
+                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">Fade rate (30-cy)</div>
+                <div style="font-size:20px;font-weight:700;color:#e2e8f0">
+                    {fade_30*1000:.2f} <span style="font-size:13px;color:#718096">mAh/cy</span>
+                </div>
+                <div style="margin-top:6px">{BADGE_VALIDATED}</div>
+            </div>
+            <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
+                        padding:10px 18px;min-width:140px">
+                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">Est. RUL</div>
+                <div style="font-size:20px;font-weight:700;color:{rul_colour}">{rul_display}</div>
+                <div style="margin-top:6px">{BADGE_VALIDATED}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 1: Second-Life Application Fit
@@ -1546,7 +1578,14 @@ def page_consequences(
 
         opt_cols = st.columns(3)
         for col, (name, value, colour, _, badge_label) in zip(opt_cols, options):
-            badge_html = _badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
+            badge_html   = _badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
+            repack_note  = (
+                f"<div style='font-size:11px;color:#718096;margin-top:6px'>"
+                f"after −${repack_cost:.0f}/cell repack &nbsp;"
+                f"{_badge(a['repack_cost']['label'], '#718096')}</div>"
+                if name == "Reuse (second-life)" else
+                "<div style='height:0'></div>"
+            )
             is_best    = (name != "Buy new cell") and (value == best) and (value > 0)
             border     = f"2px solid {colour}" if is_best else f"1px solid {colour}33"
             bg         = f"{colour}15" if is_best else "#1e2a38"
@@ -1576,6 +1615,7 @@ def page_consequences(
                         </div>
                         {cell_note}
                         <div style="margin-top:8px">{badge_html}</div>
+                        {repack_note}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -1584,8 +1624,9 @@ def page_consequences(
         if not rul_reliable:
             st.markdown(
                 "<div style='font-size:12px;color:#718096;margin-top:14px;font-style:italic'>"
-                "ℹ RUL is not calibrated for this cell — timeline projections are suppressed. "
-                "The financial snapshot above is based on current SOH only.</div>",
+                "ℹ RUL is not calibrated for this cell (fold R² below reliability floor). "
+                "The break-even chart projects value by SOH only — not by time or cycle count. "
+                "A cycle-based timeline would require a reliable RUL estimate.</div>",
                 unsafe_allow_html=True,
             )
 
