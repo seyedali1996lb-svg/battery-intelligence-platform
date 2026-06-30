@@ -103,6 +103,12 @@ st.markdown(
     .metric-chip-label { font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.06em; }
     .metric-chip-value { font-size: 26px; font-weight: 700; color: #e2e8f0; margin-top: 4px; }
     .metric-chip-sub   { font-size: 12px; color: #718096; margin-top: 2px; }
+    div[data-testid="stMetricValue"] {
+        font-size: 18px;
+        white-space: normal;
+        overflow-wrap: break-word;
+        line-height: 1.3;
+    }
     .section-header {
         font-size: 12px; font-weight: 600; color: #4a5568;
         text-transform: uppercase; letter-spacing: 0.1em;
@@ -760,15 +766,19 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
         f"{m['soh_mae']:.2f}%",
         help="Mean absolute SOH error on held-out test cycles (chronological split within training set).",
     )
-    rul_label = f"{lco_rul_r2:.3f} R²" if rul_ok else f"{lco_rul_r2:.3f} R² — not calibrated"
+    rul_label = f"{lco_rul_r2:.3f}" if rul_ok else f"{lco_rul_r2:.3f}*"
     mc3.metric(
         "RUL (LCO)",
         rul_label,
-        help="Leave-cell-out R² for RUL. Below 0.30 = model shown as 'Not calibrated' in UI.",
+        help="Leave-cell-out R² for RUL." + ("" if rul_ok else " * below 0.30 floor — shown as 'Not calibrated' in UI."),
     )
     n_cells = m.get("n_cells", "—")
     n_rows  = m.get("n_rows", 0)
-    mc4.metric("Training", f"{n_cells} cells / {n_rows:,} cycles")
+    mc4.metric(
+        "Training",
+        f"{n_cells} cells",
+        help=f"{n_cells} cells / {n_rows:,} cycles total in the training set.",
+    )
 
     with st.expander("What does resistance explaining 74% of SOH mean physically?"):
         st.markdown(
