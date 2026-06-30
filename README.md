@@ -4,7 +4,7 @@ A battery health monitoring and prediction platform built with scikit-learn and 
 
 Built as a portfolio project targeting the battery analytics / BMS tooling space. Not a production BMS — a demonstration of the full stack from raw cycle data to explainable, reliability-gated predictions.
 
-**[Live demo →](https://battery-intelligence-platform.streamlit.app)**
+**[Live demo →](https://battery-intelligence-platform-sszs92zbkfvfcda3ajtlk7.streamlit.app)**
 
 ---
 
