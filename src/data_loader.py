@@ -15,8 +15,6 @@ Real CSV files (Oxford or NASA) can be dropped into data/raw/ to replace
 synthetic generation without any other code changes.
 """
 
-from __future__ import annotations
-
 import os
 import numpy as np
 import pandas as pd

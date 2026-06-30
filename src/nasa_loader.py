@@ -19,8 +19,6 @@ Cell operating conditions:
   All: 18650-format LiCoO₂, ~2 Ah nominal
 """
 
-from __future__ import annotations
-
 import io
 import os
 import sys

@@ -512,8 +512,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
     )
     y_min = max(df["soh_pct"].min() - 2, 60)
     fig.update_layout(
-        height=340, legend=LEGEND_H,
         **base_layout(
+            height=340, legend=LEGEND_H,
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
                        zeroline=False, range=[y_min, 101]),
@@ -582,8 +582,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             hovertemplate="Cycle %{x}: %{y:.1f} mΩ<extra>30-cy avg</extra>",
         ))
         fig2.update_layout(
-            height=280, legend=LEGEND_H,
             **base_layout(
+                height=280, legend=LEGEND_H,
                 xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
                 yaxis=dict(title="mΩ", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             ),
@@ -608,8 +608,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         line=dict(color="#68d391", width=2), name="50-cycle window",
     ))
     fig3.update_layout(
-        height=260, legend=LEGEND_H,
         **base_layout(
+            height=260, legend=LEGEND_H,
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(title="mAh lost per cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
         ),
