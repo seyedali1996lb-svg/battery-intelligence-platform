@@ -243,10 +243,9 @@ NAV_ITEMS = [
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
     ("Consequences",    "consequences",    True),
-    ("Economics",       "economics",       False),
+    ("Passport",        "passport",        True),
+    ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
-    ("Sustainability",  "sustainability",  False),
-    ("Reports",         "reports",         False),
     ("Settings",        "settings",        False),
 ]
 
@@ -1344,7 +1343,7 @@ def page_consequences(
     # ── Pull validated model outputs ──
     latest           = df.iloc[-1]
     soh              = float(latest["soh_pct"])
-    fade_30          = float(latest.get("fade_30_mah_cy", 0.0))
+    fade_30          = float(latest.get("fade_rate_30cy", 0.0))
     rul_pred_raw     = latest.get("rul_pred", None)
     rul_pred         = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
     is_nasa          = selected in NASA_CELL_IDS
@@ -1844,6 +1843,193 @@ def page_consequences(
             )
 
 
+def _passport_badge(state: str) -> str:
+    colours = {
+        "available":   ("#2f855a", "Available"),
+        "estimated":   ("#b7791f", "Estimate"),
+        "unavailable": ("#4a5568", "Not available in demo"),
+    }
+    colour, label = colours[state]
+    style = (
+        f"background:{colour}22;border:1px solid {colour}55;color:{colour};"
+        f"font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;letter-spacing:0.04em"
+    )
+    if state == "unavailable":
+        style += ";font-style:italic"
+    return f"<span style='{style}'>{label}</span>"
+
+
+def _passport_field_row(f: dict) -> str:
+    muted = f["state"] == "unavailable"
+    value_colour = "#4a5568" if muted else "#e2e8f0"
+    note_html = (
+        f"<div style='font-size:11px;color:#4a5568;margin-top:3px;line-height:1.5'>{f['note']}</div>"
+        if f.get("note") else "<div style='height:0'></div>"
+    )
+    return f"""
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                gap:16px;padding:12px 0;border-bottom:1px solid #2d3748">
+        <div style="flex:1;min-width:0">
+            <div style="font-size:12px;color:#718096">{f['label']}</div>
+            <div style="font-size:14px;font-weight:600;color:{value_colour};margin-top:2px;
+                        font-style:{'italic' if muted else 'normal'}">{f['value']}</div>
+            {note_html}
+        </div>
+        <div style="flex-shrink:0;padding-top:2px">{_passport_badge(f['state'])}</div>
+    </div>
+    """
+
+
+def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
+    from passport import build_passport
+
+    is_nasa = selected in NASA_CELL_IDS
+    p = build_passport(selected, df, bundle, rul_reliable, is_nasa)
+    summ = p["summary"]
+
+    st.markdown("# Battery Passport")
+    st.markdown(f"##### Battery Passport Interface · {selected}")
+
+    st.markdown(
+        f"""
+        <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
+                    border-radius:10px;padding:14px 20px;margin-bottom:28px;
+                    font-size:13px;color:#718096;line-height:1.7">
+            <strong style="color:#63b3ed">Battery Passport Interface</strong> — demonstrating the
+            EU Battery Regulation (EU) 2023/1542 data structure. This is <strong>not</strong> a
+            compliance claim: every field below is marked {_passport_badge("available")},
+            {_passport_badge("estimated")}, or {_passport_badge("unavailable")} based on what this
+            demonstration actually has. Nothing is hidden or faked to look complete.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    groups = [
+        ("identity",  "1 · Battery Identity"),
+        ("soh",       "2 · State of Health"),
+        ("lifecycle", "3 · Lifecycle History"),
+        ("carbon",    "4 · Carbon Footprint"),
+    ]
+    for key, title in groups:
+        st.markdown(
+            f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            f"letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+            f"margin-bottom:4px;margin-top:20px'>{title}</div>",
+            unsafe_allow_html=True,
+        )
+        rows_html = "".join(_passport_field_row(f) for f in p[key])
+        st.markdown(f"<div>{rows_html}</div>", unsafe_allow_html=True)
+
+    # ── 5: Compliance Status (prose, no badge) ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:12px;margin-top:20px'>5 · Compliance Status</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px;
+                    font-size:13px;color:#a0aec0;line-height:1.8">
+            <strong style="color:#e2e8f0">This is a data-structure demonstration, not a regulatory
+            submission.</strong><br><br>
+            Of {summ['n_total']} fields modelled on the EU Battery Regulation's data requirements:
+            <strong style="color:#68d391">{summ['n_available']} are available</strong> from this
+            platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
+            cited estimates</strong> from the Consequences module, and
+            <strong style="color:#718096">{summ['n_unavailable']} are not available</strong> in
+            this demonstration.<br><br>
+            An actual regulatory submission under (EU) 2023/1542 would additionally require:
+            manufacturer-submitted identity and supply-chain records, a third-party accredited
+            carbon footprint audit, repair/refurbishment history tracking, and notified-body
+            sign-off — none of which a portfolio project can provide. No field on this page should
+            be read as a compliance claim.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
+    from passport import build_passport
+    from consequences import ASSUMPTIONS, application_fit, financial_comparison
+
+    is_nasa = selected in NASA_CELL_IDS
+    source  = "nasa" if is_nasa else "synth"
+    p       = build_passport(selected, df, bundle, rul_reliable, is_nasa)
+
+    latest  = df.iloc[-1]
+    soh     = float(latest["soh_pct"])
+
+    st.markdown("# Reports")
+    st.markdown(f"##### Demonstration report export · {selected}")
+
+    st.markdown(
+        """
+        <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
+                    border-radius:10px;padding:14px 20px;margin-bottom:28px;
+                    font-size:13px;color:#718096;line-height:1.7">
+            <strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory
+            document. Exports the current battery's identity, SOH/RUL with reliability flags,
+            second-life recommendation (if applicable), and the assumption register, with the
+            same Available / Estimate / Not-available-in-demo labelling used throughout this
+            platform.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    second_life = None
+    if soh <= 85.0:
+        fade_30 = float(latest.get("fade_rate_30cy", 0.0))
+        fit     = application_fit(soh, fade_30, fleet_fade_median=None)
+        best_key, best = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+
+        a   = {k: v["value"] for k, v in ASSUMPTIONS.items()}
+        fc  = financial_comparison(
+            soh=soh, source=source,
+            recycling_value=a["recycling_value"], new_cell_cost=a["new_cell_cost"],
+            sl_value_per_kwh=a["second_life_value_per_kwh"], repack_cost=a["repack_cost"],
+        )
+        second_life = {
+            "best_app": best["name"],
+            "best_fit": best["fit"],
+            "financials": {
+                "Reuse (second-life)": fc["sl_net"],
+                "Recycle now":         fc["recycle_value"],
+                "Buy new cell":        -fc["new_cell_cost"],
+            },
+        }
+
+    st.markdown("##### Preview")
+    st.markdown(f"**Cell:** {selected} &nbsp;·&nbsp; **SOH:** {soh:.1f}%")
+    if second_life:
+        st.markdown(
+            f"**Second-life fit:** {second_life['best_app']} ({second_life['best_fit']}) — "
+            f"figures are cited estimates, see Consequences page for full sliders."
+        )
+    else:
+        st.markdown("**Second-life fit:** still in primary life — no recommendation yet.")
+    summ = p["summary"]
+    st.markdown(
+        f"**Field coverage:** {summ['n_available']} available · {summ['n_estimated']} estimated · "
+        f"{summ['n_unavailable']} not available in demo"
+    )
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    from report_pdf import build_report_pdf
+    pdf_bytes = build_report_pdf(p, second_life, ASSUMPTIONS)
+    st.download_button(
+        label="Download demonstration report (PDF)",
+        data=pdf_bytes,
+        file_name=f"battery_passport_{selected}.pdf",
+        mime="application/pdf",
+        type="primary",
+    )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -1902,6 +2088,10 @@ def main():
         page_copilot(cell_ids, featured_dfs, bundles, selected)
     elif page == "consequences":
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
+    elif page == "passport":
+        page_passport(selected, df, bundle, rul_reliable)
+    elif page == "reports":
+        page_reports(selected, df, bundle, rul_reliable)
     elif page == "fleet":
         page_fleet(featured_dfs, bundles)
     elif page in COMING_SOON_META:
