@@ -1493,7 +1493,8 @@ def page_consequences(
             best_tag   = (
                 f"<div style='font-size:10px;color:{colour};font-weight:700;"
                 f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px'>Best option</div>"
-                if is_best else ""
+                if is_best else
+                "<div style='height:18px'></div>"
             )
             sign   = "+" if value > 0 else ""
             with col:
@@ -1608,13 +1609,19 @@ def page_consequences(
     # ── Assumption register ──
     with st.expander("All assumptions — sources and labels", expanded=False):
         for key, asmp in ASSUMPTIONS.items():
-            badge_html = _badge(asmp["label"], "#b7791f" if "Cited" in asmp["label"] else "#718096")
+            badge_colour = "#b7791f" if "Cited" in asmp["label"] else "#718096"
+            badge_html   = _badge(asmp["label"], badge_colour)
             st.markdown(
-                f"**{asmp['unit']} — default {asmp['value']}** &nbsp; {badge_html}<br>"
-                f"<span style='font-size:12px;color:#718096'>{asmp['source']}</span>",
+                f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
+                f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
+                f"{asmp['unit']} &nbsp;—&nbsp; default {asmp['value']} &nbsp; {badge_html}"
+                f"</div>"
+                f"<div style='font-size:12px;color:#718096;line-height:1.6'>"
+                f"{asmp['source']}"
+                f"</div>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
-            st.markdown("---")
 
 
 COMING_SOON_META = {
