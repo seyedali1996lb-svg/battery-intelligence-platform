@@ -243,6 +243,7 @@ NAV_ITEMS = [
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
     ("Consequences",    "consequences",    True),
+    ("Recommendations", "recommendations", True),
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
@@ -2031,6 +2032,319 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     )
 
 
+def page_recommendations(
+    selected: str,
+    df: pd.DataFrame,
+    featured_dfs: dict,
+    bundles: dict,
+    rul_reliable: bool,
+):
+    from recommendations import classify, SOH_PRIMARY_FLOOR, SOH_INSPECT_FLOOR, SOH_SECONDLIFE_FLOOR
+    from consequences import ASSUMPTIONS, application_fit, financial_comparison, CELL_NOMINAL_KWH
+
+    latest   = df.iloc[-1]
+    soh      = float(latest["soh_pct"])
+    fade_30  = float(latest.get("fade_rate_30cy", 0.0))
+    fade_50  = float(latest.get("fade_rate_50cy", 0.0))
+    is_nasa  = selected in NASA_CELL_IDS
+    source   = "nasa" if is_nasa else "synth"
+
+    rul_pred_raw = latest.get("rul_pred", None)
+    rul_pred     = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
+
+    # Fleet median fade for application_fit context
+    peer_fades = [
+        float(fdf.iloc[-1].get("fade_rate_30cy", 0))
+        for cid, fdf in featured_dfs.items()
+        if (cid in NASA_CELL_IDS) == is_nasa and cid != selected
+    ]
+    fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
+
+    fit_scores = application_fit(soh, fade_30, fleet_fade_median)
+    result     = classify(soh, fade_30, fade_50, rul_reliable, rul_pred, fit_scores)
+
+    # ── Badge helpers (identical pattern to Consequences page) ──
+    def _badge(label: str, colour: str = "#b7791f") -> str:
+        return (
+            f"<span style='background:{colour}22;border:1px solid {colour}55;"
+            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
+            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
+        )
+
+    BADGE_VALIDATED = _badge("Validated model output", "#2f855a")
+    BADGE_ESTIMATE  = _badge("Cited estimate", "#b7791f")
+
+    # ── Action metadata ──
+    ACTION_META = {
+        "continue":    ("Continue Operation",        "#2f855a", "#0d2016"),
+        "inspect":     ("Schedule Inspection",       "#d69e2e", "#1f1a08"),
+        "second_life": ("Route to Second-Life",      "#3182ce", "#0a1628"),
+        "recycle":     ("Recycle",                   "#c05621", "#1f0f06"),
+    }
+    CONF_META = {
+        "high":      ("#2f855a", "High confidence"),
+        "medium":    ("#b7791f", "Medium confidence — RUL not calibrated"),
+        "lower":     ("#718096", "Lower certainty — see notes below"),
+        "uncertain": ("#c05621", "Lower certainty — multiple uncertainty factors"),
+    }
+
+    action          = result["action"]
+    action_label, action_colour, action_bg = ACTION_META[action]
+    conf_colour, conf_label = CONF_META[result["confidence"]]
+
+    # ── Page header ──
+    st.markdown("# Recommendations")
+    st.markdown(f"##### Decision summary · {selected}")
+
+    # ── Hero card ──
+    reason_html = "".join(
+        f"<div style='margin-top:6px;font-size:13px;color:{action_colour}cc'>"
+        f"· {r}</div>"
+        for r in result["action_reasons"]
+    )
+    st.markdown(
+        f"<div style='background:{action_bg};border:2px solid {action_colour}55;"
+        f"border-radius:14px;padding:28px 32px;margin-bottom:24px'>"
+        f"<div style='font-size:11px;font-weight:700;color:{action_colour}99;"
+        f"text-transform:uppercase;letter-spacing:0.1em;margin-bottom:10px'>"
+        f"Primary Recommendation</div>"
+        f"<div style='font-size:32px;font-weight:800;color:{action_colour}'>"
+        f"{action_label}</div>"
+        f"<div style='margin-top:10px'>"
+        f"<span style='background:{conf_colour}22;border:1px solid {conf_colour}55;"
+        f"color:{conf_colour};font-size:11px;font-weight:700;padding:2px 10px;"
+        f"border-radius:10px;letter-spacing:0.06em'>{conf_label}</span>"
+        f"</div>"
+        f"{reason_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Confidence notes (only shown if not high) ──
+    if result["confidence_reasons"]:
+        for note in result["confidence_reasons"]:
+            is_fit = "fit scores" in note
+            note_colour = "#b7791f" if is_fit else "#718096"
+            badge_html  = BADGE_ESTIMATE if is_fit else _badge("Reduced certainty", "#718096")
+            st.markdown(
+                f"<div style='background:{note_colour}11;border:1px solid {note_colour}33;"
+                f"border-radius:8px;padding:10px 16px;margin-bottom:8px;"
+                f"font-size:12px;color:#a0aec0;line-height:1.6'>"
+                f"{badge_html}&nbsp; {note}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Supporting evidence tiles ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin:24px 0 16px'>Supporting Evidence</div>",
+        unsafe_allow_html=True,
+    )
+
+    ev1, ev2, ev3 = st.columns(3)
+
+    with ev1:
+        soh_status_label, soh_colour = (
+            ("Healthy", "#68d391")        if soh >= 90 else
+            ("Degrading", "#f6e05e")      if soh >= 80 else
+            ("End of Life", "#fc8181")
+        )
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:16px 20px'>"
+            f"<div style='font-size:11px;color:#4a5568'>State of Health</div>"
+            f"<div style='font-size:28px;font-weight:700;color:{soh_colour};margin-top:4px'>{soh:.1f}%</div>"
+            f"<div style='font-size:12px;color:{soh_colour}99;margin-top:2px'>{soh_status_label}</div>"
+            f"<div style='margin-top:10px'>{BADGE_VALIDATED}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    with ev2:
+        if rul_pred is not None:
+            rul_val   = f"{rul_pred:.0f} cy"
+            rul_colour = "#e2e8f0"
+            rul_note   = "Leave-cell-out validated"
+        else:
+            rul_val    = "Not calibrated"
+            rul_colour = "#718096"
+            rul_note   = f"Fold R² below {0.30} floor"
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:16px 20px'>"
+            f"<div style='font-size:11px;color:#4a5568'>Est. Remaining Useful Life</div>"
+            f"<div style='font-size:28px;font-weight:700;color:{rul_colour};margin-top:4px'>{rul_val}</div>"
+            f"<div style='font-size:12px;color:#4a5568;margin-top:2px'>{rul_note}</div>"
+            f"<div style='margin-top:10px'>{BADGE_VALIDATED}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    with ev3:
+        fade_label = "Accelerating ⚠" if result["fade_accelerating"] else "Stable"
+        fade_colour = "#fc8181" if result["fade_accelerating"] else "#68d391"
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:16px 20px'>"
+            f"<div style='font-size:11px;color:#4a5568'>Fade Rate (30-cycle)</div>"
+            f"<div style='font-size:28px;font-weight:700;color:#e2e8f0;margin-top:4px'>"
+            f"{fade_30*1000:.2f} <span style='font-size:14px;color:#718096'>mAh/cy</span></div>"
+            f"<div style='font-size:12px;color:{fade_colour};margin-top:2px'>"
+            f"{fade_label} ({result['fade_ratio']:.1f}× baseline)</div>"
+            f"<div style='margin-top:10px'>{BADGE_VALIDATED}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Action timeline ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin:24px 0 16px'>Action Timeline</div>",
+        unsafe_allow_html=True,
+    )
+
+    if action == "continue":
+        next_soh = SOH_PRIMARY_FLOOR - 2.0
+        if rul_pred is not None and fade_30 > 0:
+            cycles_to_inspect = (soh - next_soh) / (fade_30 * 1000 / 100) if fade_30 > 0 else None
+        else:
+            cycles_to_inspect = None
+
+        cycle_note = (
+            f"Estimated ~{cycles_to_inspect:.0f} cycles at current fade rate."
+            if cycles_to_inspect is not None
+            else "Cycle count not estimated — RUL not calibrated for this cell."
+        )
+        cycle_badge = BADGE_VALIDATED if rul_pred is not None else _badge("Not calibrated", "#718096")
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
+            f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Next action: monitor fade rate</div>"
+            f"<div style='font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7'>"
+            f"Schedule inspection when SOH reaches {next_soh:.0f}%. {cycle_note}"
+            f"</div>"
+            f"<div style='margin-top:10px'>{cycle_badge}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    elif action == "inspect":
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
+            f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Recommended inspection checks</div>"
+            f"<div style='font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.9'>"
+            f"· Confirm SOH trajectory — is fade rate stable, marginal, or accelerating?<br>"
+            f"· Check resistance trend — rising resistance at this SOH often precedes rapid fade<br>"
+            f"· Evaluate second-life fit (SOH target {SOH_SECONDLIFE_FLOOR:.0f}–{SOH_PRIMARY_FLOOR:.0f}%) — prepare transition plan<br>"
+            f"· If fade is accelerating ({result['fade_ratio']:.1f}× baseline currently), advance the inspection timeline"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    elif action == "second_life":
+        a   = {k: v["value"] for k, v in ASSUMPTIONS.items()}
+        fc  = financial_comparison(
+            soh=soh, source=source,
+            recycling_value=a["recycling_value"],
+            new_cell_cost=a["new_cell_cost"],
+            sl_value_per_kwh=a["second_life_value_per_kwh"],
+            repack_cost=a["repack_cost"],
+        )
+        best = result["best_app"]
+        sl_badge = BADGE_ESTIMATE
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
+            f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>"
+            f"Best application: {best['name']}</div>"
+            f"<div style='font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7'>"
+            f"Fit: <strong style='color:#e2e8f0'>{best['fit']}</strong>"
+            f" &nbsp;·&nbsp; SOH range: {best['soh_min']:.0f}–{best['soh_max']:.0f}%"
+            f"</div>"
+            f"<div style='font-size:13px;color:#a0aec0;margin-top:6px;line-height:1.7'>"
+            f"{' '.join(best['reasons'])}"
+            f"</div>"
+            f"<div style='display:flex;gap:32px;margin-top:16px'>"
+            f"<div><div style='font-size:11px;color:#4a5568'>Second-life net value</div>"
+            f"<div style='font-size:22px;font-weight:700;color:#63b3ed'>${fc['sl_net']:.2f}</div>"
+            f"<div style='margin-top:6px'>{sl_badge}</div></div>"
+            f"<div><div style='font-size:11px;color:#4a5568'>vs. Recycle now</div>"
+            f"<div style='font-size:22px;font-weight:700;color:#f6ad55'>${fc['recycle_value']:.2f}</div>"
+            f"<div style='margin-top:6px'>{sl_badge}</div></div>"
+            f"</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:12px'>"
+            f"Financial figures use Phase 4 assumption defaults — adjust on the Consequences page.</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    elif action == "recycle":
+        a        = {k: v["value"] for k, v in ASSUMPTIONS.items()}
+        rec_val  = a["recycling_value"]
+        mat_val  = a["material_recovery"]
+        rec_badge = BADGE_ESTIMATE
+        reason = (
+            "No viable second-life application identified based on estimated fit thresholds (cited-estimate uncertainty applies)."
+            if result["fit_driven"]
+            else f"SOH {soh:.1f}% is below the {SOH_SECONDLIFE_FLOOR:.0f}% second-life floor."
+        )
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
+            f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Estimated recovery value</div>"
+            f"<div style='font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7'>{reason}</div>"
+            f"<div style='display:flex;gap:32px;margin-top:16px'>"
+            f"<div><div style='font-size:11px;color:#4a5568'>Cell recycling value</div>"
+            f"<div style='font-size:22px;font-weight:700;color:#f6ad55'>${rec_val:.2f}</div>"
+            f"<div style='margin-top:6px'>{rec_badge}</div></div>"
+            f"<div><div style='font-size:11px;color:#4a5568'>Material recovery</div>"
+            f"<div style='font-size:22px;font-weight:700;color:#f6ad55'>${mat_val:.2f}</div>"
+            f"<div style='margin-top:6px'>{rec_badge}</div></div>"
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Uncertainty acknowledgment (always shown) ──
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin:24px 0 16px'>What this recommendation does not account for</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='background:#1a202c;border:1px solid #2d3748;border-radius:10px;"
+        "padding:16px 24px;font-size:13px;color:#718096;line-height:1.9'>"
+        "This recommendation is based on observed cycle data and leave-cell-out validated "
+        "model outputs. It does not account for: operating conditions going forward (temperature, "
+        "C-rate, and depth-of-discharge significantly affect future degradation); real-world "
+        "variation in second-life market pricing; manufacturer safety specifications for "
+        "continued use or repacking; or any events since the last recorded cycle. "
+        "Treat it as a data-driven starting point for a human decision, not a directive."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── All application fit scores ──
+    with st.expander("All application fit scores", expanded=False):
+        fit_cols = st.columns(len(fit_scores))
+        for col, (app_key, app) in zip(fit_cols, fit_scores.items()):
+            colour = {"fit": "#68d391", "marginal": "#f6e05e", "not_fit": "#fc8181"}[app["fit"]]
+            with col:
+                st.markdown(
+                    f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                    f"padding:14px 16px'>"
+                    f"<div style='font-size:11px;color:#4a5568'>{app['short']}</div>"
+                    f"<div style='font-size:16px;font-weight:700;color:{colour};margin-top:4px'>"
+                    f"{app['fit'].replace('_', ' ').title()}</div>"
+                    f"<div style='font-size:11px;color:#4a5568;margin-top:8px;line-height:1.6'>"
+                    f"{'<br>'.join(app['reasons'])}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -2089,6 +2403,8 @@ def main():
         page_copilot(cell_ids, featured_dfs, bundles, selected)
     elif page == "consequences":
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
+    elif page == "recommendations":
+        page_recommendations(selected, df, featured_dfs, bundles, rul_reliable)
     elif page == "passport":
         page_passport(selected, df, bundle, rul_reliable)
     elif page == "reports":
