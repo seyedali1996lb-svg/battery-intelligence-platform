@@ -2,7 +2,7 @@
 
 A battery health monitoring and prediction platform built with scikit-learn and Streamlit. It tracks State of Health (SOH) and predicts Remaining Useful Life (RUL) for lithium-ion cells — validated on real NASA PCoE battery aging data — and includes an AI Copilot that explains every number it shows in plain language without inventing anything outside the validated model outputs.
 
-Built as a portfolio project targeting the battery analytics / BMS tooling space. Not a production BMS — a demonstration of the full stack from raw cycle data to explainable, reliability-gated predictions.
+Built as a portfolio project targeting the battery analytics / BMS tooling space. Not a production BMS — a demonstration of the full stack from raw cycle data to explainable, reliability-gated predictions and honest regulatory framing.
 
 **[Live demo →](https://battery-intelligence-platform-sszs92zbkfvfcda3ajtlk7.streamlit.app)**
 
@@ -16,10 +16,12 @@ Built as a portfolio project targeting the battery analytics / BMS tooling space
 | **Phase 2 — Fleet** | Multi-cell fleet ranking by SOH + fade rate, honest cross-type RUL copy, roadmap to unified model | Done |
 | **Phase 3 — Copilot** | Template-based AI narration grounded strictly on bundle outputs — no LLM inference, no invented numbers | Done |
 | **Phase 4 — Consequences** | Second-life economics: application fit scoring (Home ESS / UPS / Grid), financial comparison (reuse vs recycle vs replace) with sourced adjustable assumptions, break-even chart, CO₂ and material recovery snapshot. Every financial and environmental figure carries a badge at render time — "Cited estimate" (with source) or "Illustrative — not sourced" (engineering judgment only) — visually distinct from the green "Validated model output" badge on SOH/RUL outputs. | Done |
+| **Phase 5 — Passport + Reports** | Battery Passport page structured around EU Battery Regulation (EU) 2023/1542 data fields: 20 fields across 5 groups (Identity, SOH, Lifecycle History, Carbon Footprint, Compliance Status), each tagged Available / Estimated / Not available in demo. Fields marked "Not available in demo" reflect genuine regulatory requirements this platform cannot satisfy without manufacturer supply chain data — the gap acknowledgment is intentional, not an oversight. Reports page exports a PDF (reportlab) with a disclaimer box up front, color-coded field tables, second-life recommendation if applicable, and the full assumption register. | Done |
 
-**Deferred (not scope-crept out, gated on real preconditions):**
+**Genuinely deferred (not scope-crept out, gated on real preconditions):**
 - **Option B — unified fleet RUL model**: requires 8+ real cells with diverse operating conditions. Current 4 NASA cells were all tested at identical lab conditions, making a combined resistance signal meaningless. Gate documented in Fleet roadmap expander.
-- **Phase 5 — Output/Control**: Battery Passport export, PDF/CSV health reports, deeper sustainability lifecycle carbon tracking, second-life market pricing integration. Planned after final scope is confirmed.
+- **Deeper Sustainability**: full lifecycle carbon tracking (mining → manufacture → transport → use → EOL), recycling market price integration. Currently the platform carries Phase 4's cited CO₂ estimates into the Passport; a full lifecycle audit would require real supply-chain data.
+- **Actual regulatory submission**: a real EU 2023/1542 Battery Passport requires manufacturer-submitted identity records, third-party accredited carbon audit, repair/refurbishment history tracking, and notified-body sign-off. What this platform demonstrates is the data structure and honest field coverage — not a compliance claim.
 
 ---
 
@@ -38,6 +40,10 @@ Built as a portfolio project targeting the battery analytics / BMS tooling space
 - *The CO₂ recycling credit had no badge.* `sustainability_snapshot()` computes `co2_recycling_credit = co2_per_cell × 0.15`, where the 15% factor comes from Dunn et al. (2015) and is hardcoded — no slider, no ASSUMPTIONS entry, no badge at render time. The inline text said "per Dunn et al. 2015" but that's prose, not a badge. Fix: added a "Cited estimate" badge inline and explicitly noted "hardcoded, no slider."
 
 - *A datasheet spec got the wrong badge.* The nominal cell capacity (2.7 Wh for NASA cells) fed directly into the Wh-based financial calculations and was initially labelled with `BADGE_VALIDATED` — the green badge — on the reasoning that it came from the NASA PCoE datasheet. That's wrong. "Validated" in this platform means leave-cell-out tested by the pipeline. A datasheet spec is a different kind of trustworthy: authoritative, but not pipeline-validated. Using the same badge for both blurs the one distinction the whole transparency layer was built to protect. Fix: dropped the badge, kept the source citation in plain text.
+
+**Silent zero from a wrong column name, Phase 5.** The Consequences page read fade rate as `latest.get("fade_30_mah_cy", 0.0)` — but the actual dataframe column is `fade_rate_30cy`. The `.get()` default meant the field always returned 0.0 without raising any error. The Consequences page appeared to work (numbers showed up, charts rendered), but every fade-rate display and application-fit score was computed against a silent zero instead of the real value. This looked like a data problem until building Phase 5's Passport module forced a careful read of the actual column names. Fix: one-line correction in the Consequences page, correct name used from the start in Passport.
+
+**Insights metric tiles truncating long strings.** The "MODEL PERFORMANCE — MULTI-CELL TRAINING" section used Streamlit's native `st.metric()` widget for four values. Two of them — `"-0.679 R² — not calibrated"` and `"8 cells / 8,134 cycles"` — were too long for the narrow 4-column layout and got clipped with no visible overflow or warning. The widget just silently cut the text. Fix: shortened the displayed values to what fits (`"0.679*"` with reliability detail in the existing `help` tooltip; `"8 cells"` with cycle count in tooltip), plus a CSS override on `[data-testid="stMetricValue"]` to reduce font size and enable wrapping as a safety net for future values on the same page.
 
 ---
 
@@ -79,6 +85,9 @@ flowchart TD
     ASM --> AF
     ASM --> FC
     ASM --> SU
+
+    CN --> PP[Passport page\n20 fields · 5 EU reg groups\nAvailable / Estimated / Not available in demo]
+    CN --> RP[Reports page\nPDF export via reportlab\ndisclaimer box · assumption register]
 ```
 
 ---
@@ -92,6 +101,8 @@ flowchart TD
 - **Dashboard**: Streamlit + Plotly
 - **Copilot**: Template-based narration (`src/copilot.py`) — no LLM API, no external calls, no invented numbers. Every sentence traces to a value in the model bundle.
 - **Consequences**: Literature-grounded assumption layer (`src/consequences.py`) — 6 financial/environmental figures, each sourced or flagged as engineering judgment, badged at render time and adjustable via sliders.
+- **Passport**: EU Battery Regulation data-structure demonstration (`src/passport.py`) — single source of truth for field values, consumed by both the Passport page and the PDF so the two surfaces stay in sync.
+- **Reports**: PDF generation (`src/report_pdf.py`) via reportlab — color-coded tables, disclaimer box, assumption register, second-life recommendation where applicable.
 
 ---
 
@@ -100,7 +111,7 @@ flowchart TD
 - **No unified fleet RUL ranking**: Requires 8+ real cells with diverse operating conditions. The current 4 NASA cells were all tested at identical lab conditions (24°C, 2A discharge) — the only variation between them is cell-to-cell manufacturing spread, not the temperature/C-rate/DoD variation needed to make a combined resistance signal meaningful. Gate documented in Fleet roadmap expander. Trigger: add CALCE/Oxford cells with varied operating conditions.
 - **No resistance normalisation**: `resistance_normalized = R / R_initial` would make synthetic and NASA resistance comparable. Deferred until the unified model gate is met.
 - **No LLM in Copilot**: Deliberate. Template narration enforces the reliability gate mechanically — an LLM can generate confident-sounding text for B0018 even when told not to. The template cannot.
-- **Phase 5 Output/Control deferred**: Battery Passport export, PDF reports, deeper sustainability tracking (lifecycle carbon, recycling market prices). Planned after final scope is confirmed — targeting late 2025.
+- **No regulatory compliance claim on the Passport**: Deliberate. The platform demonstrates the EU 2023/1542 field structure with honest coverage. Real compliance requires manufacturer identity records, accredited carbon audits, and notified-body sign-off that a portfolio project cannot provide. The gap acknowledgment is the point, not a limitation to apologise for.
 
 ---
 
