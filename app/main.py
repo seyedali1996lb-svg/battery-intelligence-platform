@@ -244,6 +244,7 @@ NAV_ITEMS = [
     ("Copilot",         "copilot",         True),
     ("Consequences",    "consequences",    True),
     ("Recommendations", "recommendations", True),
+    ("Sustainability",  "sustainability",  True),
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
@@ -2345,6 +2346,341 @@ def page_recommendations(
                 )
 
 
+def page_sustainability(selected: str, df: pd.DataFrame):
+    from consequences import ASSUMPTIONS, sustainability_snapshot, CELL_NOMINAL_KWH
+    from sustainability import (
+        CRITICAL_MATERIALS, EU_RECYCLED_TARGETS, EU_GREEN_DEAL_FIELDS,
+        material_content_for_cell,
+    )
+
+    is_nasa = selected in NASA_CELL_IDS
+    source  = "nasa" if is_nasa else "synth"
+    latest  = df.iloc[-1]
+    soh     = float(latest["soh_pct"])
+    cycles  = int(latest["cycle_number"])
+    cell_kwh = CELL_NOMINAL_KWH[source]
+
+    # ── Badge helpers ──
+    def _badge(label: str, colour: str = "#b7791f") -> str:
+        return (
+            f"<span style='background:{colour}22;border:1px solid {colour}55;"
+            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
+            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
+        )
+    BADGE_ESTIMATE  = _badge("Cited estimate", "#b7791f")
+    BADGE_ILLUST    = _badge("Illustrative — not sourced", "#718096")
+
+    def _state_badge(state: str) -> str:
+        cfg = {
+            "available":   ("#2f855a", "Available"),
+            "estimated":   ("#b7791f", "Estimated"),
+            "unavailable": ("#4a5568", "Not available in demo"),
+        }
+        c, l = cfg[state]
+        italic = ";font-style:italic" if state == "unavailable" else ""
+        return (
+            f"<span style='background:{c}22;border:1px solid {c}55;color:{c};"
+            f"font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;"
+            f"letter-spacing:0.04em{italic}'>{l}</span>"
+        )
+
+    def _section(title: str):
+        st.markdown(
+            f"<div style='font-size:11px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.08em;padding-bottom:8px;"
+            f"border-bottom:1px solid #2d3748;margin:28px 0 16px'>{title}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Page header ──
+    st.markdown("# Sustainability")
+    st.markdown(f"##### Lifecycle carbon + circularity · {selected}")
+
+    st.markdown(
+        f"<div style='background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);"
+        f"border-radius:10px;padding:14px 20px;margin-bottom:28px;"
+        f"font-size:13px;color:#718096;line-height:1.7'>"
+        f"<strong style='color:#d69e2e'>Figure transparency.</strong> "
+        f"All CO₂ and material figures are estimates from literature sources — "
+        f"not measurements from this specific cell. Each figure is labeled "
+        f"{BADGE_ESTIMATE} or {BADGE_ILLUST} at the point of display. "
+        f"No aggregated sustainability score is shown: individual labeled figures "
+        f"are more honest than any index that mixes sources with different confidence levels."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Sliders ──
+    with st.expander("Adjust assumptions", expanded=False):
+        sl_col1, sl_col2, sl_col3 = st.columns(3)
+        with sl_col1:
+            co2_val = st.slider(
+                f"CO₂ to make one new cell ({ASSUMPTIONS['co2_manufacture']['unit']})",
+                min_value=float(ASSUMPTIONS["co2_manufacture"]["slider_range"][0]),
+                max_value=float(ASSUMPTIONS["co2_manufacture"]["slider_range"][1]),
+                value=float(ASSUMPTIONS["co2_manufacture"]["value"]), step=0.05,
+                key="sus7_co2_mfg",
+                help=ASSUMPTIONS["co2_manufacture"]["source"],
+            )
+        with sl_col2:
+            grid_val = st.slider(
+                f"Grid carbon intensity ({ASSUMPTIONS['grid_carbon_intensity']['unit']})",
+                min_value=float(ASSUMPTIONS["grid_carbon_intensity"]["slider_range"][0]),
+                max_value=float(ASSUMPTIONS["grid_carbon_intensity"]["slider_range"][1]),
+                value=float(ASSUMPTIONS["grid_carbon_intensity"]["value"]), step=0.01,
+                key="sus7_grid",
+                help=ASSUMPTIONS["grid_carbon_intensity"]["source"],
+            )
+        with sl_col3:
+            mat_val = st.slider(
+                f"Material recovery value ({ASSUMPTIONS['material_recovery']['unit']})",
+                min_value=float(ASSUMPTIONS["material_recovery"]["slider_range"][0]),
+                max_value=float(ASSUMPTIONS["material_recovery"]["slider_range"][1]),
+                value=float(ASSUMPTIONS["material_recovery"]["value"]), step=0.05,
+                key="sus7_mat",
+                help=ASSUMPTIONS["material_recovery"]["source"],
+            )
+
+    sus = sustainability_snapshot(source=source, co2_per_cell=co2_val, material_recovery=mat_val)
+    use_phase_co2 = cell_kwh * cycles * grid_val
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 1: Hero CO₂ comparison
+    # ────────────────────────────────────────────────────────────────────────
+    _section("CO₂ Impact — Reuse vs Recycle vs New Cell")
+
+    h1, h2, h3, h4 = st.columns(4)
+    hero_tiles = [
+        (h1, "Manufacturing CO₂\n(one new cell)",   f"{co2_val:.2f} kg", "#f6ad55", BADGE_ESTIMATE),
+        (h2, "Use phase CO₂\n(to date, this cell)", f"{use_phase_co2:.2f} kg", "#718096", BADGE_ILLUST),
+        (h3, "Reuse saves\n(vs making a new cell)", f"{sus['co2_avoided_by_reuse']:.2f} kg", "#68d391", BADGE_ESTIMATE),
+        (h4, "Recycle credit\n(15% cathode, Dunn 2015)", f"{sus['co2_recycling_credit']:.2f} kg", "#f6e05e", BADGE_ESTIMATE),
+    ]
+    for col, label, val, colour, badge in hero_tiles:
+        label_lines = label.split("\n")
+        label_html = "<br>".join(label_lines)
+        with col:
+            st.markdown(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                f"padding:16px 20px;height:100%'>"
+                f"<div style='font-size:11px;color:#4a5568;line-height:1.5'>{label_html}</div>"
+                f"<div style='font-size:26px;font-weight:700;color:{colour};margin-top:6px'>{val}</div>"
+                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>CO₂e</div>"
+                f"<div style='margin-top:10px'>{badge}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2: Lifecycle carbon chart
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Lifecycle Carbon Chart")
+
+    st.markdown(
+        f"<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        f"Manufacturing and EOL figures are {BADGE_ESTIMATE} from IVL 2019 and Dunn et al. 2015. "
+        f"Use-phase CO₂ is {BADGE_ILLUST} — it depends entirely on your grid's carbon intensity "
+        f"(set via slider above). Drag the grid slider to see how dominant the use phase becomes "
+        f"on a coal grid vs a renewable grid."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    scenarios = ["Recycle now", "Reuse (second-life)", "New cell (counterfactual)"]
+    mfg_bars       = [co2_val,  co2_val,  co2_val]
+    use_bars        = [use_phase_co2, use_phase_co2 * 1.3, cell_kwh * 1000 * grid_val]
+    eol_credit_bars = [
+        -sus["co2_recycling_credit"],
+        -(sus["co2_recycling_credit"] + sus["co2_avoided_by_reuse"]),
+        -sus["co2_recycling_credit"],
+    ]
+
+    fig_lc = go.Figure()
+    fig_lc.add_trace(go.Bar(
+        name="Manufacturing CO₂",
+        x=scenarios, y=mfg_bars,
+        marker_color="#f6ad55",
+        text=[f"{v:.2f} kg" for v in mfg_bars],
+        textposition="inside", textfont=dict(size=10, color="#1a202c"),
+    ))
+    fig_lc.add_trace(go.Bar(
+        name="Use phase CO₂ (illustrative)",
+        x=scenarios, y=use_bars,
+        marker_color="#718096",
+        text=[f"{v:.2f} kg" for v in use_bars],
+        textposition="inside", textfont=dict(size=10, color="#e2e8f0"),
+    ))
+    fig_lc.add_trace(go.Bar(
+        name="EOL credit (negative = saving)",
+        x=scenarios, y=eol_credit_bars,
+        marker_color="#68d391",
+        text=[f"{v:.2f} kg" for v in eol_credit_bars],
+        textposition="inside", textfont=dict(size=10, color="#1a202c"),
+    ))
+    fig_lc.update_layout(
+        **base_layout(
+            barmode="relative",
+            xaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(
+                gridcolor="#232d3b", linecolor="#2d3748", zeroline=True,
+                zerolinecolor="#4a5568", title="kg CO₂e per cell",
+                titlefont=dict(size=11),
+            ),
+            legend=dict(**LEGEND_H),
+            title=dict(text="Lifecycle CO₂ per cell — three end-of-life scenarios",
+                       font=dict(size=13, color="#a0aec0"), x=0),
+            height=360,
+        )
+    )
+    st.plotly_chart(fig_lc, use_container_width=True)
+    st.markdown(
+        f"<div style='font-size:11px;color:#4a5568;margin-top:-8px;margin-bottom:4px'>"
+        f"'Reuse' use-phase estimated at 1.3× current cycles (30% second-life extension). "
+        f"'New cell' use-phase uses full nominal cycle life at current grid intensity. "
+        f"All use-phase figures are {BADGE_ILLUST}."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3: Critical materials tracker
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Critical Materials Tracker")
+
+    if not is_nasa:
+        st.markdown(
+            "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
+            "font-size:12px;color:#718096;margin-bottom:12px'>"
+            "Synthetic cells model electrochemical behaviour only — material content "
+            "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    mat_cols = st.columns(len(CRITICAL_MATERIALS))
+    for col, mat in zip(mat_cols, CRITICAL_MATERIALS):
+        scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
+        badge_html = _badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
+        rec_html = (
+            f"<div style='font-size:12px;color:#68d391;margin-top:4px'>"
+            f"~{mat['recovery_pct']}% recovery<br>"
+            f"<span style='font-size:11px;color:#4a5568'>{mat['recovery_note']}</span></div>"
+            if mat["recovery_pct"] is not None else
+            "<div style='font-size:12px;color:#4a5568;margin-top:4px'>Not recovered<br>"
+            "<span style='font-size:11px'>Not primary material in LiCoO₂</span></div>"
+        )
+        eu_dot = (
+            "<span style='color:#63b3ed;font-size:10px;margin-left:4px'>"
+            "EU critical ●</span>"
+            if mat["eu_critical"] else ""
+        )
+        with col:
+            st.markdown(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                f"padding:14px 16px'>"
+                f"<div style='font-size:12px;color:#a0aec0;font-weight:600'>"
+                f"{mat['name']}{eu_dot}</div>"
+                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{mat['formula']}</div>"
+                f"<div style='font-size:22px;font-weight:700;color:#e2e8f0;margin-top:8px'>"
+                f"{scaled_g:.1f} g</div>"
+                f"<div style='font-size:11px;color:#718096'>est. per cell ({mat['g_range']} @ 2 Ah)</div>"
+                f"{rec_html}"
+                f"<div style='margin-top:10px'>{badge_html}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 4: EU regulation recycled content targets
+    # ────────────────────────────────────────────────────────────────────────
+    _section("EU Battery Regulation — Recycled Content Targets (2023/1542, Annex XII)")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "Targets apply to industrial batteries and EV batteries by mass of active materials. "
+        "Estimated recycled content in <em>current</em> 18650 LiCoO₂ cells is not publicly "
+        "certified — the figures below reflect industry-wide estimates, not this specific cell. "
+        "This platform cannot make a compliance claim without manufacturer supply chain data."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    for target in EU_RECYCLED_TARGETS:
+        est_recycled = "~5–10%"
+        bar_fill_31  = min(target["target_2031_pct"], 100)
+        bar_fill_36  = min(target["target_2036_pct"], 100)
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:14px 20px;margin-bottom:10px'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"margin-bottom:10px'>"
+            f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>{target['material']}</div>"
+            f"<div style='display:flex;gap:16px;font-size:12px;color:#a0aec0'>"
+            f"<span>2031 target: <strong style='color:#63b3ed'>{target['target_2031_pct']}%</strong></span>"
+            f"<span>2036 target: <strong style='color:#63b3ed'>{target['target_2036_pct']}%</strong></span>"
+            f"<span>Est. current: <strong style='color:#f6ad55'>{est_recycled}</strong> "
+            f"{_badge('Illustrative', '#718096')}</span>"
+            f"</div></div>"
+            f"<div style='background:#2d3748;border-radius:4px;height:8px;margin-bottom:4px'>"
+            f"<div style='background:#63b3ed33;border-radius:4px;height:8px;width:{bar_fill_31}%;"
+            f"position:relative'>"
+            f"<div style='background:#63b3ed;border-radius:4px;height:8px;width:{bar_fill_36/bar_fill_31*100:.0f}%'>"
+            f"</div></div></div>"
+            f"<div style='font-size:10px;color:#4a5568'>Source: {target['source']}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 5: EU Green Deal alignment (three-state)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("EU Green Deal Alignment — Data Coverage")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px'>"
+        "Same three-state system as the Battery Passport page — "
+        "Available (pipeline output), Estimated (cited/illustrative), "
+        "Not available in demo (genuine gap)."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    for field in EU_GREEN_DEAL_FIELDS:
+        state = field["state"]
+        badge = _state_badge(state)
+        muted = state == "unavailable"
+        val_colour = "#4a5568" if muted else "#a0aec0"
+        st.markdown(
+            f"<div style='display:flex;justify-content:space-between;align-items:flex-start;"
+            f"gap:16px;padding:11px 0;border-bottom:1px solid #2d3748'>"
+            f"<div style='flex:1'>"
+            f"<div style='font-size:13px;color:{val_colour};font-style:{'italic' if muted else 'normal'}'>"
+            f"{field['label']}</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:3px'>{field['note']}</div>"
+            f"</div>"
+            f"<div style='flex-shrink:0;padding-top:2px'>{badge}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Assumption register ──
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    with st.expander("Assumption sources — CO₂ and material figures", expanded=False):
+        sus_keys = ["co2_manufacture", "grid_carbon_intensity", "material_recovery"]
+        for key in sus_keys:
+            a = ASSUMPTIONS[key]
+            badge_colour = "#b7791f" if "Cited" in a["label"] else "#718096"
+            st.markdown(
+                f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
+                f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
+                f"{a['unit']} — default {a['value']} &nbsp; {_badge(a['label'], badge_colour)}"
+                f"</div>"
+                f"<div style='font-size:12px;color:#718096;line-height:1.6'>{a['source']}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -2405,6 +2741,8 @@ def main():
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
     elif page == "recommendations":
         page_recommendations(selected, df, featured_dfs, bundles, rul_reliable)
+    elif page == "sustainability":
+        page_sustainability(selected, df)
     elif page == "passport":
         page_passport(selected, df, bundle, rul_reliable)
     elif page == "reports":

@@ -87,6 +87,18 @@ ASSUMPTIONS = {
             "Synthetic cells (0.74 Ah, 2.66 Wh) → 0.13–0.27 kg CO₂e."
         ),
     },
+    "grid_carbon_intensity": {
+        "value": 0.25,
+        "slider_range": (0.03, 0.85),
+        "unit": "kg CO₂/kWh electricity",
+        "label": "Illustrative — not sourced",
+        "source": (
+            "IEA Electricity Market Report 2023; EMBER European Electricity Review 2023. "
+            "Range covers clean-grid (Norway hydro: ~0.03) to coal-heavy (Poland: ~0.77). "
+            "EU average 2023: ~0.25 kg CO₂/kWh. US average: ~0.38. "
+            "No single figure is appropriate — set this to match the expected deployment grid."
+        ),
+    },
     "material_recovery": {
         "value": 1.00,
         "slider_range": (0.25, 3.00),
