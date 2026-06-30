@@ -1086,11 +1086,18 @@ def page_copilot(
 ):
     from copilot import (
         build_cell_context,
+        build_fleet_stats,
         context_summary,
         answer_health,
         answer_prediction_drivers,
         answer_rul,
         answer_compare,
+        answer_anomaly,
+        answer_recent_trajectory,
+        answer_fleet_compare,
+        answer_alerts,
+        QUERY_LABELS,
+        FOLLOW_UP_MAP,
     )
 
     st.markdown("# Copilot")
@@ -1105,47 +1112,37 @@ def page_copilot(
             Every sentence is derived from values already computed by the model pipeline —
             SOH, feature importances, per-cell RUL reliability, fade rates.
             The Copilot never calculates, estimates, or infers a value not already in the bundle.
-            If a number isn't there, it says so.
+            If a number is not there, it says so.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ── Query buttons ──
     query = st.session_state.get("copilot_query", None)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        if st.button(
-            "What is this cell's health?",
-            key="cpq_health", use_container_width=True,
-            type="primary" if query == "health" else "secondary",
-        ):
-            st.session_state.copilot_query = "health"
-            st.rerun()
-    with c2:
-        if st.button(
-            "Why does the model predict this SOH?",
-            key="cpq_drivers", use_container_width=True,
-            type="primary" if query == "drivers" else "secondary",
-        ):
-            st.session_state.copilot_query = "drivers"
-            st.rerun()
-    with c3:
-        if st.button(
-            "How much life is left?",
-            key="cpq_rul", use_container_width=True,
-            type="primary" if query == "rul" else "secondary",
-        ):
-            st.session_state.copilot_query = "rul"
-            st.rerun()
-    with c4:
-        if st.button(
-            "Compare to another cell",
-            key="cpq_compare", use_container_width=True,
-            type="primary" if query == "compare" else "secondary",
-        ):
-            st.session_state.copilot_query = "compare"
-            st.rerun()
+
+    def _qbtn(key: str, col):
+        with col:
+            if st.button(
+                QUERY_LABELS[key], key=f"cpq_{key}", use_container_width=True,
+                type="primary" if query == key else "secondary",
+            ):
+                st.session_state.copilot_query = key
+                st.rerun()
+
+    # ── Row 1: cell-level queries ──
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    _qbtn("health",  r1c1)
+    _qbtn("drivers", r1c2)
+    _qbtn("rul",     r1c3)
+    _qbtn("compare", r1c4)
+
+    # ── Row 2: deeper queries + fleet ──
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+    _qbtn("recent",        r2c1)
+    _qbtn("anomaly",       r2c2)
+    _qbtn("fleet_compare", r2c3)
+    _qbtn("alerts",        r2c4)
 
     if not query:
         st.markdown(
@@ -1157,51 +1154,111 @@ def page_copilot(
         )
         return
 
-    # ── Build context for primary cell ──
-    ctx = build_cell_context(selected, featured_dfs, bundles)
-    contexts = [ctx]
+    # ── Pre-compute fleet stats (cheap: just iterates already-computed DataFrames) ──
+    fleet_stats = build_fleet_stats(featured_dfs, bundles)
 
-    # ── Second cell selector for compare mode ──
+    # ── Build context for the selected cell (not needed for fleet-only queries) ──
+    fleet_only = (query == "alerts")
+    ctx        = None if fleet_only else build_cell_context(selected, featured_dfs, bundles)
+    contexts   = []
+
+    # ── Second cell selector for compare ──
+    compare_with = None
     if query == "compare":
         other_ids = [c for c in cell_ids if c != selected]
         if not other_ids:
             st.warning("At least two cells are needed for comparison.")
             return
         compare_with = st.selectbox(
-            "Compare with:",
-            options=other_ids,
-            key="copilot_compare_cell",
+            "Compare with:", options=other_ids, key="copilot_compare_cell",
         )
+
+    # ── Generate response ──
+    if query == "health":
+        response = answer_health(ctx)
+        contexts = [ctx]
+    elif query == "drivers":
+        response = answer_prediction_drivers(ctx)
+        contexts = [ctx]
+    elif query == "rul":
+        response = answer_rul(ctx)
+        contexts = [ctx]
+    elif query == "compare":
         ctx_b    = build_cell_context(compare_with, featured_dfs, bundles)
         response = answer_compare(ctx, ctx_b)
         contexts = [ctx, ctx_b]
-    elif query == "health":
-        response = answer_health(ctx)
-    elif query == "drivers":
-        response = answer_prediction_drivers(ctx)
-    else:  # rul
-        response = answer_rul(ctx)
+    elif query == "recent":
+        response = answer_recent_trajectory(ctx, featured_dfs[selected])
+        contexts = [ctx]
+    elif query == "anomaly":
+        response = answer_anomaly(ctx, fleet_stats)
+        contexts = [ctx]
+    elif query == "fleet_compare":
+        response = answer_fleet_compare(ctx, fleet_stats)
+        contexts = [ctx]
+    elif query == "alerts":
+        response = answer_alerts(fleet_stats)
+        contexts = []
+    else:
+        response = f"Unknown query: {query}"
+        contexts = []
 
-    # ── Response ──
-    query_labels = {
-        "health":  "What is this cell's health?",
-        "drivers": "Why does the model predict this SOH?",
-        "rul":     "How much life is left?",
-        "compare": "Compare to another cell",
-    }
+    # ── Response header ──
+    cell_label = f" &nbsp;·&nbsp; {selected}" if not fleet_only else " &nbsp;·&nbsp; all cells"
     st.markdown(
         f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
         f"letter-spacing:0.1em;margin:28px 0 16px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
-        f"{query_labels.get(query, '')} &nbsp;·&nbsp; {selected}</div>",
+        f"{QUERY_LABELS.get(query, '')}{cell_label}</div>",
         unsafe_allow_html=True,
     )
     st.markdown(response)
 
-    # ── Transparency footer: what data was used ──
-    with st.expander("Context used — what data drove this response", expanded=False):
-        for c in contexts:
-            st.markdown(f"**{c['cell_id']}**")
-            st.code(context_summary(c), language=None)
+    # ── Copy / export button ──
+    st.download_button(
+        label="Export as text",
+        data=response,
+        file_name=f"copilot_{query}_{selected}.txt",
+        mime="text/plain",
+        key="copilot_export",
+    )
+
+    # ── Follow-up suggestions ──
+    follow_ups = FOLLOW_UP_MAP.get(query, [])
+    if follow_ups:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            "letter-spacing:0.08em;margin:32px 0 10px'>Ask next</div>",
+            unsafe_allow_html=True,
+        )
+        fu_cols = st.columns(len(follow_ups))
+        for fu_key, col in zip(follow_ups, fu_cols):
+            with col:
+                if st.button(
+                    QUERY_LABELS[fu_key],
+                    key=f"fu_{fu_key}_{query}",
+                    use_container_width=True,
+                    type="secondary",
+                ):
+                    st.session_state.copilot_query = fu_key
+                    st.rerun()
+
+    # ── Transparency footer ──
+    if contexts:
+        with st.expander("Context used — what data drove this response", expanded=False):
+            for c in contexts:
+                st.markdown(f"**{c['cell_id']}**")
+                st.code(context_summary(c), language=None)
+    elif fleet_only:
+        with st.expander("Context used — fleet aggregates", expanded=False):
+            lines = [
+                f"Cells monitored: {fleet_stats['n_cells']}",
+                f"SOH range:       {fleet_stats['soh_min']:.1f}% – {fleet_stats['soh_max']:.1f}%",
+                f"SOH median:      {fleet_stats['soh_median']:.1f}%",
+                f"EOL cells:       {', '.join(fleet_stats['eol_cells']) or 'none'}",
+                f"Degrading cells: {', '.join(fleet_stats['degrading_cells']) or 'none'}",
+                f"Uncalibrated RUL: {', '.join(fleet_stats['unreliable_rul']) or 'none'}",
+            ]
+            st.code("\n".join(lines), language=None)
 
 
 COMING_SOON_META = {
