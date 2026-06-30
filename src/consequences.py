@@ -288,3 +288,47 @@ def sustainability_snapshot(
         "co2_delta_reuse_vs_recycle": co2_delta,
         "material_recovery_value": material_recovery,
     }
+
+
+# ---------------------------------------------------------------------------
+# Break-even curve
+# ---------------------------------------------------------------------------
+
+def breakeven_curve(
+    source: str,
+    sl_value_per_kwh: float,
+    repack_cost: float,
+    recycling_value: float,
+    soh_current: float,
+    soh_min: float = 62.0,
+) -> dict:
+    """
+    Project second-life reuse net value across declining future SOH.
+
+    Returns per-cell arrays for a break-even chart.
+    The crossover_soh is the SOH at which reuse net value drops below recycle value
+    — below that point, recycling is the better financial choice.
+    All values are estimates (not validated model outputs).
+    """
+    import numpy as np
+    cell_kwh = CELL_NOMINAL_KWH[source]
+    sohs     = np.arange(soh_current, soh_min - 0.1, -0.5)
+
+    sl_nets = [
+        max(0.0, cell_kwh * (s / 100.0) * sl_value_per_kwh - repack_cost)
+        for s in sohs
+    ]
+
+    # First SOH where reuse net value falls below recycling value
+    crossover_soh = None
+    for s, sln in zip(sohs, sl_nets):
+        if sln < recycling_value:
+            crossover_soh = float(s)
+            break
+
+    return {
+        "sohs":          sohs.tolist(),
+        "sl_nets":       sl_nets,
+        "recycle_val":   recycling_value,
+        "crossover_soh": crossover_soh,
+    }

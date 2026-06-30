@@ -1028,6 +1028,60 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Second-life screening ──
+    st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#718096;margin-bottom:20px;line-height:1.6'>"
+        "Conventional second-life assessment window: <strong style='color:#e2e8f0'>SOH 70–85%</strong>. "
+        "Cells above 85% are still in primary life. Below 70% is below most application floors. "
+        "Click a cell in the sidebar to open the Consequences page for detailed economics.</div>",
+        unsafe_allow_html=True,
+    )
+
+    SL_BUCKETS = {
+        "primary":    ("Primary Life",          "SOH > 85%",    "#4a5568", "#1a202c"),
+        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#68d391", "#1a2e22"),
+        "below_floor":("Below Floor",           "SOH < 70%",    "#fc8181", "#2d0f0f"),
+    }
+
+    def _sl_bucket(r_soh):
+        if r_soh > 85.0:  return "primary"
+        if r_soh >= 70.0: return "candidate"
+        return "below_floor"
+
+    bucketed = {"primary": [], "candidate": [], "below_floor": []}
+    for r in rows:
+        bucketed[_sl_bucket(r["soh"])].append(r)
+
+    sl_cols = st.columns(3)
+    for col, (bkey, (blabel, brange, bfg, bbg)) in zip(sl_cols, SL_BUCKETS.items()):
+        cells_in_bucket = bucketed[bkey]
+        count = len(cells_in_bucket)
+        pills = "".join(
+            f"<div style='display:inline-block;margin:4px;padding:5px 12px;"
+            f"background:{bfg}22;border:1px solid {bfg}44;border-radius:20px;"
+            f"font-size:12px;font-weight:600;color:{bfg}'>"
+            f"{r['cell_id']} <span style='font-weight:400;color:{bfg}88'>{r['soh']:.0f}%</span>"
+            f"</div>"
+            for r in cells_in_bucket
+        ) if cells_in_bucket else (
+            f"<div style='font-size:12px;color:#4a5568;font-style:italic;padding:8px 0'>None</div>"
+        )
+        with col:
+            st.markdown(
+                f"""
+                <div style="background:{bbg};border:1px solid {bfg}33;border-radius:10px;padding:18px;min-height:120px">
+                    <div style="font-size:10px;font-weight:700;color:{bfg};text-transform:uppercase;
+                                letter-spacing:0.08em;margin-bottom:4px">{blabel}</div>
+                    <div style="font-size:12px;color:{bfg}88;margin-bottom:12px">{brange} · {count} cell{'s' if count != 1 else ''}</div>
+                    <div style="line-height:2">{pills}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
     # ── Honest copy on cross-type RUL ──
     st.markdown("<div class='section-header'>About This Ranking</div>", unsafe_allow_html=True)
     st.markdown(
@@ -1274,7 +1328,7 @@ def page_consequences(
 ):
     from consequences import (
         ASSUMPTIONS, SECOND_LIFE_APPS, CELL_NOMINAL_KWH,
-        application_fit, financial_comparison, sustainability_snapshot,
+        application_fit, financial_comparison, sustainability_snapshot, breakeven_curve,
     )
 
     # ── Pull validated model outputs ──
@@ -1417,6 +1471,12 @@ def page_consequences(
             "Adjust assumptions — defaults are mid-points of the cited ranges.</div>",
             unsafe_allow_html=True,
         )
+        n_cells = st.number_input(
+            "Pack size (number of cells)",
+            min_value=1, max_value=10_000, value=1, step=1,
+            key="fin_n_cells",
+            help="Scale totals to a full pack. Cards show pack total; per-cell shown below each figure.",
+        )
         a = ASSUMPTIONS
         recycling_val = st.slider(
             f"Recycling value / cell ({a['recycling_value']['unit']})",
@@ -1496,7 +1556,13 @@ def page_consequences(
                 if is_best else
                 "<div style='height:18px'></div>"
             )
-            sign   = "+" if value > 0 else ""
+            pack_value = value * n_cells
+            pack_sign  = "+" if pack_value > 0 else ""
+            cell_note  = (
+                f"<div style='font-size:11px;color:{colour}77;margin-top:3px'>"
+                f"{'+' if value > 0 else ''}${abs(value):.2f} / cell</div>"
+                if n_cells > 1 else ""
+            )
             with col:
                 st.markdown(
                     f"""
@@ -1505,8 +1571,9 @@ def page_consequences(
                         {best_tag}
                         <div style="font-size:12px;color:#718096;margin-bottom:8px">{name}</div>
                         <div style="font-size:26px;font-weight:700;color:{colour}">
-                            {sign}${abs(value):.2f}
+                            {pack_sign}${abs(pack_value):.2f}
                         </div>
+                        {cell_note}
                         <div style="margin-top:8px">{badge_html}</div>
                     </div>
                     """,
@@ -1522,6 +1589,105 @@ def page_consequences(
             )
 
     st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Break-even chart
+    # ────────────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Value Crossover — When Does Recycling Win?</div>",
+        unsafe_allow_html=True,
+    )
+
+    bev = breakeven_curve(
+        source=source,
+        sl_value_per_kwh=sl_val_per_kwh,
+        repack_cost=repack_cost,
+        recycling_value=recycling_val,
+        soh_current=soh,
+    )
+    bev_sohs     = bev["sohs"]
+    bev_sl       = [v * n_cells for v in bev["sl_nets"]]
+    bev_recycle  = bev["recycle_val"] * n_cells
+    bev_cross    = bev["crossover_soh"]
+    pack_label   = f" (pack of {n_cells})" if n_cells > 1 else " (per cell)"
+
+    bev_fig = go.Figure()
+
+    # Shaded region where reuse > recycle
+    bev_fig.add_trace(go.Scatter(
+        x=bev_sohs + bev_sohs[::-1],
+        y=[max(v, bev_recycle) for v in bev_sl] + [bev_recycle] * len(bev_sohs),
+        fill="toself", fillcolor="rgba(99,179,237,0.08)",
+        line=dict(width=0), hoverinfo="skip", showlegend=False,
+    ))
+
+    # Reuse net value line
+    bev_fig.add_trace(go.Scatter(
+        x=bev_sohs, y=bev_sl,
+        mode="lines", name=f"Reuse net value{pack_label}",
+        line=dict(color="#63b3ed", width=2.5),
+        hovertemplate="SOH %{x:.1f}% → $%{y:.2f}<extra>Reuse</extra>",
+    ))
+
+    # Recycle flat line
+    bev_fig.add_trace(go.Scatter(
+        x=[bev_sohs[0], bev_sohs[-1]],
+        y=[bev_recycle, bev_recycle],
+        mode="lines", name=f"Recycle value{pack_label}",
+        line=dict(color="#f6ad55", width=2, dash="dash"),
+        hovertemplate=f"Recycle: ${bev_recycle:.2f}<extra></extra>",
+    ))
+
+    # Current SOH marker
+    bev_fig.add_vline(
+        x=soh, line_dash="dot", line_color="#718096", line_width=1.5,
+        annotation_text=f"Now ({soh:.1f}%)",
+        annotation_position="top left",
+        annotation_font_color="#718096", annotation_font_size=11,
+    )
+
+    # Crossover annotation
+    if bev_cross is not None and bev_cross < soh:
+        bev_fig.add_vline(
+            x=bev_cross, line_dash="dash", line_color="#fc8181", line_width=1.5,
+            annotation_text=f"Recycle wins ({bev_cross:.1f}%)",
+            annotation_position="top right",
+            annotation_font_color="#fc8181", annotation_font_size=11,
+        )
+    elif bev_cross is None:
+        bev_fig.add_annotation(
+            x=bev_sohs[-1], y=bev_sl[-1],
+            text="Reuse stays ahead to 62% SOH",
+            showarrow=False, font=dict(color="#68d391", size=11),
+            xanchor="left", yanchor="bottom",
+        )
+
+    bev_fig.update_layout(**base_layout(
+        height=280,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    font=dict(size=11), bgcolor="rgba(0,0,0,0)"),
+        xaxis=dict(
+            title="State of Health (%)",
+            autorange="reversed",
+            gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+        ),
+        yaxis=dict(
+            title=f"$ value{pack_label}",
+            gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+            rangemode="tozero",
+        ),
+    ))
+    st.plotly_chart(bev_fig, use_container_width=True)
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-top:-8px;margin-bottom:32px'>"
+        "Reuse net value = (remaining capacity × $/kWh) − repack cost, projected as SOH declines. "
+        "Recycle value is fixed (does not depend on remaining capacity). "
+        "All figures are estimates — adjust sliders above to explore scenarios.</div>",
+        unsafe_allow_html=True,
+    )
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 3: Sustainability
