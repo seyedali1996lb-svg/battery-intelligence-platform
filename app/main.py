@@ -1561,7 +1561,8 @@ def page_consequences(
             cell_note  = (
                 f"<div style='font-size:11px;color:{colour}77;margin-top:3px'>"
                 f"{'+' if value > 0 else ''}${abs(value):.2f} / cell</div>"
-                if n_cells > 1 else ""
+                if n_cells > 1 else
+                "<div style='height:0'></div>"
             )
             with col:
                 st.markdown(
