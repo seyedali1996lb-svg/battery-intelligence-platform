@@ -235,6 +235,7 @@ NAV_ITEMS = [
     ("Overview",        "overview",        True),
     ("Health",          "health",          True),
     ("Insights",        "insights",        True),
+    ("Copilot",         "copilot",         True),
     ("Recommendations", "recommendations", False),
     ("Economics",       "economics",       False),
     ("Fleet",           "fleet",           True),
@@ -1073,6 +1074,136 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         )
 
 
+# ---------------------------------------------------------------------------
+# Page: Copilot
+# ---------------------------------------------------------------------------
+
+def page_copilot(
+    cell_ids: list[str],
+    featured_dfs: dict,
+    bundles: dict,
+    selected: str,
+):
+    from copilot import (
+        build_cell_context,
+        context_summary,
+        answer_health,
+        answer_prediction_drivers,
+        answer_rul,
+        answer_compare,
+    )
+
+    st.markdown("# Copilot")
+
+    # ── Disclosure banner ──
+    st.markdown(
+        """
+        <div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);
+                    border-radius:10px;padding:14px 20px;margin-bottom:24px;
+                    font-size:13px;color:#718096;line-height:1.6">
+            <strong style="color:#63b3ed">Grounded narration only.</strong>
+            Every sentence is derived from values already computed by the model pipeline —
+            SOH, feature importances, per-cell RUL reliability, fade rates.
+            The Copilot never calculates, estimates, or infers a value not already in the bundle.
+            If a number isn't there, it says so.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Query buttons ──
+    query = st.session_state.get("copilot_query", None)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if st.button(
+            "What is this cell's health?",
+            key="cpq_health", use_container_width=True,
+            type="primary" if query == "health" else "secondary",
+        ):
+            st.session_state.copilot_query = "health"
+            st.rerun()
+    with c2:
+        if st.button(
+            "Why does the model predict this SOH?",
+            key="cpq_drivers", use_container_width=True,
+            type="primary" if query == "drivers" else "secondary",
+        ):
+            st.session_state.copilot_query = "drivers"
+            st.rerun()
+    with c3:
+        if st.button(
+            "How much life is left?",
+            key="cpq_rul", use_container_width=True,
+            type="primary" if query == "rul" else "secondary",
+        ):
+            st.session_state.copilot_query = "rul"
+            st.rerun()
+    with c4:
+        if st.button(
+            "Compare to another cell",
+            key="cpq_compare", use_container_width=True,
+            type="primary" if query == "compare" else "secondary",
+        ):
+            st.session_state.copilot_query = "compare"
+            st.rerun()
+
+    if not query:
+        st.markdown(
+            "<div style='text-align:center;padding:56px 24px;color:#4a5568;font-size:14px'>"
+            "Select a question above — the Copilot will explain using only the numbers "
+            "already in the model bundle for <strong style='color:#718096'>"
+            + selected + "</strong>.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── Build context for primary cell ──
+    ctx = build_cell_context(selected, featured_dfs, bundles)
+    contexts = [ctx]
+
+    # ── Second cell selector for compare mode ──
+    if query == "compare":
+        other_ids = [c for c in cell_ids if c != selected]
+        if not other_ids:
+            st.warning("At least two cells are needed for comparison.")
+            return
+        compare_with = st.selectbox(
+            "Compare with:",
+            options=other_ids,
+            key="copilot_compare_cell",
+        )
+        ctx_b    = build_cell_context(compare_with, featured_dfs, bundles)
+        response = answer_compare(ctx, ctx_b)
+        contexts = [ctx, ctx_b]
+    elif query == "health":
+        response = answer_health(ctx)
+    elif query == "drivers":
+        response = answer_prediction_drivers(ctx)
+    else:  # rul
+        response = answer_rul(ctx)
+
+    # ── Response ──
+    query_labels = {
+        "health":  "What is this cell's health?",
+        "drivers": "Why does the model predict this SOH?",
+        "rul":     "How much life is left?",
+        "compare": "Compare to another cell",
+    }
+    st.markdown(
+        f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        f"letter-spacing:0.1em;margin:28px 0 16px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
+        f"{query_labels.get(query, '')} &nbsp;·&nbsp; {selected}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(response)
+
+    # ── Transparency footer: what data was used ──
+    with st.expander("Context used — what data drove this response", expanded=False):
+        for c in contexts:
+            st.markdown(f"**{c['cell_id']}**")
+            st.code(context_summary(c), language=None)
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -1127,6 +1258,8 @@ def main():
         page_health(df, split_cycle, selected)
     elif page == "insights":
         page_insights(df, bundle, selected)
+    elif page == "copilot":
+        page_copilot(cell_ids, featured_dfs, bundles, selected)
     elif page == "fleet":
         page_fleet(featured_dfs, bundles)
     elif page in COMING_SOON_META:
