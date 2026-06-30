@@ -750,8 +750,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
     rul_ok     = m.get("rul_reliable", True)
 
     mc1.metric(
-        "SOH MAE (LCO)",
-        f"{m.get('lco_soh_r2', float('nan')):.3f} R²" if not (lco_soh_r2 != lco_soh_r2) else "—",
+        "SOH R² (LCO)",
+        f"{m.get('lco_soh_r2', float('nan')):.3f}" if not (lco_soh_r2 != lco_soh_r2) else "—",
         help="Leave-cell-out R² — model trained on N-1 cells, tested on the held-out cell. "
              "This is the honest generalisation metric, not a row-level split.",
     )

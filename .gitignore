@@ -10,9 +10,9 @@ build/
 .venv
 venv/
 
-# Data — raw CSVs stay local, not in git
-# To share data, use a cloud storage link instead
-data/raw/
+# Data — large raw files stay local, not in git
+data/raw/*.mat
+data/raw/*.zip
 
 # Jupyter
 .ipynb_checkpoints/
