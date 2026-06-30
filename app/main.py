@@ -1272,12 +1272,13 @@ def page_consequences(
     bundles: dict,
     rul_reliable: bool,
 ):
-    from consequences import action_recommendation, cost_model, second_life_score
+    from consequences import (
+        ASSUMPTIONS, SECOND_LIFE_APPS, CELL_NOMINAL_KWH,
+        application_fit, financial_comparison, sustainability_snapshot,
+    )
 
-    st.markdown("# Consequences")
-
-    # ── Pull values from the already-computed feature DataFrame ──
-    latest = df.iloc[-1]
+    # ── Pull validated model outputs ──
+    latest           = df.iloc[-1]
     soh              = float(latest["soh_pct"])
     fade_30          = float(latest.get("fade_30_mah_cy", 0.0))
     rul_pred_raw     = latest.get("rul_pred", None)
@@ -1285,7 +1286,6 @@ def page_consequences(
     is_nasa          = selected in NASA_CELL_IDS
     source           = "nasa" if is_nasa else "synth"
 
-    # Fleet fade median — same-source peers only (avoids resistance scale issue)
     peer_fades = [
         float(fdf.iloc[-1].get("fade_30_mah_cy", 0))
         for cid, fdf in featured_dfs.items()
@@ -1293,210 +1293,328 @@ def page_consequences(
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
 
-    # ── Section 1: Action recommendation ──
-    rec = action_recommendation(
-        soh=soh,
-        rul_reliable=rul_reliable,
-        rul_pred=rul_pred,
-        fade_30_mah_cy=fade_30,
-        fleet_fade_median=fleet_fade_median,
-    )
+    # ── Page header ──
+    st.markdown("# Consequences")
+    st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
 
-    level_colours = {
-        "healthy":  ("#68d391", "#1a2e22"),
-        "degrading": ("#f6e05e", "#2d2a0a"),
-        "eol":      ("#f6ad55", "#2d1f05"),
-        "critical": ("#fc8181", "#2d0f0f"),
-    }
-    fg, bg = level_colours.get(rec["level"], ("#a0aec0", "#1a202c"))
+    # ── Assumption transparency banner ──
+    def _badge(label: str, colour: str = "#b7791f") -> str:
+        return (
+            f"<span style='background:{colour}22;border:1px solid {colour}55;"
+            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
+            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
+        )
+
+    BADGE_ESTIMATE  = _badge("Estimate", "#b7791f")
+    BADGE_ILLUST    = _badge("Illustrative — not sourced", "#718096")
+    BADGE_VALIDATED = _badge("Validated model output", "#2f855a")
 
     st.markdown(
         f"""
-        <div style="background:{bg};border:1px solid {fg}33;border-radius:12px;
-                    padding:28px 32px;margin-bottom:24px">
-            <div style="font-size:11px;font-weight:600;color:{fg}99;
-                        text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px">
-                Action Recommendation · {selected}
-            </div>
-            <div style="font-size:22px;font-weight:700;color:{fg};margin-bottom:12px">
-                {rec['title']}
-            </div>
-            <div style="font-size:14px;color:{fg}cc;line-height:1.7">
-                {rec['description']}
-            </div>
+        <div style="background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);
+                    border-radius:10px;padding:14px 20px;margin-bottom:28px;
+                    font-size:13px;color:#718096;line-height:1.7">
+            <strong style="color:#d69e2e">Assumption transparency.</strong>
+            SOH, fade rate, and the RUL reliability flag are {BADGE_VALIDATED} outputs
+            from the leave-cell-out validated pipeline.<br>
+            All financial and environmental figures carry either an {BADGE_ESTIMATE} badge
+            (cited source below) or an {BADGE_ILLUST} badge (engineering judgment only).
+            Slider values are yours to adjust — the defaults are mid-points of the cited ranges.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if rec["suggestions"]:
-        st.markdown(
-            "<div style='font-size:11px;font-weight:600;color:#4a5568;"
-            "text-transform:uppercase;letter-spacing:0.08em;margin:0 0 10px'>Specific actions</div>",
-            unsafe_allow_html=True,
-        )
-        for s in rec["suggestions"]:
-            st.markdown(
-                f"<div style='background:#1e2a38;border-left:3px solid #4a5568;"
-                f"border-radius:4px;padding:10px 16px;margin-bottom:8px;"
-                f"font-size:13px;color:#a0aec0;line-height:1.6'>→ {s}</div>",
-                unsafe_allow_html=True,
-            )
-
-    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
-
-    # ── Section 2: Cost model ──
-    st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
-        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
-        "margin-bottom:20px'>Replacement Economics</div>",
-        unsafe_allow_html=True,
-    )
-
-    col_sl, col_sr = st.columns([1, 2])
-    with col_sl:
-        replacement_cost = st.slider(
-            "Cell replacement cost ($)", min_value=5, max_value=200,
-            value=25, step=5, key="cons_replace_cost",
-        )
-        value_per_cycle = st.slider(
-            "Value per cycle ($)", min_value=0.10, max_value=5.00,
-            value=0.50, step=0.10, key="cons_value_cycle",
-            help="Revenue or service value delivered per charge/discharge cycle.",
-        )
-
-    econ = cost_model(
-        rul_reliable=rul_reliable,
-        rul_pred=rul_pred,
-        replacement_cost=replacement_cost,
-        value_per_cycle=value_per_cycle,
-    )
-
-    with col_sr:
-        if not rul_reliable:
-            st.markdown(
-                "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                "padding:28px;text-align:center;color:#4a5568;font-size:14px'>"
-                "RUL not calibrated for this cell — cost projection requires a validated "
-                "remaining-life estimate.<br><span style='font-size:12px'>Switch to a cell "
-                "with reliable RUL (e.g. B0005, B0006, B0007, or any synthetic cell with "
-                "SOH &lt; 90%) to see projections.</span></div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            ec1, ec2, ec3 = st.columns(3)
-            rv   = econ["remaining_value"]
-            cpc  = econ["cost_per_remaining_cycle"]
-            net  = econ["replace_now_net"]
-            rul  = econ["rul_pred"]
-
-            ec1.metric(
-                "Remaining Value",
-                f"${rv:,.0f}",
-                help=f"Est. {int(rul)} cycles × ${value_per_cycle:.2f}/cycle",
-            )
-            ec2.metric(
-                "Cost / Remaining Cycle",
-                f"${cpc:.3f}",
-                help=f"${replacement_cost} replacement ÷ {int(rul)} remaining cycles",
-            )
-            verdict = "worth running to EOL" if net >= 0 else "cheaper to replace now"
-            delta_colour = "normal" if net >= 0 else "inverse"
-            ec3.metric(
-                "Keep vs Replace Now",
-                f"${abs(net):,.0f} {'ahead' if net >= 0 else 'behind'}",
-                delta=verdict,
-                delta_color=delta_colour,
-                help="Remaining value minus cost of replacing today.",
-            )
-
-    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
-
-    # ── Section 3: Second-life score ──
-    st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
-        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
-        "margin-bottom:20px'>Second-Life Suitability — Stationary Storage</div>",
-        unsafe_allow_html=True,
-    )
-
-    sl = second_life_score(
-        soh=soh,
-        fade_30_mah_cy=fade_30,
-        fleet_fade_median=fleet_fade_median,
-    )
-
-    sl_col1, sl_col2 = st.columns([1, 2])
-
-    with sl_col1:
-        score = sl["score"]
-        if score is None:
-            score_display = "—"
-            bar_pct       = 0
-            score_colour  = "#4a5568"
-        else:
-            score_display = str(score)
-            bar_pct       = score
-            if score >= 70:
-                score_colour = "#68d391"
-            elif score >= 50:
-                score_colour = "#f6e05e"
-            elif score >= 30:
-                score_colour = "#f6ad55"
-            else:
-                score_colour = "#fc8181"
-
+    # ── Primary life gate ──
+    if soh > 85.0:
         st.markdown(
             f"""
-            <div style="background:#1e2a38;border-radius:12px;padding:28px;text-align:center">
-                <div style="font-size:48px;font-weight:700;color:{score_colour};
-                            line-height:1;margin-bottom:8px">{score_display}</div>
-                <div style="font-size:12px;color:#718096;margin-bottom:16px">/ 100</div>
-                <div style="font-size:13px;font-weight:600;color:{score_colour}">
-                    {sl['category']}
+            <div style="background:#1e2a38;border:1px dashed #2d3748;border-radius:12px;
+                        padding:48px;text-align:center">
+                <div style="font-size:18px;font-weight:600;color:#4a5568;margin-bottom:12px">
+                    Still in Primary Life
                 </div>
-                <div style="background:#2d3748;border-radius:4px;height:6px;
-                            margin-top:16px;overflow:hidden">
-                    <div style="background:{score_colour};width:{bar_pct}%;
-                                height:6px;border-radius:4px;
-                                transition:width 0.4s ease"></div>
+                <div style="font-size:14px;color:#4a5568;max-width:480px;margin:0 auto;line-height:1.7">
+                    SOH is {soh:.1f}% — above the 85% threshold where second-life assessment
+                    becomes relevant. Return here as the cell degrades toward 85% SOH.
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        return
 
-    with sl_col2:
-        st.markdown(
-            f"<div style='font-size:14px;color:#a0aec0;line-height:1.8;padding-top:8px'>"
-            f"{sl['description']}</div>",
-            unsafe_allow_html=True,
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 1: Second-Life Application Fit
+    # ────────────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Second-Life Application Fit</div>",
+        unsafe_allow_html=True,
+    )
+
+    fit_results = application_fit(soh, fade_30, fleet_fade_median)
+
+    FIT_STYLE = {
+        "fit":      ("#68d391", "#1a2e22", "Fit"),
+        "marginal": ("#f6e05e", "#2d2a0a", "Marginal"),
+        "not_fit":  ("#fc8181", "#2d0f0f", "Not Fit"),
+    }
+
+    fit_cols = st.columns(3)
+    for col, (app_key, res) in zip(fit_cols, fit_results.items()):
+        fg, bg, label = FIT_STYLE[res["fit"]]
+        reasons_html = "".join(
+            f"<div style='margin-top:6px;font-size:12px;color:{fg}99;line-height:1.5'>{r}</div>"
+            for r in res["reasons"]
         )
-        for note in sl["notes"]:
+        source_html = (
+            f"<div style='margin-top:10px;font-size:10px;color:#4a5568;font-style:italic;"
+            f"line-height:1.4'>{res['source']}</div>"
+        )
+        with col:
             st.markdown(
-                f"<div style='font-size:12px;color:#4a5568;margin-top:12px;"
-                f"line-height:1.6;font-style:italic'>ℹ {note}</div>",
+                f"""
+                <div style="background:{bg};border:1px solid {fg}33;border-radius:10px;
+                            padding:20px;height:100%">
+                    <div style="font-size:10px;font-weight:700;color:{fg};
+                                text-transform:uppercase;letter-spacing:0.08em;
+                                margin-bottom:6px">{label}</div>
+                    <div style="font-size:15px;font-weight:700;color:{fg};
+                                margin-bottom:4px">{res['name']}</div>
+                    <div style="font-size:12px;color:{fg}99;margin-bottom:8px">
+                        {res['description']}
+                    </div>
+                    <div style="border-top:1px solid {fg}22;padding-top:8px">
+                        {reasons_html}
+                    </div>
+                    {source_html}
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
-    # ── Provenance footer ──
-    with st.expander("Data provenance — what values drove these outputs", expanded=False):
-        fade_median_str = f"{fleet_fade_median:.4f} mAh/cy" if fleet_fade_median else "not available"
-        rul_str         = f"{rul_pred:.0f} cycles" if rul_pred is not None else "not calibrated"
-        st.code(
-            f"cell:               {selected}\n"
-            f"source:             {'NASA PCoE (real)' if is_nasa else 'Synthetic'}\n"
-            f"current_soh:        {soh:.2f}%\n"
-            f"fade_30_mah_cy:     {fade_30:.4f} mAh/cy\n"
-            f"fleet_fade_median:  {fade_median_str}\n"
-            f"rul_reliable:       {rul_reliable}\n"
-            f"rul_pred:           {rul_str}\n"
-            f"replacement_cost:   ${replacement_cost}\n"
-            f"value_per_cycle:    ${value_per_cycle:.2f}\n"
-            f"second_life_score:  {sl['score']}\n"
-            f"second_life_cat:    {sl['category']}",
-            language=None,
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2: Financial Comparison
+    # ────────────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Financial Comparison</div>",
+        unsafe_allow_html=True,
+    )
+
+    fin_left, fin_right = st.columns([1, 2])
+
+    with fin_left:
+        st.markdown(
+            "<div style='font-size:12px;color:#4a5568;margin-bottom:12px'>"
+            "Adjust assumptions — defaults are mid-points of the cited ranges.</div>",
+            unsafe_allow_html=True,
         )
+        a = ASSUMPTIONS
+        recycling_val = st.slider(
+            f"Recycling value / cell ({a['recycling_value']['unit']})",
+            min_value=float(a["recycling_value"]["slider_range"][0]),
+            max_value=float(a["recycling_value"]["slider_range"][1]),
+            value=float(a["recycling_value"]["value"]), step=0.25,
+            key="fin_recycling",
+            help=a["recycling_value"]["source"],
+        )
+        new_cell_cost = st.slider(
+            f"New cell cost ({a['new_cell_cost']['unit']})",
+            min_value=float(a["new_cell_cost"]["slider_range"][0]),
+            max_value=float(a["new_cell_cost"]["slider_range"][1]),
+            value=float(a["new_cell_cost"]["value"]), step=1.0,
+            key="fin_new_cell",
+            help=a["new_cell_cost"]["source"],
+        )
+        sl_val_per_kwh = st.slider(
+            f"Second-life value ({a['second_life_value_per_kwh']['unit']})",
+            min_value=float(a["second_life_value_per_kwh"]["slider_range"][0]),
+            max_value=float(a["second_life_value_per_kwh"]["slider_range"][1]),
+            value=float(a["second_life_value_per_kwh"]["value"]), step=5.0,
+            key="fin_sl_kwh",
+            help=a["second_life_value_per_kwh"]["source"],
+        )
+        repack_cost = st.slider(
+            f"Repack cost / cell ({a['repack_cost']['unit']})",
+            min_value=float(a["repack_cost"]["slider_range"][0]),
+            max_value=float(a["repack_cost"]["slider_range"][1]),
+            value=float(a["repack_cost"]["value"]), step=1.0,
+            key="fin_repack",
+            help=a["repack_cost"]["source"],
+        )
+
+    fin = financial_comparison(
+        soh=soh, source=source,
+        recycling_value=recycling_val,
+        new_cell_cost=new_cell_cost,
+        sl_value_per_kwh=sl_val_per_kwh,
+        repack_cost=repack_cost,
+    )
+
+    with fin_right:
+        # Three option cards: Reuse, Recycle, Replace new
+        sl_net   = fin["sl_net"]
+        rec_val  = fin["recycle_value"]
+        new_cost = fin["new_cell_cost"]
+
+        best     = max(sl_net, rec_val)
+        options  = [
+            ("Reuse (second-life)", sl_net,  "#63b3ed", "BADGE_ESTIMATE", a["second_life_value_per_kwh"]["label"]),
+            ("Recycle now",         rec_val, "#f6ad55", "BADGE_ESTIMATE", a["recycling_value"]["label"]),
+            ("Buy new cell",        -new_cost, "#fc8181", "BADGE_ESTIMATE", a["new_cell_cost"]["label"]),
+        ]
+
+        cell_kwh    = fin["cell_kwh"]
+        current_kwh = fin["current_kwh"]
+        kwh_note    = (
+            f"Cell: {cell_kwh*1000:.1f} Wh nominal · "
+            f"Current: {current_kwh*1000:.1f} Wh at {soh:.1f}% SOH"
+        )
+
+        st.markdown(
+            f"<div style='font-size:11px;color:#4a5568;margin-bottom:16px'>{kwh_note}</div>",
+            unsafe_allow_html=True,
+        )
+
+        opt_cols = st.columns(3)
+        for col, (name, value, colour, _, badge_label) in zip(opt_cols, options):
+            badge_html = _badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
+            is_best    = (name != "Buy new cell") and (value == best) and (value > 0)
+            border     = f"2px solid {colour}" if is_best else f"1px solid {colour}33"
+            bg         = f"{colour}15" if is_best else "#1e2a38"
+            best_tag   = (
+                f"<div style='font-size:10px;color:{colour};font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px'>Best option</div>"
+                if is_best else ""
+            )
+            sign   = "+" if value > 0 else ""
+            with col:
+                st.markdown(
+                    f"""
+                    <div style="background:{bg};border:{border};border-radius:10px;
+                                padding:20px;text-align:center">
+                        {best_tag}
+                        <div style="font-size:12px;color:#718096;margin-bottom:8px">{name}</div>
+                        <div style="font-size:26px;font-weight:700;color:{colour}">
+                            {sign}${abs(value):.2f}
+                        </div>
+                        <div style="margin-top:8px">{badge_html}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        if not rul_reliable:
+            st.markdown(
+                "<div style='font-size:12px;color:#718096;margin-top:14px;font-style:italic'>"
+                "ℹ RUL is not calibrated for this cell — timeline projections are suppressed. "
+                "The financial snapshot above is based on current SOH only.</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3: Sustainability
+    # ────────────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>Sustainability Snapshot</div>",
+        unsafe_allow_html=True,
+    )
+
+    sus_left, sus_right = st.columns([1, 2])
+
+    with sus_left:
+        co2_val = st.slider(
+            f"CO₂ to make one new cell ({ASSUMPTIONS['co2_manufacture']['unit']})",
+            min_value=float(ASSUMPTIONS["co2_manufacture"]["slider_range"][0]),
+            max_value=float(ASSUMPTIONS["co2_manufacture"]["slider_range"][1]),
+            value=float(ASSUMPTIONS["co2_manufacture"]["value"]), step=0.05,
+            key="sus_co2",
+            help=ASSUMPTIONS["co2_manufacture"]["source"],
+        )
+        mat_val = st.slider(
+            f"Material recovery value ({ASSUMPTIONS['material_recovery']['unit']})",
+            min_value=float(ASSUMPTIONS["material_recovery"]["slider_range"][0]),
+            max_value=float(ASSUMPTIONS["material_recovery"]["slider_range"][1]),
+            value=float(ASSUMPTIONS["material_recovery"]["value"]), step=0.25,
+            key="sus_material",
+            help=ASSUMPTIONS["material_recovery"]["source"],
+        )
+
+    sus = sustainability_snapshot(source=source, co2_per_cell=co2_val, material_recovery=mat_val)
+
+    with sus_right:
+        s1, s2 = st.columns(2)
+        co2_badge   = _badge(ASSUMPTIONS["co2_manufacture"]["label"], "#b7791f")
+        mat_badge   = _badge(ASSUMPTIONS["material_recovery"]["label"], "#b7791f")
+
+        with s1:
+            st.markdown(
+                f"""
+                <div style="background:#1e2a38;border:1px solid #2d374855;
+                            border-radius:10px;padding:20px">
+                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
+                        CO₂ avoided by reuse vs making a new cell
+                    </div>
+                    <div style="font-size:28px;font-weight:700;color:#68d391">
+                        {sus['co2_avoided_by_reuse']:.2f} kg
+                    </div>
+                    <div style="font-size:11px;color:#4a5568;margin-top:4px">CO₂e avoided</div>
+                    <div style="margin-top:10px">{co2_badge}</div>
+                    <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
+                        Reusing this cell avoids manufacturing one equivalent new cell.
+                        Recycling instead saves only ~{sus['co2_recycling_credit']:.2f} kg
+                        (material credit, per Dunn et al. 2015).
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with s2:
+            st.markdown(
+                f"""
+                <div style="background:#1e2a38;border:1px solid #2d374855;
+                            border-radius:10px;padding:20px">
+                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
+                        Recoverable material value if recycled now
+                    </div>
+                    <div style="font-size:28px;font-weight:700;color:#f6ad55">
+                        ${sus['material_recovery_value']:.2f}
+                    </div>
+                    <div style="font-size:11px;color:#4a5568;margin-top:4px">cobalt + lithium recovery</div>
+                    <div style="margin-top:10px">{mat_badge}</div>
+                    <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
+                        LiCoO₂ cobalt content is the primary driver. Value tracks cobalt spot price
+                        (Sommerville et al. 2020).
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ── Assumption register ──
+    with st.expander("All assumptions — sources and labels", expanded=False):
+        for key, asmp in ASSUMPTIONS.items():
+            badge_html = _badge(asmp["label"], "#b7791f" if "Cited" in asmp["label"] else "#718096")
+            st.markdown(
+                f"**{asmp['unit']} — default {asmp['value']}** &nbsp; {badge_html}<br>"
+                f"<span style='font-size:12px;color:#718096'>{asmp['source']}</span>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("---")
 
 
 COMING_SOON_META = {
