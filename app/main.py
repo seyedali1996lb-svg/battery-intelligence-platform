@@ -1566,9 +1566,11 @@ def page_consequences(
 
         cell_kwh    = fin["cell_kwh"]
         current_kwh = fin["current_kwh"]
+        src_label   = "NASA PCoE datasheet (~2 Ah)" if is_nasa else "Oxford dataset spec (0.74 Ah)"
         kwh_note    = (
-            f"Cell: {cell_kwh*1000:.1f} Wh nominal · "
+            f"Cell: {cell_kwh*1000:.1f} Wh nominal ({src_label}) · "
             f"Current: {current_kwh*1000:.1f} Wh at {soh:.1f}% SOH"
+            f" &nbsp; {BADGE_VALIDATED}"
         )
 
         st.markdown(
@@ -1784,7 +1786,8 @@ def page_consequences(
                     <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
                         Reusing this cell avoids manufacturing one equivalent new cell.
                         Recycling instead saves only ~{sus['co2_recycling_credit']:.2f} kg
-                        (material credit, per Dunn et al. 2015).
+                        &nbsp;{_badge("Cited estimate", "#b7791f")}&nbsp;
+                        (≈15% cathode-material credit, Dunn et al. 2015 — hardcoded, no slider).
                     </div>
                 </div>
                 """,
