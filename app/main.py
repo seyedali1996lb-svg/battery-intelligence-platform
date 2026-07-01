@@ -2185,8 +2185,8 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     with _pb_col1:
         selected_pack_cells = st.multiselect(
             "Select cells for pack",
-            options=list(active_fdfs.keys()),
-            default=list(active_fdfs.keys())[:min(4, len(active_fdfs))],
+            options=list(featured_dfs.keys()),
+            default=list(featured_dfs.keys())[:min(4, len(featured_dfs))],
             key="pack_cells",
         )
     with _pb_col2:
@@ -2195,7 +2195,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     if len(selected_pack_cells) < 2:
         st.warning("Select at least 2 cells.")
     else:
-        _fdfs = active_fdfs
+        _fdfs = featured_dfs
         _soh_values = [float(_fdfs[c]["soh_pct"].iloc[-1]) for c in selected_pack_cells]
         _rul_values = [float(_fdfs[c]["rul_pred"].iloc[-1]) if "rul_pred" in _fdfs[c].columns else None for c in selected_pack_cells]
         _cap_values = [float(_fdfs[c]["capacity_ah"].iloc[-1]) for c in selected_pack_cells]
