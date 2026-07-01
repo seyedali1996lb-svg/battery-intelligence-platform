@@ -290,6 +290,7 @@ NAV_ITEMS = [
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
+    ("Grading",         "grading",         True),
     ("Settings",        "settings",        True),
 ]
 
@@ -852,10 +853,43 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         annotation_position="top left",
         annotation_font_color="#4a5568", annotation_font_size=11,
     )
+    # ── Scenario projections ──
+    import numpy as np
+    last_cycle = df.cycle_number.iloc[-1]
+    last_soh   = df.soh_pct.iloc[-1]
+    eol_line   = float(st.session_state.get("eol_threshold_pct", 80.0))
+    nominal_rate    = float(df.fade_rate_50cy.iloc[-1]) * 100   # % SOH / cycle
+    optimistic_rate = nominal_rate * 0.6
+    pessimistic_rate = nominal_rate * 1.5
+
+    def _proj(rate):
+        if rate > 1e-9:
+            n_steps = min(500, int((last_soh - eol_line) / rate) + 10)
+        else:
+            n_steps = 200
+        n_steps = max(n_steps, 2)
+        proj_cycles = np.arange(last_cycle, last_cycle + n_steps)
+        proj_soh    = last_soh - rate * np.arange(n_steps)
+        proj_soh    = np.clip(proj_soh, 60.0, None)
+        return proj_cycles.tolist(), proj_soh.tolist()
+
+    for rate, name, color in [
+        (nominal_rate,     "Nominal projection",          "#63b3ed"),
+        (optimistic_rate,  "Optimistic (−40% stress)",    "#48bb78"),
+        (pessimistic_rate, "Pessimistic (+50% stress)",   "#fc8181"),
+    ]:
+        px, py = _proj(rate)
+        fig.add_trace(go.Scatter(
+            x=px, y=py, name=name, mode="lines",
+            line=dict(dash="dash", width=1.5, color=color),
+            opacity=0.7,
+            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>" + name + "</extra>",
+        ))
+
     fig.add_hline(
-        y=80, line_dash="dash", line_color="#fc8181", line_width=1,
-        annotation_text="EOL (80%)", annotation_position="bottom right",
-        annotation_font_color="#fc8181", annotation_font_size=11,
+        y=eol_line, line_dash="dot", line_color="#e53e3e", line_width=1,
+        annotation_text=f"EOL threshold ({eol_line:.0f}%)",
+        annotation_position="bottom right",
     )
     y_min = max(df["soh_pct"].min() - 2, 60)
     fig.update_layout(
@@ -867,6 +901,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         ),
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.caption("Projections assume constant fade rate. Optimistic = 40% stress reduction (lower C-rate or temperature). Pessimistic = 50% stress increase.")
 
 
 # ---------------------------------------------------------------------------
@@ -1208,6 +1243,47 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 )
                 fig_fwhm.update_layout(title=dict(text="dQ/dV Peak Width (FWHM) — Broadening = increased heterogeneity", font=dict(size=12, color="#a0aec0"), x=0))
                 st.plotly_chart(fig_fwhm, use_container_width=True)
+
+            # ── ⚗️ Degradation Mechanism Interpretation ──
+            st.markdown("<div class='section-header'>⚗️ Degradation Mechanism Interpretation</div>", unsafe_allow_html=True)
+            if all(c in df.columns for c in ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_fwhm"]):
+                import numpy as _np2
+                early_mech = df[df.cycle_number <= df.cycle_number.quantile(0.10)]
+                late_mech  = df[df.cycle_number >= df.cycle_number.quantile(0.90)]
+                if len(early_mech) > 0 and len(late_mech) > 0 and early_mech.dqdv_peak_value.mean() > 1e-9 and early_mech.dqdv_fwhm.mean() > 1e-9:
+                    peak_soc_shift  = early_mech.dqdv_peak_soc.mean() - late_mech.dqdv_peak_soc.mean()
+                    amplitude_drop  = (early_mech.dqdv_peak_value.mean() - late_mech.dqdv_peak_value.mean()) / early_mech.dqdv_peak_value.mean() * 100
+                    fwhm_change     = (late_mech.dqdv_fwhm.mean() - early_mech.dqdv_fwhm.mean()) / early_mech.dqdv_fwhm.mean() * 100
+                    if peak_soc_shift > 0.05 and amplitude_drop > 10:
+                        dominant = "LLI + LAM (mixed)"
+                    elif peak_soc_shift > 0.05:
+                        dominant = "LLI (Loss of Lithium Inventory)"
+                    elif amplitude_drop > 15:
+                        dominant = "LAM (Loss of Active Material)"
+                    elif fwhm_change > 20:
+                        dominant = "LAM_NE (Graphite heterogeneity)"
+                    else:
+                        dominant = "Early stage / inconclusive"
+                    _mech_explanations = {
+                        "LLI (Loss of Lithium Inventory)": "SEI layer growth is consuming cyclable lithium. Common in calendar aging and elevated temperature operation. Characteristic: peak shifts to lower SOC values.",
+                        "LAM (Loss of Active Material)": "Electrode active sites are being lost, reducing overall capacity. Common with high C-rate cycling. Characteristic: peak amplitude decreases proportionally to capacity loss.",
+                        "LLI + LAM (mixed)": "Both mechanisms active simultaneously. Typical of aged cells with combined calendar and cycle stress.",
+                        "LAM_NE (Graphite heterogeneity)": "Graphite particle cracking or lithium plating creating heterogeneous intercalation sites. Characteristic: peak broadening without large position shift.",
+                        "Early stage / inconclusive": "Insufficient degradation to identify dominant mechanism. Continue monitoring — revisit after further cycling.",
+                    }
+                    explanation = _mech_explanations.get(dominant, "")
+                    m1, m2, m3 = st.columns(3)
+                    with m1:
+                        st.metric("Peak SOC Shift", f"{peak_soc_shift:+.3f}", "← left = LLI signature")
+                    with m2:
+                        st.metric("Amplitude Drop", f"{amplitude_drop:.1f}%", "↓ drop = LAM signature")
+                    with m3:
+                        st.metric("FWHM Change", f"{fwhm_change:+.1f}%", "↑ broaden = heterogeneity")
+                    st.info(f"**Dominant mechanism: {dominant}**\n\n{explanation}")
+                else:
+                    st.info("Insufficient dQ/dV data to classify degradation mechanism.")
+            else:
+                st.info("dQ/dV columns unavailable for mechanism interpretation.")
         except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")
 
@@ -1216,7 +1292,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 # Page: Insights
 # ---------------------------------------------------------------------------
 
-def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
+def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
+                  cell_ids: list | None = None, active_fdfs: dict | None = None):
     st.markdown("# Insights")
 
     # Warn if this bundle was trained on fewer than 3 cells (uploaded data path)
@@ -1405,6 +1482,161 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
         ),
     )
     st.plotly_chart(fig2, use_container_width=True)
+
+    # ── 🌡️ Temperature–Degradation Analysis (Arrhenius) ──
+    st.markdown("<div class='section-header'>🌡️ Temperature–Degradation Analysis (Arrhenius)</div>", unsafe_allow_html=True)
+    _afdfs = active_fdfs if active_fdfs is not None else {}
+    if len(_afdfs) <= 1:
+        st.info("Select multiple cells to enable cross-cell temperature analysis.")
+    else:
+        import numpy as _np_arr
+        _arr_rows = []
+        for _cid, _cdf in _afdfs.items():
+            _mean_temp      = float(_cdf["temperature_c"].mean())
+            _mean_fade_rate = float(_cdf["fade_rate_50cy"].mean()) if "fade_rate_50cy" in _cdf.columns else float("nan")
+            _arr_rows.append({"cell_id": _cid, "mean_temp": _mean_temp, "mean_fade_rate": _mean_fade_rate})
+        _arr_df = pd.DataFrame(_arr_rows).dropna()
+        if len(_arr_df) >= 2:
+            _x = (1000 / (_arr_df["mean_temp"] + 273.15)).values
+            _y = _np_arr.log(_arr_df["mean_fade_rate"].clip(lower=1e-9)).values
+            _slope, _intercept = _np_arr.polyfit(_x, _y, 1)
+            _x_line = _np_arr.linspace(_x.min(), _x.max(), 50)
+            _y_line = _slope * _x_line + _intercept
+            Ea_J_per_mol = -_slope * 8.314
+            Ea_eV        = Ea_J_per_mol / 96485
+            _fig_arr = go.Figure()
+            _fig_arr.add_trace(go.Scatter(
+                x=_x_line.tolist(), y=_y_line.tolist(),
+                mode="lines", name="Trendline",
+                line=dict(color="#4a5568", width=1.5, dash="dash"),
+                hoverinfo="skip",
+            ))
+            _fig_arr.add_trace(go.Scatter(
+                x=_x.tolist(), y=_y.tolist(),
+                mode="markers+text",
+                text=_arr_df["cell_id"].tolist(),
+                textposition="top center",
+                textfont=dict(size=10, color="#a0aec0"),
+                marker=dict(color="#63b3ed", size=10, line=dict(color="#1a202c", width=1)),
+                name="Cells",
+                hovertemplate="<b>%{text}</b><br>1000/T=%{x:.3f}<br>ln(fade)=%{y:.3f}<extra></extra>",
+            ))
+            _fig_arr.update_layout(
+                **base_layout(
+                    height=320, legend=LEGEND_H,
+                    xaxis=dict(title="1000 / T (K⁻¹)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    yaxis=dict(title="ln(Fade Rate per Cycle)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                ),
+            )
+            _fig_arr.update_layout(title=dict(text="Arrhenius Plot: ln(Fade Rate) vs 1000/T", font=dict(size=12, color="#a0aec0"), x=0))
+            st.plotly_chart(_fig_arr, use_container_width=True)
+            st.caption(f"Estimated activation energy: {Ea_eV:.2f} eV (literature: ~0.4–0.6 eV for LiCoO₂ SEI growth)")
+            _arr_c1, _arr_c2 = st.columns(2)
+            with _arr_c1:
+                _arr_display = _arr_df.copy()
+                _arr_display["avg temp (°C)"]   = _arr_display["mean_temp"].map("{:.1f}".format)
+                _arr_display["avg fade rate"]    = _arr_display["mean_fade_rate"].map("{:.6f}".format)
+                _max_fade = _arr_display["mean_fade_rate"].max()
+                _arr_display["relative stress"]  = (_arr_display["mean_fade_rate"] / max(_max_fade, 1e-12)).map("{:.2f}×".format)
+                st.dataframe(
+                    _arr_display[["cell_id", "avg temp (°C)", "avg fade rate", "relative stress"]].rename(columns={"cell_id": "Cell ID"}),
+                    use_container_width=True, hide_index=True,
+                )
+            with _arr_c2:
+                st.caption(
+                    "A linear Arrhenius relationship confirms thermally-activated degradation (SEI growth). "
+                    "Slope gives activation energy — steeper = more temperature-sensitive chemistry."
+                )
+        else:
+            st.info("Need at least 2 cells with valid data for Arrhenius plot.")
+
+
+# ---------------------------------------------------------------------------
+# Page: Grading
+# ---------------------------------------------------------------------------
+
+def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
+    import numpy as _np_grade
+    st.markdown("# 🏆 Cell Grading — Early-Cycle Lifetime Prediction")
+    st.markdown(
+        "Based on Severson et al. (2019, Nature Energy): early-cycle capacity variance and fade rate "
+        "predict full cell lifetime with high accuracy. Cells graded A–C based on first 100 cycles."
+    )
+
+    _grade_rows = []
+    for _cid in cell_ids:
+        _gdf = active_fdfs.get(_cid)
+        if _gdf is None:
+            continue
+        _early = _gdf[_gdf["cycle_number"] <= 100]
+        if len(_early) < 20:
+            _grade_rows.append({
+                "Cell ID": _cid,
+                "Grade": "—",
+                "Score": float("nan"),
+                "Early Fade Rate (Ah/cy)": float("nan"),
+                "Capacity Variance": float("nan"),
+                "Resistance Slope (Ω/cy)": float("nan"),
+                "Predicted Lifetime": "Insufficient data",
+            })
+            continue
+        _early_fade_rate     = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
+        _capacity_variance   = float(_early["capacity_ah"].var())
+        _resistance_slope    = float(_np_grade.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0])
+        _score = 100 - (_early_fade_rate * 50000) - (_capacity_variance * 100000) - (_resistance_slope * 20000)
+        _score = float(_np_grade.clip(_score, 0, 100))
+        if _score >= 75:
+            _grade    = "A"
+            _lifetime = "Long life (>800 cycles to EOL)"
+        elif _score >= 50:
+            _grade    = "B"
+            _lifetime = "Moderate life (400–800 cycles)"
+        else:
+            _grade    = "C"
+            _lifetime = "Short life (<400 cycles)"
+        _grade_rows.append({
+            "Cell ID": _cid,
+            "Grade": _grade,
+            "Score": round(_score, 1),
+            "Early Fade Rate (Ah/cy)": round(_early_fade_rate, 6),
+            "Capacity Variance": round(_capacity_variance, 6),
+            "Resistance Slope (Ω/cy)": round(_resistance_slope, 6),
+            "Predicted Lifetime": _lifetime,
+        })
+
+    _grade_df = pd.DataFrame(_grade_rows)
+    if len(_grade_df) > 0:
+        st.dataframe(_grade_df, use_container_width=True, hide_index=True)
+
+        # ── Score bar chart ──
+        _valid = _grade_df[_grade_df["Score"].notna()].copy()
+        if len(_valid) > 0:
+            _color_map = {"A": "#48bb78", "B": "#ed8936", "C": "#fc8181"}
+            _bar_colors = [_color_map.get(str(g), "#718096") for g in _valid["Grade"]]
+            _fig_grade = go.Figure(go.Bar(
+                x=_valid["Cell ID"].tolist(),
+                y=_valid["Score"].tolist(),
+                marker=dict(color=_bar_colors),
+                text=[f"{s:.0f}" for s in _valid["Score"].tolist()],
+                textposition="outside",
+                textfont=dict(color="#e2e8f0", size=11),
+                hovertemplate="<b>%{x}</b><br>Score: %{y:.1f}<extra></extra>",
+            ))
+            _fig_grade.update_layout(
+                **base_layout(
+                    height=320,
+                    xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    yaxis=dict(title="Grade Score (0–100)", gridcolor="#232d3b", linecolor="#2d3748",
+                               zeroline=False, range=[0, 110]),
+                ),
+            )
+            _fig_grade.update_layout(title=dict(text="Cell Grade Score (A=green, B=amber, C=red)", font=dict(size=12, color="#a0aec0"), x=0))
+            st.plotly_chart(_fig_grade, use_container_width=True)
+
+    st.caption(
+        "Methodology: simplified adaptation of Severson et al. (2019). Score derived from early-cycle "
+        "fade rate, capacity variance, and resistance slope. Not a validated commercial grading system."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -4618,7 +4850,7 @@ def main():
     elif page == "health":
         page_health(df, split_cycle, selected)
     elif page == "insights":
-        page_insights(df, bundle, selected)
+        page_insights(df, bundle, selected, cell_ids=cell_ids, active_fdfs=active_fdfs)
     elif page == "copilot":
         page_copilot(cell_ids, active_fdfs, bundles, selected)
     elif page == "consequences":
@@ -4633,6 +4865,8 @@ def main():
         page_reports(selected, df, bundle, rul_reliable)
     elif page == "fleet":
         page_fleet(active_fdfs, bundles)
+    elif page == "grading":
+        page_grading(cell_ids, active_fdfs, bundles, selected)
     elif page == "settings":
         page_settings(
             featured_dfs_all,
