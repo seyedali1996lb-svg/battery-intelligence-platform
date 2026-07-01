@@ -4026,6 +4026,32 @@ def page_import():
         except FileNotFoundError:
             st.warning("Format guide not found at docs/import_format_guide.md")
 
+    # ── Section 1b: External Benchmark Datasets ─────────────────────────────
+    with st.expander("📦 External Benchmark Datasets", expanded=False):
+        st.markdown(
+            "Use the loaders in `src/severson_loader.py` and `src/calce_loader.py` "
+            "to integrate published benchmark datasets into the pipeline."
+        )
+        st.markdown("**Severson 2019 (Nature Energy)**")
+        st.markdown(
+            "Download `batch1.pkl`, `batch2.pkl`, `batch3.pkl` from "
+            "[data.matr.io/1/](https://data.matr.io/1/) (Severson et al., Nature Energy 2019) "
+            "and place them in `data/severson/`. "
+            "Call `load_severson_directory('data/severson/')` to get a dict of "
+            "`{cell_id: DataFrame}` with columns `cycle_number`, `capacity_ah`, "
+            "`resistance_ohm`, `temperature_c` — ready to feed directly into "
+            "`build_features()`. Cells with fewer than 100 cycles are skipped automatically."
+        )
+        st.markdown("**CALCE Battery Research Group**")
+        st.markdown(
+            "Download CSV or XLSX files from "
+            "[web.calce.umd.edu/batteries/data.htm](https://web.calce.umd.edu/batteries/data.htm) "
+            "and place them in `data/calce/`. "
+            "Call `load_calce_directory('data/calce/')` to load all files at once; "
+            "the loader handles column-name variation across CALCE sub-datasets with "
+            "case-insensitive fuzzy matching and normalises to the same four-column schema."
+        )
+
     # ── Section 2: Upload widget ────────────────────────────────────────────
     _section("Upload CSV")
 

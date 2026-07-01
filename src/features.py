@@ -12,6 +12,7 @@ must use these signals to distinguish them.
 
 import numpy as np
 import pandas as pd
+from dqdv import add_dqdv_features
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,9 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
         fade_rate = df["fade_rate_50cy"].clip(lower=1e-6)
         df["rul"] = ((df["capacity_ah"] - eol_capacity) / fade_rate).clip(lower=0)
 
+    # ── dQ/dV features ──
+    df = add_dqdv_features(df)
+
     return df
 
 
@@ -112,6 +116,11 @@ FEATURE_COLUMNS = [
     # conditions from cycle-to-cycle noise. Only meaningful across cells
     # with different temperature profiles (multi-cell training).
     "temp_rolling_30cy",
+    # dQ/dV differential capacity features
+    "dqdv_peak_value",
+    "dqdv_peak_soc",
+    "dqdv_area",
+    "dqdv_fwhm",
 ]
 
 TARGET_SOH = "soh_pct"

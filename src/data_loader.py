@@ -119,20 +119,32 @@ def generate_cell_data(
 
     sf = _stress_factor(temp_mean, c_rate, dod)
 
-    # ── Capacity fade ──
+    # ── Calendar aging: rest periods between cycles ──
+    # Truncated normal around 1.5 days (min 0.5, max 14).
+    raw_days = rng.normal(1.5, 1.5, n_cycles)
+    days_between_cycles = np.clip(raw_days, 0.5, 14.0)
+    cumulative_days = np.cumsum(days_between_cycles)
+
+    # ── Capacity fade (cycle aging) ──
     base_fade_rate = 0.00008 * sf
     cap_noise = rng.normal(0, 0.002, n_cycles)
-    capacity_ah = (
-        nominal_capacity * (1.0 - base_fade_rate * cycles ** 1.1)
-        + cap_noise
-    )
+    capacity_cycle = nominal_capacity * (1.0 - base_fade_rate * cycles ** 1.1)
+
+    # SEI growth follows sqrt-time law: additional calendar loss per cycle
+    k_cal = 0.00003
+    calendar_loss_per_cycle = k_cal * sf * np.sqrt(days_between_cycles)
+    capacity_ah = capacity_cycle - np.cumsum(calendar_loss_per_cycle) + cap_noise
     capacity_ah = np.clip(capacity_ah, 0.01, nominal_capacity)
 
     # ── Internal resistance growth ──
     r0 = 0.150
     r_growth = 0.00007 * sf
     r_noise = rng.normal(0, 0.002, n_cycles)
-    resistance_ohm = r0 + r_growth * cycles + r_noise
+    r_cycle = r0 + r_growth * cycles + r_noise
+    # Calendar resistance growth: sqrt of cumulative days
+    k_rcal = 0.000005
+    r_calendar = k_rcal * sf * np.sqrt(cumulative_days)
+    resistance_ohm = r_cycle + r_calendar
     resistance_ohm = np.clip(resistance_ohm, 0.10, 0.90)
 
     # ── Per-cycle temperature ──
@@ -142,10 +154,12 @@ def generate_cell_data(
     temperature_c = rng.normal(temp_mean, 2.5, n_cycles)
 
     return pd.DataFrame({
-        "cycle_number":  cycles,
-        "capacity_ah":   capacity_ah,
-        "resistance_ohm": resistance_ohm,
-        "temperature_c": temperature_c,
+        "cycle_number":        cycles,
+        "capacity_ah":         capacity_ah,
+        "resistance_ohm":      resistance_ohm,
+        "temperature_c":       temperature_c,
+        "days_between_cycles": days_between_cycles,
+        "cumulative_days":     cumulative_days,
     })
 
 
