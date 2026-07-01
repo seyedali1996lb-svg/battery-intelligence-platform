@@ -3115,19 +3115,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     st.markdown("# Reports")
     st.markdown(f"##### Demonstration report export · {selected}")
 
-    st.markdown(
-        """
-        <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
-                    border-radius:10px;padding:14px 20px;margin-bottom:28px;
-                    font-size:13px;color:#718096;line-height:1.7">
-            <strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory
-            document. Exports the current battery's identity, SOH/RUL with reliability flags,
-            second-life recommendation (if applicable), and the assumption register, with the
-            same Available / Estimate / Not-available-in-demo labelling used throughout this
-            platform.
-        </div>
-        """
-    )
+    _md_html("""<div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);border-radius:10px;padding:14px 20px;margin-bottom:28px;font-size:13px;color:#718096;line-height:1.7"><strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory document. Exports the current battery's identity, SOH/RUL with reliability flags, second-life recommendation (if applicable), and the assumption register, with the same Available / Estimate / Not-available-in-demo labelling used throughout this platform.</div>""")
 
     second_life = None
     if soh <= 85.0:
