@@ -2523,8 +2523,8 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             xaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(
                 gridcolor="#232d3b", linecolor="#2d3748", zeroline=True,
-                zerolinecolor="#4a5568", title="kg CO₂e per cell",
-                titlefont=dict(size=11),
+                zerolinecolor="#4a5568",
+                title=dict(text="kg CO₂e per cell", font=dict(size=11)),
             ),
             height=360,
         )
