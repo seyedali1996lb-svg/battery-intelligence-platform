@@ -15,6 +15,88 @@ import numpy as np
 REQUIRED_COLUMNS  = ["cell_id", "cycle_number", "capacity_ah", "resistance_ohm"]
 OPTIONAL_COLUMNS  = ["temperature_c", "test_date", "notes"]
 
+# Fuzzy column name variants → canonical column name.
+# Covers the most common BMS export headers — handles case and separator variation.
+_FUZZY_MAP: dict[str, str] = {
+    # cell_id
+    "cell_id": "cell_id", "cellid": "cell_id", "cell": "cell_id",
+    "battery_id": "cell_id", "batteryid": "cell_id",
+    # cycle_number
+    "cycle_number": "cycle_number", "cyclenumber": "cycle_number",
+    "cycle_num": "cycle_number", "cycle": "cycle_number",
+    "cycle_no": "cycle_number", "cycleno": "cycle_number",
+    # capacity_ah
+    "capacity_ah": "capacity_ah", "capacityah": "capacity_ah",
+    "capacity": "capacity_ah", "cap_ah": "capacity_ah",
+    "discharge_capacity": "capacity_ah", "dchg_capacity": "capacity_ah",
+    # resistance_ohm
+    "resistance_ohm": "resistance_ohm", "resistanceohm": "resistance_ohm",
+    "resistance": "resistance_ohm", "res_ohm": "resistance_ohm",
+    "internal_resistance": "resistance_ohm", "dcir": "resistance_ohm",
+    "resistance_omega": "resistance_ohm",
+    # temperature_c
+    "temperature_c": "temperature_c", "temperaturec": "temperature_c",
+    "temp_c": "temperature_c", "temperature": "temperature_c",
+    "temp": "temperature_c",
+    # test_date
+    "test_date": "test_date", "testdate": "test_date",
+    "date": "test_date", "cycle_date": "test_date",
+    # notes
+    "notes": "notes", "note": "notes", "comment": "notes", "comments": "notes",
+}
+
+
+def fuzzy_match_columns(df: pd.DataFrame) -> dict[str, str]:
+    """
+    Auto-match uploaded column names to canonical pipeline column names.
+
+    Returns a dict mapping existing_column_name → canonical_column_name for
+    any column that can be identified. Columns that already have canonical names
+    are included as identity matches. Columns with no match are omitted.
+
+    Matching rules (in priority order):
+    1. Exact canonical name — identity match, always wins
+    2. Lowercase + underscores version is in _FUZZY_MAP
+    3. Lowercase + no separators version is in _FUZZY_MAP
+
+    Returns: {original_col: canonical_col, ...}
+    Only columns that resolve to a canonical name are included.
+    """
+    mapping: dict[str, str] = {}
+    canonical_set = set(REQUIRED_COLUMNS + OPTIONAL_COLUMNS)
+
+    for col in df.columns:
+        col_str = str(col)
+
+        # 1. Already a canonical name
+        if col_str in canonical_set:
+            mapping[col_str] = col_str
+            continue
+
+        # 2. Normalise: lowercase, replace spaces/hyphens/dots with underscores
+        normalised = col_str.lower().replace(" ", "_").replace("-", "_").replace(".", "_")
+        if normalised in _FUZZY_MAP:
+            mapping[col_str] = _FUZZY_MAP[normalised]
+            continue
+
+        # 3. Lowercase with all separators stripped
+        stripped = col_str.lower().replace(" ", "").replace("-", "").replace("_", "").replace(".", "")
+        if stripped in _FUZZY_MAP:
+            mapping[col_str] = _FUZZY_MAP[stripped]
+            continue
+
+    return mapping
+
+
+def apply_column_mapping(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+    """
+    Apply a fuzzy mapping dict (original → canonical) to a DataFrame.
+    Only renames columns that appear in the mapping and differ from their value.
+    Returns a copy with renamed columns.
+    """
+    renames = {orig: canon for orig, canon in mapping.items() if orig != canon}
+    return df.rename(columns=renames) if renames else df.copy()
+
 CAPACITY_MIN, CAPACITY_MAX     = 0.01, 500.0   # Ah
 RESISTANCE_MIN, RESISTANCE_MAX = 0.001, 10.0   # Ω
 RESISTANCE_MOHM_THRESHOLD      = 100.0          # values above this look like mΩ

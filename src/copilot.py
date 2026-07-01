@@ -36,6 +36,7 @@ import math
 import numpy as np
 
 from lco_eval import RUL_RELIABLE_FLOOR
+from copilot_templates import TEMPLATES as _T
 
 # ---------------------------------------------------------------------------
 # Navigation constants
@@ -168,8 +169,19 @@ def build_cell_context(
     from data_loader import CELL_STRESS_PROFILES, _stress_factor
     from model import feature_importance_df
 
-    is_nasa = cell_id in NASA_CELL_IDS
-    bundle  = bundles["nasa"] if is_nasa else bundles["synth"]
+    is_nasa   = cell_id in NASA_CELL_IDS
+    is_synth  = (not is_nasa) and (cell_id in CELL_STRESS_PROFILES)
+    is_upload = not is_nasa and not is_synth
+
+    if is_nasa:
+        bundle = bundles["nasa"]
+    elif is_synth:
+        bundle = bundles["synth"]
+    else:
+        bundle = bundles.get("upload") or bundles.get("synth")  # uploaded data uses its own bundle
+
+    if bundle is None:
+        bundle = bundles.get("nasa") or next(iter(bundles.values()))
 
     df     = featured_dfs[cell_id]
     latest = df.iloc[-1]
@@ -203,6 +215,8 @@ def build_cell_context(
     rul_fold_r2  = cell_fold.get("rul_r2", None)
     soh_fold_r2  = cell_fold.get("soh_r2", None)
     rul_pred     = float(latest["rul_pred"]) if rul_reliable else None
+    rul_q10      = float(latest["rul_q10"])  if (rul_reliable and "rul_q10" in latest.index) else None
+    rul_q90      = float(latest["rul_q90"])  if (rul_reliable and "rul_q90" in latest.index) else None
 
     fi           = feature_importance_df(bundle, "soh")
     top_features = fi.head(5).to_dict(orient="records")
@@ -210,6 +224,9 @@ def build_cell_context(
     if is_nasa:
         source         = "NASA PCoE real measured data"
         operating_note = "discharged at 2A to ~2.7V cutoff at ~24 C lab conditions"
+    elif is_upload:
+        source         = "user-uploaded data"
+        operating_note = "operating conditions from uploaded dataset"
     else:
         profile        = CELL_STRESS_PROFILES.get(cell_id, {})
         sf             = _stress_factor(
@@ -225,10 +242,13 @@ def build_cell_context(
             f"stress factor {sf:.2f}x baseline"
         )
 
+    data_mode = "nasa" if is_nasa else ("uploaded" if is_upload else "synth")
+
     return {
         "cell_id":        cell_id,
         "source":         source,
         "operating_note": operating_note,
+        "data_mode":      data_mode,
         "is_nasa":        is_nasa,
         "soh":            soh,
         "status":         status,
@@ -240,6 +260,8 @@ def build_cell_context(
         "eol_reached":    eol_reached,
         "rul_reliable":   rul_reliable,
         "rul_pred":       rul_pred,
+        "rul_q10":        rul_q10,
+        "rul_q90":        rul_q90,
         "rul_fold_r2":    rul_fold_r2,
         "soh_fold_r2":    soh_fold_r2,
         "lco_soh_r2":     bundle["metrics"].get("lco_soh_r2"),
@@ -289,8 +311,18 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
     rows: list[dict] = []
 
     for cell_id, df in featured_dfs.items():
-        is_nasa  = cell_id in NASA_CELL_IDS
-        bundle   = bundles["nasa"] if is_nasa else bundles["synth"]
+        from data_loader import CELL_STRESS_PROFILES as _CSP
+        is_nasa   = cell_id in NASA_CELL_IDS
+        is_synth  = (not is_nasa) and (cell_id in _CSP)
+        is_upload = not is_nasa and not is_synth
+
+        if is_nasa:
+            bundle = bundles.get("nasa")
+        elif is_synth:
+            bundle = bundles.get("synth")
+        else:
+            bundle = bundles.get("upload") or bundles.get("synth")
+
         if bundle is None:
             continue
         per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
@@ -303,9 +335,10 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
         cycle    = int(latest["cycle_number"])
         rul_pred = float(latest["rul_pred"]) if rul_reliable else None
 
+        source = "nasa" if is_nasa else ("uploaded" if is_upload else "synth")
         rows.append({
             "cell_id":     cell_id,
-            "source":      "nasa" if is_nasa else "synth",
+            "source":      source,
             "soh":         soh,
             "cycle":       cycle,
             "fade_30":     fade_30,
@@ -355,45 +388,34 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
 def answer_health(ctx: dict) -> str:
     """Explain the cell's current health state."""
     cell  = ctx["cell_id"]
-    soh   = ctx["soh"]
     cycle = ctx["cycle"]
-    fade  = ctx["fade_30_mah_cy"]
+
+    intro = _T["health_intro"].format_map({
+        "cell": cell, "soh": ctx["soh"], "status_note": ctx["status_note"],
+        "cycle": cycle, "source": ctx["source"],
+        "operating_note": ctx["operating_note"], "fade": ctx["fade_30_mah_cy"],
+    })
 
     if ctx["eol_reached"]:
-        eol_line = (
-            f"{cell} crossed the end-of-life threshold at cycle {ctx['eol_at']} "
-            f"and is now {cycle - ctx['eol_at']} cycles past it."
+        eol_line = _T["health_eol_reached"].format_map(
+            {"cell": cell, "eol_at": ctx["eol_at"], "past_eol": cycle - ctx["eol_at"]}
         )
     elif ctx["eol_at"]:
-        remaining = ctx["eol_at"] - cycle
-        eol_line = (
-            f"Based on the observed fade trajectory, the end-of-life threshold "
-            f"is projected at cycle {ctx['eol_at']} — approximately {remaining} cycles from now."
+        eol_line = _T["health_eol_projected"].format_map(
+            {"eol_at": ctx["eol_at"], "remaining": ctx["eol_at"] - cycle}
         )
     else:
-        eol_line = (
-            "End of life has not been reached and is not projected within "
-            "the current data window."
-        )
+        eol_line = _T["health_eol_none"]
 
     top_driver = ""
     if ctx["top_features"]:
         f0   = ctx["top_features"][0]
         name = FEATURE_LABELS.get(f0["feature"], f0["feature"])
-        top_driver = (
-            f"The model's strongest signal for this assessment is **{name}**, "
-            f"which accounts for {f0['importance_pct']:.0f}% of the SOH prediction."
+        top_driver = _T["health_top_driver"].format_map(
+            {"name": name, "pct": f0["importance_pct"]}
         )
 
-    return (
-        f"**{cell}** is currently at **{soh:.1f}% state of health** — "
-        f"{ctx['status_note']}.\n\n"
-        f"This is based on cycle {cycle} of {ctx['source']} ({ctx['operating_note']}). "
-        f"Over the last 30 cycles, the cell has been losing approximately "
-        f"**{fade:.2f} mAh of capacity per cycle**.\n\n"
-        f"{eol_line}\n\n"
-        f"{top_driver}"
-    ).strip()
+    return f"{intro}\n\n{eol_line}\n\n{top_driver}".strip()
 
 
 def answer_prediction_drivers(ctx: dict) -> str:
@@ -444,49 +466,41 @@ def answer_rul(ctx: dict) -> str:
     """
     Explain remaining useful life — or explain honestly why it is not shown.
     If rul_reliable is False, no cycle estimate is generated under any circumstances.
+    Includes 80% prediction interval (Q10–Q90) when quantile models are available.
     """
     cell = ctx["cell_id"]
 
     if not ctx["rul_reliable"]:
         fold_r2 = ctx["rul_fold_r2"]
-        r2_str  = f"R2={fold_r2:.2f}" if fold_r2 is not None else "below the reliability threshold"
-        return (
-            f"**A reliable remaining-life estimate is not available for {cell}.**\n\n"
-            f"During leave-cell-out validation — where the model was trained on all "
-            f"other cells and tested on {cell} alone — the RUL model achieved "
-            f"**{r2_str}** for this cell. The reliability threshold is R2>={RUL_RELIABLE_FLOOR}.\n\n"
-            f"An R2 below this floor means the model's remaining-life predictions for "
-            f"{cell} were less accurate than simply guessing the average remaining "
-            f"life across similar cells. Displaying a cycle count would create false "
-            f"confidence in a number the model cannot support.\n\n"
-            f"This does not mean {cell}'s data is wrong — it means the model has not "
-            f"seen enough cells with a similar degradation profile to generalise "
-            f"reliably to this one. As more cells are added to the training set, "
-            f"this may change."
+        r2_str  = f"R²={fold_r2:.2f}" if fold_r2 is not None else "below the reliability threshold"
+        return _T["rul_not_calibrated"].format_map(
+            {"cell": cell, "r2_str": r2_str, "floor": RUL_RELIABLE_FLOOR}
         )
 
     rul  = ctx["rul_pred"]
     fold = ctx["rul_fold_r2"]
-    conf = f" (model fold R2={fold:.2f} on this cell)" if fold is not None else ""
+    conf = f" (fold R²={fold:.2f} on this cell)" if fold is not None else ""
 
     if ctx["eol_reached"]:
-        return (
-            f"**{cell} has already reached end of life**, crossing the 80% SOH "
-            f"threshold at cycle {ctx['eol_at']}. It is currently at cycle {ctx['cycle']}.\n\n"
-            f"The model's remaining-life estimate is {rul:.0f} cycles, which at this "
-            f"stage reflects how much further below EOL the cell continues to operate — "
-            f"not a forward-looking projection{conf}."
+        body = _T["rul_eol_reached"].format_map(
+            {"cell": cell, "eol_at": ctx["eol_at"],
+             "cycle": ctx["cycle"], "rul": rul, "conf": conf}
+        )
+    else:
+        body = _T["rul_normal"].format_map(
+            {"cell": cell, "rul": rul, "conf": conf, "cycle": ctx["cycle"]}
         )
 
-    return (
-        f"**{cell}** has an estimated **{rul:.0f} cycles of useful life remaining** "
-        f"before reaching the 80% SOH end-of-life threshold{conf}.\n\n"
-        f"This estimate is based on the cell's current capacity fade rate and "
-        f"resistance trajectory at cycle {ctx['cycle']}. It assumes operating "
-        f"conditions remain similar to those observed so far — significant changes "
-        f"in temperature, charge rate, or depth of discharge would shift the actual "
-        f"remaining life."
-    )
+    # Append prediction interval note if available
+    q10, q90 = ctx.get("rul_q10"), ctx.get("rul_q90")
+    if q10 is not None and q90 is not None and q90 > q10:
+        interval_note = "\n\n" + _T["rul_interval_note"].format_map(
+            {"q10": q10, "q90": q90}
+        )
+    else:
+        interval_note = ""
+
+    return body + interval_note
 
 
 def answer_compare(ctx_a: dict, ctx_b: dict) -> str:
@@ -746,58 +760,100 @@ def answer_recent_trajectory(ctx: dict, df, window: int = 20) -> str:
 
 
 def answer_fleet_compare(ctx: dict, fleet_stats: dict) -> str:
-    """How does this cell rank in the fleet by SOH, fade rate, and RUL?"""
-    cell = ctx["cell_id"]
-    rows = fleet_stats["rows"]
-    n    = fleet_stats["n_cells"]
+    """
+    How does this cell rank among its peers?
 
-    sorted_rows = fleet_stats["sorted_by_soh"]  # worst first
-    rank        = next((i + 1 for i, r in enumerate(sorted_rows) if r["cell_id"] == cell), None)
+    Peers are restricted to the same data mode (nasa / synth / uploaded).
+    Cross-mode comparison stays out of scope because resistance scales are
+    incompatible across measurement methods and model training boundaries.
+    """
+    cell      = ctx["cell_id"]
+    cell_mode = ctx.get("data_mode", "nasa" if ctx["is_nasa"] else "synth")
 
-    soh_diff_median = ctx["soh"] - fleet_stats["soh_median"]
+    # Filter to same-mode peers only
+    rows = [r for r in fleet_stats["rows"] if r.get("source", "nasa") == cell_mode]
+    n    = len(rows)
+
+    if n == 0:
+        return (
+            f"No other cells from the same data source ({cell_mode}) found in the fleet. "
+            f"Cross-mode comparison stays out of scope."
+        )
+
+    # Exclude self to count actual peers
+    peers = [r for r in rows if r["cell_id"] != cell]
+    if len(peers) < 2:
+        peer_ids = ", ".join(r["cell_id"] for r in peers) if peers else "none"
+        return (
+            f"Not enough same-mode cells for a fleet comparison.\n\n"
+            f"**{cell}** is in {cell_mode} mode with only {len(peers)} other "
+            f"cell{'s' if len(peers) != 1 else ''} ({peer_ids or 'none yet'}). "
+            f"Fleet averages computed from fewer than 2 peers reduce to pairwise comparison "
+            f"— 'faster than the fleet average' would mean 'faster than one other cell,' "
+            f"which is not a meaningful fleet statistic.\n\n"
+            f"Upload at least 3 cells in the same mode to enable fleet ranking."
+            if cell_mode == "uploaded" else
+            f"Not enough {cell_mode} cells for a fleet comparison.\n\n"
+            f"**{cell}** has only {len(peers)} peer cell{'s' if len(peers) != 1 else ''} "
+            f"in this mode ({peer_ids or 'none'}). "
+            f"A minimum of 2 peers (3 total cells in mode) is required for fleet statistics "
+            f"to be meaningful."
+        )
+
+    sorted_rows = sorted(rows, key=lambda r: r["soh"])  # worst first
+    rank = next((i + 1 for i, r in enumerate(sorted_rows) if r["cell_id"] == cell), None)
+
+    sohs        = [r["soh"] for r in rows]
+    soh_median  = float(np.median(sohs))
+    soh_min     = float(min(sohs))
+    soh_max     = float(max(sohs))
+
+    soh_diff_median = ctx["soh"] - soh_median
     median_dir      = "above" if soh_diff_median >= 0 else "below"
 
-    if rank == 1:
-        rank_desc = f"the lowest SOH in the fleet (rank 1 of {n} — worst)"
+    if rank is None:
+        rank_desc = f"not ranked (cell not found in same-mode fleet rows)"
+    elif rank == 1:
+        rank_desc = f"the lowest SOH among {cell_mode} cells (rank 1 of {n} — worst)"
     elif rank == n:
-        rank_desc = f"the highest SOH in the fleet (rank {n} of {n} — best)"
+        rank_desc = f"the highest SOH among {cell_mode} cells (rank {n} of {n} — best)"
     elif rank <= n // 3:
-        rank_desc = f"in the bottom third of the fleet (rank {rank} of {n})"
+        rank_desc = f"in the bottom third of {cell_mode} cells (rank {rank} of {n})"
     elif rank >= n - n // 3 + 1:
-        rank_desc = f"in the top third of the fleet (rank {rank} of {n})"
+        rank_desc = f"in the top third of {cell_mode} cells (rank {rank} of {n})"
     else:
-        rank_desc = f"mid-fleet (rank {rank} of {n})"
+        rank_desc = f"mid-fleet among {cell_mode} cells (rank {rank} of {n})"
 
-    # Fade rank across fleet
-    all_fades  = [r["fade_30"] for r in rows if not math.isnan(r.get("fade_30", float("nan")))]
-    fade_rank  = sum(1 for f in all_fades if f > ctx["fade_30_mah_cy"]) + 1  # 1 = fastest
+    # Fade rank within same-mode peers
+    all_fades = [r["fade_30"] for r in rows if not math.isnan(r.get("fade_30", float("nan")))]
+    fade_rank = sum(1 for f in all_fades if f > ctx["fade_30_mah_cy"]) + 1
 
     if fade_rank == 1:
-        fade_rank_desc = f"fastest-degrading cell in the fleet"
+        fade_rank_desc = f"fastest-degrading among {cell_mode} cells"
     elif fade_rank <= n // 3:
-        fade_rank_desc = f"among the faster-degrading cells (fade rank {fade_rank} of {n})"
+        fade_rank_desc = f"among the faster-degrading {cell_mode} cells (fade rank {fade_rank} of {n})"
     elif fade_rank >= n - n // 3 + 1:
-        fade_rank_desc = f"among the slower-degrading cells (fade rank {fade_rank} of {n})"
+        fade_rank_desc = f"among the slower-degrading {cell_mode} cells (fade rank {fade_rank} of {n})"
     else:
-        fade_rank_desc = f"mid-fleet in degradation speed (fade rank {fade_rank} of {n})"
+        fade_rank_desc = f"mid-fleet in degradation speed among {cell_mode} cells (fade rank {fade_rank} of {n})"
 
-    # RUL context
+    # RUL context — same-mode peers only
     if ctx["rul_reliable"] and ctx["rul_pred"] is not None:
         peer_ruls = [
             r["rul_pred"] for r in rows
             if r["rul_reliable"] and r["rul_pred"] is not None and r["cell_id"] != cell
         ]
         if peer_ruls:
-            mean_rul  = float(np.mean(peer_ruls))
-            rul_diff  = ctx["rul_pred"] - mean_rul
-            rul_dir   = "more" if rul_diff > 0 else "fewer"
-            rul_line  = (
+            mean_rul = float(np.mean(peer_ruls))
+            rul_diff = ctx["rul_pred"] - mean_rul
+            rul_dir  = "more" if rul_diff > 0 else "fewer"
+            rul_line = (
                 f"RUL estimate of {ctx['rul_pred']:.0f} cycles is "
-                f"{abs(rul_diff):.0f} cycles {rul_dir} than the fleet mean "
+                f"{abs(rul_diff):.0f} cycles {rul_dir} than the {cell_mode} fleet mean "
                 f"for calibrated cells ({mean_rul:.0f} cycles)."
             )
         else:
-            rul_line = f"RUL estimate: {ctx['rul_pred']:.0f} cycles (only calibrated cell in fleet)."
+            rul_line = f"RUL estimate: {ctx['rul_pred']:.0f} cycles (only calibrated {cell_mode} cell in fleet)."
     else:
         fold   = ctx["rul_fold_r2"]
         r2_str = f"fold R2={fold:.2f}" if fold is not None else "below floor"
@@ -805,11 +861,13 @@ def answer_fleet_compare(ctx: dict, fleet_stats: dict) -> str:
 
     return (
         f"**{cell} has {rank_desc}** with {ctx['soh']:.1f}% SOH.\n\n"
-        f"Fleet SOH ranges from {fleet_stats['soh_min']:.1f}% to "
-        f"{fleet_stats['soh_max']:.1f}%, median {fleet_stats['soh_median']:.1f}%. "
+        f"{cell_mode.capitalize()} fleet SOH ranges from {soh_min:.1f}% to "
+        f"{soh_max:.1f}%, median {soh_median:.1f}%. "
         f"{cell} sits {abs(soh_diff_median):.1f} pp {median_dir} the median.\n\n"
         f"{cell} is the {fade_rank_desc} at {ctx['fade_30_mah_cy']:.2f} mAh/cycle.\n\n"
-        f"{rul_line}"
+        f"{rul_line}\n\n"
+        f"*Cross-mode comparison stays out of scope — resistance scales are incompatible "
+        f"across NASA, synthetic, and uploaded data sources.*"
     )
 
 
@@ -826,44 +884,40 @@ def answer_alerts(fleet_stats: dict) -> str:
     n         = fleet_stats["n_cells"]
     healthy   = n - len(eol) - len(degrading)
 
-    lines = [f"**Fleet alert summary — {n} cells monitored**\n"]
+    lines = [_T["alerts_header"].format_map({"n": n}) + "\n"]
 
     if eol:
-        cell_str = ", ".join(f"**{c}**" for c in eol)
-        lines.append(
-            f"**End of Life ({len(eol)} cell{'s' if len(eol) > 1 else ''}):** "
-            f"{cell_str} — below 80% SOH, past the replacement threshold."
-        )
+        lines.append(_T["alerts_eol"].format_map({
+            "count": len(eol), "plural": "s" if len(eol) > 1 else "",
+            "cells": ", ".join(f"**{c}**" for c in eol),
+        }))
     if degrading:
-        cell_str = ", ".join(f"**{c}**" for c in degrading)
-        lines.append(
-            f"**Degrading ({len(degrading)} cell{'s' if len(degrading) > 1 else ''}):** "
-            f"{cell_str} — between 80% and 90% SOH, monitor closely."
-        )
+        lines.append(_T["alerts_degrading"].format_map({
+            "count": len(degrading), "plural": "s" if len(degrading) > 1 else "",
+            "cells": ", ".join(f"**{c}**" for c in degrading),
+        }))
     if not eol and not degrading:
-        lines.append("No cells are at or past end of life.")
+        lines.append(_T["alerts_no_eol"])
 
     lines.append("\n**Fastest degrading (30-cycle fade rate):**")
     for r in fastest:
         status = "End of Life" if r["soh"] < 80 else ("Degrading" if r["soh"] < 90 else "Healthy")
-        fade   = r["fade_30"]
         lines.append(
-            f"- **{r['cell_id']}**: {fade:.2f} mAh/cycle "
+            f"- **{r['cell_id']}**: {r['fade_30']:.2f} mAh/cycle "
             f"({status}, {r['soh']:.1f}% SOH)"
         )
 
     lines.append("")
     if unreliable:
-        cell_str = ", ".join(f"**{c}**" for c in unreliable)
-        lines.append(
-            f"**RUL not calibrated:** {cell_str} — remaining-life estimates are withheld "
-            f"(model fold R2 below {RUL_RELIABLE_FLOOR} on leave-cell-out validation)."
-        )
+        lines.append(_T["alerts_unreliable_rul"].format_map({
+            "cells": ", ".join(f"**{c}**" for c in unreliable),
+            "floor": RUL_RELIABLE_FLOOR,
+        }))
     else:
-        lines.append("All cells have calibrated RUL estimates.")
+        lines.append(_T["alerts_all_calibrated"])
 
-    lines.append(
-        f"\n**Fleet health:** {len(eol)} at EOL · {len(degrading)} degrading · {healthy} healthy"
-    )
+    lines.append("\n" + _T["alerts_footer"].format_map({
+        "n_eol": len(eol), "n_deg": len(degrading), "n_healthy": healthy,
+    }))
 
     return "\n".join(lines)

@@ -31,6 +31,7 @@ from design_system import (
     ACTION_META, CONF_META,
 )
 from import_adapter import adapt_upload_to_pipeline
+from bundle_cache import load_cached, save_cached, clear_cache as clear_bundle_cache
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +205,8 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
         df_out = df_feat.loc[X.index].copy()
         df_out["soh_pred"]       = preds["soh_pred"]
         df_out["rul_pred"]       = preds["rul_pred"]
+        df_out["rul_q10"]        = preds.get("rul_q10", preds["rul_pred"])
+        df_out["rul_q90"]        = preds.get("rul_q90", preds["rul_pred"])
         df_out["confidence_tag"] = preds["confidence_tag"]
         featured_dfs[cell_id] = df_out
         split_idx = int(len(X) * 0.8)
@@ -224,17 +227,27 @@ def load_everything():
 
     The dashboard selects the correct bundle based on which cell is chosen.
     """
-    # ── Synthetic cells ──
+    # ── Synthetic cells (disk-cached after first run) ──
     synth_ids = list(CELL_STRESS_PROFILES.keys())
     battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
-    bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
+    cached = load_cached("synth", battery_synth["cells"])
+    if cached is not None:
+        bundle_synth, fdfs_synth, sc_synth = cached
+    else:
+        bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
+        save_cached("synth", battery_synth["cells"], (bundle_synth, fdfs_synth, sc_synth))
 
-    # ── NASA real cells (if present) ──
+    # ── NASA real cells (disk-cached after first run) ──
     nasa_ids = _nasa_cells_available()
     bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
     if nasa_ids:
         battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
-        bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
+        cached_nasa = load_cached("nasa", battery_nasa["cells"])
+        if cached_nasa is not None:
+            bundle_nasa, fdfs_nasa, sc_nasa = cached_nasa
+        else:
+            bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
+            save_cached("nasa", battery_nasa["cells"], (bundle_nasa, fdfs_nasa, sc_nasa))
 
     # Merge cell outputs; keep bundles separate
     featured_dfs = {**fdfs_synth, **fdfs_nasa}
@@ -250,7 +263,7 @@ def load_everything():
 
 NAV_ITEMS = [
     ("Overview",        "overview",        True),
-    ("Import",          "import",          True),
+    ("Import",          "import",          True),   # also repeated at bottom
     ("Health",          "health",          True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
@@ -261,6 +274,7 @@ NAV_ITEMS = [
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
     ("Settings",        "settings",        True),
+    ("Import",          "import",          True),   # repeated at bottom for discoverability
 ]
 
 LEGEND_H = dict(
@@ -359,12 +373,23 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None):
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                    up_meta: dict | None) -> str:
     with st.sidebar:
+        # Dynamic subtitle based on active mode
+        n_cells = len(cell_ids)
+        if mode == "nasa":
+            subtitle = f"{n_cells} NASA real cells · leave-cell-out model"
+        elif mode == "synthetic":
+            subtitle = f"{n_cells} synthetic cells · leave-cell-out model"
+        elif mode == "uploaded":
+            cell_label = up_meta.get("cell_ids", cell_ids) if up_meta else cell_ids
+            subtitle = f"{n_cells} uploaded cell{'s' if n_cells != 1 else ''} · your data"
+        else:
+            subtitle = f"{nasa_n + synth_n} cells ({synth_n} synthetic + {nasa_n} NASA real) · multi-cell model"
+
         st.markdown(
-            "<div style='padding:0 4px 16px'>"
-            "<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
-            "<div style='font-size:11px;color:#4a5568;margin-top:2px'>"
-            "Multi-cell degradation platform</div>"
-            "</div>",
+            f"<div style='padding:0 4px 16px'>"
+            f"<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{subtitle}</div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 
@@ -376,10 +401,13 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         if "page" not in st.session_state:
             st.session_state.page = "overview"
         current_page = st.session_state.page
+        _nav_key_counts: dict[str, int] = {}
         for label, key, enabled in NAV_ITEMS:
+            _nav_key_counts[key] = _nav_key_counts.get(key, 0) + 1
+            btn_key = f"nav_{key}" if _nav_key_counts[key] == 1 else f"nav_{key}_b"
             if enabled:
                 if st.button(
-                    label, key=f"nav_{key}", use_container_width=True,
+                    label, key=btn_key, use_container_width=True,
                     type="primary" if current_page == key else "secondary",
                 ):
                     st.session_state.page = key
@@ -401,13 +429,29 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             "letter-spacing:0.08em;padding:0 4px 8px'>Cell</div>",
             unsafe_allow_html=True,
         )
+        # Determine default index — preserve current selection when cell list changes
+        _cur_sel = st.session_state.get("selected_cell")
+        _sel_idx = cell_ids.index(_cur_sel) if _cur_sel in cell_ids else 0
         selected = st.selectbox(
             "Select cell",
             options=cell_ids,
-            index=0,
+            index=_sel_idx,
             key="selected_cell",
             label_visibility="collapsed",
         )
+
+        # Prev / Next quick navigation
+        _nav_prev, _nav_next = st.columns(2)
+        with _nav_prev:
+            if st.button("← Prev", key="cell_prev", use_container_width=True,
+                         disabled=(cell_ids.index(selected) == 0)):
+                st.session_state["selected_cell"] = cell_ids[cell_ids.index(selected) - 1]
+                st.rerun()
+        with _nav_next:
+            if st.button("Next →", key="cell_next", use_container_width=True,
+                         disabled=(cell_ids.index(selected) == len(cell_ids) - 1)):
+                st.session_state["selected_cell"] = cell_ids[cell_ids.index(selected) + 1]
+                st.rerun()
 
         # ── Cell annotation — varies by active mode ──
         if mode == "uploaded":
@@ -510,11 +554,39 @@ def friendly(name: str) -> str:
     return FEATURE_LABELS.get(name, name.replace("_", " ").title())
 
 
+def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 32) -> str:
+    """Inline SVG mini-chart of recent SOH trend (last 50 cycles)."""
+    vals = soh_series.dropna().tail(50).tolist()
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    span = hi - lo if hi > lo else 1.0
+    pad = 2
+    w, h = width - pad * 2, height - pad * 2
+    pts = []
+    for i, v in enumerate(vals):
+        x = pad + i / (len(vals) - 1) * w
+        y = pad + (1 - (v - lo) / span) * h
+        pts.append(f"{x:.1f},{y:.1f}")
+    polyline = " ".join(pts)
+    # Colour: green if last >= first, red if declining steeply
+    delta = vals[-1] - vals[0]
+    stroke = "#68d391" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle">'
+        f'<polyline points="{polyline}" fill="none" stroke="{stroke}" stroke-width="1.5" '
+        f'stroke-linecap="round" stroke-linejoin="round"/>'
+        f'</svg>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page: Overview
 # ---------------------------------------------------------------------------
 
-def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable: bool = True):
+def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
+                  rul_reliable: bool = True, bundle: dict | None = None):
     st.markdown("# Overview")
 
     latest         = df.iloc[-1]
@@ -524,6 +596,16 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
     total_fade     = latest["capacity_fade_ah"]
     confidence     = latest["confidence_tag"]
     status_label, status_colour = soh_status(current_soh)
+
+    # Quantile interval (populated by predict() for calibrated cells)
+    rul_q10 = float(latest["rul_q10"]) if "rul_q10" in latest.index else None
+    rul_q90 = float(latest["rul_q90"]) if "rul_q90" in latest.index else None
+
+    # Per-cell fold R² — drives confidence inline reason
+    fold_r2 = None
+    if bundle is not None:
+        cell_fold = bundle["metrics"].get("lco_per_cell", {}).get(cell_id, {})
+        fold_r2   = cell_fold.get("rul_r2", None)
 
     # RUL display: suppress when model doesn't generalise (LCO R² < floor)
     # or when early-cycle features haven't stabilised yet.
@@ -538,6 +620,38 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
     )
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
 
+    # Confidence inline reason (two non-engineer templates per CTO spec)
+    if rul_calibrating and not rul_reliable:
+        if fold_r2 is not None:
+            conf_reason = (
+                "RUL not calibrated — model accuracy insufficient for this cell's "
+                f"degradation profile (held-out fold R²={fold_r2:.2f}, below 0.30 reliability floor)"
+            )
+        else:
+            conf_reason = (
+                "RUL not calibrated — model accuracy insufficient for this cell's degradation profile"
+            )
+    elif not rul_calibrating and fold_r2 is not None:
+        conf_reason = (
+            f"RUL predictions were tested against data this cell never trained on "
+            f"(leave-cell-out validation) — fold R²={fold_r2:.2f} (reliable above 0.30 floor)"
+        )
+    else:
+        conf_reason = None
+
+    # Time estimate: cycles/day from test_date if present, else assume 1 cycle/day
+    if "test_date" in df.columns and df["test_date"].notna().any():
+        dates = pd.to_datetime(df["test_date"].dropna())
+        span_days = max((dates.iloc[-1] - dates.iloc[0]).days, 1)
+        cycles_per_day = len(df) / span_days
+        rate_note = f"estimated at {cycles_per_day:.1f} cycle/day from data"
+    else:
+        cycles_per_day = 1.0
+        rate_note = "estimated at 1 cycle/day assumption"
+    months_remaining = None
+    if not rul_calibrating and current_rul is not None and cycles_per_day > 0:
+        months_remaining = current_rul / cycles_per_day / 30.44
+
     is_nasa = cell_id in NASA_CELL_IDS
     if is_nasa:
         source_tag = "NASA real · 24°C · 2A discharge"
@@ -546,6 +660,15 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
         sf = _stress_factor(p.get("temp_mean",25), p.get("c_rate",1.0), p.get("dod",1.0))
         source_tag = f"Synthetic · Stress {sf:.2f}x baseline"
 
+    sparkline_svg = _soh_sparkline_svg(df["soh_pct"])
+    interval_html = ""
+    if not rul_calibrating and rul_q10 is not None and rul_q90 is not None and rul_q90 > rul_q10:
+        interval_html = (
+            f"<div style='font-size:11px;color:#718096;margin-top:4px'>"
+            f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
+            f"</div>"
+        )
+
     st.markdown(
         f"""
         <div class="hero-card">
@@ -553,14 +676,25 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
             <div class="hero-value {status_colour}">{status_label}</div>
             <div class="hero-sub">
                 SOH: <strong style="color:#e2e8f0">{current_soh:.1f}%</strong>
+                &nbsp;{sparkline_svg}&nbsp;
                 &nbsp;·&nbsp; {rul_hero}
                 &nbsp;·&nbsp; {source_tag}
                 &nbsp;·&nbsp; {conf_html}
             </div>
+            {interval_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    if conf_reason:
+        conf_c = "#fc8181" if (rul_calibrating and not rul_reliable) else "#4a5568"
+        st.markdown(
+            f"<div style='font-size:12px;color:{conf_c};margin:-8px 0 12px;"
+            f"padding:6px 12px;background:#1a202c;border-radius:6px;"
+            f"border-left:3px solid {conf_c}'>{conf_reason}</div>",
+            unsafe_allow_html=True,
+        )
 
     is_nasa_src = cell_id in NASA_CELL_IDS
     src_val = "NASA" if is_nasa_src else f"{sf:.2f}x"
@@ -583,6 +717,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str, rul_reliable
                 <div class="metric-chip-label">Est. Remaining Life</div>
                 <div class="metric-chip-value">{rul_display}</div>
                 <div class="metric-chip-sub">{rul_sub}</div>
+                {f"<div class='metric-chip-sub' style='margin-top:2px;color:#4a5568'>~{months_remaining:.0f} months · {rate_note}</div>" if months_remaining is not None else ""}
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Capacity Lost</div>
@@ -711,6 +846,25 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         )
         st.plotly_chart(fig2, use_container_width=True)
 
+    # ── Fade acceleration detection (compute before fig3 so we can annotate it) ──
+    # Heuristic: first cycle after cycle 30 where the 30-cycle rolling fade rate
+    # exceeds 2× the mean rate from cycles 1–30. Not triggered in first 30 cycles
+    # because early fade rates are noisy while rolling features stabilise.
+    INFLECTION_MIN_CYCLE = 30
+    ACCEL_FACTOR         = 2.0
+    first_accel: int | None = None
+
+    if "fade_rate_30cy" in df.columns:
+        df_baseline = df[df["cycle_number"] <= INFLECTION_MIN_CYCLE]
+        df_post30   = df[df["cycle_number"] >  INFLECTION_MIN_CYCLE]
+        if len(df_baseline) > 0:
+            baseline_rate = df_baseline["fade_rate_30cy"].mean()
+            if baseline_rate > 0 and not pd.isna(baseline_rate):
+                accel_threshold = baseline_rate * ACCEL_FACTOR
+                accel_rows = df_post30[df_post30["fade_rate_30cy"] > accel_threshold]
+                if len(accel_rows) > 0:
+                    first_accel = int(accel_rows["cycle_number"].iloc[0])
+
     st.markdown(
         "<div class='section-header'>Fade Rate — Is degradation accelerating?</div>",
         unsafe_allow_html=True,
@@ -728,14 +882,33 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         x=df["cycle_number"], y=df["fade_rate_50cy"] * 1000,
         line=dict(color="#68d391", width=2), name="50-cycle window",
     ))
+    if first_accel is not None:
+        fig3.add_vline(
+            x=first_accel,
+            line=dict(color="#fc8181", width=1.5, dash="dash"),
+            annotation_text=f"Fade acceleration threshold: {ACCEL_FACTOR:.0f}× {INFLECTION_MIN_CYCLE}-cycle baseline (heuristic)",
+            annotation_position="top right",
+            annotation=dict(font=dict(size=10, color="#fc8181"), bgcolor="rgba(26,32,44,0.85)"),
+        )
     fig3.update_layout(
         **base_layout(
-            height=260, legend=LEGEND_H,
+            height=280, legend=LEGEND_H,
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             yaxis=dict(title="mAh lost per cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
         ),
     )
     st.plotly_chart(fig3, use_container_width=True)
+
+    if first_accel is not None:
+        st.markdown(
+            f"<div style='background:rgba(252,129,129,0.08);border:1px solid rgba(252,129,129,0.3);"
+            f"border-radius:8px;padding:12px 16px;font-size:12px;color:#fed7d7;margin-top:-8px'>"
+            f"⚠ <strong>Fade acceleration detected at cycle {first_accel}</strong> — "
+            f"30-cycle rolling rate exceeded {ACCEL_FACTOR:.0f}× the cycle-1–{INFLECTION_MIN_CYCLE} baseline. "
+            f"Schedule inspection or monitor closely."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     early = df[df["confidence_tag"] == "Calibrating"]
     if len(early) > 0:
@@ -795,85 +968,63 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns([3, 2])
-
-    with col1:
-        st.markdown("<div class='section-header'>Feature Importance — SOH Model</div>", unsafe_allow_html=True)
-
-        fi_df = feature_importance_df(bundle, model="soh")
-        fi_df["label"] = fi_df["feature"].map(friendly)
-
-        label_threshold = fi_df["importance_pct"].max() * 0.03
-        labels = fi_df["importance_pct"].apply(
-            lambda v: f"{v:.1f}%" if v >= label_threshold else ""
+    def _importance_bar(fi: "pd.DataFrame", color_hi: str, height: int = 340) -> "go.Figure":
+        labels = fi["importance_pct"].apply(
+            lambda v: f"{v:.1f}%" if v >= fi["importance_pct"].max() * 0.03 else ""
         )
-
         fig = go.Figure(go.Bar(
-            x=fi_df["importance_pct"],
-            y=fi_df["label"],
+            x=fi["importance_pct"], y=fi["label"],
             orientation="h",
             marker=dict(
-                color=fi_df["importance_pct"],
-                colorscale=[[0, "#1e2a38"], [0.3, "#2d4a6a"], [1, "#63b3ed"]],
+                color=fi["importance_pct"],
+                colorscale=[[0, "#1e2a38"], [0.4, "#1e2a38"], [1, color_hi]],
                 showscale=False,
             ),
             text=labels,
-            textposition="inside",
-            insidetextanchor="end",
-            textfont=dict(color="#ffffff", size=12),
-            customdata=fi_df["importance_pct"],
+            textposition="inside", insidetextanchor="end",
+            textfont=dict(color="#ffffff", size=11),
+            customdata=fi["importance_pct"],
             hovertemplate="<b>%{y}</b><br>Importance: %{customdata:.2f}%<extra></extra>",
         ))
         fig.update_layout(
-            height=360,
+            height=height,
             **base_layout(
-                xaxis=dict(
-                    title="% contribution to prediction",
-                    gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
-                    range=[0, fi_df["importance_pct"].max() * 1.1],
-                ),
+                xaxis=dict(title="% importance", gridcolor="#232d3b", linecolor="#2d3748",
+                           zeroline=False, range=[0, fi["importance_pct"].max() * 1.12]),
                 yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
             ),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        return fig
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("<div class='section-header'>Feature Importance — SOH Model</div>", unsafe_allow_html=True)
+        fi_soh = feature_importance_df(bundle, model="soh")
+        fi_soh["label"] = fi_soh["feature"].map(friendly)
+        st.plotly_chart(_importance_bar(fi_soh, "#63b3ed"), use_container_width=True)
 
     with col2:
-        st.markdown("<div class='section-header'>Top 5 Drivers — SOH</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-header'>Feature Importance — RUL Model</div>", unsafe_allow_html=True)
+        fi_rul = feature_importance_df(bundle, model="rul")
+        fi_rul["label"] = fi_rul["feature"].map(friendly)
+        st.plotly_chart(_importance_bar(fi_rul, "#68d391"), use_container_width=True)
 
-        RANK_COLOURS = ["#63b3ed", "#68d391", "#f6e05e", "#f6ad55", "#fc8181"]
-        for i, d in enumerate(drivers):
-            pct      = d["importance_pct"]
-            bar_pct  = int(pct / drivers[0]["importance_pct"] * 100)
-            colour   = RANK_COLOURS[i]
-            st.markdown(
-                f"""
-                <div style="margin-bottom:18px;font-family:sans-serif">
-                    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-                        <p style="margin:0;font-size:13px;font-weight:600;color:{colour}">
-                            {friendly(d['feature'])}
-                        </p>
-                        <p style="margin:0;font-size:13px;font-weight:700;color:{colour}">
-                            {pct:.1f}%
-                        </p>
-                    </div>
-                    <div style="background:#1e2a38;border-radius:4px;height:5px;overflow:hidden">
-                        <div style="background:{colour};width:{bar_pct}%;height:5px;border-radius:4px"></div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div class='section-header'>Top 5 Drivers — RUL</div>", unsafe_allow_html=True)
-        fi_rul = feature_importance_df(bundle, model="rul").head(5)
-        for _, row in fi_rul.iterrows():
-            st.markdown(
-                f"<div style='font-size:12px;margin-bottom:6px'>"
-                f"<span style='color:#a0aec0'>{friendly(row['feature'])}</span>"
-                f"<span style='color:#4a5568;float:right'>{row['importance_pct']:.1f}%</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+    # Explain the profile difference
+    top_soh_feat = fi_soh.iloc[0]["label"]
+    top_rul_feat = fi_rul.iloc[0]["label"]
+    if top_soh_feat != top_rul_feat:
+        st.markdown(
+            f"<div style='font-size:12px;color:#718096;background:#1a202c;border-left:3px solid #2d3748;"
+            f"padding:10px 14px;border-radius:4px;margin-bottom:12px'>"
+            f"<strong style='color:#a0aec0'>Why the profiles differ:</strong> "
+            f"{top_soh_feat} dominates SOH prediction because it tracks cumulative degradation. "
+            f"{top_rul_feat} dominates RUL prediction because it determines how fast the remaining "
+            f"life gets consumed — a different question. This divergence is the honest explanation "
+            f"for why RUL is harder to calibrate than SOH: it requires the model to extrapolate "
+            f"future rate, not just describe current state.</div>",
+            unsafe_allow_html=True,
+        )
 
     # ── Model metrics ──
     st.markdown("<div class='section-header'>Model Performance — Multi-cell Training</div>", unsafe_allow_html=True)
@@ -975,21 +1126,25 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     st.markdown("# Fleet")
 
     # ── Build fleet summary row per cell ──
+    # Bundle and per-cell reliability lookup is source-aware; uploaded cells use
+    # the "upload" bundle, NASA cells the "nasa" bundle, synthetic the "synth" bundle.
     rows = []
-    # Per-cell reliability lookup — must check the individual fold R², not the group average.
-    synth_per_cell = bundles["synth"]["metrics"].get("per_cell_rul_reliable", {})
-    nasa_per_cell  = (bundles["nasa"]["metrics"].get("per_cell_rul_reliable", {})
-                      if bundles["nasa"] else {})
+    _synth_ids = set(CELL_STRESS_PROFILES.keys())
+
+    def _bundle_for_cell(cid: str) -> dict | None:
+        if cid in NASA_CELL_IDS:
+            return bundles.get("nasa")
+        if cid in _synth_ids:
+            return bundles.get("synth")
+        return bundles.get("upload")      # uploaded cell
 
     for cell_id, df in featured_dfs.items():
+        bndl      = _bundle_for_cell(cell_id)
+        if bndl is None:
+            continue
+        per_cell  = bndl["metrics"].get("per_cell_rul_reliable", {})
+        rul_ok    = per_cell.get(cell_id, bndl["metrics"].get("rul_reliable", False))
         is_nasa   = cell_id in NASA_CELL_IDS
-        per_cell  = nasa_per_cell if is_nasa else synth_per_cell
-        # Fall back to dataset-level flag only when this cell had no LCO fold (shouldn't happen).
-        rul_ok    = per_cell.get(
-            cell_id,
-            bundles["nasa"]["metrics"].get("rul_reliable", False) if is_nasa
-            else bundles["synth"]["metrics"].get("rul_reliable", False),
-        )
         latest    = df.iloc[-1]
         soh       = latest["soh_pct"]
         cycle     = int(latest["cycle_number"])
@@ -999,10 +1154,23 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         eol_at    = int(eol_row["cycle_number"].iloc[0]) if len(eol_row) else None
         cycles_to_eol = max(0, eol_at - cycle) if eol_at else None
 
+        is_upload = not is_nasa and cell_id not in _synth_ids
         status_label, _ = soh_status(soh)
+
+        # Degradation trend: compare current 30-cy fade rate vs 30 cycles earlier
+        trend = "Stable"
+        if "fade_rate_30cy" in df.columns and len(df) >= 31:
+            fade_now  = df["fade_rate_30cy"].iloc[-1]
+            fade_prev = df["fade_rate_30cy"].iloc[-31]
+            delta_pct = (fade_now - fade_prev) / (abs(fade_prev) + 1e-9) * 100
+            if delta_pct > 20:
+                trend = "Accelerating"
+            elif delta_pct < -20:
+                trend = "Decelerating"
+
         rows.append({
             "cell_id":      cell_id,
-            "source":       "NASA" if is_nasa else "Synthetic",
+            "source":       "NASA" if is_nasa else ("Uploaded" if is_upload else "Synthetic"),
             "soh":          soh,
             "status":       status_label,
             "cycle":        cycle,
@@ -1011,6 +1179,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             "rul_ok":       rul_ok,
             "eol_at":       eol_at,
             "cycles_to_eol": cycles_to_eol,
+            "trend":        trend,
         })
 
     # Sort: worst SOH first (most urgent)
@@ -1022,6 +1191,14 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     n_healthy   = sum(1 for r in rows if r["status"] == "Healthy")
     worst_soh   = rows[0]["soh"]
     best_soh    = rows[-1]["soh"]
+    n_nasa      = sum(1 for r in rows if r["source"] == "NASA")
+    n_synth     = sum(1 for r in rows if r["source"] == "Synthetic")
+    n_upload    = sum(1 for r in rows if r["source"] == "Uploaded")
+    src_parts   = []
+    if n_synth:  src_parts.append(f"{n_synth} synthetic")
+    if n_nasa:   src_parts.append(f"{n_nasa} NASA real")
+    if n_upload: src_parts.append(f"{n_upload} uploaded")
+    src_sub = " · ".join(src_parts) or "—"
 
     st.markdown(
         f"""
@@ -1029,7 +1206,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             <div class="metric-chip">
                 <div class="metric-chip-label">Total Cells</div>
                 <div class="metric-chip-value">{len(rows)}</div>
-                <div class="metric-chip-sub">8 synthetic · {sum(1 for r in rows if r['source']=='NASA')} NASA real</div>
+                <div class="metric-chip-sub">{src_sub}</div>
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">End of Life</div>
@@ -1063,6 +1240,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     SOURCE_STYLE  = {
         "NASA":      "background:rgba(104,211,145,0.12);color:#68d391;border:1px solid rgba(104,211,145,0.25)",
         "Synthetic": "background:rgba(74,85,104,0.3);color:#718096;border:1px solid #2d3748",
+        "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }
 
     table_rows_html = ""
@@ -1081,6 +1259,13 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             if r["eol_at"] and r["cycles_to_eol"] == 0
             else (f"{r['cycles_to_eol']} cy" if r["cycles_to_eol"] is not None else "—")
         )
+
+        TREND_STYLE = {
+            "Accelerating": ("⚡", "#fc8181"),
+            "Stable":       ("→",  "#a0aec0"),
+            "Decelerating": ("↘",  "#68d391"),
+        }
+        trend_icon, trend_colour = TREND_STYLE.get(r["trend"], ("→", "#a0aec0"))
 
         table_rows_html += f"""
         <tr style="border-bottom:1px solid #1a202c">
@@ -1105,6 +1290,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{r['fade_30']:.2f} mSOH/cy</td>
             <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{rul_cell}</td>
             <td style="padding:14px 12px;font-size:13px">{eol_cell}</td>
+            <td style="padding:14px 12px;font-size:12px;color:{trend_colour}">{trend_icon} {r['trend']}</td>
         </tr>
         """
 
@@ -1129,6 +1315,8 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL</th>
                     <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Trend</th>
                 </tr>
             </thead>
             <tbody>
@@ -1166,6 +1354,110 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         ),
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── Risk matrix: SOH vs RUL ──
+    st.markdown("<div class='section-header'>Risk Matrix — SOH vs Remaining Life</div>", unsafe_allow_html=True)
+
+    cal_rows   = [r for r in rows if r["rul_ok"] and r["rul"] is not None]
+    uncal_rows = [r for r in rows if not (r["rul_ok"] and r["rul"] is not None)]
+
+    if cal_rows:
+        import numpy as _np
+        rul_vals    = [r["rul"] for r in cal_rows]
+        rul_med     = float(_np.median(rul_vals))
+        soh_thresh  = 80.0   # EOL threshold (consistent with rest of platform)
+
+        def _quadrant(soh_v, rul_v):
+            h_soh = soh_v >= soh_thresh
+            h_rul = rul_v >= rul_med
+            if h_soh and h_rul:     return "Continue", "#68d391"
+            if h_soh and not h_rul: return "Watch",    "#d69e2e"
+            if not h_soh and h_rul: return "Act",      "#f6ad55"
+            return "Critical", "#fc8181"
+
+        fig_risk = go.Figure()
+
+        # Calibrated cells — colored by quadrant
+        fig_risk.add_trace(go.Scatter(
+            x=[r["soh"] for r in cal_rows],
+            y=[r["rul"] for r in cal_rows],
+            mode="markers+text",
+            text=[r["cell_id"] for r in cal_rows],
+            textposition="top center",
+            textfont=dict(size=11, color="#a0aec0"),
+            marker=dict(
+                size=16,
+                color=[_quadrant(r["soh"], r["rul"])[1] for r in cal_rows],
+                line=dict(color="#1a202c", width=1),
+            ),
+            customdata=[[r["cell_id"], r["soh"], r["rul"], _quadrant(r["soh"], r["rul"])[0]]
+                        for r in cal_rows],
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "SOH: %{customdata[1]:.1f}%<br>"
+                "RUL: %{customdata[2]:.0f} cycles<br>"
+                "Quadrant: %{customdata[3]}<extra></extra>"
+            ),
+            name="Calibrated RUL",
+            showlegend=False,
+        ))
+
+        # Uncalibrated cells — plotted at y=0 with X markers
+        if uncal_rows:
+            fig_risk.add_trace(go.Scatter(
+                x=[r["soh"] for r in uncal_rows],
+                y=[0] * len(uncal_rows),
+                mode="markers+text",
+                text=[r["cell_id"] for r in uncal_rows],
+                textposition="top center",
+                textfont=dict(size=11, color="#4a5568"),
+                marker=dict(size=14, color="#4a5568", symbol="x", line=dict(color="#4a5568", width=2)),
+                customdata=[[r["cell_id"], r["soh"]] for r in uncal_rows],
+                hovertemplate="<b>%{customdata[0]}</b><br>SOH: %{customdata[1]:.1f}%<br>RUL: not calibrated<extra></extra>",
+                name="RUL not calibrated",
+                showlegend=bool(uncal_rows),
+            ))
+
+        # Quadrant dividers
+        fig_risk.add_vline(x=soh_thresh, line_dash="dash", line_color="#fc8181", line_width=1)
+        fig_risk.add_hline(y=rul_med,    line_dash="dash", line_color="#4a5568",  line_width=1)
+
+        # Quadrant labels
+        x_lo, x_hi = 55, max(r["soh"] for r in cal_rows) + 5
+        y_hi        = max(rul_vals) * 1.05
+        for (sx, sy, label, c) in [
+            (soh_thresh - 1, rul_med + y_hi * 0.02, "ACT",      "#f6ad55"),
+            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#68d391"),
+            (soh_thresh - 1, y_hi * 0.04,           "CRITICAL", "#fc8181"),
+            (soh_thresh + 1, y_hi * 0.04,           "WATCH",    "#d69e2e"),
+        ]:
+            fig_risk.add_annotation(
+                x=sx, y=sy, text=label, showarrow=False,
+                font=dict(size=9, color=c, family="monospace"),
+                xanchor="right" if sx < soh_thresh else "left",
+            )
+
+        fig_risk.update_layout(
+            height=320,
+            **base_layout(
+                xaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+                           zeroline=False, range=[x_lo, x_hi]),
+                yaxis=dict(title="Est. RUL (cycles)", gridcolor="#232d3b", linecolor="#2d3748",
+                           zeroline=False, range=[-y_hi * 0.08, y_hi]),
+            ),
+        )
+        fig_risk.update_layout(legend=dict(font=dict(size=11, color="#718096")))
+        st.plotly_chart(fig_risk, use_container_width=True)
+
+        if uncal_rows:
+            st.markdown(
+                f"<div style='font-size:11px;color:#4a5568;margin-top:-8px'>"
+                f"✕ = RUL not calibrated (LCO fold R² below 0.30) — plotted at y=0. "
+                f"Quadrant split at SOH 80% and median RUL of calibrated cells ({rul_med:.0f} cy).</div>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
 
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
@@ -1218,6 +1510,71 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                 """,
                 unsafe_allow_html=True,
             )
+
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ── Virtual Pack Builder ──
+    st.markdown("<div class='section-header'>Virtual Pack Builder</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6'>"
+        "Select cells to model as a series/parallel pack. Pack health is constrained by "
+        "the weakest cell — the cell with lowest SOH determines effective pack capacity, "
+        "and the cell with fewest remaining cycles determines when the pack needs service."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    all_cell_ids = [r["cell_id"] for r in rows]
+    pack_selection = st.multiselect(
+        "Select cells for virtual pack",
+        options=all_cell_ids,
+        default=all_cell_ids[:min(4, len(all_cell_ids))],
+        key="fleet_pack_cells",
+        label_visibility="collapsed",
+    )
+    if pack_selection:
+        pack_rows = [r for r in rows if r["cell_id"] in pack_selection]
+        weakest = min(pack_rows, key=lambda r: r["soh"])
+        pack_soh = weakest["soh"]
+        pack_rul_rows = [r for r in pack_rows if r["rul"] is not None and r["rul_ok"]]
+        pack_rul = min(r["rul"] for r in pack_rul_rows) if pack_rul_rows else None
+        pack_status_label, pack_status_c = soh_status(pack_soh)
+        rul_display = f"{pack_rul:.0f} cy" if pack_rul is not None else "—"
+        rul_note = "" if pack_rul_rows else "RUL not calibrated for any selected cell"
+        n_uncal = len(pack_rows) - len(pack_rul_rows)
+
+        st.markdown(
+            f"""
+            <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;
+                        padding:18px 22px;margin-bottom:12px">
+                <div style="font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;
+                            letter-spacing:0.07em;margin-bottom:10px">
+                    Virtual Pack · {len(pack_selection)} cells selected</div>
+                <div style="display:flex;gap:32px;flex-wrap:wrap">
+                    <div>
+                        <div style="font-size:11px;color:#4a5568">Pack SOH (weakest cell)</div>
+                        <div style="font-size:28px;font-weight:700;color:{STATUS_COLOUR[pack_status_label]}">{pack_soh:.1f}%</div>
+                        <div style="font-size:11px;color:#4a5568">{weakest['cell_id']} · {pack_status_label}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px;color:#4a5568">Pack RUL (shortest)</div>
+                        <div style="font-size:28px;font-weight:700;color:#a0aec0">{rul_display}</div>
+                        <div style="font-size:11px;color:#4a5568">{rul_note if rul_note else (f'{n_uncal} cell(s) excluded from RUL' if n_uncal else 'all cells calibrated')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px;color:#4a5568">Cells in pack</div>
+                        <div style="font-size:28px;font-weight:700;color:#e2e8f0">{len(pack_selection)}</div>
+                        <div style="font-size:11px;color:#4a5568">{', '.join(pack_selection)}</div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='font-size:13px;color:#4a5568;padding:12px'>Select at least one cell above to build a virtual pack.</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
 
@@ -2332,6 +2689,26 @@ def page_recommendations(
         )
         best = result["best_app"]
         sl_badge = BADGE_ESTIMATE
+
+        # Cycle timeline — gated on rul_reliable, not rul_pred, because this
+        # is a forward projection using fade rate; the same reliability standard
+        # that gates the RUL number must gate any timeline derived from it.
+        if rul_reliable and fade_30 > 0:
+            cycles_to_eol = (soh - SOH_SECONDLIFE_FLOOR) / (fade_30 * 1000 / 100)
+            sl_timeline_html = (
+                f"<div style='font-size:13px;color:#a0aec0;margin-top:10px'>"
+                f"Estimated ~<strong style='color:#e2e8f0'>{cycles_to_eol:.0f} cycles</strong> "
+                f"remaining before reaching the {SOH_SECONDLIFE_FLOOR:.0f}% second-life floor "
+                f"at the current fade rate."
+                f"</div>"
+            )
+        else:
+            sl_timeline_html = (
+                f"<div style='font-size:12px;color:#718096;margin-top:10px'>"
+                f"Timeline unavailable — RUL not calibrated for this cell."
+                f"</div>"
+            )
+
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
             f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>"
@@ -2343,6 +2720,7 @@ def page_recommendations(
             f"<div style='font-size:13px;color:#a0aec0;margin-top:6px;line-height:1.7'>"
             f"{' '.join(best['reasons'])}"
             f"</div>"
+            f"{sl_timeline_html}"
             f"<div style='display:flex;gap:32px;margin-top:16px'>"
             f"<div><div style='font-size:11px;color:#4a5568'>Second-life net value</div>"
             f"<div style='font-size:22px;font-weight:700;color:#63b3ed'>${fc['sl_net']:.2f}</div>"
@@ -2367,10 +2745,27 @@ def page_recommendations(
             if result["fit_driven"]
             else f"SOH {soh:.1f}% is below the {SOH_SECONDLIFE_FLOOR:.0f}% second-life floor."
         )
+
+        # Cycle timeline (RUL gate)
+        if rul_pred is not None:
+            rec_timeline_html = (
+                f"<div style='font-size:13px;color:#a0aec0;margin-top:10px'>"
+                f"Est. <strong style='color:#e2e8f0'>{rul_pred:.0f} cycles</strong> remaining "
+                f"before reaching 80% EOL threshold — proceed with recycling pathway now."
+                f"</div>"
+            )
+        else:
+            rec_timeline_html = (
+                f"<div style='font-size:12px;color:#718096;margin-top:10px'>"
+                f"Timeline unavailable — RUL not calibrated for this cell."
+                f"</div>"
+            )
+
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
             f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Estimated recovery value</div>"
             f"<div style='font-size:13px;color:#a0aec0;margin-top:8px;line-height:1.7'>{reason}</div>"
+            f"{rec_timeline_html}"
             f"<div style='display:flex;gap:32px;margin-top:16px'>"
             f"<div><div style='font-size:11px;color:#4a5568'>Cell recycling value</div>"
             f"<div style='font-size:22px;font-weight:700;color:#f6ad55'>${rec_val:.2f}</div>"
@@ -2634,6 +3029,68 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2b: Per-cell carbon context (qualitative — no percentages)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Degradation Rate & Carbon — What the Trend Means")
+
+    fade_30 = float(latest.get("fade_rate_30cy", float("nan")))
+    if not (fade_30 != fade_30):  # not NaN
+        if fade_30 * 1000 > 5.0:
+            fade_signal = "accelerating"
+            fade_implication = (
+                "A fast fade rate shortens the useful life phase. "
+                "Because manufacturing CO₂ is fixed at cell production and amortised across the "
+                "full operating lifetime, a shorter useful life leaves more of that carbon "
+                "unrecovered per unit of energy delivered. "
+                "A cell degrading quickly reaches the recycling decision point sooner — "
+                "meaning less time in which the reuse CO₂ saving accumulates."
+            )
+            fade_colour = "#fc8181"
+        elif fade_30 * 1000 > 2.0:
+            fade_signal = "moderate"
+            fade_implication = (
+                "A moderate fade rate means the manufacturing carbon is being amortised "
+                "at a reasonable pace across the useful life. "
+                "Extending service life through second-life deployment would increase that "
+                "amortisation further, reducing the manufacturing carbon burden per kWh delivered."
+            )
+            fade_colour = "#f6e05e"
+        else:
+            fade_signal = "slow"
+            fade_implication = (
+                "A slow, stable fade rate maximises the amortisation of manufacturing CO₂ "
+                "across a long useful life. "
+                "This cell is recovering its embodied carbon effectively: a longer service "
+                "life means the fixed manufacturing cost is spread across more kWh delivered."
+            )
+            fade_colour = "#68d391"
+
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:18px 22px;margin-bottom:4px'>"
+            f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            f"letter-spacing:0.08em;margin-bottom:8px'>Fade rate impact on carbon amortisation</div>"
+            f"<div style='display:flex;align-items:baseline;gap:12px;margin-bottom:12px'>"
+            f"<div style='font-size:22px;font-weight:700;color:{fade_colour}'>"
+            f"{fade_30*1000:.2f} mAh/cy</div>"
+            f"<div style='font-size:13px;color:{fade_colour}99'>{fade_signal} degradation</div>"
+            f"</div>"
+            f"<div style='font-size:13px;color:#a0aec0;line-height:1.8'>"
+            f"{fade_implication}"
+            f"</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:12px'>"
+            f"This is qualitative direction only — the carbon figures above are based on "
+            f"literature estimates, not measurements from this cell. No percentage saving is "
+            f"stated here because the absolute manufacturing CO₂ figure (above) already carries "
+            f"wide uncertainty. "
+            f"Tier thresholds (slow &lt;2 mAh/cy · moderate 2–5 mAh/cy · accelerating &gt;5 mAh/cy) "
+            f"are illustrative — adjust for your cell chemistry."
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 3: Critical materials tracker
@@ -2977,13 +3434,22 @@ def page_settings(featured_dfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
-    preview_floor = st.slider(
-        "Preview threshold",
-        min_value=0.0, max_value=0.9,
-        value=float(RUL_RELIABLE_FLOOR), step=0.05,
-        key="settings_rul_floor_preview",
-        help=f"Active floor in code: {RUL_RELIABLE_FLOOR}. Drag to see which cells would be affected at other thresholds.",
-    )
+    slider_col, reset_col = st.columns([5, 1])
+    with slider_col:
+        preview_floor = st.slider(
+            "Preview threshold",
+            min_value=0.0, max_value=0.5,
+            value=float(st.session_state.get("settings_rul_floor_preview", RUL_RELIABLE_FLOOR)),
+            step=0.05,
+            key="settings_rul_floor_preview",
+            help=f"Active floor in code: {RUL_RELIABLE_FLOOR}. Drag to see which cells would flip at different thresholds.",
+        )
+    with reset_col:
+        st.markdown("<div style='padding-top:26px'>", unsafe_allow_html=True)
+        if st.button("Reset", key="settings_rul_reset", help="Reset to default (0.30)"):
+            st.session_state["settings_rul_floor_preview"] = float(RUL_RELIABLE_FLOOR)
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     preview_rows = []
     for source_key, bundle in bundles.items():
@@ -3005,6 +3471,18 @@ def page_settings(featured_dfs: dict, bundles: dict):
             unsafe_allow_html=True,
         )
 
+    # Example callout: at R²≥0.25 the B0018 NASA cell would cross the floor
+    if 0.20 <= preview_floor <= 0.29:
+        st.markdown(
+            "<div style='font-size:12px;color:#d69e2e;margin:4px 0 8px;"
+            "padding:6px 12px;background:rgba(214,158,46,0.08);border-radius:6px;"
+            "border-left:3px solid #d69e2e'>"
+            f"At R²≥{preview_floor:.2f}: B0018 becomes reliable — fold R²=0.22, "
+            f"currently withheld (below the 0.30 active floor)."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
     for cell_id, rul_r2, active_ok, preview_ok, changed in preview_rows:
         def _status(ok): return ("<span style='color:#2f855a'>✓ Shown</span>" if ok
                                  else "<span style='color:#c05621'>✗ Withheld</span>")
@@ -3019,6 +3497,40 @@ def page_settings(featured_dfs: dict, bundles: dict):
         row[2].markdown(f"<div style='padding:4px 0'>{_status(active_ok)}</div>", unsafe_allow_html=True)
         row[3].markdown(f"<div style='padding:4px 0'>{_status(preview_ok)}</div>", unsafe_allow_html=True)
         row[4].markdown(f"<div style='padding:4px 0'>{change_html}</div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3b: Model cache
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Model Cache")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "Training takes 20–60 s on first run. The trained model bundles are stored on disk "
+        "in <code style='color:#63b3ed'>.cache/bundles/</code> and reloaded instantly on "
+        "subsequent runs. The cache is automatically invalidated when cycle counts change "
+        "(new data imported). Use the button below to force a full retrain on next app load.</div>",
+        unsafe_allow_html=True,
+    )
+
+    from bundle_cache import clear_cache as _clear_bundle_cache, CACHE_DIR as _CACHE_DIR
+    import pathlib as _pathlib
+    cache_files = list(_CACHE_DIR.glob("*.joblib")) if _CACHE_DIR.exists() else []
+    cache_size_mb = sum(f.stat().st_size for f in cache_files) / (1024 * 1024) if cache_files else 0
+    cache_info = f"{len(cache_files)} bundle(s) · {cache_size_mb:.1f} MB" if cache_files else "No cache on disk — will train fresh on next load"
+
+    st.markdown(
+        f"<div style='font-size:13px;color:#a0aec0;margin-bottom:12px'>"
+        f"Current cache: <strong style='color:#e2e8f0'>{cache_info}</strong></div>",
+        unsafe_allow_html=True,
+    )
+
+    _cache_col1, _cache_col2 = st.columns([2, 3])
+    with _cache_col1:
+        if st.button("Clear model cache", key="settings_clear_cache",
+                     help="Deletes all cached .joblib bundles. Models will retrain on next app load."):
+            _clear_bundle_cache()
+            st.success("Model cache cleared — models will retrain on next app load.")
+            st.rerun()
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 4: About
@@ -3249,7 +3761,6 @@ def page_import():
     import io
     import os
     import plotly.graph_objects as go
-    from import_validator import validate_upload
 
     def _section(title: str):
         st.markdown(section_header_html(title), unsafe_allow_html=True)
@@ -3322,6 +3833,35 @@ def page_import():
     except Exception as exc:
         st.error(f"Could not parse CSV: {exc}")
         return
+
+    # ── Fuzzy column matching ─────────────────────────────────────────────
+    from import_validator import validate_upload, fuzzy_match_columns, apply_column_mapping
+
+    col_mapping = fuzzy_match_columns(df_raw)
+    renames = {orig: canon for orig, canon in col_mapping.items() if orig != canon}
+    if renames:
+        rename_items = "".join(
+            f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
+            f"<span style='color:#718096'>{orig}</span>"
+            f"<span style='color:#4a5568;padding:0 8px'>→</span>"
+            f"<span style='color:#68d391'>{canon}</span>"
+            f"</div>"
+            for orig, canon in sorted(renames.items())
+        )
+        st.markdown(
+            f"<div style='background:rgba(104,211,145,0.07);border:1px solid rgba(104,211,145,0.3);"
+            f"border-radius:10px;padding:14px 18px;margin:12px 0'>"
+            f"<div style='font-size:13px;font-weight:600;color:#68d391;margin-bottom:8px'>"
+            f"✓ Auto-matched {len(renames)} column{'s' if len(renames) != 1 else ''}</div>"
+            f"{rename_items}"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:10px'>"
+            f"Column names were automatically remapped to the pipeline's expected format. "
+            f"If a mapping looks wrong, rename the column in your CSV and re-upload."
+            f"</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        df_raw = apply_column_mapping(df_raw, col_mapping)
 
     result = validate_upload(df_raw)
     errors   = result["errors"]
@@ -3584,6 +4124,12 @@ def main():
         st.session_state["data_mode"] = "nasa"
         mode = "nasa"
 
+    # Guard: unknown mode value (can appear from stale browser session state after
+    # a server restart). Reset to the default rather than hitting the else branch.
+    if mode not in ("nasa", "synthetic", "uploaded"):
+        st.session_state["data_mode"] = "nasa"
+        mode = "nasa"
+
     if mode == "nasa":
         active_fdfs   = nasa_fdfs
         active_sc     = nasa_sc
@@ -3616,7 +4162,7 @@ def main():
     rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
 
     if page == "overview":
-        page_overview(df, split_cycle, selected, rul_reliable=rul_reliable)
+        page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
     elif page == "health":
         page_health(df, split_cycle, selected)
     elif page == "insights":

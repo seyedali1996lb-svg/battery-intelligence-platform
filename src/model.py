@@ -36,7 +36,17 @@ GBRT_PARAMS = dict(
     n_estimators=200,
     max_depth=4,
     learning_rate=0.05,
-    subsample=0.8,          # use 80% of data per tree — reduces overfitting
+    subsample=0.8,
+    random_state=42,
+)
+
+# Fewer trees for quantile models — they're trained twice (Q10 + Q90) and
+# quantile loss converges faster than squared loss.
+GBRT_QUANTILE_PARAMS = dict(
+    n_estimators=150,
+    max_depth=4,
+    learning_rate=0.05,
+    subsample=0.8,
     random_state=42,
 )
 
@@ -91,7 +101,7 @@ def train_models(
     soh_r2 = r2_score(y_soh_test, soh_pred_test)
     print(f"  SOH  MAE: {soh_mae:.3f}%  |  R2: {soh_r2:.4f}")
 
-    # --- RUL model ---
+    # --- RUL model (point estimate) ---
     print("Training RUL model...")
     rul_model = GradientBoostingRegressor(**GBRT_PARAMS)
     rul_model.fit(X_train_scaled, y_rul_train)
@@ -101,26 +111,52 @@ def train_models(
     rul_r2 = r2_score(y_rul_test, rul_pred_test)
     print(f"  RUL  MAE: {rul_mae:.1f} cycles  |  R2: {rul_r2:.4f}")
 
+    # --- RUL quantile models: 80% prediction interval (Q10 / Q90) ---
+    # Quantile loss trains the model to predict the α-th percentile rather
+    # than the mean. Q10+Q90 form an 80% interval — wide enough to be honest
+    # about uncertainty without being uselessly vague. These use fewer trees
+    # because quantile loss converges faster than squared error.
+    print("Training RUL interval models (Q10/Q90)...")
+    rul_q10_model = GradientBoostingRegressor(
+        loss="quantile", alpha=0.10, **GBRT_QUANTILE_PARAMS
+    )
+    rul_q90_model = GradientBoostingRegressor(
+        loss="quantile", alpha=0.90, **GBRT_QUANTILE_PARAMS
+    )
+    rul_q10_model.fit(X_train_scaled, y_rul_train)
+    rul_q90_model.fit(X_train_scaled, y_rul_train)
+    rul_q10_test = rul_q10_model.predict(X_test_scaled)
+    rul_q90_test = rul_q90_model.predict(X_test_scaled)
+    # Coverage: fraction of true values inside the interval
+    interval_coverage = float(np.mean(
+        (y_rul_test.values >= rul_q10_test) & (y_rul_test.values <= rul_q90_test)
+    ))
+    print(f"  RUL interval coverage (80% target): {interval_coverage*100:.1f}%")
+
     feature_names = list(X.columns)
 
     return {
-        "soh_model": soh_model,
-        "rul_model": rul_model,
-        "scaler": scaler,
+        "soh_model":     soh_model,
+        "rul_model":     rul_model,
+        "rul_q10_model": rul_q10_model,
+        "rul_q90_model": rul_q90_model,
+        "scaler":        scaler,
         "feature_names": feature_names,
         "metrics": {
             "soh_mae": soh_mae,
-            "soh_r2": soh_r2,
+            "soh_r2":  soh_r2,
             "rul_mae": rul_mae,
-            "rul_r2": rul_r2,
+            "rul_r2":  rul_r2,
+            "rul_interval_coverage": interval_coverage,
         },
-        # Keep test predictions for calibration display in the dashboard.
         "test_data": {
-            "X_test": X_test,
+            "X_test":    X_test,
             "y_soh_test": y_soh_test,
             "y_rul_test": y_rul_test,
-            "soh_pred": soh_pred_test,
-            "rul_pred": rul_pred_test,
+            "soh_pred":  soh_pred_test,
+            "rul_pred":  rul_pred_test,
+            "rul_q10":   rul_q10_test,
+            "rul_q90":   rul_q90_test,
         },
     }
 
@@ -152,7 +188,15 @@ def predict(model_bundle: dict, X: pd.DataFrame) -> dict:
     soh_pred = model_bundle["soh_model"].predict(X_scaled)
     rul_pred = model_bundle["rul_model"].predict(X_scaled)
 
-    # Confidence: "Calibrating" if early-cycle features are still noisy.
+    # Quantile interval (Q10/Q90) — only if quantile models are present
+    # (older bundles loaded from disk may not have them; degrade gracefully).
+    if "rul_q10_model" in model_bundle and "rul_q90_model" in model_bundle:
+        rul_q10 = np.clip(model_bundle["rul_q10_model"].predict(X_scaled), 0, None)
+        rul_q90 = np.clip(model_bundle["rul_q90_model"].predict(X_scaled), 0, None)
+    else:
+        rul_q10 = np.clip(rul_pred, 0, None)
+        rul_q90 = np.clip(rul_pred, 0, None)
+
     cycle_col = X["cycle_number"] if "cycle_number" in X.columns else None
     if cycle_col is not None:
         confidence_tags = [
@@ -162,8 +206,10 @@ def predict(model_bundle: dict, X: pd.DataFrame) -> dict:
         confidence_tags = ["Model"] * len(soh_pred)
 
     return {
-        "soh_pred": soh_pred,
-        "rul_pred": np.clip(rul_pred, 0, None),  # RUL can't be negative
+        "soh_pred":       soh_pred,
+        "rul_pred":       np.clip(rul_pred, 0, None),
+        "rul_q10":        rul_q10,
+        "rul_q90":        rul_q90,
         "confidence_tag": confidence_tags,
     }
 

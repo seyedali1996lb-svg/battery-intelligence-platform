@@ -34,13 +34,32 @@ def build_passport(
     """
     source = "nasa" if is_nasa else "synth"
     latest = df.iloc[-1]
+    first  = df.iloc[0]
 
-    soh         = float(latest["soh_pct"])
-    cycle_count = int(latest["cycle_number"])
-    resistance  = float(latest.get("resistance_ohm", float("nan")))
-    fade_30     = float(latest.get("fade_rate_30cy", float("nan")))
-    rul_pred    = latest.get("rul_pred", None)
-    lco_soh_r2  = bundle["metrics"].get("lco_soh_r2", float("nan"))
+    soh              = float(latest["soh_pct"])
+    cycle_count      = int(latest["cycle_number"])
+    resistance       = float(latest.get("resistance_ohm", float("nan")))
+    fade_30          = float(latest.get("fade_rate_30cy", float("nan")))
+    rul_pred         = latest.get("rul_pred", None)
+    lco_soh_r2       = bundle["metrics"].get("lco_soh_r2", float("nan"))
+
+    # Pipeline-derived capacity fields (available, not validated)
+    initial_cap_ah   = float(first.get("capacity_ah", float("nan")))
+    last_cap_ah      = float(latest.get("capacity_ah", float("nan")))
+    total_throughput = (
+        float(df["capacity_ah"].sum())
+        if "capacity_ah" in df.columns else float("nan")
+    )
+
+    # Date range from test_date if present
+    has_dates = "test_date" in df.columns and df["test_date"].notna().any()
+    if has_dates:
+        import pandas as _pd
+        dates     = _pd.to_datetime(df["test_date"].dropna(), errors="coerce").dropna()
+        date_from = str(dates.min().date()) if len(dates) else None
+        date_to   = str(dates.max().date()) if len(dates) else None
+    else:
+        date_from = date_to = None
 
     cell_kwh = CELL_NOMINAL_KWH[source]
 
@@ -69,17 +88,29 @@ def build_passport(
 
     rul_value = f"{float(rul_pred):.0f} cycles" if (rul_reliable and rul_pred is not None) else "Not calibrated (fold R² below 0.30 reliability floor)"
 
+    def _ah(v: float) -> str:
+        return f"{v:.3f} Ah" if v == v else "n/a"
+
     soh_group = [
         {"label": "State of Health", "value": f"{soh:.1f}%", "state": "available", "note": "Validated model output — leave-cell-out tested"},
         {"label": "Cycle count", "value": f"{cycle_count:,}", "state": "available"},
+        {"label": "Initial capacity (cycle 1)", "value": _ah(initial_cap_ah), "state": "available", "note": "Pipeline output — first measured cycle"},
+        {"label": "Current capacity (latest cycle)", "value": _ah(last_cap_ah), "state": "available", "note": "Pipeline output — last measured cycle"},
+        {"label": "Total energy throughput (sum of discharge capacity)", "value": f"{total_throughput:.1f} Ah" if total_throughput == total_throughput else "n/a", "state": "available", "note": "Pipeline output — cumulative Ah across all cycles"},
         {"label": "Internal resistance", "value": f"{resistance:.4f} Ω" if resistance == resistance else "n/a", "state": "available"},
-        {"label": "Fade rate (30-cycle window)", "value": f"{fade_30*1000:.2f} mAh/cy" if fade_30 == fade_30 else "n/a", "state": "available", "note": "Validated model output"},
+        {"label": "Fade rate (30-cycle window)", "value": f"{fade_30*1000:.2f} mAh/cy" if fade_30 == fade_30 else "n/a", "state": "available", "note": "Pipeline output"},
         {"label": "Remaining Useful Life (RUL)", "value": rul_value, "state": "available"},
         {"label": "SOH model accuracy (leave-cell-out R²)", "value": f"{lco_soh_r2:.3f}" if lco_soh_r2 == lco_soh_r2 else "n/a", "state": "available"},
     ]
 
     lifecycle = [
         {"label": "Cycle history (SOH vs. cycle)", "value": "Available — see Health page chart", "state": "available"},
+        {
+            "label": "Test date range",
+            "value": (f"{date_from} → {date_to}" if (date_from and date_to) else "Not available in this demonstration"),
+            "state": ("available" if date_from else "unavailable"),
+            "note": ("Pipeline output — from test_date column" if date_from else "No test_date column in this dataset"),
+        },
         {"label": "Usage profile / test conditions", "value": usage_src, "state": "available"},
         {"label": "Repair / refurbishment history", "value": "Not available in this demonstration", "state": "unavailable", "note": "Neither dataset models repair events"},
         {"label": "Prior-owner / installation history", "value": "Not available in this demonstration", "state": "unavailable"},
