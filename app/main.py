@@ -1559,13 +1559,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
     import numpy as _np_grade
 
-    _md_html("""
-    <div style="padding-top:8px;margin-bottom:8px">
-        <div style="font-size:22px;font-weight:700;color:#e2e8f0">🏆 Cell Grading</div>
-        <div style="font-size:13px;color:#718096;margin-top:2px">
-            Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)
-        </div>
-    </div>""")
+    _md_html("""<div style="padding-top:32px;margin-bottom:8px"><div style="font-size:22px;font-weight:700;color:#e2e8f0">⏳ Cell Grading</div><div style="font-size:13px;color:#718096;margin-top:2px">Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)</div></div>""")
     st.caption(
         "Grades A–C are derived from the first 100 cycles only: fade rate, capacity variance, "
         "and resistance slope. A high score predicts long life; a low score flags early replacement."
