@@ -282,6 +282,7 @@ NAV_ITEMS = [
     ("Import",          "import",          True),
     ("Overview",        "overview",        True),
     ("Health",          "health",          True),
+    ("Compare",         "compare",         True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
     ("Consequences",    "consequences",    True),
@@ -2125,6 +2126,106 @@ def page_fleet(featured_dfs: dict, bundles: dict):
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
 
+    # ── Enhanced Virtual Pack Builder ──
+    st.subheader("🔋 Virtual Pack Builder")
+    st.caption("Model series or parallel configurations and assess cell matching quality for pack assembly.")
+    _pb_col1, _pb_col2 = st.columns(2)
+    with _pb_col1:
+        selected_pack_cells = st.multiselect(
+            "Select cells for pack",
+            options=list(active_fdfs.keys()),
+            default=list(active_fdfs.keys())[:min(4, len(active_fdfs))],
+            key="pack_cells",
+        )
+    with _pb_col2:
+        pack_topology = st.radio("Configuration", ["Series", "Parallel"], horizontal=True, key="pack_topology")
+
+    if len(selected_pack_cells) < 2:
+        st.warning("Select at least 2 cells.")
+    else:
+        _fdfs = active_fdfs
+        _soh_values = [float(_fdfs[c]["soh_pct"].iloc[-1]) for c in selected_pack_cells]
+        _rul_values = [float(_fdfs[c]["rul_pred"].iloc[-1]) if "rul_pred" in _fdfs[c].columns else None for c in selected_pack_cells]
+        _cap_values = [float(_fdfs[c]["capacity_ah"].iloc[-1]) for c in selected_pack_cells]
+        _res_values = [float(_fdfs[c]["resistance_ohm"].iloc[-1]) for c in selected_pack_cells]
+
+        if pack_topology == "Series":
+            _pack_soh = min(_soh_values)
+            _pack_rul = min(r for r in _rul_values if r is not None) if any(r is not None for r in _rul_values) else None
+            _pack_capacity = min(_cap_values)
+            _pack_resistance = sum(_res_values)
+            _bottleneck_cell = selected_pack_cells[_soh_values.index(min(_soh_values))]
+            _cap_label = f"{_pack_capacity * 1000:.0f} mAh"
+        else:
+            _cap_total = sum(_cap_values)
+            _pack_soh = sum(s * c for s, c in zip(_soh_values, _cap_values)) / _cap_total
+            _pack_rul = min(r for r in _rul_values if r is not None) if any(r is not None for r in _rul_values) else None
+            _pack_capacity = _cap_total
+            _res_safe = [r for r in _res_values if r > 0]
+            _pack_resistance = 1 / sum(1 / r for r in _res_safe) if _res_safe else float("nan")
+            _bottleneck_cell = selected_pack_cells[_soh_values.index(min(_soh_values))]
+            _cap_label = f"{_pack_capacity * 1000:.0f} mAh total"
+
+        _pm1, _pm2, _pm3, _pm4 = st.columns(4)
+        _pm1.metric("Pack SOH", f"{_pack_soh:.1f}%")
+        _pm2.metric("Pack RUL", f"{_pack_rul:.0f} cy" if _pack_rul is not None else "—")
+        _pm3.metric("Pack Capacity", _cap_label)
+        _pm4.metric("Pack Resistance", f"{_pack_resistance * 1000:.1f} mΩ" if not (_pack_resistance != _pack_resistance) else "—")
+
+        _soh_spread = max(_soh_values) - min(_soh_values)
+        if _soh_spread > 5:
+            st.error(f"⚠️ **{_bottleneck_cell}** is the pack bottleneck (SOH spread: {_soh_spread:.1f}%). Consider replacing or rebalancing.")
+        elif _soh_spread > 2:
+            st.warning(f"⚡ SOH spread is {_soh_spread:.1f}%. Monitor {_bottleneck_cell} closely.")
+        else:
+            st.success(f"✅ Pack is well-balanced (SOH spread: {_soh_spread:.1f}%)")
+
+        st.subheader("Cell Matching Score")
+        st.caption("Cells with similar degradation trajectories are better matched for pack assembly (minimises balancing losses).")
+        _match_rows = []
+        for _i in range(len(selected_pack_cells)):
+            for _j in range(_i + 1, len(selected_pack_cells)):
+                _ca, _cb = selected_pack_cells[_i], selected_pack_cells[_j]
+                _soh_diff = abs(_soh_values[_i] - _soh_values[_j])
+                _cap_diff = abs(_cap_values[_i] - _cap_values[_j]) / (_cap_values[_i] + 1e-9) * 100
+                _res_diff = abs(_res_values[_i] - _res_values[_j]) / (_res_values[_i] + 1e-9) * 100
+                _score = max(0, min(100, 100 - (_soh_diff * 2 + _cap_diff * 1.5 + _res_diff * 0.5)))
+                _rec = ("Excellent match" if _score > 80 else
+                        "Good match" if _score > 60 else
+                        "Acceptable" if _score > 40 else
+                        "Poor — avoid pairing")
+                _match_rows.append({"Cell A": _ca, "Cell B": _cb, "Match Score": f"{_score:.0f}", "Recommendation": _rec})
+        if _match_rows:
+            st.dataframe(pd.DataFrame(_match_rows), use_container_width=True, hide_index=True)
+
+        _bar_colors = []
+        for _sv in _soh_values:
+            _dist = abs(_sv - _pack_soh)
+            if _dist <= 2:
+                _bar_colors.append("#68d391")
+            elif _dist <= 5:
+                _bar_colors.append("#f6ad55")
+            else:
+                _bar_colors.append("#fc8181")
+        _fig_pack = go.Figure(go.Bar(
+            x=selected_pack_cells, y=_soh_values,
+            marker_color=_bar_colors,
+            hovertemplate="<b>%{x}</b><br>SOH: %{y:.1f}%<extra></extra>",
+        ))
+        _fig_pack.add_hline(y=_pack_soh, line_dash="dash", line_color="#63b3ed", line_width=1,
+                            annotation_text=f"Pack SOH {_pack_soh:.1f}%", annotation_font_color="#63b3ed")
+        _fig_pack.update_layout(
+            height=250,
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="#e2e8f0"),
+            margin=dict(l=10, r=10, t=36, b=10),
+            xaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False, range=[50, 102]),
+        )
+        st.plotly_chart(_fig_pack, use_container_width=True)
+
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
     # ── Honest copy on cross-type RUL ──
     st.markdown("<div class='section-header'>About This Ranking</div>", unsafe_allow_html=True)
     st.markdown(
@@ -3066,6 +3167,53 @@ def page_recommendations(
     st.markdown("# Recommendations")
     st.markdown(f"##### Decision summary · {selected}")
 
+    # ── Maintenance Calendar ──
+    st.markdown("<div class='section-header'>📅 Maintenance Calendar</div>", unsafe_allow_html=True)
+    _eol_threshold = float(st.session_state.get("eol_threshold_pct", 80.0))
+    _current_soh = float(df["soh_pct"].iloc[-1])
+    _fade_per_cycle_pct = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
+    if _fade_per_cycle_pct > 1e-6:
+        _rul_cycles = max(0, (_current_soh - _eol_threshold) / _fade_per_cycle_pct)
+    else:
+        _rul_cycles = None
+
+    if "test_date" in df.columns and df["test_date"].notna().any():
+        _dates = pd.to_datetime(df["test_date"].dropna())
+        _span_days = max((_dates.iloc[-1] - _dates.iloc[0]).days, 1)
+        _cycles_per_day = len(df) / _span_days
+    else:
+        _cycles_per_day = 1.0
+
+    if _rul_cycles is not None and _rul_cycles > 0:
+        from datetime import date as _date, timedelta as _timedelta
+        _days_to_eol = _rul_cycles / _cycles_per_day
+        _replacement_date = _date.today() + _timedelta(days=_days_to_eol)
+        _cal1, _cal2, _cal3 = st.columns(3)
+        _cal1.metric("Recommended Replacement", _replacement_date.strftime("%B %Y"))
+        _cal2.metric("Cycles Remaining", f"{_rul_cycles:.0f}")
+        _cal3.metric("Days Remaining", f"{_days_to_eol:.0f}")
+
+        st.markdown("**⚠️ Cost of Delay**")
+        _monthly_extra_fade_pct = _fade_per_cycle_pct * _cycles_per_day * 30.44
+        _delay_data = []
+        for _months_delay in [0, 1, 3, 6, 12]:
+            _extra_fade = _monthly_extra_fade_pct * _months_delay
+            _soh_at_delay = max(60, _current_soh - _fade_per_cycle_pct * (_rul_cycles + _cycles_per_day * 30.44 * _months_delay))
+            _value_penalty_pct = max(0, (_eol_threshold - _soh_at_delay) * 2)
+            _delay_data.append({
+                "Delay": f"+{_months_delay}mo" if _months_delay > 0 else "On time",
+                "SOH at replacement": f"{_soh_at_delay:.1f}%",
+                "Extra degradation": f"{_extra_fade:.2f}%",
+                "Est. residual value loss": f"{_value_penalty_pct:.0f}%",
+                "Risk": "Low" if _months_delay == 0 else ("Medium" if _months_delay <= 3 else "High"),
+            })
+        st.dataframe(pd.DataFrame(_delay_data), use_container_width=True, hide_index=True)
+        st.caption("Residual value estimate: each % SOH below EOL threshold at replacement ≈ 2% additional value penalty (illustrative — no market data).")
+    else:
+        st.info("Insufficient fade data to compute replacement timeline for this cell.")
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
     # ── Hero card ──
     reason_html = "".join(
         f"<div style='margin-top:6px;font-size:13px;color:{action_colour}cc'>"
@@ -4002,6 +4150,43 @@ def page_settings(featured_dfs: dict, bundles: dict):
         )
 
     # ────────────────────────────────────────────────────────────────────────
+    # Section 2c: Alert thresholds
+    # ────────────────────────────────────────────────────────────────────────
+    _section("🔔 Alert Thresholds")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "Configure alert thresholds that trigger warning banners across all pages. "
+        "Alerts are evaluated on every page load against the currently active fleet.</div>",
+        unsafe_allow_html=True,
+    )
+
+    _at_col1, _at_col2, _at_col3 = st.columns(3)
+    with _at_col1:
+        soh_alert = st.slider(
+            "SOH Warning Threshold (%)", 70, 95,
+            int(st.session_state.get("soh_alert_pct", 85)),
+            key="soh_alert_pct",
+        )
+        st.caption("Show warning banner when any cell's SOH drops below this level.")
+    with _at_col2:
+        resistance_alert = st.slider(
+            "Resistance Alert Multiplier (×initial)", 1.2, 3.0,
+            float(st.session_state.get("resistance_alert_mult", 1.8)),
+            step=0.1,
+            key="resistance_alert_mult",
+        )
+        st.caption("Alert when resistance exceeds this multiple of the cell's initial resistance.")
+    with _at_col3:
+        spread_alert = st.slider(
+            "Pack Spread Alert (%)", 1.0, 10.0,
+            float(st.session_state.get("spread_alert_pct", 5.0)),
+            step=0.5,
+            key="spread_alert_pct",
+        )
+        st.caption("Alert when SOH spread across fleet cells exceeds this threshold.")
+
+    # ────────────────────────────────────────────────────────────────────────
     # Section 3: RUL reliability threshold
     # ────────────────────────────────────────────────────────────────────────
     _section("RUL Reliability Threshold")
@@ -4743,6 +4928,148 @@ def page_import():
     )
 
 
+# ---------------------------------------------------------------------------
+# Page: Compare
+# ---------------------------------------------------------------------------
+
+def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
+    st.markdown("# ⚖️ Cell Comparison")
+
+    if len(cell_ids) < 2:
+        st.warning("Comparison requires at least 2 cells in the active fleet.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        cell_a = st.selectbox("Cell A", options=cell_ids, index=0, key="compare_cell_a")
+    with col2:
+        cell_b = st.selectbox("Cell B", options=cell_ids, index=min(1, len(cell_ids) - 1), key="compare_cell_b")
+
+    if cell_a == cell_b:
+        st.info("Select two different cells to compare.")
+        return
+
+    df_a = active_fdfs[cell_a]
+    df_b = active_fdfs[cell_b]
+
+    # ── Summary metrics comparison ──
+    st.markdown("<div class='section-header'>Key Metrics</div>", unsafe_allow_html=True)
+    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+    _soh_a = float(df_a["soh_pct"].iloc[-1])
+    _soh_b = float(df_b["soh_pct"].iloc[-1])
+    _cyc_a = int(df_a["cycle_number"].iloc[-1])
+    _cyc_b = int(df_b["cycle_number"].iloc[-1])
+    _res_a = float(df_a["resistance_ohm"].iloc[-1])
+    _res_b = float(df_b["resistance_ohm"].iloc[-1])
+    _fade_a = float(df_a["fade_rate_50cy"].iloc[-1])
+    _fade_b = float(df_b["fade_rate_50cy"].iloc[-1])
+
+    _mc1.metric(f"SOH — {cell_a}", f"{_soh_a:.1f}%", delta=f"{_soh_a - _soh_b:+.1f}%")
+    _mc2.metric(f"SOH — {cell_b}", f"{_soh_b:.1f}%")
+    _mc3.metric(f"Cycles — {cell_a}", f"{_cyc_a:,}", delta=f"{_cyc_a - _cyc_b:+,}")
+    _mc4.metric(f"Cycles — {cell_b}", f"{_cyc_b:,}")
+
+    _mc5, _mc6, _mc7, _mc8 = st.columns(4)
+    _mc5.metric(f"Resistance — {cell_a}", f"{_res_a*1000:.1f} mΩ", delta=f"{(_res_a - _res_b)*1000:+.1f} mΩ")
+    _mc6.metric(f"Resistance — {cell_b}", f"{_res_b*1000:.1f} mΩ")
+    _mc7.metric(f"Fade rate — {cell_a}", f"{_fade_a*1000:.2f} mSOH/cy", delta=f"{(_fade_a - _fade_b)*1000:+.2f}")
+    _mc8.metric(f"Fade rate — {cell_b}", f"{_fade_b*1000:.2f} mSOH/cy")
+
+    # ── SOH trajectory comparison ──
+    st.markdown("<div class='section-header'>SOH Trajectory Comparison (10-cycle rolling avg)</div>", unsafe_allow_html=True)
+    _soh_col_a = "soh_rolling_avg" if "soh_rolling_avg" in df_a.columns else "soh_pct"
+    _soh_col_b = "soh_rolling_avg" if "soh_rolling_avg" in df_b.columns else "soh_pct"
+
+    _fig_soh = go.Figure()
+    _fig_soh.add_trace(go.Scatter(
+        x=df_a["cycle_number"], y=df_a[_soh_col_a],
+        name=cell_a, line=dict(color="#63b3ed", width=2),
+        hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}}%<extra></extra>",
+    ))
+    _fig_soh.add_trace(go.Scatter(
+        x=df_b["cycle_number"], y=df_b[_soh_col_b],
+        name=cell_b, line=dict(color="#fc8181", width=2),
+        hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}}%<extra></extra>",
+    ))
+    _fig_soh.update_layout(
+        height=300,
+        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#e2e8f0"),
+        margin=dict(l=10, r=10, t=36, b=10),
+        hovermode="x unified",
+        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+        yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+        legend=dict(font=dict(size=11, color="#718096")),
+    )
+    st.plotly_chart(_fig_soh, use_container_width=True)
+
+    # ── Resistance trajectory comparison ──
+    st.markdown("<div class='section-header'>Resistance Trajectory Comparison</div>", unsafe_allow_html=True)
+    _fig_res = go.Figure()
+    _fig_res.add_trace(go.Scatter(
+        x=df_a["cycle_number"], y=df_a["resistance_ohm"] * 1000,
+        name=cell_a, line=dict(color="#63b3ed", width=2),
+        hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
+    ))
+    _fig_res.add_trace(go.Scatter(
+        x=df_b["cycle_number"], y=df_b["resistance_ohm"] * 1000,
+        name=cell_b, line=dict(color="#fc8181", width=2),
+        hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
+    ))
+    _fig_res.update_layout(
+        height=280,
+        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        font=dict(color="#e2e8f0"),
+        margin=dict(l=10, r=10, t=36, b=10),
+        hovermode="x unified",
+        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+        yaxis=dict(title="Resistance (mΩ)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+        legend=dict(font=dict(size=11, color="#718096")),
+    )
+    st.plotly_chart(_fig_res, use_container_width=True)
+
+    # ── dQ/dV radar chart (if columns exist) ──
+    _dqdv_features = ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_area", "dqdv_fwhm"]
+    _dqdv_available = [f for f in _dqdv_features if f in df_a.columns and f in df_b.columns]
+    if _dqdv_available:
+        st.markdown("<div class='section-header'>dQ/dV Feature Comparison</div>", unsafe_allow_html=True)
+        _vals_a = [float(df_a[f].iloc[-1]) for f in _dqdv_available]
+        _vals_b = [float(df_b[f].iloc[-1]) for f in _dqdv_available]
+        _all_vals = [abs(v) for v in _vals_a + _vals_b if v == v]
+        _max_v = max(_all_vals) if _all_vals else 1.0
+        _norm_a = [v / (_max_v + 1e-9) for v in _vals_a]
+        _norm_b = [v / (_max_v + 1e-9) for v in _vals_b]
+        _fig_radar = go.Figure()
+        _fig_radar.add_trace(go.Scatterpolar(r=_norm_a + [_norm_a[0]], theta=_dqdv_available + [_dqdv_available[0]],
+                                              name=cell_a, line=dict(color="#63b3ed")))
+        _fig_radar.add_trace(go.Scatterpolar(r=_norm_b + [_norm_b[0]], theta=_dqdv_available + [_dqdv_available[0]],
+                                              name=cell_b, line=dict(color="#fc8181")))
+        _fig_radar.update_layout(
+            height=300,
+            paper_bgcolor="#0e1117",
+            font=dict(color="#e2e8f0"),
+            polar=dict(bgcolor="#0e1117",
+                       radialaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748"),
+                       angularaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748")),
+            legend=dict(font=dict(size=11, color="#718096")),
+        )
+        st.plotly_chart(_fig_radar, use_container_width=True)
+
+    # ── Summary verdict ──
+    _soh_winner = cell_a if _soh_a > _soh_b else cell_b
+    _fade_winner = cell_a if _fade_a < _fade_b else cell_b
+    st.markdown(
+        f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+        f"padding:18px 22px;margin-top:8px'>"
+        f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:8px'>Summary Verdict</div>"
+        f"<div style='font-size:13px;color:#a0aec0;line-height:1.8'>"
+        f"<strong style='color:#63b3ed'>{_soh_winner}</strong> has higher current SOH. "
+        f"<strong style='color:#63b3ed'>{_fade_winner}</strong> is degrading more slowly."
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -4845,10 +5172,39 @@ def main():
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
     rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
 
+    # ── Global fleet alerts ──
+    _soh_thresh = float(st.session_state.get("soh_alert_pct", 85))
+    _res_mult = float(st.session_state.get("resistance_alert_mult", 1.8))
+    _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
+    _alert_msgs = []
+
+    for _cid, _fdf in active_fdfs.items():
+        _latest = _fdf.iloc[-1]
+        if _latest.get("soh_pct", 100) < _soh_thresh:
+            _alert_msgs.append(f"⚠️ **{_cid}**: SOH {_latest['soh_pct']:.1f}% — below {_soh_thresh:.0f}% warning threshold")
+        if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
+            _r_init = _fdf["resistance_ohm"].iloc[0]
+            _r_now = float(_latest["resistance_ohm"])
+            if _r_init > 0 and _r_now > _r_init * _res_mult:
+                _alert_msgs.append(f"🔴 **{_cid}**: Resistance {_r_now/_r_init:.2f}× initial — above {_res_mult:.1f}× alert threshold")
+
+    if len(active_fdfs) > 1:
+        _soh_vals = [fdf["soh_pct"].iloc[-1] for fdf in active_fdfs.values()]
+        _spread = max(_soh_vals) - min(_soh_vals)
+        if _spread > _spread_thresh:
+            _alert_msgs.append(f"⚡ **Fleet spread**: {_spread:.1f}% SOH range across cells — above {_spread_thresh:.0f}% threshold")
+
+    if _alert_msgs:
+        with st.container():
+            for _msg in _alert_msgs[:5]:
+                st.warning(_msg)
+
     if page == "overview":
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
     elif page == "health":
         page_health(df, split_cycle, selected)
+    elif page == "compare":
+        page_compare(cell_ids, active_fdfs, bundles)
     elif page == "insights":
         page_insights(df, bundle, selected, cell_ids=cell_ids, active_fdfs=active_fdfs)
     elif page == "copilot":
