@@ -111,6 +111,13 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
     else:
         df["equivalent_cycles"] = np.nan
 
+    # ── EIS-derived component trends ──
+    for _col, _out in [("r_sei", "r_sei_trend_30cy"), ("r_ct", "r_ct_trend_30cy")]:
+        if _col in df.columns:
+            df[_out] = df[_col].diff().rolling(30, min_periods=1).mean()
+        else:
+            df[_out] = np.nan
+
     # ── dQ/dV features ──
     df = add_dqdv_features(df)
 

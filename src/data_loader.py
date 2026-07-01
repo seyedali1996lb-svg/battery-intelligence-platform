@@ -161,10 +161,23 @@ def generate_cell_data(
     charge_capacity_ah = capacity_ah / np.clip(coulombic_efficiency, 0.01, 1.0)
 
     # ── Stress weight per cycle (for equivalent-cycle accounting) ──
-    # sf=1.0 for baseline (Cell1 at 25°C, 1C, 100% DoD).
-    # Equivalent cycles = Σ stress_weight — captures that 1 cycle at 2× stress
-    # ages the cell as much as 2 baseline cycles.
     cycle_stress_weight = np.full(n_cycles, sf)
+
+    # ── EIS component decomposition ──
+    # Decomposes single DC resistance into Randles-circuit components.
+    # R_ohm: bulk electrolyte (constant). R_SEI: SEI layer (calendar-driven).
+    # R_ct: charge transfer (cycle-driven). sigma_w: Warburg (diffusion-driven).
+    r_0         = resistance_ohm[0]
+    r_ohm_eis   = np.full(n_cycles, 0.35 * r_0)
+    r_remaining = np.maximum(0, resistance_ohm - r_ohm_eis)
+
+    sei_driver  = np.sqrt(np.maximum(cumulative_days, 0))
+    ct_driver   = np.power(cycles.astype(float), 0.6)
+    _tot        = sei_driver + ct_driver + 1e-9
+
+    r_sei   = 0.33 * r_0 + r_remaining * (sei_driver / _tot) * 0.75
+    r_ct    = 0.32 * r_0 + r_remaining * (ct_driver  / _tot) * 0.75
+    sigma_w = np.clip(0.005 * (1.0 + 2.0 * (resistance_ohm / r_0 - 1.0)), 0.005, 0.040)
 
     return pd.DataFrame({
         "cycle_number":          cycles,
@@ -172,12 +185,17 @@ def generate_cell_data(
         "charge_capacity_ah":    charge_capacity_ah,
         "coulombic_efficiency":  coulombic_efficiency,
         "resistance_ohm":        resistance_ohm,
+        "r_ohm_eis":             r_ohm_eis,
+        "r_sei":                 r_sei,
+        "r_ct":                  r_ct,
+        "sigma_w":               sigma_w,
         "temperature_c":         temperature_c,
         "days_between_cycles":   days_between_cycles,
         "cumulative_days":       cumulative_days,
         "c_rate":                np.full(n_cycles, c_rate),
         "dod":                   np.full(n_cycles, dod),
         "cycle_stress_weight":   cycle_stress_weight,
+        "chemistry":             "Li-ion",
     })
 
 
