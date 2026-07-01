@@ -1,0 +1,6 @@
+cell_id,cycle_number,capacity_ah,resistance_ohm,temperature_c,test_date,notes
+ExampleCell_01,1,2.031,0.052,24.3,2023-01-05,Initial cycle after formation
+ExampleCell_01,2,2.028,0.053,24.1,2023-01-06,
+ExampleCell_01,3,2.024,0.054,24.4,2023-01-07,
+ExampleCell_02,1,1.985,0.061,25.0,2023-01-05,
+ExampleCell_02,2,1.981,0.062,,2023-01-06,Temperature sensor fault — left blank
