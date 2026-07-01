@@ -2016,6 +2016,27 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         """
     )
 
+    # ── CSV Export ──────────────────────────────────────────────────────────
+    _csv_rows = []
+    for r in rows:
+        _csv_rows.append({
+            "cell_id": r["cell_id"], "source": r["source"],
+            "soh_pct": round(r["soh"], 2), "status": r["status"],
+            "cycle": r["cycle"], "fade_rate_mSOH_cy": round(r["fade_30"], 3),
+            "rul_cycles": round(r["rul"], 0) if r["rul"] is not None else "",
+            "eol_at_cycle": r["eol_at"] or "",
+            "cycles_to_eol": r["cycles_to_eol"] or "",
+            "trend": r["trend"],
+            "knee_cycle": r["knee"]["cycle"] if r["knee"]["detected"] else "",
+        })
+    _csv_bytes = pd.DataFrame(_csv_rows).to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇ Export fleet table as CSV",
+        data=_csv_bytes,
+        file_name="fleet_health_summary.csv",
+        mime="text/csv",
+    )
+
     # ── SOH distribution chart ──
     st.markdown("<div class='section-header'>SOH Distribution Across Fleet</div>", unsafe_allow_html=True)
 
@@ -2147,6 +2168,63 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             )
     else:
         st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
+
+    # ── Cell-to-Cell Spread Trending ────────────────────────────────────────
+    st.markdown("<div class='section-header'>📉 Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)
+    _md_html("""<div style="font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
+    try:
+        import numpy as _np_sp
+        _cy_min = int(max(df.iloc[0]["cycle_number"] if len(df) > 0 else 1 for df in featured_dfs.values()))
+        _cy_max = int(min(df.iloc[-1]["cycle_number"] for df in featured_dfs.values()))
+        if _cy_max > _cy_min + 20 and len(featured_dfs) >= 2:
+            _check_cycles = list(range(_cy_min, _cy_max + 1, max(1, (_cy_max - _cy_min) // 80)))
+            _sigma_data = []
+            for _cy in _check_cycles:
+                _sohs = [
+                    float(_np_sp.interp(_cy, fdf["cycle_number"].values, fdf["soh_pct"].values))
+                    for fdf in featured_dfs.values()
+                    if _cy >= fdf["cycle_number"].min() and _cy <= fdf["cycle_number"].max()
+                ]
+                if len(_sohs) >= 2:
+                    _sigma_data.append({"cycle": _cy, "sigma": float(_np_sp.std(_sohs)), "n": len(_sohs)})
+            if _sigma_data:
+                _sd_df = pd.DataFrame(_sigma_data)
+                _sigma_smoothed = pd.Series(_sd_df["sigma"]).rolling(5, min_periods=1).mean()
+                _fig_spread = go.Figure()
+                _fig_spread.add_trace(go.Scatter(
+                    x=_sd_df["cycle"].tolist(), y=_sd_df["sigma"].tolist(),
+                    name="σ(SOH) raw", mode="lines",
+                    line=dict(color="#4a5568", width=1),
+                    hovertemplate="Cycle %{x}: σ=%{y:.2f}%<extra>Raw spread</extra>",
+                ))
+                _fig_spread.add_trace(go.Scatter(
+                    x=_sd_df["cycle"].tolist(), y=_sigma_smoothed.tolist(),
+                    name="σ(SOH) smoothed", mode="lines",
+                    line=dict(color="#63b3ed", width=2.5),
+                    hovertemplate="Cycle %{x}: σ=%{y:.2f}% (smoothed)<extra></extra>",
+                ))
+                _fig_spread.add_hline(y=3.0, line=dict(color="#f6ad55", width=1, dash="dot"),
+                                      annotation_text="3% — investigation threshold",
+                                      annotation=dict(font=dict(size=9, color="#f6ad55")))
+                _fig_spread.add_hline(y=5.0, line=dict(color="#fc8181", width=1, dash="dot"),
+                                      annotation_text="5% — service threshold",
+                                      annotation=dict(font=dict(size=9, color="#fc8181")))
+                _fig_spread.update_layout(
+                    **base_layout(
+                        height=280, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="σ(SOH) %", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                _fig_spread.update_layout(title=dict(text=f"Fleet SOH Spread ({len(featured_dfs)} cells)", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(_fig_spread, use_container_width=True)
+                _peak_sigma = float(_sd_df["sigma"].max())
+                _trend_dir = "rising" if _sigma_smoothed.iloc[-1] > _sigma_smoothed.iloc[max(0, len(_sigma_smoothed)//2)] else "falling or stable"
+                st.caption(f"Peak spread: {_peak_sigma:.2f}% SOH — current trend: {_trend_dir}.")
+        else:
+            st.info("Fleet spread analysis requires ≥ 2 cells with overlapping cycle ranges.")
+    except Exception as _sp_e:
+        st.info(f"Spread trend unavailable: {_sp_e}")
 
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
@@ -2426,6 +2504,57 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             Until then, ranking by SOH and fade rate is the honest choice.
             """
         )
+
+    # ── 🚨 Anomaly Alert History Log ─────────────────────────────────────────
+    st.markdown("<div class='section-header'>🚨 Anomaly Alert History</div>", unsafe_allow_html=True)
+    _anom_log = []
+    for _cid, _fdf in featured_dfs.items():
+        if "capacity_anomaly" in _fdf.columns:
+            _cap_anom = _fdf[_fdf["capacity_anomaly"] == True]
+            if len(_cap_anom) > 0:
+                _last10 = _fdf.iloc[-min(10, len(_fdf)):]
+                _recent = int(_last10["capacity_anomaly"].sum())
+                _anom_log.append({
+                    "cell_id": _cid,
+                    "type": "Capacity",
+                    "total_flags": len(_cap_anom),
+                    "last_10_cycles": _recent,
+                    "last_flagged_cycle": int(_cap_anom["cycle_number"].iloc[-1]),
+                    "severity": "High" if _recent >= 3 else ("Moderate" if _recent >= 1 else "Low"),
+                })
+        if "resistance_anomaly" in _fdf.columns:
+            _res_anom = _fdf[_fdf["resistance_anomaly"] == True]
+            if len(_res_anom) > 0:
+                _last10r = _fdf.iloc[-min(10, len(_fdf)):]
+                _recent_r = int(_last10r["resistance_anomaly"].sum())
+                _anom_log.append({
+                    "cell_id": _cid,
+                    "type": "Resistance",
+                    "total_flags": len(_res_anom),
+                    "last_10_cycles": _recent_r,
+                    "last_flagged_cycle": int(_res_anom["cycle_number"].iloc[-1]),
+                    "severity": "High" if _recent_r >= 3 else ("Moderate" if _recent_r >= 1 else "Low"),
+                })
+    if _anom_log:
+        _anom_df = pd.DataFrame(_anom_log).sort_values(["severity", "last_10_cycles"], ascending=[True, False])
+        _SEV_COLOUR = {"High": "#fc8181", "Moderate": "#f6ad55", "Low": "#718096"}
+        for _, _al in _anom_df.iterrows():
+            _sc = _SEV_COLOUR[_al["severity"]]
+            _md_html(
+                f"<div style='display:flex;align-items:center;gap:16px;padding:10px 14px;"
+                f"margin-bottom:6px;background:#1e2a38;border-radius:8px;"
+                f"border-left:3px solid {_sc}'>"
+                f"<span style='font-size:13px;font-weight:700;color:#e2e8f0;min-width:80px'>{_al['cell_id']}</span>"
+                f"<span style='font-size:11px;padding:2px 8px;border-radius:4px;"
+                f"background:{_sc}22;color:{_sc};border:1px solid {_sc}44'>{_al['type']}</span>"
+                f"<span style='font-size:12px;color:#a0aec0'>Total: <strong style='color:#e2e8f0'>{_al['total_flags']}</strong> flags</span>"
+                f"<span style='font-size:12px;color:#a0aec0'>Last 10 cycles: <strong style='color:{_sc}'>{_al['last_10_cycles']}</strong></span>"
+                f"<span style='font-size:12px;color:#4a5568'>Last at cycle {_al['last_flagged_cycle']}</span>"
+                f"<span style='margin-left:auto;font-size:11px;font-weight:700;color:{_sc}'>{_al['severity']}</span>"
+                f"</div>"
+            )
+    else:
+        st.success("No anomaly flags detected across the fleet.")
 
 
 # ---------------------------------------------------------------------------
@@ -3386,6 +3515,91 @@ def page_recommendations(
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── 🔋 SoC Window Recommendation ─────────────────────────────────────────
+    st.markdown("<div class='section-header'>🔋 Optimal Charging Window (SoC)</div>", unsafe_allow_html=True)
+    _fade_pct_cy = fade_30 * 100  # approximate % fade per cycle
+    # Determine recommended window (Tesla adaptive charging logic)
+    if soh >= 95 and _fade_pct_cy < 0.02:
+        _soc_lo, _soc_hi = 0, 100
+        _soc_label, _soc_colour = "Full range OK", "#68d391"
+        _soc_reason = "Cell is healthy with low fade rate. 0–100% is acceptable for this usage profile."
+    elif soh >= 90:
+        _soc_lo, _soc_hi = 10, 90
+        _soc_label, _soc_colour = "Light restriction", "#a3e635"
+        _soc_reason = "Avoid deep discharge and sustained 100% SOC. Restricting top/bottom 10% extends cycle life by ~20% (NREL 2022)."
+    elif soh >= 80:
+        _soc_lo, _soc_hi = 20, 80
+        _soc_label, _soc_colour = "Standard protection", "#f6ad55"
+        _soc_reason = "20–80% is Tesla's default adaptive charging target for degraded cells. Minimises lithium plating risk at charge top and copper dissolution at deep discharge."
+    elif soh >= 70:
+        _soc_lo, _soc_hi = 25, 75
+        _soc_label, _soc_colour = "Conservative window", "#f6ad55"
+        _soc_reason = "Cell approaching EOL. Narrowing window to 25–75% maximises residual value and reduces thermal risk per IEC 62619."
+    else:
+        _soc_lo, _soc_hi = 30, 70
+        _soc_label, _soc_colour = "Deep restriction", "#fc8181"
+        _soc_reason = "Cell significantly degraded. 30–70% minimises lithium plating and reduces thermal runaway risk."
+
+    _soc_c1, _soc_c2, _soc_c3 = st.columns([1, 2, 1])
+    with _soc_c1:
+        st.metric("Lower Limit", f"{_soc_lo}% SOC")
+    with _soc_c2:
+        # Visual bar
+        _bar_left  = _soc_lo
+        _bar_width = _soc_hi - _soc_lo
+        _md_html(
+            f"<div style='margin:8px 0'>"
+            f"<div style='font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.08em'>Recommended Window</div>"
+            f"<div style='position:relative;background:#1a202c;border-radius:6px;height:28px;overflow:hidden'>"
+            f"<div style='position:absolute;left:{_bar_left}%;width:{_bar_width}%;height:100%;"
+            f"background:{_soc_colour}33;border:2px solid {_soc_colour};border-radius:4px'></div>"
+            f"<div style='position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);"
+            f"font-size:12px;font-weight:700;color:{_soc_colour};text-align:center'>"
+            f"{_soc_lo}% → {_soc_hi}%</div></div>"
+            f"<div style='display:flex;justify-content:space-between;font-size:10px;color:#4a5568;margin-top:3px'>"
+            f"<span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>"
+            f"</div>"
+        )
+    with _soc_c3:
+        st.metric("Upper Limit", f"{_soc_hi}% SOC")
+    _md_html(f"<div style='font-size:12px;color:#718096;margin:8px 0 4px;padding:10px 14px;background:#1e2a38;border-radius:8px;border-left:3px solid {_soc_colour}'><strong style='color:{_soc_colour}'>{_soc_label}</strong> — {_soc_reason}</div>")
+
+    # ── ⚠️ Thermal Runaway Risk Proxy ─────────────────────────────────────────
+    st.markdown("<div class='section-header'>⚠️ Thermal Runaway Risk Proxy</div>", unsafe_allow_html=True)
+    _r_norm = float(latest.get("resistance_normalized", 1.0))
+    _fade_acc = float(latest.get("fade_acceleration", 0.0))
+    _temp_now = float(latest.get("temperature_c", 25.0))
+    # Normalize each factor to 0–100
+    _r_score   = min(100, max(0, (_r_norm - 1.0) / 0.6 * 100))       # 0× at baseline, 100 at 1.6× R
+    _acc_score = min(100, max(0, -_fade_acc / 0.0008 * 100))          # 0 stable, 100 at strong accel
+    _t_score   = min(100, max(0, (_temp_now - 25.0) / 20.0 * 100))    # 0 at 25°C, 100 at 45°C
+    _tr_score  = 0.45 * _r_score + 0.40 * _acc_score + 0.15 * _t_score
+    _tr_score  = round(min(100, max(0, _tr_score)), 1)
+    if _tr_score >= 65:
+        _tr_label, _tr_colour, _tr_bg = "High", "#fc8181", "rgba(252,129,129,0.08)"
+        _tr_action = "Immediate inspection recommended. Prioritise this cell for replacement."
+    elif _tr_score >= 35:
+        _tr_label, _tr_colour, _tr_bg = "Moderate", "#f6ad55", "rgba(246,173,85,0.08)"
+        _tr_action = "Monitor closely. Reduce operating temperature and C-rate if possible."
+    else:
+        _tr_label, _tr_colour, _tr_bg = "Low", "#68d391", "rgba(104,211,145,0.08)"
+        _tr_action = "No elevated thermal risk. Continue standard monitoring."
+    _tr1, _tr2, _tr3, _tr4 = st.columns(4)
+    _tr1.metric("TR Risk Score", f"{_tr_score:.0f} / 100")
+    _tr2.metric("Resistance Factor", f"{_r_norm:.2f}×", help=f"{_r_score:.0f}/100 — contributes 45%")
+    _tr3.metric("Fade Acceleration", f"{_fade_acc*1000:.3f} mAh/cy²", help=f"{_acc_score:.0f}/100 — contributes 40%")
+    _tr4.metric("Temp. Factor", f"{_temp_now:.1f}°C", help=f"{_t_score:.0f}/100 — contributes 15%")
+    _md_html(
+        f"<div style='background:{_tr_bg};border:1px solid {_tr_colour}44;border-radius:10px;"
+        f"padding:14px 20px;margin:8px 0'>"
+        f"<span style='font-size:14px;font-weight:700;color:{_tr_colour}'>{_tr_label} Risk</span>"
+        f"<span style='font-size:12px;color:#a0aec0;margin-left:14px'>{_tr_action}</span>"
+        f"<div style='margin-top:8px;background:#0e1117;border-radius:4px;height:8px'>"
+        f"<div style='width:{_tr_score}%;background:{_tr_colour};height:8px;border-radius:4px'></div>"
+        f"</div></div>"
+    )
+    _md_html("""<div style="font-size:11px;color:#4a5568;margin-top:4px">This is a composite proxy score — not a certified safety assessment. It flags elevated risk from three observable signals: resistance growth (SEI), fade acceleration (mechanical fatigue), and operating temperature (Arrhenius). A certified TR risk assessment requires calorimetry and electrochemical impedance spectroscopy.</div>""")
 
     # ── Supporting evidence tiles ──
     st.markdown(
@@ -5162,32 +5376,80 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     )
     st.plotly_chart(_fig_res, use_container_width=True)
 
-    # ── dQ/dV radar chart (if columns exist) ──
-    _dqdv_features = ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_area", "dqdv_fwhm"]
-    _dqdv_available = [f for f in _dqdv_features if f in df_a.columns and f in df_b.columns]
-    if _dqdv_available:
-        st.markdown("<div class='section-header'>dQ/dV Feature Comparison</div>", unsafe_allow_html=True)
-        _vals_a = [float(df_a[f].iloc[-1]) for f in _dqdv_available]
-        _vals_b = [float(df_b[f].iloc[-1]) for f in _dqdv_available]
-        _all_vals = [abs(v) for v in _vals_a + _vals_b if v == v]
-        _max_v = max(_all_vals) if _all_vals else 1.0
-        _norm_a = [v / (_max_v + 1e-9) for v in _vals_a]
-        _norm_b = [v / (_max_v + 1e-9) for v in _vals_b]
-        _fig_radar = go.Figure()
-        _fig_radar.add_trace(go.Scatterpolar(r=_norm_a + [_norm_a[0]], theta=_dqdv_available + [_dqdv_available[0]],
-                                              name=cell_a, line=dict(color="#63b3ed")))
-        _fig_radar.add_trace(go.Scatterpolar(r=_norm_b + [_norm_b[0]], theta=_dqdv_available + [_dqdv_available[0]],
-                                              name=cell_b, line=dict(color="#fc8181")))
-        _fig_radar.update_layout(
-            height=300,
-            paper_bgcolor="#0e1117",
-            font=dict(color="#e2e8f0"),
-            polar=dict(bgcolor="#0e1117",
-                       radialaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748"),
-                       angularaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748")),
-            legend=dict(font=dict(size=11, color="#718096")),
-        )
-        st.plotly_chart(_fig_radar, use_container_width=True)
+    # ── Engineering Radar Chart (CATL / A123 format) ─────────────────────────
+    st.markdown("<div class='section-header'>Engineering Radar — Multi-Metric Health Profile</div>", unsafe_allow_html=True)
+    _md_html("""<div style="font-size:12px;color:#718096;margin-bottom:10px">Normalized 0–1 scale. <strong style="color:#e2e8f0">Outer = better</strong> for SOH, CE, dQ/dV; <strong style="color:#e2e8f0">Inner = better</strong> for resistance and fade rate (inverted). Standard CATL / A123 engineering review format.</div>""")
+    try:
+        def _radar_val(df, col, invert=False, scale=1.0, floor=0.0):
+            if col not in df.columns:
+                return None
+            v = float(df[col].iloc[-1])
+            if pd.isna(v):
+                return None
+            v = (v - floor) / (scale - floor + 1e-9)
+            v = max(0.0, min(1.0, v))
+            return (1.0 - v) if invert else v
+
+        _radar_axes = [
+            ("SOH %",          "soh_pct",              False, 100.0, 60.0),
+            ("CE",             "ce_rolling_30cy",       False, 1.0,   0.97),
+            ("dQ/dV Peak",     "dqdv_peak_value",       False, None,  0.0),
+            ("Fade Rate",      "fade_rate_30cy",        True,  0.005, 0.0),
+            ("Resistance",     "resistance_normalized", True,  1.8,   1.0),
+            ("Throughput kWh", "cumulative_kwh",        False, None,  0.0),
+        ]
+
+        # For axes without a fixed scale, normalise across both cells
+        _raw_a, _raw_b, _labels = [], [], []
+        for _lbl, _col, _inv, _scale, _floor in _radar_axes:
+            _va = _radar_val(df_a, _col, _inv, _scale or 1.0, _floor) if _scale else None
+            _vb = _radar_val(df_b, _col, _inv, _scale or 1.0, _floor) if _scale else None
+            if _va is None and _vb is None:
+                # skip this axis
+                continue
+            if _scale is None:
+                # dynamic scale: max of both raw values
+                _rv_a = float(df_a[_col].iloc[-1]) if _col in df_a.columns and not pd.isna(df_a[_col].iloc[-1]) else 0.0
+                _rv_b = float(df_b[_col].iloc[-1]) if _col in df_b.columns and not pd.isna(df_b[_col].iloc[-1]) else 0.0
+                _dyn_max = max(abs(_rv_a), abs(_rv_b), 1e-9)
+                _va = max(0.0, min(1.0, _rv_a / _dyn_max)) if not _inv else 1.0 - max(0.0, min(1.0, _rv_a / _dyn_max))
+                _vb = max(0.0, min(1.0, _rv_b / _dyn_max)) if not _inv else 1.0 - max(0.0, min(1.0, _rv_b / _dyn_max))
+            _raw_a.append(_va if _va is not None else 0.0)
+            _raw_b.append(_vb if _vb is not None else 0.0)
+            _labels.append(_lbl)
+
+        if len(_labels) >= 3:
+            _labels_c  = _labels + [_labels[0]]
+            _vals_a_c  = _raw_a  + [_raw_a[0]]
+            _vals_b_c  = _raw_b  + [_raw_b[0]]
+            _fig_radar = go.Figure()
+            _fig_radar.add_trace(go.Scatterpolar(
+                r=_vals_a_c, theta=_labels_c, name=cell_a,
+                line=dict(color="#63b3ed", width=2),
+                fill="toself", fillcolor="rgba(99,179,237,0.08)",
+            ))
+            _fig_radar.add_trace(go.Scatterpolar(
+                r=_vals_b_c, theta=_labels_c, name=cell_b,
+                line=dict(color="#fc8181", width=2),
+                fill="toself", fillcolor="rgba(252,129,129,0.08)",
+            ))
+            _fig_radar.update_layout(
+                height=380,
+                paper_bgcolor="#0e1117",
+                font=dict(color="#e2e8f0", size=12),
+                polar=dict(
+                    bgcolor="#0e1117",
+                    radialaxis=dict(visible=True, range=[0, 1], gridcolor="#1e2a38", linecolor="#2d3748", tickfont=dict(size=9, color="#4a5568")),
+                    angularaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748", tickfont=dict(size=11, color="#a0aec0")),
+                ),
+                legend=dict(font=dict(size=11, color="#718096")),
+                margin=dict(l=60, r=60, t=30, b=30),
+            )
+            st.plotly_chart(_fig_radar, use_container_width=True)
+        else:
+            st.info("Insufficient features available for radar chart.")
+    except Exception as _re:
+        st.info(f"Radar chart unavailable: {_re}")
 
     # ── Summary verdict ──
     _soh_winner = cell_a if _soh_a > _soh_b else cell_b
