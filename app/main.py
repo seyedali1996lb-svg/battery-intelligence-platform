@@ -2412,7 +2412,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
 
     # ── Sliders ──
     with st.expander("Adjust assumptions", expanded=False):
-        sl_col1, sl_col2, sl_col3 = st.columns(3)
+        sl_col1, sl_col2 = st.columns(2)
         with sl_col1:
             co2_val = st.slider(
                 f"CO₂ to make one new cell ({ASSUMPTIONS['co2_manufacture']['unit']})",
@@ -2431,6 +2431,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 key="sus7_grid",
                 help=ASSUMPTIONS["grid_carbon_intensity"]["source"],
             )
+        sl_col3, sl_col4 = st.columns(2)
         with sl_col3:
             mat_val = st.slider(
                 f"Material recovery value ({ASSUMPTIONS['material_recovery']['unit']})",
@@ -2439,6 +2440,15 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 value=float(ASSUMPTIONS["material_recovery"]["value"]), step=0.05,
                 key="sus7_mat",
                 help=ASSUMPTIONS["material_recovery"]["source"],
+            )
+        with sl_col4:
+            extension_val = st.slider(
+                f"Second-life extension ({ASSUMPTIONS['second_life_extension']['unit']})",
+                min_value=float(ASSUMPTIONS["second_life_extension"]["slider_range"][0]),
+                max_value=float(ASSUMPTIONS["second_life_extension"]["slider_range"][1]),
+                value=float(ASSUMPTIONS["second_life_extension"]["value"]), step=0.1,
+                key="sus7_extension",
+                help=ASSUMPTIONS["second_life_extension"]["source"],
             )
 
     sus = sustainability_snapshot(source=source, co2_per_cell=co2_val, material_recovery=mat_val)
@@ -2486,35 +2496,64 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         unsafe_allow_html=True,
     )
 
-    scenarios = ["Recycle now", "Reuse (second-life)", "New cell (counterfactual)"]
-    mfg_bars       = [co2_val,  co2_val,  co2_val]
-    use_bars        = [use_phase_co2, use_phase_co2 * 1.3, cell_kwh * 1000 * grid_val]
+    lc_norm = st.radio(
+        "Chart normalisation",
+        ["Per cell", "Per kWh delivered"],
+        index=0,
+        horizontal=True,
+        key="sus7_lc_norm",
+        help="Per kWh delivered divides all bars by total energy throughput for each scenario, making scenarios with different lifetimes comparable.",
+    )
+
+    reuse_cycles       = cycles * extension_val
+    new_cell_cycles    = cycles   # same history length as counterfactual baseline
+    reuse_use_co2      = cell_kwh * reuse_cycles * grid_val
+    new_cell_use_co2   = cell_kwh * new_cell_cycles * grid_val
+
+    scenarios = ["Recycle now", f"Reuse (×{extension_val:.1f} cycles)", "New cell (counterfactual)"]
+    mfg_bars       = [co2_val, co2_val, co2_val]
+    use_bars        = [use_phase_co2, reuse_use_co2, new_cell_use_co2]
     eol_credit_bars = [
         -sus["co2_recycling_credit"],
         -(sus["co2_recycling_credit"] + sus["co2_avoided_by_reuse"]),
         -sus["co2_recycling_credit"],
     ]
 
+    if lc_norm == "Per kWh delivered":
+        kwh_denominators = [
+            cell_kwh * cycles,
+            cell_kwh * reuse_cycles,
+            cell_kwh * new_cell_cycles,
+        ]
+        mfg_bars       = [v / d for v, d in zip(mfg_bars, kwh_denominators)]
+        use_bars       = [v / d for v, d in zip(use_bars, kwh_denominators)]
+        eol_credit_bars = [v / d for v, d in zip(eol_credit_bars, kwh_denominators)]
+        yaxis_label    = "kg CO₂e per kWh delivered"
+        bar_suffix     = " kg/kWh"
+    else:
+        yaxis_label = "kg CO₂e per cell"
+        bar_suffix  = " kg"
+
     fig_lc = go.Figure()
     fig_lc.add_trace(go.Bar(
         name="Manufacturing CO₂",
         x=scenarios, y=mfg_bars,
         marker_color="#f6ad55",
-        text=[f"{v:.2f} kg" for v in mfg_bars],
+        text=[f"{v:.3f}{bar_suffix}" for v in mfg_bars],
         textposition="inside", textfont=dict(size=10, color="#1a202c"),
     ))
     fig_lc.add_trace(go.Bar(
         name="Use phase CO₂ (illustrative)",
         x=scenarios, y=use_bars,
         marker_color="#718096",
-        text=[f"{v:.2f} kg" for v in use_bars],
+        text=[f"{v:.3f}{bar_suffix}" for v in use_bars],
         textposition="inside", textfont=dict(size=10, color="#e2e8f0"),
     ))
     fig_lc.add_trace(go.Bar(
         name="EOL credit (negative = saving)",
         x=scenarios, y=eol_credit_bars,
         marker_color="#68d391",
-        text=[f"{v:.2f} kg" for v in eol_credit_bars],
+        text=[f"{v:.3f}{bar_suffix}" for v in eol_credit_bars],
         textposition="inside", textfont=dict(size=10, color="#1a202c"),
     ))
     fig_lc.update_layout(
@@ -2524,7 +2563,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             yaxis=dict(
                 gridcolor="#232d3b", linecolor="#2d3748", zeroline=True,
                 zerolinecolor="#4a5568",
-                title=dict(text="kg CO₂e per cell", font=dict(size=11)),
+                title=dict(text=yaxis_label, font=dict(size=11)),
             ),
             height=360,
         )
@@ -2532,7 +2571,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     fig_lc.update_layout(
         legend=LEGEND_H,
         title=dict(
-            text="Lifecycle CO₂ per cell — three end-of-life scenarios",
+            text="Lifecycle CO₂ — three end-of-life scenarios",
             font=dict(size=13, color="#a0aec0"),
             x=0,
         ),
@@ -2540,8 +2579,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     st.plotly_chart(fig_lc, use_container_width=True)
     st.markdown(
         f"<div style='font-size:11px;color:#4a5568;margin-top:-8px;margin-bottom:4px'>"
-        f"'Reuse' use-phase estimated at 1.3× current cycles (30% second-life extension). "
-        f"'New cell' use-phase uses full nominal cycle life at current grid intensity. "
+        f"'Reuse' use-phase uses {extension_val:.1f}× current cycles ({cycles} → {reuse_cycles:.0f} cycles). "
+        f"Second-life extension slider is {BADGE_ILLUST}. "
+        f"'New cell' use-phase uses the same {cycles}-cycle baseline at current grid intensity. "
         f"All use-phase figures are {BADGE_ILLUST}."
         f"</div>",
         unsafe_allow_html=True,
@@ -2562,8 +2602,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    mat_cols = st.columns(len(CRITICAL_MATERIALS))
-    for col, mat in zip(mat_cols, CRITICAL_MATERIALS):
+    primary_materials = [m for m in CRITICAL_MATERIALS if m["name"] != "Nickel (Ni)"]
+    mat_cols = st.columns(len(primary_materials))
+    for col, mat in zip(mat_cols, primary_materials):
         scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
         badge_html = _badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
         rec_html = (
@@ -2595,6 +2636,20 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 unsafe_allow_html=True,
             )
 
+    ni_mat = next((m for m in CRITICAL_MATERIALS if m["name"] == "Nickel (Ni)"), None)
+    if ni_mat:
+        ni_g = material_content_for_cell(ni_mat["g_per_2ah"], cell_kwh)
+        st.markdown(
+            f"<div style='font-size:11px;color:#4a5568;margin-top:10px;padding:8px 14px;"
+            f"background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
+            f"<strong style='color:#718096'>Nickel (Ni)</strong> — EU critical material, but trace-only in LiCoO₂ chemistry "
+            f"(est. {ni_g:.2f} g per cell, {BADGE_ILLUST}). "
+            f"EU 2023/1542 nickel recycled-content targets apply to NMC/NCA chemistries where nickel is a primary cathode material, "
+            f"not to LiCoO₂. Shown here for completeness only."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     # ────────────────────────────────────────────────────────────────────────
     # Section 4: EU regulation recycled content targets
     # ────────────────────────────────────────────────────────────────────────
@@ -2611,14 +2666,15 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     )
 
     for target in EU_RECYCLED_TARGETS:
-        est_recycled = "~5–10%"
+        est_recycled = target.get("current_industry_range", "—")
+        current_note = target.get("current_note", "")
         bar_fill_31  = min(target["target_2031_pct"], 100)
         bar_fill_36  = min(target["target_2036_pct"], 100)
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:14px 20px;margin-bottom:10px'>"
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
-            f"margin-bottom:10px'>"
+            f"margin-bottom:8px'>"
             f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>{target['material']}</div>"
             f"<div style='display:flex;gap:16px;font-size:12px;color:#a0aec0'>"
             f"<span>2031 target: <strong style='color:#63b3ed'>{target['target_2031_pct']}%</strong></span>"
@@ -2626,6 +2682,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"<span>Est. current: <strong style='color:#f6ad55'>{est_recycled}</strong> "
             f"{_badge('Illustrative', '#718096')}</span>"
             f"</div></div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>{current_note}</div>"
             f"<div style='background:#2d3748;border-radius:4px;height:8px;margin-bottom:4px'>"
             f"<div style='background:#63b3ed33;border-radius:4px;height:8px;width:{bar_fill_31}%;"
             f"position:relative'>"

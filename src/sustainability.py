@@ -77,6 +77,8 @@ EU_RECYCLED_TARGETS = [
         "target_2031_pct": 16,
         "target_2036_pct": 26,
         "source":    "EU 2023/1542 Annex XII",
+        "current_industry_range": "~5–10%",
+        "current_note": "Industry-wide estimate; Cobalt recycling is most mature (hydromet), but certified recycled-content batteries remain rare. Figures from Sommerville et al. (2020) and BloombergNEF 2023.",
     },
     {
         "material":  "Lithium",
@@ -84,12 +86,16 @@ EU_RECYCLED_TARGETS = [
         "target_2036_pct": 12,
         "source":    "EU 2023/1542 Annex XII",
         "note":      "Applying from 2031; 2036 target reflects increased recycling infrastructure",
+        "current_industry_range": "~1–3%",
+        "current_note": "Lithium recycling infrastructure is nascent; hydromet recovery rates are improving but certified content is very low. Estimate from IEA Critical Minerals Report 2023.",
     },
     {
         "material":  "Nickel",
         "target_2031_pct": 6,
         "target_2036_pct": 15,
         "source":    "EU 2023/1542 Annex XII",
+        "current_industry_range": "N/A for LiCoO₂",
+        "current_note": "Nickel is not a primary material in LiCoO₂ — the EU recycled-content target applies to NMC/NCA chemistries where nickel is a major cathode component.",
     },
 ]
 

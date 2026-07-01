@@ -99,6 +99,19 @@ ASSUMPTIONS = {
             "No single figure is appropriate — set this to match the expected deployment grid."
         ),
     },
+    "second_life_extension": {
+        "value": 1.3,
+        "slider_range": (1.1, 2.0),
+        "unit": "× current cycles",
+        "label": "Illustrative — not sourced",
+        "source": (
+            "Assumed second-life extends total cycle use by 30% above current cycles as default. "
+            "Range 1.1–2.0× reflects literature estimates: Harper et al. (2019) suggest 20–80% "
+            "additional service life depending on application duty; NREL (2019) ESS case studies "
+            "show 1.5–2× extensions for lower-stress stationary storage. "
+            "No single figure applies — set to match your expected second-life application."
+        ),
+    },
     "material_recovery": {
         "value": 1.00,
         "slider_range": (0.25, 3.00),
