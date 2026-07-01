@@ -250,6 +250,7 @@ def load_everything():
 
 NAV_ITEMS = [
     ("Overview",        "overview",        True),
+    ("Import",          "import",          True),
     ("Health",          "health",          True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
@@ -259,7 +260,6 @@ NAV_ITEMS = [
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
-    ("Import",          "import",          True),
     ("Settings",        "settings",        True),
 ]
 
