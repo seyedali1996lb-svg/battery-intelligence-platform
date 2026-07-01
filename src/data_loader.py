@@ -148,18 +148,36 @@ def generate_cell_data(
     resistance_ohm = np.clip(resistance_ohm, 0.10, 0.90)
 
     # ── Per-cycle temperature ──
-    # Varies around the cell's mean operating temperature with ±2.5°C noise.
-    # This is the only stress parameter carried into the feature matrix —
-    # C-rate and DoD are not measured per-cycle in Oxford-style test data.
     temperature_c = rng.normal(temp_mean, 2.5, n_cycles)
 
+    # ── Coulombic Efficiency (CE) ──
+    # CE = Q_discharge / Q_charge. Fresh LiCoO2 ~99.95%; degrades as SEI
+    # consumes cyclable lithium. Modelled as sqrt-decay, stress-modulated.
+    # Published range: 99.5–99.95% for healthy cells (Smith et al. 2021).
+    k_ce = 0.000012 * sf
+    ce_base = 0.9995 - k_ce * np.sqrt(cycles)
+    ce_noise = rng.normal(0, 0.00008, n_cycles)
+    coulombic_efficiency = np.clip(ce_base + ce_noise, 0.970, 0.9998)
+    charge_capacity_ah = capacity_ah / np.clip(coulombic_efficiency, 0.01, 1.0)
+
+    # ── Stress weight per cycle (for equivalent-cycle accounting) ──
+    # sf=1.0 for baseline (Cell1 at 25°C, 1C, 100% DoD).
+    # Equivalent cycles = Σ stress_weight — captures that 1 cycle at 2× stress
+    # ages the cell as much as 2 baseline cycles.
+    cycle_stress_weight = np.full(n_cycles, sf)
+
     return pd.DataFrame({
-        "cycle_number":        cycles,
-        "capacity_ah":         capacity_ah,
-        "resistance_ohm":      resistance_ohm,
-        "temperature_c":       temperature_c,
-        "days_between_cycles": days_between_cycles,
-        "cumulative_days":     cumulative_days,
+        "cycle_number":          cycles,
+        "capacity_ah":           capacity_ah,
+        "charge_capacity_ah":    charge_capacity_ah,
+        "coulombic_efficiency":  coulombic_efficiency,
+        "resistance_ohm":        resistance_ohm,
+        "temperature_c":         temperature_c,
+        "days_between_cycles":   days_between_cycles,
+        "cumulative_days":       cumulative_days,
+        "c_rate":                np.full(n_cycles, c_rate),
+        "dod":                   np.full(n_cycles, dod),
+        "cycle_stress_weight":   cycle_stress_weight,
     })
 
 

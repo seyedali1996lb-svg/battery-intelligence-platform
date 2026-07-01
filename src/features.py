@@ -88,6 +88,29 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
         fade_rate = df["fade_rate_50cy"].clip(lower=1e-6)
         df["rul"] = ((df["capacity_ah"] - eol_capacity) / fade_rate).clip(lower=0)
 
+    # ── Coulombic Efficiency features ──
+    if "coulombic_efficiency" in df.columns:
+        df["ce_rolling_30cy"] = df["coulombic_efficiency"].rolling(30, min_periods=1).mean()
+        df["ce_drop_rate"]    = df["coulombic_efficiency"].diff().rolling(10, min_periods=1).mean()
+    else:
+        df["ce_rolling_30cy"] = np.nan
+        df["ce_drop_rate"]    = np.nan
+
+    # ── Energy / capacity throughput ──
+    # Cumulative Ah and kWh delivered by the cell over its lifetime.
+    # kWh uses 3.7 V LiCoO2 nominal voltage.
+    df["cumulative_ah"]  = df["capacity_ah"].cumsum()
+    df["cumulative_kwh"] = (df["capacity_ah"] * 3.7).cumsum() / 1000.0
+
+    # ── Equivalent cycles (stress-normalized) ──
+    # Σ stress_weight gives the number of baseline cycles (25°C, 1C, 100% DoD)
+    # that would produce equivalent degradation — the metric CATL and BYD use
+    # for warranty throughput accounting.
+    if "cycle_stress_weight" in df.columns:
+        df["equivalent_cycles"] = df["cycle_stress_weight"].cumsum()
+    else:
+        df["equivalent_cycles"] = np.nan
+
     # ── dQ/dV features ──
     df = add_dqdv_features(df)
 
@@ -121,6 +144,9 @@ FEATURE_COLUMNS = [
     "dqdv_peak_soc",
     "dqdv_area",
     "dqdv_fwhm",
+    # Coulombic Efficiency — tracks SEI lithium consumption
+    "ce_rolling_30cy",
+    "ce_drop_rate",
 ]
 
 TARGET_SOH = "soh_pct"

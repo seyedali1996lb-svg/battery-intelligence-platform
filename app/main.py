@@ -744,43 +744,19 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         f"~{months_remaining:.0f} months · {rate_note}</div>"
         if months_remaining is not None else ""
     )
+    # Energy throughput
+    _cum_kwh = float(latest["cumulative_kwh"]) if "cumulative_kwh" in latest.index else None
+    kwh_display = f"{_cum_kwh:.2f} kWh" if _cum_kwh is not None else "—"
+    # Equivalent cycles
+    _eq_cy = float(latest["equivalent_cycles"]) if "equivalent_cycles" in latest.index and not pd.isna(latest["equivalent_cycles"]) else None
+    eq_cy_display = f"{_eq_cy:,.0f}" if _eq_cy is not None else "—"
+    eq_cy_sub = "stress-normalized (CATL/BYD metric)" if _eq_cy is not None else "not available"
+    # Current CE
+    _ce = float(latest["coulombic_efficiency"]) if "coulombic_efficiency" in latest.index else None
+    ce_display = f"{_ce*100:.3f}%" if _ce is not None else "—"
 
     _md_html(
-        f"""
-        <div class="metric-row">
-            <div class="metric-chip">
-                <div class="metric-chip-label">State of Health</div>
-                <div class="metric-chip-value">{current_soh:.1f}%</div>
-                <div class="metric-chip-sub">vs 100% at cycle 1</div>
-            </div>
-            <div class="metric-chip">
-                <div class="metric-chip-label">Cycles Completed</div>
-                <div class="metric-chip-value">{current_cycle:,}</div>
-                <div class="metric-chip-sub">charge / discharge</div>
-            </div>
-            <div class="metric-chip">
-                <div class="metric-chip-label">Est. Remaining Life</div>
-                <div class="metric-chip-value">{rul_display}</div>
-                <div class="metric-chip-sub">{rul_sub}</div>
-                {months_html}
-            </div>
-            <div class="metric-chip">
-                <div class="metric-chip-label">Capacity Lost</div>
-                <div class="metric-chip-value">{total_fade*1000:.0f} mAh</div>
-                <div class="metric-chip-sub">since commissioning</div>
-            </div>
-            <div class="metric-chip">
-                <div class="metric-chip-label">Peak Power</div>
-                <div class="metric-chip-value" style="font-size:20px">{sop_display}</div>
-                <div class="metric-chip-sub">of initial capability</div>
-            </div>
-            <div class="metric-chip">
-                <div class="metric-chip-label">Data Source</div>
-                <div class="metric-chip-value" style="font-size:18px">{src_val}</div>
-                <div class="metric-chip-sub">{src_sub}</div>
-            </div>
-        </div>
-        """
+        f"""<div class="metric-row"><div class="metric-chip"><div class="metric-chip-label">State of Health</div><div class="metric-chip-value">{current_soh:.1f}%</div><div class="metric-chip-sub">vs 100% at cycle 1</div></div><div class="metric-chip"><div class="metric-chip-label">Cycles Completed</div><div class="metric-chip-value">{current_cycle:,}</div><div class="metric-chip-sub">charge / discharge</div></div><div class="metric-chip"><div class="metric-chip-label">Est. Remaining Life</div><div class="metric-chip-value">{rul_display}</div><div class="metric-chip-sub">{rul_sub}</div>{months_html}</div><div class="metric-chip"><div class="metric-chip-label">Capacity Lost</div><div class="metric-chip-value">{total_fade*1000:.0f} mAh</div><div class="metric-chip-sub">since commissioning</div></div><div class="metric-chip"><div class="metric-chip-label">Peak Power</div><div class="metric-chip-value" style="font-size:20px">{sop_display}</div><div class="metric-chip-sub">of initial capability</div></div><div class="metric-chip"><div class="metric-chip-label">Energy Delivered</div><div class="metric-chip-value" style="font-size:18px">{kwh_display}</div><div class="metric-chip-sub">cumulative throughput</div></div><div class="metric-chip"><div class="metric-chip-label">Equiv. Cycles</div><div class="metric-chip-value" style="font-size:18px">{eq_cy_display}</div><div class="metric-chip-sub">{eq_cy_sub}</div></div><div class="metric-chip"><div class="metric-chip-label">Coulombic Eff.</div><div class="metric-chip-value" style="font-size:18px">{ce_display}</div><div class="metric-chip-sub">last cycle Q_d / Q_c</div></div></div>"""
     )
 
     # ── Calendar Age Analysis ─────────────────────────────────────────────────
@@ -1287,6 +1263,130 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 st.info("dQ/dV columns unavailable for mechanism interpretation.")
         except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")
+
+    # ── ⚡ Coulombic Efficiency ──────────────────────────────────────────────
+    if "coulombic_efficiency" in df.columns:
+        with st.expander("⚡ Coulombic Efficiency (CE) Analysis", expanded=False):
+            try:
+                ce_latest  = float(df["coulombic_efficiency"].iloc[-1])
+                ce_initial = float(df["coulombic_efficiency"].iloc[:10].mean())
+                ce_drop    = ce_initial - ce_latest
+
+                _ce1, _ce2, _ce3 = st.columns(3)
+                with _ce1:
+                    st.metric("Current CE", f"{ce_latest*100:.3f}%",
+                              help="Q_discharge / Q_charge — lithium consumed by SEI each cycle")
+                with _ce2:
+                    st.metric("CE Drop from Cycle 1", f"{ce_drop*100:.3f}%",
+                              delta=f"{-ce_drop*100:.3f}%",
+                              help="Cumulative lithium inventory loss signature")
+                with _ce3:
+                    ce_risk = "High" if ce_latest < 0.993 else ("Moderate" if ce_latest < 0.997 else "Low")
+                    st.metric("Lithium Loss Risk", ce_risk,
+                              help="< 99.7%: moderate SEI growth; < 99.3%: accelerated LLI")
+
+                _md_html("""<div style="font-size:12px;color:#718096;margin:8px 0 12px;line-height:1.6"><strong style="color:#a0aec0">Why CE matters:</strong> Every cycle where CE &lt; 100% permanently loses cyclable lithium to the SEI layer. A CE drop from 99.95% → 99.30% may seem small but represents ~0.65% lithium lost per cycle — the dominant degradation mechanism in calendar-aged cells. CATL and BYD track cumulative CE deficit as the primary warranty signal for LLI-dominated failures.</div>""")
+
+                # CE trend chart
+                fig_ce = go.Figure()
+                fig_ce.add_trace(go.Scatter(
+                    x=df["cycle_number"].tolist(),
+                    y=(df["coulombic_efficiency"] * 100).tolist(),
+                    name="CE per cycle", mode="lines",
+                    line=dict(color="#4a5568", width=1),
+                    hovertemplate="Cycle %{x}: %{y:.4f}%<extra>CE</extra>",
+                ))
+                if "ce_rolling_30cy" in df.columns:
+                    fig_ce.add_trace(go.Scatter(
+                        x=df["cycle_number"].tolist(),
+                        y=(df["ce_rolling_30cy"] * 100).tolist(),
+                        name="30-cycle rolling avg", mode="lines",
+                        line=dict(color="#63b3ed", width=2),
+                        hovertemplate="Cycle %{x}: %{y:.4f}%<extra>30cy avg</extra>",
+                    ))
+                fig_ce.add_hline(y=99.70, line=dict(color="#f6ad55", width=1, dash="dot"),
+                                 annotation_text="99.70% — moderate risk threshold",
+                                 annotation=dict(font=dict(size=9, color="#f6ad55")))
+                fig_ce.add_hline(y=99.30, line=dict(color="#fc8181", width=1, dash="dot"),
+                                 annotation_text="99.30% — high LLI risk",
+                                 annotation=dict(font=dict(size=9, color="#fc8181")))
+                fig_ce.update_layout(
+                    **base_layout(
+                        height=280, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Coulombic Efficiency (%)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                fig_ce.update_layout(title=dict(text="Coulombic Efficiency — Q_discharge / Q_charge", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_ce, use_container_width=True)
+
+                # Cumulative lithium loss
+                ce_deficit = (1.0 - df["coulombic_efficiency"]).cumsum()
+                fig_lii = go.Figure()
+                fig_lii.add_trace(go.Scatter(
+                    x=df["cycle_number"].tolist(),
+                    y=(ce_deficit * float(df["capacity_ah"].iloc[0]) * 1000).tolist(),
+                    fill="tozeroy", fillcolor="rgba(252,129,129,0.08)",
+                    line=dict(color="#fc8181", width=2),
+                    hovertemplate="Cycle %{x}: %{y:.2f} mAh cumulative LLI<extra></extra>",
+                    showlegend=False,
+                ))
+                fig_lii.update_layout(
+                    **base_layout(
+                        height=220, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Cumulative Li loss (mAh)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                fig_lii.update_layout(title=dict(text="Cumulative Lithium Inventory Loss (LLI) from CE Deficit", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_lii, use_container_width=True)
+            except Exception as _ce_e:
+                st.info(f"CE analysis unavailable: {_ce_e}")
+
+    # ── 📈 Energy Throughput ─────────────────────────────────────────────────
+    if "cumulative_kwh" in df.columns:
+        with st.expander("📈 Energy & Capacity Throughput", expanded=False):
+            try:
+                total_kwh = float(df["cumulative_kwh"].iloc[-1])
+                total_ah  = float(df["cumulative_ah"].iloc[-1])
+                eq_cy     = float(df["equivalent_cycles"].iloc[-1]) if "equivalent_cycles" in df.columns and not pd.isna(df["equivalent_cycles"].iloc[-1]) else None
+
+                _t1, _t2, _t3 = st.columns(3)
+                with _t1:
+                    st.metric("Total Energy Delivered", f"{total_kwh:.2f} kWh",
+                              help="Cumulative energy throughput — BYD/CATL warranty metric")
+                with _t2:
+                    st.metric("Total Capacity Delivered", f"{total_ah:.0f} Ah",
+                              help="Cumulative Ah throughput across all cycles")
+                with _t3:
+                    if eq_cy is not None:
+                        raw_cy = int(df["cycle_number"].iloc[-1])
+                        st.metric("Equivalent Cycles", f"{eq_cy:,.0f}",
+                                  delta=f"{eq_cy - raw_cy:+,.0f} vs raw",
+                                  help="Stress-normalized cycle count: raw cycles × stress factor")
+                    else:
+                        st.metric("Equivalent Cycles", "—", help="Not available for this data source")
+
+                fig_kwh = go.Figure()
+                fig_kwh.add_trace(go.Scatter(
+                    x=df["cycle_number"].tolist(),
+                    y=df["cumulative_kwh"].tolist(),
+                    fill="tozeroy", fillcolor="rgba(99,179,237,0.07)",
+                    line=dict(color="#63b3ed", width=2),
+                    hovertemplate="Cycle %{x}: %{y:.3f} kWh delivered<extra></extra>",
+                    showlegend=False,
+                ))
+                fig_kwh.update_layout(
+                    **base_layout(
+                        height=250, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Cumulative kWh", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                fig_kwh.update_layout(title=dict(text="Cumulative Energy Throughput (kWh) — Warranty Accounting Metric", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_kwh, use_container_width=True)
+            except Exception as _te:
+                st.info(f"Throughput analysis unavailable: {_te}")
 
 
 # ---------------------------------------------------------------------------
