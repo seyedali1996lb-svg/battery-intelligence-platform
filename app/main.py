@@ -2363,18 +2363,8 @@ def page_copilot(
     st.markdown("# Copilot")
 
     # ── Disclosure banner ──
-    st.markdown(
-        """
-        <div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);
-                    border-radius:10px;padding:14px 20px;margin-bottom:24px;
-                    font-size:13px;color:#718096;line-height:1.6">
-            <strong style="color:#63b3ed">Grounded narration only.</strong>
-            Every sentence is derived from values already computed by the model pipeline —
-            SOH, feature importances, per-cell RUL reliability, fade rates.
-            The Copilot never calculates, estimates, or infers a value not already in the bundle.
-            If a number is not there, it says so.
-        </div>
-        """
+    _md_html(
+        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#718096;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.</div>"""
     )
 
     query = st.session_state.get("copilot_query", None)
