@@ -712,6 +712,12 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     is_nasa_src = cell_id in NASA_CELL_IDS
     src_val = "NASA" if is_nasa_src else f"{sf:.2f}x"
     src_sub = "real measured" if is_nasa_src else "vs baseline (synthetic)"
+    sop_display = f"{sop_pct:.0f}%" if sop_pct is not None else "—"
+    months_html = (
+        f"<div class='metric-chip-sub' style='margin-top:2px;color:#4a5568'>"
+        f"~{months_remaining:.0f} months · {rate_note}</div>"
+        if months_remaining is not None else ""
+    )
 
     st.markdown(
         f"""
@@ -730,7 +736,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 <div class="metric-chip-label">Est. Remaining Life</div>
                 <div class="metric-chip-value">{rul_display}</div>
                 <div class="metric-chip-sub">{rul_sub}</div>
-                {f"<div class='metric-chip-sub' style='margin-top:2px;color:#4a5568'>~{months_remaining:.0f} months · {rate_note}</div>" if months_remaining is not None else ""}
+                {months_html}
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Capacity Lost</div>
@@ -739,7 +745,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Peak Power</div>
-                <div class="metric-chip-value" style="font-size:20px">{f"{sop_pct:.0f}%" if sop_pct is not None else "—"}</div>
+                <div class="metric-chip-value" style="font-size:20px">{sop_display}</div>
                 <div class="metric-chip-sub">of initial capability</div>
             </div>
             <div class="metric-chip">
