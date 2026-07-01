@@ -17,15 +17,20 @@ import joblib
 
 CACHE_DIR = pathlib.Path(__file__).parent.parent / ".cache" / "bundles"
 
+# Bump this string whenever feature engineering or model code changes in a way
+# that makes cached featured_dfs or bundles incompatible with the current code.
+# The version is mixed into the cache signature so old caches are automatically
+# invalidated and rebuilt on the next app start.
+FEATURE_VERSION = "v4-dqdv-calendar"
+
 
 def _signature(battery_dict: dict) -> str:
     """
-    Fast data signature: cell IDs + cycle counts per cell.
-    If any cell's data changes length (new cycles added), the sig changes
-    and the cache is invalidated. Deliberately ignores actual values for
-    speed — a length change is the normal signal that data was updated.
+    Cache signature: cell IDs + cycle counts + feature version.
+    Changing FEATURE_VERSION above busts the cache across all cells.
     """
     sig = {cid: len(cell["cycles"]) for cid, cell in sorted(battery_dict.items())}
+    sig["__feature_version__"] = FEATURE_VERSION
     return hashlib.sha256(json.dumps(sig).encode()).hexdigest()[:20]
 
 
