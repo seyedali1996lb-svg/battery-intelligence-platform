@@ -275,7 +275,6 @@ NAV_ITEMS = [
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
     ("Settings",        "settings",        True),
-    ("Import",          "import",          True),   # repeated at bottom for discoverability
 ]
 
 LEGEND_H = dict(
