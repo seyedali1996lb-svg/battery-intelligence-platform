@@ -1593,10 +1593,20 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
             _grade_results.append({"cid": _cid, "grade": "—", "score": None,
                                    "fade": None, "var": None, "slope": None})
             continue
+        _cap0  = float(_early["capacity_ah"].iloc[0])
+        _res0  = max(float(_early["resistance_ohm"].iloc[0]), 1e-6)
         _fade  = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
         _var   = float(_early["capacity_ah"].var())
         _slope = float(_np_grade.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0])
-        _score = float(_np_grade.clip(100 - _fade * 50000 - _var * 100000 - _slope * 20000, 0, 100))
+        # Normalise metrics relative to cell's own initial values so the score
+        # is scale-independent (works for both 0.74 Ah synthetic and 1.8 Ah NASA cells)
+        _fade_pct_per_cy  = _fade / _cap0 * 100            # % capacity lost per cycle
+        _cv2              = _var / (_cap0 ** 2) * 1e4       # dimensionless variance × 1e4
+        _r_slope_pct      = abs(_slope) / _res0 * 100       # % resistance growth per cycle
+        _score = float(_np_grade.clip(
+            100 - _fade_pct_per_cy * 400 - _cv2 * 8 - _r_slope_pct * 150,
+            0, 100,
+        ))
         _grade = "A" if _score >= 75 else ("B" if _score >= 50 else "C")
         _grade_results.append({"cid": _cid, "grade": _grade, "score": _score,
                                 "fade": _fade, "var": _var, "slope": _slope})
