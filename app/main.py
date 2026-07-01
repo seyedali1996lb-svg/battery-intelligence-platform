@@ -253,7 +253,7 @@ NAV_ITEMS = [
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
-    ("Settings",        "settings",        False),
+    ("Settings",        "settings",        True),
 ]
 
 LEGEND_H = dict(
@@ -2671,6 +2671,242 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             )
 
 
+def page_settings(featured_dfs: dict, bundles: dict):
+    from lco_eval import RUL_RELIABLE_FLOOR
+    from design_system import C_GREEN, C_AMBER, C_MUTED, C_ORANGE
+
+    def _section(title: str):
+        st.markdown(section_header_html(title), unsafe_allow_html=True)
+
+    st.markdown("# Settings")
+    st.markdown("##### Platform configuration · model transparency · reliability controls")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 1: Data sources
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Data Sources")
+
+    synth_ids = [c for c in featured_dfs if c not in NASA_CELL_IDS]
+    nasa_ids  = [c for c in featured_dfs if c in NASA_CELL_IDS]
+
+    src_col1, src_col2 = st.columns(2)
+    with src_col1:
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:18px 20px'>"
+            f"<div style='font-size:12px;font-weight:600;color:#fc8181;text-transform:uppercase;"
+            f"letter-spacing:0.07em;margin-bottom:8px'>Synthetic cells</div>"
+            f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(synth_ids)}</div>"
+            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"Physics-informed simulation (Arrhenius SEI growth, empirical C-rate factor, "
+            f"Rainflow DoD scaling). Resistance: 0.15–0.40 Ω internal. "
+            f"<strong>Not real measured data.</strong></div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"{', '.join(synth_ids)}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with src_col2:
+        st.markdown(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:18px 20px'>"
+            f"<div style='font-size:12px;font-weight:600;color:#68d391;text-transform:uppercase;"
+            f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
+            f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
+            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"LiCoO₂ 18650 cells, ~2 Ah, 24°C, 2A constant discharge. "
+            f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
+            f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run src/nasa_loader.py'}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-top:12px;padding:10px 14px;"
+        "background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
+        "<strong style='color:#718096'>Why two separate models?</strong> "
+        "Synthetic and NASA cells use incompatible resistance scales (0.15–0.40 Ω vs 0.04–0.07 Ω Re). "
+        "A combined model produced R²=−0.49. Two separate GBRT models, each trained and validated "
+        "on its own data source, keep the predictions honest. Fleet ranking uses SOH "
+        "(scale-invariant) rather than RUL (model-dependent) for cross-type comparison.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2: Model transparency
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Model Transparency — Leave-Cell-Out Validation")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "Leave-cell-out (LCO) cross-validation trains on N−1 cells and tests on the held-out "
+        "cell entirely. This is the honest generalisation metric — a row-level split on "
+        "a multi-cell dataset leaks cell identity into training. Per-cell fold R² below "
+        "the reliability floor gates RUL display for that cell across all pages.</div>",
+        unsafe_allow_html=True,
+    )
+
+    for source_key, bundle in bundles.items():
+        if bundle is None:
+            continue
+        m = bundle["metrics"]
+        lco_per = m.get("lco_per_cell", {})
+        per_cell_ok = m.get("per_cell_rul_reliable", {})
+        label = "NASA PCoE" if source_key == "nasa" else "Synthetic"
+        colour = "#68d391" if source_key == "nasa" else "#fc8181"
+
+        st.markdown(
+            f"<div style='font-size:12px;font-weight:600;color:{colour};"
+            f"margin:16px 0 8px'>{label} model</div>",
+            unsafe_allow_html=True,
+        )
+
+        header_cols = st.columns([2, 1, 1, 1, 2])
+        for col, hdr in zip(header_cols, ["Cell", "SOH fold R²", "RUL fold R²", "RUL status", "Note"]):
+            col.markdown(
+                f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+                f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
+                unsafe_allow_html=True,
+            )
+
+        for cell_id, fold in lco_per.items():
+            soh_r2  = fold.get("soh_r2", None)
+            rul_r2  = fold.get("rul_r2", None)
+            ok      = per_cell_ok.get(cell_id, True)
+            status_c = C_GREEN if ok else C_ORANGE
+            status_l = "Calibrated" if ok else "Not calibrated"
+            note = "" if ok else f"fold R²={rul_r2:.2f} < {RUL_RELIABLE_FLOOR} floor — RUL withheld"
+            row_cols = st.columns([2, 1, 1, 1, 2])
+            row_cols[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
+            row_cols[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{soh_r2:.2f}</div>", unsafe_allow_html=True)
+            row_cols[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{rul_r2:.2f}</div>", unsafe_allow_html=True)
+            row_cols[3].markdown(f"<div style='font-size:13px;color:{status_c};padding:4px 0'>{status_l}</div>", unsafe_allow_html=True)
+            row_cols[4].markdown(f"<div style='font-size:11px;color:#4a5568;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            f"<div style='display:flex;gap:24px;font-size:12px;color:#718096;"
+            f"padding:8px 0;border-top:1px solid #2d3748;margin-top:4px'>"
+            f"<span>Dataset SOH R²: <strong style='color:#e2e8f0'>{m.get('lco_soh_r2', 0):.3f}</strong></span>"
+            f"<span>Dataset RUL R²: <strong style='color:#e2e8f0'>{m.get('lco_rul_r2', 0):.3f}</strong></span>"
+            f"<span>Training cells: <strong style='color:#e2e8f0'>{m.get('n_cells', '—')}</strong></span>"
+            f"<span>Training rows: <strong style='color:#e2e8f0'>{m.get('n_rows', 0):,}</strong></span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3: RUL reliability threshold
+    # ────────────────────────────────────────────────────────────────────────
+    _section("RUL Reliability Threshold")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "The reliability floor gates whether RUL predictions are shown or suppressed. "
+        "Cells whose held-out fold R² falls below this value have RUL withheld across "
+        "all pages — shown as 'Not calibrated' instead of a cycle count. "
+        "Adjusting the slider below shows which cells would flip at different thresholds. "
+        "<strong style='color:#718096'>This is a read-only preview</strong> — "
+        "the active floor is hardcoded at "
+        f"<code style='color:#63b3ed'>{RUL_RELIABLE_FLOOR}</code> in "
+        "<code style='color:#63b3ed'>src/lco_eval.py</code> and requires a code change to modify.</div>",
+        unsafe_allow_html=True,
+    )
+
+    preview_floor = st.slider(
+        "Preview threshold",
+        min_value=0.0, max_value=0.9,
+        value=float(RUL_RELIABLE_FLOOR), step=0.05,
+        key="settings_rul_floor_preview",
+        help=f"Active floor in code: {RUL_RELIABLE_FLOOR}. Drag to see which cells would be affected at other thresholds.",
+    )
+
+    preview_rows = []
+    for source_key, bundle in bundles.items():
+        if bundle is None:
+            continue
+        lco_per = bundle["metrics"].get("lco_per_cell", {})
+        for cell_id, fold in lco_per.items():
+            rul_r2 = fold.get("rul_r2", None)
+            active_ok  = rul_r2 >= RUL_RELIABLE_FLOOR if rul_r2 is not None else True
+            preview_ok = rul_r2 >= preview_floor       if rul_r2 is not None else True
+            changed = active_ok != preview_ok
+            preview_rows.append((cell_id, rul_r2, active_ok, preview_ok, changed))
+
+    th_cols = st.columns([2, 1, 1, 1, 2])
+    for col, hdr in zip(th_cols, ["Cell", "RUL fold R²", f"At {RUL_RELIABLE_FLOOR} (active)", f"At {preview_floor:.2f} (preview)", "Change"]):
+        col.markdown(
+            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
+            unsafe_allow_html=True,
+        )
+
+    for cell_id, rul_r2, active_ok, preview_ok, changed in preview_rows:
+        def _status(ok): return ("<span style='color:#2f855a'>✓ Shown</span>" if ok
+                                 else "<span style='color:#c05621'>✗ Withheld</span>")
+        change_html = (
+            "<span style='color:#d69e2e;font-weight:600'>⚑ Would flip</span>" if changed
+            else "<span style='color:#2d3748'>—</span>"
+        )
+        r2_str = f"{rul_r2:.2f}" if rul_r2 is not None else "—"
+        row = st.columns([2, 1, 1, 1, 2])
+        row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
+        row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{r2_str}</div>", unsafe_allow_html=True)
+        row[2].markdown(f"<div style='padding:4px 0'>{_status(active_ok)}</div>", unsafe_allow_html=True)
+        row[3].markdown(f"<div style='padding:4px 0'>{_status(preview_ok)}</div>", unsafe_allow_html=True)
+        row[4].markdown(f"<div style='padding:4px 0'>{change_html}</div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 4: About
+    # ────────────────────────────────────────────────────────────────────────
+    _section("About")
+
+    phase_rows = [
+        ("Phase 1", "Core Loop",       "SOH/RUL model, LCO validation, per-cell reliability gate, Overview/Health/Insights",       "Done"),
+        ("Phase 2", "Fleet",           "Multi-cell fleet ranking by SOH + fade rate; cross-type RUL gate documented",               "Done"),
+        ("Phase 3", "Copilot",         "Template-based narration grounded on bundle outputs — no LLM, no invented numbers",         "Done"),
+        ("Phase 4", "Consequences",    "Second-life economics: fit scoring, break-even chart, full assumption register",             "Done"),
+        ("Phase 5", "Passport",        "EU 2023/1542 Battery Passport field structure; PDF export via reportlab",                   "Done"),
+        ("Phase 6", "Recommendations", "4-tier auditable confidence system; dual-signal SOH + fade acceleration routing",           "Done"),
+        ("Phase 7", "Sustainability",  "Lifecycle CO₂ chart, critical materials tracker, EU recycled-content targets",              "Done"),
+        ("Phase 8", "Design System",   "design_system.py: badge constants, state badges, color tokens; base_layout() documented",  "Done"),
+        ("Phase 9", "Settings",        "Model transparency, per-cell LCO table, RUL floor preview, data source panel",             "Done"),
+    ]
+
+    for ph, name, desc, status in phase_rows:
+        status_c = C_GREEN if status == "Done" else C_MUTED
+        st.markdown(
+            f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
+            f"<div style='min-width:64px;font-size:11px;font-weight:600;color:#4a5568;padding-top:2px'>{ph}</div>"
+            f"<div style='min-width:120px;font-size:13px;font-weight:600;color:#e2e8f0'>{name}</div>"
+            f"<div style='flex:1;font-size:12px;color:#718096;line-height:1.5'>{desc}</div>"
+            f"<div style='min-width:48px;font-size:12px;font-weight:600;color:{status_c};text-align:right'>{status}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;line-height:1.8;padding:14px 18px;"
+        "background:#1a202c;border-radius:8px'>"
+        "<strong style='color:#718096'>Stack</strong> — "
+        "scikit-learn GBRT · Streamlit · Plotly · reportlab<br>"
+        "<strong style='color:#718096'>Model</strong> — "
+        "Two separate GBRT instances (synthetic / NASA); leave-cell-out cross-validation<br>"
+        "<strong style='color:#718096'>Data</strong> — "
+        "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007)<br>"
+        "<strong style='color:#718096'>Regulatory</strong> — "
+        "EU Battery Regulation (EU) 2023/1542 — field structure demonstration only; "
+        "not a compliance claim<br>"
+        "<strong style='color:#718096'>Source</strong> — "
+        "<a href='https://github.com/seyedali1996lb-svg/battery-intelligence-platform' "
+        "style='color:#63b3ed'>github.com/seyedali1996lb-svg/battery-intelligence-platform</a>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -2739,6 +2975,8 @@ def main():
         page_reports(selected, df, bundle, rul_reliable)
     elif page == "fleet":
         page_fleet(featured_dfs, bundles)
+    elif page == "settings":
+        page_settings(featured_dfs, bundles)
     elif page in COMING_SOON_META:
         page_coming_soon(page)
     else:
