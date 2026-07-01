@@ -88,6 +88,7 @@ def _field_table(fields: list[dict], ss) -> Table:
         bg_cmds.append(("BACKGROUND", (2, i), (2, i), STATE_BG[f["state"]]))
 
     t = Table(rows, colWidths=[150, 230, 90])
+    t.splitByRow = 0  # never split small field tables mid-row
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), SLATE),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
