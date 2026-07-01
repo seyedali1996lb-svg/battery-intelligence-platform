@@ -781,6 +781,50 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         """
     )
 
+    # ── Calendar Age Analysis ─────────────────────────────────────────────────
+    if "cumulative_days" in df.columns:
+        with st.expander("📅 Calendar Age Analysis", expanded=False):
+            try:
+                cal_last = float(df["cumulative_days"].iloc[-1])
+                avg_rest = float(df["days_between_cycles"].mean()) if "days_between_cycles" in df.columns else 1.0
+                total_fade_ah = float(df["capacity_ah"].iloc[0]) - float(df["capacity_ah"].iloc[-1])
+                calendar_fade_pct = min(35, max(5, 100 * (cal_last * 0.00003 * 0.5) / max(total_fade_ah, 1e-6)))
+
+                cal_c1, cal_c2, cal_c3 = st.columns(3)
+                with cal_c1:
+                    st.metric("Total Calendar Time", f"{cal_last:.0f} days", help="since first cycle")
+                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>since first cycle</div>", unsafe_allow_html=True)
+                with cal_c2:
+                    st.metric("Avg Rest Between Cycles", f"{avg_rest:.1f} days", help="mean rest period")
+                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>mean rest period</div>", unsafe_allow_html=True)
+                with cal_c3:
+                    st.metric("Calendar vs Cycle Fade", f"~{calendar_fade_pct:.0f}% calendar", help="remainder from cycling")
+                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>remainder from cycling</div>", unsafe_allow_html=True)
+
+                fig_cal = go.Figure()
+                fig_cal.add_trace(go.Scatter(
+                    x=df["cycle_number"], y=df["cumulative_days"],
+                    name="Actual calendar time", line=dict(color="#63b3ed", width=2),
+                    hovertemplate="Cycle %{x}: %{y:.1f} days<extra>Calendar</extra>",
+                ))
+                max_cy = int(df["cycle_number"].max())
+                fig_cal.add_trace(go.Scatter(
+                    x=[0, max_cy], y=[0, max_cy],
+                    name="1 cycle/day baseline", line=dict(color="#4a5568", width=1.5, dash="dash"),
+                    hoverinfo="skip",
+                ))
+                fig_cal.update_layout(
+                    **base_layout(
+                        height=260, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Days elapsed", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                fig_cal.update_layout(title=dict(text="Calendar Time vs Cycle Count", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_cal, use_container_width=True)
+            except Exception as _e:
+                st.info(f"Calendar age analysis unavailable: {_e}")
+
     st.markdown("<div class='section-header'>State of Health — Full History</div>", unsafe_allow_html=True)
 
     df_train = df[df["cycle_number"] <= split_cycle]
@@ -1016,6 +1060,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         )
 
     # ── Anomaly summary ──
+
     n_cap_anom = len(cap_anomalies)
     n_res_anom = len(res_anomalies)
     if n_cap_anom > 0 or n_res_anom > 0:
@@ -1079,6 +1124,92 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         </div>
         """
     )
+
+    # ── dQ/dV Degradation Analysis ──────────────────────────────────────────
+    with st.expander("🔬 dQ/dV Degradation Analysis", expanded=False):
+        try:
+            from dqdv import simulate_vq_curve
+
+            n_cycles = len(df)
+            pct_indices = [int(n_cycles * p) for p in [0.05, 0.25, 0.50, 0.75, 0.95]]
+            pct_indices = [min(max(i, 0), n_cycles - 1) for i in pct_indices]
+            rep_rows = [df.iloc[i] for i in pct_indices]
+
+            # ── A) V(Q) Curve Overlay ──
+            _COLORS = ["#63b3ed", "#7fbfea", "#f6ad55", "#ed8936", "#fc8181"]
+            fig_vq = go.Figure()
+            for i, (row, color) in enumerate(zip(rep_rows, _COLORS)):
+                try:
+                    cap = float(row["capacity_ah"])
+                    res = float(row.get("resistance_ohm", 0.02))
+                    Q, V = simulate_vq_curve(cap, res)
+                    fig_vq.add_trace(go.Scatter(
+                        x=Q.tolist(), y=V.tolist(),
+                        mode="lines",
+                        name=f"Cycle {int(row['cycle_number'])}",
+                        line=dict(color=color, width=1.8),
+                        hovertemplate="Q=%{x:.3f} Ah  V=%{y:.3f} V<extra>Cycle " + str(int(row["cycle_number"])) + "</extra>",
+                    ))
+                except Exception:
+                    pass
+            fig_vq.update_layout(
+                **base_layout(
+                    height=300, legend=LEGEND_H,
+                    xaxis=dict(title="Discharge Capacity (Ah)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    yaxis=dict(title="Voltage (V)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                ),
+            )
+            fig_vq.update_layout(title=dict(text="Simulated Discharge Voltage Curves (V vs Q)", font=dict(size=12, color="#a0aec0"), x=0))
+            st.plotly_chart(fig_vq, use_container_width=True)
+
+            # ── B) dQ/dV Peak Trend ──
+            dqdv_cols = ["dqdv_peak_soc", "dqdv_peak_value"]
+            if all(c in df.columns for c in dqdv_cols):
+                fig_peak = go.Figure()
+                fig_peak.add_trace(go.Scatter(
+                    x=df["cycle_number"], y=df["dqdv_peak_soc"],
+                    name="Peak SOC Position", line=dict(color="#63b3ed", width=2),
+                    hovertemplate="Cycle %{x}: %{y:.3f}<extra>Peak SOC</extra>",
+                ))
+                fig_peak.add_trace(go.Scatter(
+                    x=df["cycle_number"], y=df["dqdv_peak_value"],
+                    name="Peak Amplitude (Ah/V)", line=dict(color="#f6ad55", width=2),
+                    yaxis="y2",
+                    hovertemplate="Cycle %{x}: %{y:.2f} Ah/V<extra>Peak Amplitude</extra>",
+                ))
+                fig_peak.update_layout(
+                    **base_layout(
+                        height=300, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Peak SOC Position", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False, color="#63b3ed"),
+                        yaxis2=dict(title="Peak Amplitude (Ah/V)", overlaying="y", side="right",
+                                    gridcolor="#232d3b", linecolor="#2d3748", zeroline=False, color="#f6ad55"),
+                    ),
+                )
+                fig_peak.update_layout(title=dict(text="dQ/dV Peak Shift Over Aging", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_peak, use_container_width=True)
+                st.caption("Peak SOC shifts left and amplitude drops as active material is lost — a direct electrochemical signature of degradation.")
+
+            # ── C) FWHM Trend ──
+            if "dqdv_fwhm" in df.columns:
+                fig_fwhm = go.Figure()
+                fig_fwhm.add_trace(go.Scatter(
+                    x=df["cycle_number"], y=df["dqdv_fwhm"],
+                    line=dict(color="#68d391", width=2),
+                    hovertemplate="Cycle %{x}: %{y:.4f} Ah<extra>FWHM</extra>",
+                    showlegend=False,
+                ))
+                fig_fwhm.update_layout(
+                    **base_layout(
+                        height=260, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="FWHM (Ah)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    ),
+                )
+                fig_fwhm.update_layout(title=dict(text="dQ/dV Peak Width (FWHM) — Broadening = increased heterogeneity", font=dict(size=12, color="#a0aec0"), x=0))
+                st.plotly_chart(fig_fwhm, use_container_width=True)
+        except Exception as _e:
+            st.info(f"dQ/dV analysis unavailable: {_e}")
 
 
 # ---------------------------------------------------------------------------
@@ -4034,53 +4165,109 @@ def page_import():
         )
         st.markdown("**Severson 2019 (Nature Energy)**")
         st.markdown(
-            "Download `batch1.pkl`, `batch2.pkl`, `batch3.pkl` from "
-            "[data.matr.io/1/](https://data.matr.io/1/) (Severson et al., Nature Energy 2019) "
-            "and place them in `data/severson/`. "
-            "Call `load_severson_directory('data/severson/')` to get a dict of "
-            "`{cell_id: DataFrame}` with columns `cycle_number`, `capacity_ah`, "
-            "`resistance_ohm`, `temperature_c` — ready to feed directly into "
-            "`build_features()`. Cells with fewer than 100 cycles are skipped automatically."
+            "Download `batch1.pkl`, `batch2.pkl`, `batch3.pkl` from data.matr.io "
+            "(Severson et al., Nature Energy 2019). "
+            "Upload them below — the importer auto-detects `.pkl` files and loads all cells."
         )
+        st.link_button("Download Severson Dataset (data.matr.io)", "https://data.matr.io/1/")
         st.markdown("**CALCE Battery Research Group**")
         st.markdown(
-            "Download CSV or XLSX files from "
-            "[web.calce.umd.edu/batteries/data.htm](https://web.calce.umd.edu/batteries/data.htm) "
-            "and place them in `data/calce/`. "
-            "Call `load_calce_directory('data/calce/')` to load all files at once; "
-            "the loader handles column-name variation across CALCE sub-datasets with "
-            "case-insensitive fuzzy matching and normalises to the same four-column schema."
+            "Download CSV or XLSX files from the CALCE battery data portal. "
+            "The importer handles column-name variation across CALCE sub-datasets."
         )
+        st.link_button("Download CALCE Dataset", "https://web.calce.umd.edu/batteries/data.htm")
 
     # ── Section 2: Upload widget ────────────────────────────────────────────
-    _section("Upload CSV")
+    _section("Upload CSV / XLSX / PKL")
 
     uploaded = st.file_uploader(
-        "Choose a CSV file",
-        type=["csv"],
+        "Upload battery cycle data",
+        type=["csv", "xlsx", "pkl"],
+        accept_multiple_files=True,
         key="import_csv_upload",
-        help="Must follow the Battery Intelligence Platform import format. Download the template above.",
+        help="CSV/XLSX: Battery Intelligence Platform format. PKL: Severson batch file.",
         label_visibility="collapsed",
     )
 
-    if uploaded is None:
+    # Handle Severson .pkl upload (multi-file uploader returns a list)
+    _pkl_files = [f for f in (uploaded or []) if f.name.endswith(".pkl")]
+    _csv_files = [f for f in (uploaded or []) if not f.name.endswith(".pkl")]
+
+    for _pkl_file in _pkl_files:
+        try:
+            import tempfile
+            from severson_loader import load_severson_batch
+            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
+                tmp.write(_pkl_file.read())
+                tmp_path = tmp.name
+            cell_dfs = load_severson_batch(tmp_path)
+            st.success(f"Loaded {len(cell_dfs)} cells from Severson batch file")
+            preview_rows = [
+                {
+                    "Cell ID": cid,
+                    "Cycles": len(_df),
+                    "Final SOH": f"{(_df.capacity_ah.iloc[-1] / max(_df.capacity_ah.iloc[0], 1e-9) * 100):.1f}%",
+                }
+                for cid, _df in cell_dfs.items()
+            ]
+            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
+            st.session_state["severson_cells"] = cell_dfs
+            st.info("Severson cells loaded. Switch to Overview to analyze individual cells (pipeline integration coming in next phase).")
+        except Exception as _e:
+            st.error(f"Could not load Severson batch file '{_pkl_file.name}': {_e}")
+
+    # For CSV/XLSX, take the first file (existing single-file flow)
+    uploaded = _csv_files[0] if _csv_files else None
+
+    if uploaded is None and not _pkl_files:
         st.markdown(
             "<div style='background:#1a202c;border:1px dashed #2d3748;border-radius:10px;"
             "padding:40px;text-align:center;color:#4a5568;font-size:13px'>"
-            "Drag and drop a CSV file here, or click to browse.<br>"
+            "Drag and drop a CSV, XLSX, or PKL file here, or click to browse.<br>"
             "<span style='font-size:11px;color:#2d3748;margin-top:6px;display:block'>"
-            "7 columns required — download the template for the exact format.</span>"
+            "CSV/XLSX: 7 columns required — download the template for the exact format. "
+            "PKL: Severson batch file.</span>"
             "</div>",
             unsafe_allow_html=True,
         )
         return
 
+    if uploaded is None:
+        # Only pkl files were uploaded — handled above; nothing more to do.
+        return
+
     # ── Parse + validate ────────────────────────────────────────────────────
     try:
-        df_raw = pd.read_csv(uploaded)
+        _fname = getattr(uploaded, "name", "")
+        if _fname.endswith((".xlsx", ".xls")):
+            df_raw = pd.read_excel(uploaded)
+        else:
+            df_raw = pd.read_csv(uploaded)
     except Exception as exc:
-        st.error(f"Could not parse CSV: {exc}")
+        st.error(f"Could not parse file: {exc}")
         return
+
+    # ── CALCE auto-detection fallback ────────────────────────────────────────
+    # If standard validation fails badly, try the CALCE loader before giving up.
+    _calce_tried = False
+    _calce_df = None
+    try:
+        from calce_loader import load_calce_file
+        import tempfile as _tmpmod
+        _fname = getattr(uploaded, "name", "")
+        if _fname.endswith((".csv", ".xlsx", ".xls")):
+            uploaded.seek(0)
+            with _tmpmod.NamedTemporaryFile(suffix=os.path.splitext(_fname)[1] or ".csv", delete=False) as _tmp:
+                _tmp.write(uploaded.read())
+                _tmp_path = _tmp.name
+            try:
+                _calce_df = load_calce_file(_tmp_path)
+                _calce_tried = True
+            except Exception:
+                _calce_df = None
+            uploaded.seek(0)
+    except Exception:
+        pass
 
     # ── Fuzzy column matching ─────────────────────────────────────────────
     from import_validator import validate_upload, fuzzy_match_columns, apply_column_mapping
@@ -4115,6 +4302,21 @@ def page_import():
     errors   = result["errors"]
     warnings = result["warnings"]
     summary  = result["summary"]
+
+    # ── CALCE fallback: if validation produced errors and CALCE succeeded ─────
+    if errors and _calce_tried and _calce_df is not None and len(_calce_df) > 50:
+        st.info(
+            f"Standard format not detected — auto-detected as CALCE format "
+            f"({len(_calce_df)} cycles loaded). Using CALCE loader."
+        )
+        # Wrap into multi-cell format expected by adapt_upload_to_pipeline
+        _fname_stem = os.path.splitext(getattr(uploaded, "name", "calce_cell"))[0]
+        df_raw = _calce_df.copy()
+        df_raw["cell_id"] = _fname_stem
+        result = validate_upload(df_raw)
+        errors   = result["errors"]
+        warnings = result["warnings"]
+        summary  = result["summary"]
 
     # ── Validation results banner ────────────────────────────────────────────
     if errors:
