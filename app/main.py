@@ -2526,11 +2526,16 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 zerolinecolor="#4a5568", title="kg CO₂e per cell",
                 titlefont=dict(size=11),
             ),
-            legend=dict(**LEGEND_H),
-            title=dict(text="Lifecycle CO₂ per cell — three end-of-life scenarios",
-                       font=dict(size=13, color="#a0aec0"), x=0),
             height=360,
         )
+    )
+    fig_lc.update_layout(
+        legend=LEGEND_H,
+        title=dict(
+            text="Lifecycle CO₂ per cell — three end-of-life scenarios",
+            font=dict(size=13, color="#a0aec0"),
+            x=0,
+        ),
     )
     st.plotly_chart(fig_lc, use_container_width=True)
     st.markdown(
