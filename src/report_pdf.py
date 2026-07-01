@@ -20,6 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_LEFT
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+    KeepTogether,
 )
 
 NAVY    = colors.HexColor("#1a202c")
@@ -34,6 +35,15 @@ RED_BG  = colors.HexColor("#fdecec")
 RED     = colors.HexColor("#c0392b")
 
 STATE_COLOUR = {"available": GREEN, "estimated": AMBER, "unavailable": MUTED}
+
+
+def _pdf_text(s: str) -> str:
+    """Sanitize text for reportlab Paragraphs.
+
+    Replaces Unicode subscript ₂ (U+2082) — not in Helvetica's encoding —
+    with reportlab's <sub> XML markup so it renders as proper superscript.
+    """
+    return s.replace("₂", "<sub>2</sub>")
 STATE_BG     = {"available": GREEN_BG, "estimated": AMBER_BG, "unavailable": GRAY_BG}
 STATE_LABEL  = {"available": "AVAILABLE", "estimated": "ESTIMATE", "unavailable": "N/A IN DEMO"}
 
@@ -63,9 +73,11 @@ def _field_table(fields: list[dict], ss) -> Table:
     bg_cmds = []
     for i, f in enumerate(fields, start=1):
         note = f.get("note")
-        value_html = f["value"] + (f"<br/><font size=7 color='#718096'>{note}</font>" if note else "")
+        value_html = _pdf_text(f["value"]) + (
+            f"<br/><font size=7 color='#718096'>{_pdf_text(note)}</font>" if note else ""
+        )
         rows.append([
-            Paragraph(f["label"], ss["CellWrap"]),
+            Paragraph(_pdf_text(f["label"]), ss["CellWrap"]),
             Paragraph(value_html, ss["CellWrap"]),
             Paragraph(
                 STATE_LABEL[f["state"]],
@@ -145,6 +157,11 @@ def build_report_pdf(
     story.append(Spacer(1, 4))
 
     # ── Field groups ──
+    # Wrap each section (header + table) in KeepTogether so a small table is
+    # never split across pages. KeepTogether tries to place the whole block on
+    # the current page; if it doesn't fit, it pushes everything to the next page.
+    # For large tables that exceed a full page, platypus falls back to splitting
+    # at row boundaries — this is the correct behaviour for genuinely long tables.
     group_titles = {
         "identity":  "1 · Battery Identity",
         "soh":       "2 · State of Health",
@@ -152,14 +169,17 @@ def build_report_pdf(
         "carbon":    "4 · Carbon Footprint",
     }
     for key, title in group_titles.items():
-        story.append(Paragraph(title, ss["SectionHeader"]))
-        story.append(_field_table(passport[key], ss))
-        story.append(Spacer(1, 4))
+        section = [
+            Paragraph(title, ss["SectionHeader"]),
+            _field_table(passport[key], ss),
+            Spacer(1, 4),
+        ]
+        story.append(KeepTogether(section))
 
     # ── Second-life recommendation ──
-    story.append(Paragraph("5 · Second-Life Recommendation", ss["SectionHeader"]))
+    sl_section = [Paragraph("5 · Second-Life Recommendation", ss["SectionHeader"])]
     if second_life is None:
-        story.append(Paragraph(
+        sl_section.append(Paragraph(
             "Cell is still in primary life (SOH above the 85% second-life assessment threshold). "
             "No second-life recommendation is generated yet — return once SOH degrades further.",
             ss["CellWrap"],
@@ -183,24 +203,25 @@ def build_report_pdf(
             ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
             ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ] + bg_cmds))
-        story.append(t)
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
+        sl_section.append(t)
+        sl_section.append(Spacer(1, 4))
+        sl_section.append(Paragraph(
             f"Best-fit application: <b>{second_life['best_app']}</b> ({second_life['best_fit']}). "
             "All figures are cited estimates — see assumption register below.",
             ss["CellWrap"],
         ))
-
-    story.append(Spacer(1, 6))
+    sl_section.append(Spacer(1, 6))
+    story.append(KeepTogether(sl_section))
 
     # ── Assumption register ──
-    story.append(Paragraph("Assumption Register", ss["SectionHeader"]))
-    rows = [[Paragraph("Assumption", ss["CellLabel"]), Paragraph("Value", ss["CellLabel"]),
-             Paragraph("Label", ss["CellLabel"]), Paragraph("Source", ss["CellLabel"])]]
+    # This table can be long — wrap only the header + first few rows to avoid
+    # orphaning the section header on its own page, then let the rest split naturally.
+    assume_rows = [[Paragraph("Assumption", ss["CellLabel"]), Paragraph("Value", ss["CellLabel"]),
+                    Paragraph("Label", ss["CellLabel"]), Paragraph("Source", ss["CellLabel"])]]
     bg_cmds = []
     for i, (key, a) in enumerate(assumptions.items(), start=1):
         is_cited = "Cited" in a["label"]
-        rows.append([
+        assume_rows.append([
             Paragraph(key.replace("_", " ").title(), ss["CellWrap"]),
             Paragraph(f"{a['value']:.2f} {a['unit']}", ss["CellWrap"]),
             Paragraph(a["label"], ParagraphStyle("l", fontSize=8, fontName="Helvetica-Bold",
@@ -208,7 +229,8 @@ def build_report_pdf(
             Paragraph(a["source"], ss["Note"]),
         ])
         bg_cmds.append(("BACKGROUND", (2, i), (2, i), AMBER_BG if is_cited else GRAY_BG))
-    t = Table(rows, colWidths=[95, 70, 75, 230])
+    t = Table(assume_rows, colWidths=[95, 70, 75, 230],
+              repeatRows=1)   # repeat header row when table splits across pages
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), SLATE),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -217,7 +239,12 @@ def build_report_pdf(
         ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
         ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ] + bg_cmds))
-    story.append(t)
+    # KeepTogether with just the header + table ensures the section title never
+    # appears alone at the bottom of a page. Long tables still split at row boundaries.
+    story.append(KeepTogether([
+        Paragraph("Assumption Register", ss["SectionHeader"]),
+        t,
+    ]))
 
     # ── Footer ──
     story.append(Spacer(1, 10))
