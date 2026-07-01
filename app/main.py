@@ -253,6 +253,7 @@ NAV_ITEMS = [
     ("Passport",        "passport",        True),
     ("Reports",         "reports",         True),
     ("Fleet",           "fleet",           True),
+    ("Import",          "import",          True),
     ("Settings",        "settings",        True),
 ]
 
@@ -2907,6 +2908,298 @@ def page_settings(featured_dfs: dict, bundles: dict):
     )
 
 
+def page_import():
+    import io
+    import os
+    import plotly.graph_objects as go
+    from import_validator import validate_upload
+
+    def _section(title: str):
+        st.markdown(section_header_html(title), unsafe_allow_html=True)
+
+    st.markdown("# Import Your Battery Data")
+    st.markdown("##### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
+
+    # ── Section 1: Hero card ────────────────────────────────────────────────
+    h1, h2 = st.columns(2)
+
+    template_path = os.path.join(
+        os.path.dirname(__file__), "..", "data", "import_template.csv"
+    )
+    with h1:
+        try:
+            with open(template_path, "rb") as f:
+                template_bytes = f.read()
+            st.download_button(
+                label="⬇ Download Template CSV",
+                data=template_bytes,
+                file_name="battery_import_template.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        except FileNotFoundError:
+            st.error("Template file not found at data/import_template.csv")
+
+    with h2:
+        if st.button("📖 View Format Guide", use_container_width=True, key="import_guide_toggle"):
+            st.session_state["import_guide_open"] = not st.session_state.get("import_guide_open", False)
+
+    if st.session_state.get("import_guide_open", False):
+        guide_path = os.path.join(
+            os.path.dirname(__file__), "..", "docs", "import_format_guide.md"
+        )
+        try:
+            with open(guide_path, "r", encoding="utf-8") as f:
+                guide_text = f.read()
+            with st.expander("Format Guide", expanded=True):
+                st.markdown(guide_text)
+        except FileNotFoundError:
+            st.warning("Format guide not found at docs/import_format_guide.md")
+
+    # ── Section 2: Upload widget ────────────────────────────────────────────
+    _section("Upload CSV")
+
+    uploaded = st.file_uploader(
+        "Choose a CSV file",
+        type=["csv"],
+        key="import_csv_upload",
+        help="Must follow the Battery Intelligence Platform import format. Download the template above.",
+        label_visibility="collapsed",
+    )
+
+    if uploaded is None:
+        st.markdown(
+            "<div style='background:#1a202c;border:1px dashed #2d3748;border-radius:10px;"
+            "padding:40px;text-align:center;color:#4a5568;font-size:13px'>"
+            "Drag and drop a CSV file here, or click to browse.<br>"
+            "<span style='font-size:11px;color:#2d3748;margin-top:6px;display:block'>"
+            "7 columns required — download the template for the exact format.</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── Parse + validate ────────────────────────────────────────────────────
+    try:
+        df_raw = pd.read_csv(uploaded)
+    except Exception as exc:
+        st.error(f"Could not parse CSV: {exc}")
+        return
+
+    result = validate_upload(df_raw)
+    errors   = result["errors"]
+    warnings = result["warnings"]
+    summary  = result["summary"]
+
+    # ── Validation results banner ────────────────────────────────────────────
+    if errors:
+        st.markdown(
+            f"<div style='background:rgba(197,48,48,0.12);border:1px solid rgba(197,48,48,0.4);"
+            f"border-radius:10px;padding:16px 20px;margin:16px 0'>"
+            f"<div style='font-size:14px;font-weight:700;color:#fc8181;margin-bottom:10px'>"
+            f"Upload cannot be processed — {len(errors)} issue{'s' if len(errors) != 1 else ''} found</div>",
+            unsafe_allow_html=True,
+        )
+        for err in errors:
+            st.markdown(
+                f"<div style='display:flex;gap:10px;padding:6px 0;border-top:1px solid rgba(197,48,48,0.2)'>"
+                f"<span style='color:#fc8181;font-size:14px;flex-shrink:0'>✕</span>"
+                f"<span style='font-size:13px;color:#fed7d7;line-height:1.5'>{err}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:12px;color:#718096;margin-top:8px'>"
+            "Fix these issues in your CSV and re-upload.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # No errors — show warning banner if needed
+    if warnings:
+        st.markdown(
+            f"<div style='background:rgba(183,121,31,0.10);border:1px solid rgba(183,121,31,0.35);"
+            f"border-radius:10px;padding:16px 20px;margin:16px 0'>"
+            f"<div style='font-size:14px;font-weight:700;color:#f6ad55;margin-bottom:10px'>"
+            f"Upload parsed successfully — {len(warnings)} note{'s' if len(warnings) != 1 else ''} to review</div>",
+            unsafe_allow_html=True,
+        )
+        for w in warnings:
+            st.markdown(
+                f"<div style='display:flex;gap:10px;padding:6px 0;border-top:1px solid rgba(183,121,31,0.2)'>"
+                f"<span style='color:#f6ad55;font-size:14px;flex-shrink:0'>⚠</span>"
+                f"<span style='font-size:13px;color:#fefcbf;line-height:1.5'>{w}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # One checkbox per warning — all must be ticked before proceeding
+        st.markdown(
+            "<div style='font-size:12px;color:#718096;margin:12px 0 8px'>"
+            "Acknowledge each note to continue:</div>",
+            unsafe_allow_html=True,
+        )
+        all_acked = True
+        for i, w in enumerate(warnings):
+            # Short label: first sentence of the warning, truncated
+            short = w.split(".")[0][:90] + ("…" if len(w.split(".")[0]) > 90 else "")
+            acked = st.checkbox(f"I understand: {short}", key=f"import_ack_{i}")
+            if not acked:
+                all_acked = False
+
+        if not all_acked:
+            st.markdown(
+                "<div style='font-size:12px;color:#718096;margin-top:12px'>"
+                "Tick all boxes above to enable the Proceed button.</div>",
+                unsafe_allow_html=True,
+            )
+            return   # Proceed button not rendered until all ticked
+    else:
+        # Clean upload
+        st.markdown(
+            "<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
+            "border-radius:10px;padding:14px 20px;margin:16px 0'>"
+            "<span style='font-size:14px;font-weight:700;color:#68d391'>✓ Upload validated — ready to analyse</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Section 3: Data preview ─────────────────────────────────────────────
+    _section("Data Preview")
+
+    # Summary table — one row per cell
+    st.markdown(
+        "<div style='font-size:12px;color:#718096;margin-bottom:10px'>One row per cell:</div>",
+        unsafe_allow_html=True,
+    )
+
+    df_raw_clean = df_raw.copy()
+    df_raw_clean["capacity_ah"]    = pd.to_numeric(df_raw_clean["capacity_ah"],    errors="coerce")
+    df_raw_clean["resistance_ohm"] = pd.to_numeric(df_raw_clean["resistance_ohm"], errors="coerce")
+
+    tbl_cols = st.columns([2, 1, 2, 2, 1])
+    for col, hdr in zip(tbl_cols, ["Cell ID", "Cycles", "Capacity range (Ah)", "Resistance range (Ω)", "Temp"]):
+        col.markdown(
+            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px'>{hdr}</div>",
+            unsafe_allow_html=True,
+        )
+
+    has_temp = "temperature_c" in df_raw_clean.columns
+    for cid, n_cy in summary["cycles_per_cell"].items():
+        cell_df = df_raw_clean[df_raw_clean["cell_id"].astype(str).str.strip() == cid]
+        cap_min = cell_df["capacity_ah"].min()
+        cap_max = cell_df["capacity_ah"].max()
+        res_min = cell_df["resistance_ohm"].min()
+        res_max = cell_df["resistance_ohm"].max()
+        temp_ok = has_temp and cell_df["temperature_c"].notna().any() if has_temp else False
+        row = st.columns([2, 1, 2, 2, 1])
+        row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:3px 0'>{cid}</div>", unsafe_allow_html=True)
+        row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{n_cy}</div>", unsafe_allow_html=True)
+        row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{cap_min:.3f} – {cap_max:.3f}</div>", unsafe_allow_html=True)
+        row[3].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{res_min:.4f} – {res_max:.4f}</div>", unsafe_allow_html=True)
+        row[4].markdown(
+            f"<div style='font-size:13px;padding:3px 0;color:{'#68d391' if temp_ok else '#4a5568'}'>"
+            f"{'Yes' if temp_ok else 'No'}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Capacity fade chart
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    fig_prev = go.Figure()
+    capacity_going_up = False
+    for cid in summary["cycles_per_cell"]:
+        cell_df = df_raw_clean[df_raw_clean["cell_id"].astype(str).str.strip() == cid].sort_values("cycle_number")
+        cap = pd.to_numeric(cell_df["capacity_ah"], errors="coerce").dropna()
+        if len(cap) >= 3:
+            # Check if capacity is trending upward (may indicate mAh/Ah unit error)
+            first_third  = cap.iloc[:max(1, len(cap)//3)].mean()
+            last_third   = cap.iloc[-max(1, len(cap)//3):].mean()
+            if last_third > first_third * 1.05:
+                capacity_going_up = True
+        fig_prev.add_trace(go.Scatter(
+            x=cell_df["cycle_number"].tolist(),
+            y=cell_df["capacity_ah"].tolist(),
+            mode="lines",
+            name=cid,
+            line=dict(width=1.5),
+        ))
+
+    fig_prev.update_layout(
+        **base_layout(
+            height=280,
+            xaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+                       title=dict(text="Cycle number", font=dict(size=11))),
+            yaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+                       title=dict(text="Capacity (Ah)", font=dict(size=11))),
+        )
+    )
+    fig_prev.update_layout(
+        legend=LEGEND_H,
+        title=dict(text="Capacity fade — uploaded cells", font=dict(size=12, color="#a0aec0"), x=0),
+    )
+    st.plotly_chart(fig_prev, use_container_width=True)
+
+    if capacity_going_up:
+        st.markdown(
+            "<div style='background:rgba(183,121,31,0.08);border:1px solid rgba(183,121,31,0.3);"
+            "border-radius:8px;padding:10px 16px;font-size:12px;color:#f6ad55;margin-top:-8px'>"
+            "⚠ One or more cells show capacity <em>increasing</em> over cycles — this may indicate "
+            "a unit error (mAh uploaded instead of Ah). If so, divide all capacity values by 1000 "
+            "and re-upload. Fade in Ah should decrease or stay flat over cycle life."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Section 4: Confirmation ─────────────────────────────────────────────
+    _section("Analyse This Data")
+
+    st.markdown(
+        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+        "padding:20px 24px;margin-bottom:20px'>"
+        f"<div style='font-size:13px;color:#a0aec0;line-height:1.7'>"
+        f"<strong style='color:#e2e8f0'>{summary['n_cells']} cells</strong> · "
+        f"<strong style='color:#e2e8f0'>{sum(summary['cycles_per_cell'].values()):,} total cycles</strong> · "
+        f"{'Temperature available' if summary['has_temperature'] else 'Temperature assumed 25°C'}"
+        f"</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button(
+        "⚡ Analyse this data",
+        type="primary",
+        use_container_width=True,
+        key="import_run_analysis",
+    ):
+        st.markdown(
+            "<div style='background:rgba(49,130,206,0.10);border:1px solid rgba(49,130,206,0.35);"
+            "border-radius:10px;padding:20px 24px;margin-top:16px'>"
+            "<div style='font-size:15px;font-weight:700;color:#63b3ed;margin-bottom:8px'>"
+            "Pipeline integration coming in the next build step</div>"
+            "<div style='font-size:13px;color:#a0aec0;line-height:1.7'>"
+            "This is Piece 2 of 3 — the upload and validation interface. "
+            "Piece 3 will wire this button to the training pipeline: "
+            "validate → LCO training → per-cell reliability scoring → results appear in all pages. "
+            "Estimated time once wired: 60–90 seconds."
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        "<div style='font-size:11px;color:#4a5568;margin-top:12px;text-align:center'>"
+        "Analysis will take approximately 60–90 seconds. Your uploaded data will replace "
+        "the current dataset in this session — refreshing the page will restore the "
+        "original NASA / synthetic data."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
     "economics":       ("Economics",       "Total cost of ownership analysis, replacement cost modelling, and second-life ROI.", "Phase 2"),
@@ -2977,6 +3270,8 @@ def main():
         page_fleet(featured_dfs, bundles)
     elif page == "settings":
         page_settings(featured_dfs, bundles)
+    elif page == "import":
+        page_import()
     elif page in COMING_SOON_META:
         page_coming_soon(page)
     else:
