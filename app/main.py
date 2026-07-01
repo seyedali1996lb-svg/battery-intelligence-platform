@@ -25,6 +25,11 @@ from data_loader import build_battery, get_cell_df, CELL_STRESS_PROFILES, _stres
 from features import build_features, get_model_matrix
 from model import train_models, predict, feature_importance_df, top_drivers
 from lco_eval import run_lco
+from design_system import (
+    make_badge, make_state_badge, section_header_html,
+    BADGE_VALIDATED, BADGE_ESTIMATE, BADGE_ILLUST, BADGE_UNAVAIL,
+    ACTION_META, CONF_META,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +359,9 @@ def render_sidebar(cell_ids: list[str]):
 # ---------------------------------------------------------------------------
 
 def base_layout(**overrides) -> dict:
+    # Plotly 6 strict validation: do NOT pass `legend` or `title` here.
+    # They must go in a separate fig.update_layout(legend=..., title=...) call.
+    # Passing them through **base_layout() raises ValueError on Plotly 6+.
     layout = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -1362,18 +1370,6 @@ def page_consequences(
     st.markdown("# Consequences")
     st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
 
-    # ── Assumption transparency banner ──
-    def _badge(label: str, colour: str = "#b7791f") -> str:
-        return (
-            f"<span style='background:{colour}22;border:1px solid {colour}55;"
-            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
-            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
-        )
-
-    BADGE_ESTIMATE  = _badge("Estimate", "#b7791f")
-    BADGE_ILLUST    = _badge("Illustrative — not sourced", "#718096")
-    BADGE_VALIDATED = _badge("Validated model output", "#2f855a")
-
     st.markdown(
         f"""
         <div style="background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);
@@ -1590,11 +1586,11 @@ def page_consequences(
 
         opt_cols = st.columns(3)
         for col, (name, value, colour, _, badge_label) in zip(opt_cols, options):
-            badge_html   = _badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
+            badge_html   = make_badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
             repack_note  = (
                 f"<div style='font-size:11px;color:#718096;margin-top:6px'>"
                 f"after −${repack_cost:.0f}/cell repack &nbsp;"
-                f"{_badge(a['repack_cost']['label'], '#718096')}</div>"
+                f"{make_badge(a['repack_cost']['label'], '#718096')}</div>"
                 if name == "Reuse (second-life)" else
                 "<div style='height:0'></div>"
             )
@@ -1777,8 +1773,8 @@ def page_consequences(
 
     with sus_right:
         s1, s2 = st.columns(2)
-        co2_badge   = _badge(ASSUMPTIONS["co2_manufacture"]["label"], "#b7791f")
-        mat_badge   = _badge(ASSUMPTIONS["material_recovery"]["label"], "#b7791f")
+        co2_badge   = make_badge(ASSUMPTIONS["co2_manufacture"]["label"], "#b7791f")
+        mat_badge   = make_badge(ASSUMPTIONS["material_recovery"]["label"], "#b7791f")
 
         with s1:
             st.markdown(
@@ -1796,7 +1792,7 @@ def page_consequences(
                     <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
                         Reusing this cell avoids manufacturing one equivalent new cell.
                         Recycling instead saves only ~{sus['co2_recycling_credit']:.2f} kg
-                        &nbsp;{_badge("Cited estimate", "#b7791f")}&nbsp;
+                        &nbsp;{make_badge("Cited estimate", "#b7791f")}&nbsp;
                         (≈15% cathode-material credit, Dunn et al. 2015 — hardcoded, no slider).
                     </div>
                 </div>
@@ -1831,7 +1827,7 @@ def page_consequences(
     with st.expander("All assumptions — sources and labels", expanded=False):
         for key, asmp in ASSUMPTIONS.items():
             badge_colour = "#b7791f" if "Cited" in asmp["label"] else "#718096"
-            badge_html   = _badge(asmp["label"], badge_colour)
+            badge_html   = make_badge(asmp["label"], badge_colour)
             st.markdown(
                 f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
                 f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
@@ -1843,22 +1839,6 @@ def page_consequences(
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-
-def _passport_badge(state: str) -> str:
-    colours = {
-        "available":   ("#2f855a", "Available"),
-        "estimated":   ("#b7791f", "Estimate"),
-        "unavailable": ("#4a5568", "Not available in demo"),
-    }
-    colour, label = colours[state]
-    style = (
-        f"background:{colour}22;border:1px solid {colour}55;color:{colour};"
-        f"font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;letter-spacing:0.04em"
-    )
-    if state == "unavailable":
-        style += ";font-style:italic"
-    return f"<span style='{style}'>{label}</span>"
 
 
 def _passport_field_row(f: dict) -> str:
@@ -1878,7 +1858,7 @@ def _passport_field_row(f: dict) -> str:
         f"font-style:{font_style}'>{f['value']}</div>"
         f"{note_html}"
         f"</div>"
-        f"<div style='flex-shrink:0;padding-top:2px'>{_passport_badge(f['state'])}</div>"
+        f"<div style='flex-shrink:0;padding-top:2px'>{make_state_badge(f['state'])}</div>"
         f"</div>"
     )
 
@@ -1900,8 +1880,8 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
                     font-size:13px;color:#718096;line-height:1.7">
             <strong style="color:#63b3ed">Battery Passport Interface</strong> — demonstrating the
             EU Battery Regulation (EU) 2023/1542 data structure. This is <strong>not</strong> a
-            compliance claim: every field below is marked {_passport_badge("available")},
-            {_passport_badge("estimated")}, or {_passport_badge("unavailable")} based on what this
+            compliance claim: every field below is marked {make_state_badge("available")},
+            {make_state_badge("estimated")}, or {make_state_badge("unavailable")} based on what this
             demonstration actually has. Nothing is hidden or faked to look complete.
         </div>
         """,
@@ -2065,30 +2045,6 @@ def page_recommendations(
     result     = classify(soh, fade_30, fade_50, rul_reliable, rul_pred, fit_scores)
 
     # ── Badge helpers (identical pattern to Consequences page) ──
-    def _badge(label: str, colour: str = "#b7791f") -> str:
-        return (
-            f"<span style='background:{colour}22;border:1px solid {colour}55;"
-            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
-            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
-        )
-
-    BADGE_VALIDATED = _badge("Validated model output", "#2f855a")
-    BADGE_ESTIMATE  = _badge("Cited estimate", "#b7791f")
-
-    # ── Action metadata ──
-    ACTION_META = {
-        "continue":    ("Continue Operation",        "#2f855a", "#0d2016"),
-        "inspect":     ("Schedule Inspection",       "#d69e2e", "#1f1a08"),
-        "second_life": ("Route to Second-Life",      "#3182ce", "#0a1628"),
-        "recycle":     ("Recycle",                   "#c05621", "#1f0f06"),
-    }
-    CONF_META = {
-        "high":      ("#2f855a", "High confidence"),
-        "medium":    ("#b7791f", "Medium confidence — RUL not calibrated"),
-        "lower":     ("#718096", "Lower certainty — see notes below"),
-        "uncertain": ("#c05621", "Lower certainty — multiple uncertainty factors"),
-    }
-
     action          = result["action"]
     action_label, action_colour, action_bg = ACTION_META[action]
     conf_colour, conf_label = CONF_META[result["confidence"]]
@@ -2126,7 +2082,7 @@ def page_recommendations(
         for note in result["confidence_reasons"]:
             is_fit = "fit scores" in note
             note_colour = "#b7791f" if is_fit else "#718096"
-            badge_html  = BADGE_ESTIMATE if is_fit else _badge("Reduced certainty", "#718096")
+            badge_html  = BADGE_ESTIMATE if is_fit else make_badge("Reduced certainty", "#718096")
             st.markdown(
                 f"<div style='background:{note_colour}11;border:1px solid {note_colour}33;"
                 f"border-radius:8px;padding:10px 16px;margin-bottom:8px;"
@@ -2219,7 +2175,7 @@ def page_recommendations(
             if cycles_to_inspect is not None
             else "Cycle count not estimated — RUL not calibrated for this cell."
         )
-        cycle_badge = BADGE_VALIDATED if rul_pred is not None else _badge("Not calibrated", "#718096")
+        cycle_badge = BADGE_VALIDATED if rul_pred is not None else make_badge("Not calibrated", "#718096")
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
             f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Next action: monitor fade rate</div>"
@@ -2361,36 +2317,8 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     cell_kwh = CELL_NOMINAL_KWH[source]
 
     # ── Badge helpers ──
-    def _badge(label: str, colour: str = "#b7791f") -> str:
-        return (
-            f"<span style='background:{colour}22;border:1px solid {colour}55;"
-            f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
-            f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
-        )
-    BADGE_ESTIMATE  = _badge("Cited estimate", "#b7791f")
-    BADGE_ILLUST    = _badge("Illustrative — not sourced", "#718096")
-
-    def _state_badge(state: str) -> str:
-        cfg = {
-            "available":   ("#2f855a", "Available"),
-            "estimated":   ("#b7791f", "Estimated"),
-            "unavailable": ("#4a5568", "Not available in demo"),
-        }
-        c, l = cfg[state]
-        italic = ";font-style:italic" if state == "unavailable" else ""
-        return (
-            f"<span style='background:{c}22;border:1px solid {c}55;color:{c};"
-            f"font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;"
-            f"letter-spacing:0.04em{italic}'>{l}</span>"
-        )
-
     def _section(title: str):
-        st.markdown(
-            f"<div style='font-size:11px;font-weight:600;color:#4a5568;"
-            f"text-transform:uppercase;letter-spacing:0.08em;padding-bottom:8px;"
-            f"border-bottom:1px solid #2d3748;margin:28px 0 16px'>{title}</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(section_header_html(title), unsafe_allow_html=True)
 
     # ── Page header ──
     st.markdown("# Sustainability")
@@ -2606,7 +2534,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     mat_cols = st.columns(len(primary_materials))
     for col, mat in zip(mat_cols, primary_materials):
         scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
-        badge_html = _badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
+        badge_html = make_badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
         rec_html = (
             f"<div style='font-size:12px;color:#68d391;margin-top:4px'>"
             f"~{mat['recovery_pct']}% recovery<br>"
@@ -2680,7 +2608,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"<span>2031 target: <strong style='color:#63b3ed'>{target['target_2031_pct']}%</strong></span>"
             f"<span>2036 target: <strong style='color:#63b3ed'>{target['target_2036_pct']}%</strong></span>"
             f"<span>Est. current: <strong style='color:#f6ad55'>{est_recycled}</strong> "
-            f"{_badge('Illustrative', '#718096')}</span>"
+            f"{make_badge('Illustrative', '#718096')}</span>"
             f"</div></div>"
             f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>{current_note}</div>"
             f"<div style='background:#2d3748;border-radius:4px;height:8px;margin-bottom:4px'>"
@@ -2709,7 +2637,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
 
     for field in EU_GREEN_DEAL_FIELDS:
         state = field["state"]
-        badge = _state_badge(state)
+        badge = make_state_badge(state)
         muted = state == "unavailable"
         val_colour = "#4a5568" if muted else "#a0aec0"
         st.markdown(
@@ -2735,7 +2663,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             st.markdown(
                 f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
                 f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
-                f"{a['unit']} — default {a['value']} &nbsp; {_badge(a['label'], badge_colour)}"
+                f"{a['unit']} — default {a['value']} &nbsp; {make_badge(a['label'], badge_colour)}"
                 f"</div>"
                 f"<div style='font-size:12px;color:#718096;line-height:1.6'>{a['source']}</div>"
                 f"</div>",
