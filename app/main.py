@@ -32,6 +32,7 @@ from design_system import (
 )
 from import_adapter import adapt_upload_to_pipeline
 from bundle_cache import load_cached, save_cached, clear_cache as clear_bundle_cache
+from knee_detection import detect_knee, degradation_phases
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +602,22 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     rul_q10 = float(latest["rul_q10"]) if "rul_q10" in latest.index else None
     rul_q90 = float(latest["rul_q90"]) if "rul_q90" in latest.index else None
 
+    # Application EOL threshold (user-configurable; default 80%)
+    app_eol  = float(st.session_state.get("eol_threshold_pct", 80.0))
+    # Adjust displayed RUL to the user's application threshold using current fade rate.
+    # The model was trained on 80% EOL, so we scale by projecting remaining SOH headroom.
+    sop_pct  = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
+    if not rul_calibrating and current_rul is not None and app_eol != 80.0:
+        fade_50 = float(latest.get("fade_rate_50cy", 0)) * 100  # as SOH %/cy
+        if fade_50 > 1e-6:
+            adj_rul = max(0, (current_soh - app_eol) / fade_50)
+        else:
+            adj_rul = current_rul
+        rul_display = f"{adj_rul:.0f}"
+        rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold)"
+    else:
+        adj_rul = current_rul
+
     # Per-cell fold R² — drives confidence inline reason
     fold_r2 = None
     if bundle is not None:
@@ -725,6 +742,11 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 <div class="metric-chip-sub">since commissioning</div>
             </div>
             <div class="metric-chip">
+                <div class="metric-chip-label">Peak Power</div>
+                <div class="metric-chip-value" style="font-size:20px">{f"{sop_pct:.0f}%" if sop_pct is not None else "—"}</div>
+                <div class="metric-chip-sub">of initial capability</div>
+            </div>
+            <div class="metric-chip">
                 <div class="metric-chip-label">Data Source</div>
                 <div class="metric-chip-value" style="font-size:18px">{src_val}</div>
                 <div class="metric-chip-sub">{src_sub}</div>
@@ -789,6 +811,20 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     current_soh = latest["soh_pct"]
     status_label, status_colour = soh_status(current_soh)
 
+    # Knee-point detection
+    knee = detect_knee(df["soh_pct"], df["cycle_number"])
+    sop_pct = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
+
+    knee_note = ""
+    if knee["detected"]:
+        k_cy  = knee["cycle"]
+        k_soh = knee["soh_at_knee"]
+        cur   = int(latest["cycle_number"])
+        if cur >= k_cy:
+            knee_note = f"· ⚡ Knee at cycle {k_cy} ({k_soh:.1f}% SOH) — now in accelerating phase"
+        else:
+            knee_note = f"· Knee projected ~cycle {k_cy} ({k_soh:.1f}% SOH)"
+
     st.markdown(
         f"""
         <div class="hero-card">
@@ -797,6 +833,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             <div class="hero-sub">
                 Fading at ~{latest['fade_rate_50cy']*1000:.2f} mAh/cycle (50-cycle avg)
                 &nbsp;·&nbsp; Internal resistance: {latest.get('resistance_ohm',0):.3f} Ω
+                &nbsp;·&nbsp; Peak power: {f"{sop_pct:.0f}% of initial" if sop_pct else "—"}
+                {knee_note}
             </div>
         </div>
         """,
@@ -804,6 +842,10 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     )
 
     col1, col2 = st.columns(2)
+
+    # Anomaly cycles (precompute for both charts)
+    cap_anomalies = df[df.get("capacity_anomaly", pd.Series(False, index=df.index))] if "capacity_anomaly" in df.columns else df.iloc[0:0]
+    res_anomalies = df[df.get("resistance_anomaly", pd.Series(False, index=df.index))] if "resistance_anomaly" in df.columns else df.iloc[0:0]
 
     with col1:
         st.markdown("<div class='section-header'>Capacity Fade</div>", unsafe_allow_html=True)
@@ -813,10 +855,25 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             fill="tozeroy", fillcolor="rgba(252,129,129,0.08)",
             line=dict(color="#fc8181", width=2),
             hovertemplate="Cycle %{x}: %{y:.1f} mAh lost<extra></extra>",
+            showlegend=False,
         ))
+        if len(cap_anomalies) > 0:
+            fig.add_trace(go.Scatter(
+                x=cap_anomalies["cycle_number"],
+                y=cap_anomalies["capacity_fade_ah"] * 1000,
+                mode="markers", name=f"Anomaly ({len(cap_anomalies)})",
+                marker=dict(color="#f6ad55", size=7, symbol="diamond",
+                            line=dict(color="#1a202c", width=1)),
+                hovertemplate="Cycle %{x}: anomalous capacity<extra>⚠ Anomaly</extra>",
+            ))
+        if knee["detected"]:
+            fig.add_vline(x=knee["cycle"], line=dict(color="#9f7aea", width=1.5, dash="dot"),
+                          annotation_text=f"Knee ({knee['cycle']})",
+                          annotation=dict(font=dict(size=9, color="#9f7aea")))
         fig.update_layout(
             height=280,
             **base_layout(
+                legend=LEGEND_H,
                 xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
                 yaxis=dict(title="mAh lost", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
             ),
@@ -828,7 +885,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
             x=df["cycle_number"], y=df["resistance_ohm"] * 1000,
-            line=dict(color="#4a5568", width=1),
+            line=dict(color="#4a5568", width=1), name="Raw",
             hovertemplate="Cycle %{x}: %{y:.1f} mΩ<extra></extra>",
         ))
         fig2.add_trace(go.Scatter(
@@ -837,6 +894,15 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             name="30-cycle avg", line=dict(color="#f6ad55", width=2),
             hovertemplate="Cycle %{x}: %{y:.1f} mΩ<extra>30-cy avg</extra>",
         ))
+        if len(res_anomalies) > 0:
+            fig2.add_trace(go.Scatter(
+                x=res_anomalies["cycle_number"],
+                y=res_anomalies["resistance_ohm"] * 1000,
+                mode="markers", name=f"Spike ({len(res_anomalies)})",
+                marker=dict(color="#fc8181", size=7, symbol="diamond",
+                            line=dict(color="#1a202c", width=1)),
+                hovertemplate="Cycle %{x}: resistance spike<extra>⚠ Spike</extra>",
+            ))
         fig2.update_layout(
             **base_layout(
                 height=280, legend=LEGEND_H,
@@ -890,6 +956,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             annotation_position="top right",
             annotation=dict(font=dict(size=10, color="#fc8181"), bgcolor="rgba(26,32,44,0.85)"),
         )
+    if knee["detected"]:
+        fig3.add_vline(
+            x=knee["cycle"],
+            line=dict(color="#9f7aea", width=1.5, dash="dot"),
+            annotation_text=f"Knee-point ({knee['cycle']})",
+            annotation_position="top left",
+            annotation=dict(font=dict(size=10, color="#9f7aea"), bgcolor="rgba(26,32,44,0.85)"),
+        )
     fig3.update_layout(
         **base_layout(
             height=280, legend=LEGEND_H,
@@ -916,6 +990,72 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             f"**Calibrating** — the first {len(early)} cycles show higher variability "
             f"while rolling-window features stabilise. Readings from cycle 50 onward are reliable."
         )
+
+    # ── Anomaly summary ──
+    n_cap_anom = len(cap_anomalies)
+    n_res_anom = len(res_anomalies)
+    if n_cap_anom > 0 or n_res_anom > 0:
+        st.markdown(
+            f"<div style='background:rgba(246,173,85,0.08);border:1px solid rgba(246,173,85,0.3);"
+            f"border-radius:8px;padding:12px 16px;font-size:12px;color:#fefcbf;margin-top:8px'>"
+            f"⚠ <strong>Anomalous cycles detected</strong> — "
+            f"{n_cap_anom} capacity outlier(s) · {n_res_anom} resistance spike(s) "
+            f"(>2.5σ from 30-cycle rolling baseline). "
+            f"Isolated anomalies are often measurement noise. Clustered anomalies may indicate "
+            f"lithium plating, electrolyte leakage, or tab resistance changes."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Degradation phase summary ──
+    st.markdown("<div class='section-header'>Degradation Phase Analysis</div>", unsafe_allow_html=True)
+    phase_labels = degradation_phases(df["soh_pct"], df["cycle_number"])
+    phase_counts = phase_labels.value_counts()
+    n_early = int(phase_counts.get("Early", 0))
+    n_plateau = int(phase_counts.get("Plateau", 0))
+    n_accel = int(phase_counts.get("Accelerating", 0))
+    current_phase = knee["phase"]
+    PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#68d391", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
+    pc = PHASE_COLOUR.get(current_phase, "#4a5568")
+
+    st.markdown(
+        f"""
+        <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:18px 22px;margin-bottom:16px">
+            <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
+                <div>
+                    <div style="font-size:11px;color:#4a5568;text-transform:uppercase;letter-spacing:0.07em">Current phase</div>
+                    <div style="font-size:26px;font-weight:700;color:{pc}">{current_phase}</div>
+                    <div style="font-size:11px;color:#4a5568;margin-top:2px">
+                        {"Knee at cycle " + str(knee["cycle"]) + f" ({knee['soh_at_knee']}% SOH)" if knee["detected"] else "No knee detected yet"}
+                    </div>
+                </div>
+                <div style="border-left:1px solid #2d3748;padding-left:24px">
+                    <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
+                    <div style="font-size:12px;color:#a0aec0;line-height:2">
+                        <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
+                        <span style="color:#68d391">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
+                        <span style="color:#fc8181">Accelerating</span> — {n_accel} cycles (post-knee, rapid fade)
+                    </div>
+                </div>
+                <div style="border-left:1px solid #2d3748;padding-left:24px;max-width:280px">
+                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
+                    <div style="font-size:11px;color:#718096;line-height:1.7">
+                        {"The cell is past its knee point — degradation has entered the rapid-fade regime. "
+                         "Remaining life estimates are shorter and less predictable than in the plateau phase. "
+                         "Prioritise replacement planning."
+                         if current_phase == "Accelerating" else
+                         "The cell is in the stable plateau phase — degradation is approximately linear "
+                         "and predictable. RUL estimates are most reliable here."
+                         if current_phase == "Plateau" else
+                         "Early cycles — rolling-window features are still stabilising. "
+                         "Fade rate estimates will become reliable from cycle 50 onward."}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1157,6 +1297,9 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         is_upload = not is_nasa and cell_id not in _synth_ids
         status_label, _ = soh_status(soh)
 
+        # Knee-point detection per cell
+        knee_result = detect_knee(df["soh_pct"], df["cycle_number"])
+
         # Degradation trend: compare current 30-cy fade rate vs 30 cycles earlier
         trend = "Stable"
         if "fade_rate_30cy" in df.columns and len(df) >= 31:
@@ -1180,6 +1323,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             "eol_at":       eol_at,
             "cycles_to_eol": cycles_to_eol,
             "trend":        trend,
+            "knee":         knee_result,
         })
 
     # Sort: worst SOH first (most urgent)
@@ -1291,6 +1435,9 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{rul_cell}</td>
             <td style="padding:14px 12px;font-size:13px">{eol_cell}</td>
             <td style="padding:14px 12px;font-size:12px;color:{trend_colour}">{trend_icon} {r['trend']}</td>
+            <td style="padding:14px 12px;font-size:12px;color:{'#9f7aea' if r['knee']['detected'] else '#2d3748'}">
+                {'⬡ cy ' + str(r['knee']['cycle']) if r['knee']['detected'] else '—'}
+            </td>
         </tr>
         """
 
@@ -1317,6 +1464,8 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
                     <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Trend</th>
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Knee</th>
                 </tr>
             </thead>
             <tbody>
@@ -1532,15 +1681,23 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         label_visibility="collapsed",
     )
     if pack_selection:
+        import statistics as _stats
         pack_rows = [r for r in rows if r["cell_id"] in pack_selection]
         weakest = min(pack_rows, key=lambda r: r["soh"])
+        strongest = max(pack_rows, key=lambda r: r["soh"])
         pack_soh = weakest["soh"]
+        soh_vals = [r["soh"] for r in pack_rows]
+        pack_spread = _stats.stdev(soh_vals) if len(soh_vals) > 1 else 0.0
+        soh_range = strongest["soh"] - weakest["soh"]
         pack_rul_rows = [r for r in pack_rows if r["rul"] is not None and r["rul_ok"]]
         pack_rul = min(r["rul"] for r in pack_rul_rows) if pack_rul_rows else None
         pack_status_label, pack_status_c = soh_status(pack_soh)
         rul_display = f"{pack_rul:.0f} cy" if pack_rul is not None else "—"
         rul_note = "" if pack_rul_rows else "RUL not calibrated for any selected cell"
         n_uncal = len(pack_rows) - len(pack_rul_rows)
+        # Spread health: <2% is excellent, 2-5% is watch, >5% is high imbalance
+        spread_c = "#68d391" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
+        spread_label = "Balanced" if pack_spread < 2 else ("Watch" if pack_spread < 5 else "Imbalanced")
 
         st.markdown(
             f"""
@@ -1556,6 +1713,11 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                         <div style="font-size:11px;color:#4a5568">{weakest['cell_id']} · {pack_status_label}</div>
                     </div>
                     <div>
+                        <div style="font-size:11px;color:#4a5568">Cell SOH Spread (σ)</div>
+                        <div style="font-size:28px;font-weight:700;color:{spread_c}">{pack_spread:.1f}%</div>
+                        <div style="font-size:11px;color:{spread_c}">{spread_label} · range {soh_range:.1f}%</div>
+                    </div>
+                    <div>
                         <div style="font-size:11px;color:#4a5568">Pack RUL (shortest)</div>
                         <div style="font-size:28px;font-weight:700;color:#a0aec0">{rul_display}</div>
                         <div style="font-size:11px;color:#4a5568">{rul_note if rul_note else (f'{n_uncal} cell(s) excluded from RUL' if n_uncal else 'all cells calibrated')}</div>
@@ -1565,6 +1727,10 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                         <div style="font-size:28px;font-weight:700;color:#e2e8f0">{len(pack_selection)}</div>
                         <div style="font-size:11px;color:#4a5568">{', '.join(pack_selection)}</div>
                     </div>
+                </div>
+                <div style="font-size:11px;color:#4a5568;margin-top:10px;padding-top:10px;border-top:1px solid #2d3748">
+                    High cell spread (σ&gt;5%) forces the BMS to restrict charge/discharge to protect the weakest cell,
+                    reducing effective pack capacity below the weakest cell's SOH alone.
                 </div>
             </div>
             """,
@@ -3417,6 +3583,55 @@ def page_settings(featured_dfs: dict, bundles: dict):
         )
 
     # ────────────────────────────────────────────────────────────────────────
+    # Section 2b: Application EOL threshold
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Application End-of-Life Threshold")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "The EOL threshold defines when a cell is 'retired' for your application. "
+        "The standard industry convention is <strong style='color:#718096'>80% SOH</strong>, "
+        "but this is not universal — a delivery van needing 90% range may retire at 88%, "
+        "while stationary grid storage may run to 70%. "
+        "Changing this threshold adjusts the displayed RUL on the Overview page "
+        "using the current fade rate — <strong style='color:#718096'>it does not retrain the model</strong>. "
+        "The model was trained on 80% EOL; the adjusted RUL is a fade-rate projection, not a new model prediction.</div>",
+        unsafe_allow_html=True,
+    )
+
+    eol_col1, eol_col2 = st.columns([4, 1])
+    with eol_col1:
+        new_eol = st.slider(
+            "Application EOL threshold (%)",
+            min_value=70, max_value=95, step=1,
+            value=int(st.session_state.get("eol_threshold_pct", 80)),
+            key="settings_eol_threshold",
+            help="RUL on Overview will reflect cycles remaining until SOH hits this value.",
+        )
+    with eol_col2:
+        st.markdown("<div style='padding-top:26px'>", unsafe_allow_html=True)
+        if st.button("Reset to 80%", key="settings_eol_reset"):
+            st.session_state["eol_threshold_pct"] = 80.0
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if new_eol != int(st.session_state.get("eol_threshold_pct", 80)):
+        st.session_state["eol_threshold_pct"] = float(new_eol)
+        st.rerun()
+
+    if new_eol != 80:
+        direction = "earlier" if new_eol > 80 else "later"
+        st.markdown(
+            f"<div style='font-size:12px;color:#d69e2e;margin:4px 0 8px;"
+            f"padding:6px 12px;background:rgba(214,158,46,0.08);border-radius:6px;"
+            f"border-left:3px solid #d69e2e'>"
+            f"Active: {new_eol}% EOL threshold — RUL will show {direction} retirement than "
+            f"the standard 80% convention. Model predictions are still anchored to 80%; "
+            f"the Overview adjustment uses linear fade-rate extrapolation.</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ────────────────────────────────────────────────────────────────────────
     # Section 3: RUL reliability threshold
     # ────────────────────────────────────────────────────────────────────────
     _section("RUL Reliability Threshold")
@@ -4104,12 +4319,15 @@ def main():
     synth_sc   = {k: v for k, v in split_cycles_all.items() if k not in NASA_CELL_IDS}
 
     # ── Session state init (first run per session only) ───────────────────────
-    # data_mode — which of the three workspaces is active
     if "data_mode" not in st.session_state:
         st.session_state["data_mode"] = "nasa"
-    # uploaded_mode_meta — populated after a successful upload, None otherwise
     if "uploaded_mode_meta" not in st.session_state:
         st.session_state["uploaded_mode_meta"] = None
+    # Application EOL threshold — user-configurable in Settings.
+    # Changing this does NOT retrain the model; it rescales the displayed RUL
+    # using the current fade rate to project to the user-defined threshold.
+    if "eol_threshold_pct" not in st.session_state:
+        st.session_state["eol_threshold_pct"] = 80.0
 
     # ── Resolve active data from current mode ─────────────────────────────────
     mode      = st.session_state["data_mode"]

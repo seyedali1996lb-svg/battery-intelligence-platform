@@ -54,6 +54,28 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
     else:
         df["temp_rolling_30cy"] = np.nan
 
+    # ── Cycle-level anomaly flags ──
+    # A cycle is anomalous when its value deviates more than 2.5 std deviations
+    # from a 30-cycle rolling baseline. This catches sudden resistance spikes,
+    # capacity dips, and thermal events that are precursors to failure.
+    for col, out in [("capacity_ah", "capacity_anomaly"), ("resistance_ohm", "resistance_anomaly")]:
+        if col in df.columns:
+            roll_mean = df[col].rolling(30, min_periods=5, center=True).mean()
+            roll_std  = df[col].rolling(30, min_periods=5, center=True).std()
+            df[out]   = (df[col] - roll_mean).abs() > (2.5 * roll_std.clip(lower=1e-9))
+        else:
+            df[out] = False
+
+    # ── State of Power (SoP) — relative peak-power capability ──
+    # P_peak ∝ 1/R (constant-voltage approximation).  We express it as a
+    # percentage of the cell's initial power capability so it's dimensionless
+    # and comparable across resistance scales (NASA vs synthetic).
+    if "resistance_ohm" in df.columns:
+        initial_r   = df["resistance_ohm"].iloc[0]
+        df["sop_pct"] = (initial_r / df["resistance_ohm"].clip(lower=1e-6)) * 100.0
+    else:
+        df["sop_pct"] = np.nan
+
     # ── RUL target ──
     eol_capacity = df["capacity_ah"].iloc[0] * (eol_threshold_pct / 100.0)
     eol_cycles = df.loc[df["capacity_ah"] <= eol_capacity, "cycle_number"]

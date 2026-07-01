@@ -218,14 +218,14 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 # Enrich cycles with derived metrics
 # ---------------------------------------------------------------------------
 
-def enrich_cycles(df: pd.DataFrame) -> pd.DataFrame:
+def enrich_cycles(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.DataFrame:
     """Add computed columns: SOH, capacity fade, EOL flag, rolling averages."""
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 
     initial_capacity = df["capacity_ah"].iloc[0]
     df["soh_pct"]          = (df["capacity_ah"] / initial_capacity) * 100.0
     df["capacity_fade_ah"] = initial_capacity - df["capacity_ah"]
-    df["is_eol"]           = df["soh_pct"] < 80.0
+    df["is_eol"]           = df["soh_pct"] < eol_threshold_pct
     df["soh_rolling_avg"]  = df["soh_pct"].rolling(10, min_periods=1).mean()
     df["capacity_fade_rate"] = df["capacity_ah"].diff().abs().rolling(5, min_periods=1).mean()
     return df
