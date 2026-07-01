@@ -36,6 +36,22 @@ from knee_detection import detect_knee, degradation_phases
 
 
 # ---------------------------------------------------------------------------
+# HTML rendering helper
+# ---------------------------------------------------------------------------
+
+def _md_html(html: str) -> None:
+    """Render an HTML string via st.markdown with blank-line stripping.
+
+    CommonMark terminates an HTML block at the first blank (or whitespace-only)
+    line, causing remaining tags to be shown as raw text.  Stripping such lines
+    before handing the string to Streamlit prevents this across ALL multi-line
+    HTML f-strings in the app.
+    """
+    cleaned = "\n".join(ln for ln in html.split("\n") if ln.strip())
+    st.markdown(cleaned, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -691,7 +707,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"</div>"
         )
 
-    st.markdown(
+    _md_html(
         f"""
         <div class="hero-card">
             <div class="hero-label">Battery Status · {cell_id}</div>
@@ -705,8 +721,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             </div>
             {interval_html}
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if conf_reason:
@@ -728,7 +743,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         if months_remaining is not None else ""
     )
 
-    st.markdown(
+    _md_html(
         f"""
         <div class="metric-row">
             <div class="metric-chip">
@@ -763,8 +778,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 <div class="metric-chip-sub">{src_sub}</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     st.markdown("<div class='section-header'>State of Health — Full History</div>", unsafe_allow_html=True)
@@ -836,7 +850,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         else:
             knee_note = f"· Knee projected ~cycle {k_cy} ({k_soh:.1f}% SOH)"
 
-    st.markdown(
+    _md_html(
         f"""
         <div class="hero-card">
             <div class="hero-label">Health Assessment · {cell_id}</div>
@@ -848,8 +862,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 {knee_note}
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     col1, col2 = st.columns(2)
@@ -1029,7 +1042,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#68d391", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
     pc = PHASE_COLOUR.get(current_phase, "#4a5568")
 
-    st.markdown(
+    _md_html(
         f"""
         <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:18px 22px;margin-bottom:16px">
             <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
@@ -1064,8 +1077,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -1101,7 +1113,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
         else f"Synthetic model · {bundle['metrics'].get('n_cells', 8)} cells"
     )
     n_cells_trained = bundle["metrics"].get("n_cells", "—")
-    st.markdown(
+    _md_html(
         f"""
         <div class="hero-card">
             <div class="hero-label">Why this prediction? · SOH model · {model_label}</div>
@@ -1115,8 +1127,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str):
                 the dominant degradation mechanism in LiCoO&#x2082; cells.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     def _importance_bar(fi: "pd.DataFrame", color_hi: str, height: int = 340) -> "go.Figure":
@@ -1355,7 +1366,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     if n_upload: src_parts.append(f"{n_upload} uploaded")
     src_sub = " · ".join(src_parts) or "—"
 
-    st.markdown(
+    _md_html(
         f"""
         <div class="metric-row">
             <div class="metric-chip">
@@ -1384,8 +1395,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                 <div class="metric-chip-sub">worst to best</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # ── Ranking table ──
@@ -1452,7 +1462,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         </tr>
         """
 
-    st.markdown(
+    _md_html(
         f"""
         <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
             <thead>
@@ -1483,8 +1493,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                 {table_rows_html}
             </tbody>
         </table>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # ── SOH distribution chart ──
@@ -1659,7 +1668,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;color:#4a5568;font-style:italic;padding:8px 0'>None</div>"
         )
         with col:
-            st.markdown(
+            _md_html(
                 f"""
                 <div style="background:{bbg};border:1px solid {bfg}33;border-radius:10px;padding:18px;min-height:120px">
                     <div style="font-size:10px;font-weight:700;color:{bfg};text-transform:uppercase;
@@ -1667,8 +1676,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                     <div style="font-size:12px;color:{bfg}88;margin-bottom:12px">{brange} · {count} cell{'s' if count != 1 else ''}</div>
                     <div style="line-height:2">{pills}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
@@ -1710,7 +1718,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         spread_c = "#68d391" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
         spread_label = "Balanced" if pack_spread < 2 else ("Watch" if pack_spread < 5 else "Imbalanced")
 
-        st.markdown(
+        _md_html(
             f"""
             <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;
                         padding:18px 22px;margin-bottom:12px">
@@ -1744,8 +1752,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                     reducing effective pack capacity below the weakest cell's SOH alone.
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
     else:
         st.markdown(
@@ -1841,8 +1848,7 @@ def page_copilot(
             The Copilot never calculates, estimates, or infers a value not already in the bundle.
             If a number is not there, it says so.
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     query = st.session_state.get("copilot_query", None)
@@ -2024,7 +2030,7 @@ def page_consequences(
     st.markdown("# Consequences")
     st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
 
-    st.markdown(
+    _md_html(
         f"""
         <div style="background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);
                     border-radius:10px;padding:14px 20px;margin-bottom:28px;
@@ -2036,13 +2042,12 @@ def page_consequences(
             (cited source below) or an {BADGE_ILLUST} badge (engineering judgment only).
             Slider values are yours to adjust — the defaults are mid-points of the cited ranges.
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # ── Primary life gate ──
     if soh > 85.0:
-        st.markdown(
+        _md_html(
             f"""
             <div style="background:#1e2a38;border:1px dashed #2d3748;border-radius:12px;
                         padding:48px;text-align:center">
@@ -2054,8 +2059,7 @@ def page_consequences(
                     becomes relevant. Return here as the cell degrades toward 85% SOH.
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
         return
 
@@ -2065,7 +2069,7 @@ def page_consequences(
         else "not calibrated"
     )
     rul_colour  = "#718096" if rul_pred is None else "#e2e8f0"
-    st.markdown(
+    _md_html(
         f"""
         <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:24px">
             <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
@@ -2089,8 +2093,7 @@ def page_consequences(
                 <div style="margin-top:6px">{BADGE_VALIDATED}</div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # ────────────────────────────────────────────────────────────────────────
@@ -2123,7 +2126,7 @@ def page_consequences(
             f"line-height:1.4'>{res['source']}</div>"
         )
         with col:
-            st.markdown(
+            _md_html(
                 f"""
                 <div style="background:{bg};border:1px solid {fg}33;border-radius:10px;
                             padding:20px;height:100%">
@@ -2140,8 +2143,7 @@ def page_consequences(
                     </div>
                     {source_html}
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
     st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
@@ -2266,7 +2268,7 @@ def page_consequences(
                 "<div style='height:0'></div>"
             )
             with col:
-                st.markdown(
+                _md_html(
                     f"""
                     <div style="background:{bg};border:{border};border-radius:10px;
                                 padding:20px;text-align:center">
@@ -2279,8 +2281,7 @@ def page_consequences(
                         <div style="margin-top:8px">{badge_html}</div>
                         {repack_note}
                     </div>
-                    """,
-                    unsafe_allow_html=True,
+                    """
                 )
 
         if not rul_reliable:
@@ -2431,7 +2432,7 @@ def page_consequences(
         mat_badge   = make_badge(ASSUMPTIONS["material_recovery"]["label"], "#b7791f")
 
         with s1:
-            st.markdown(
+            _md_html(
                 f"""
                 <div style="background:#1e2a38;border:1px solid #2d374855;
                             border-radius:10px;padding:20px">
@@ -2450,11 +2451,10 @@ def page_consequences(
                         (≈15% cathode-material credit, Dunn et al. 2015 — hardcoded, no slider).
                     </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
         with s2:
-            st.markdown(
+            _md_html(
                 f"""
                 <div style="background:#1e2a38;border:1px solid #2d374855;
                             border-radius:10px;padding:20px">
@@ -2471,8 +2471,7 @@ def page_consequences(
                         (Sommerville et al. 2020).
                     </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
     st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
@@ -2527,7 +2526,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     st.markdown("# Battery Passport")
     st.markdown(f"##### Battery Passport Interface · {selected}")
 
-    st.markdown(
+    _md_html(
         f"""
         <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
                     border-radius:10px;padding:14px 20px;margin-bottom:28px;
@@ -2538,8 +2537,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             {make_state_badge("estimated")}, or {make_state_badge("unavailable")} based on what this
             demonstration actually has. Nothing is hidden or faked to look complete.
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     groups = [
@@ -2565,7 +2563,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         "margin-bottom:12px;margin-top:20px'>5 · Compliance Status</div>",
         unsafe_allow_html=True,
     )
-    st.markdown(
+    _md_html(
         f"""
         <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px;
                     font-size:13px;color:#a0aec0;line-height:1.8">
@@ -2583,8 +2581,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             sign-off — none of which a portfolio project can provide. No field on this page should
             be read as a compliance claim.
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -2613,8 +2610,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
             same Available / Estimate / Not-available-in-demo labelling used throughout this
             platform.
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     second_life = None
@@ -4298,7 +4294,7 @@ COMING_SOON_META = {
 def page_coming_soon(key: str):
     label, description, phase = COMING_SOON_META[key]
     st.markdown(f"# {label}")
-    st.markdown(
+    _md_html(
         f"""
         <div style="border:1px dashed #2d3748;border-radius:12px;padding:64px 48px;
                     text-align:center;margin-top:32px">
@@ -4311,8 +4307,7 @@ def page_coming_soon(key: str):
                 {description}
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -4425,3 +4420,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
