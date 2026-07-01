@@ -601,21 +601,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     rul_q10 = float(latest["rul_q10"]) if "rul_q10" in latest.index else None
     rul_q90 = float(latest["rul_q90"]) if "rul_q90" in latest.index else None
 
-    # Application EOL threshold (user-configurable; default 80%)
-    app_eol  = float(st.session_state.get("eol_threshold_pct", 80.0))
-    # Adjust displayed RUL to the user's application threshold using current fade rate.
-    # The model was trained on 80% EOL, so we scale by projecting remaining SOH headroom.
-    sop_pct  = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
-    if not rul_calibrating and current_rul is not None and app_eol != 80.0:
-        fade_50 = float(latest.get("fade_rate_50cy", 0)) * 100  # as SOH %/cy
-        if fade_50 > 1e-6:
-            adj_rul = max(0, (current_soh - app_eol) / fade_50)
-        else:
-            adj_rul = current_rul
-        rul_display = f"{adj_rul:.0f}"
-        rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold)"
-    else:
-        adj_rul = current_rul
+    # SoP from features (computed by build_features)
+    sop_pct = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
 
     # Per-cell fold R² — drives confidence inline reason
     fold_r2 = None
@@ -628,6 +615,16 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     rul_calibrating = (not rul_reliable) or (confidence == "Calibrating")
     rul_display     = "—" if rul_calibrating else f"{current_rul:.0f}"
     rul_sub         = "not calibrated" if not rul_reliable else "cycles to 80% SOH"
+
+    # Application EOL threshold — adjust displayed RUL after rul_calibrating is known
+    app_eol = float(st.session_state.get("eol_threshold_pct", 80.0))
+    adj_rul = current_rul
+    if not rul_calibrating and current_rul is not None and app_eol != 80.0:
+        fade_50 = float(latest.get("fade_rate_50cy", 0)) * 100  # SOH %/cy
+        if fade_50 > 1e-6:
+            adj_rul = max(0, (current_soh - app_eol) / fade_50)
+        rul_display = f"{adj_rul:.0f}"
+        rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold)"
 
     conf_html = (
         "<span class='tag-calibrating'>CALIBRATING</span>"
@@ -4385,11 +4382,11 @@ def main():
     elif page == "insights":
         page_insights(df, bundle, selected)
     elif page == "copilot":
-        page_copilot(cell_ids, featured_dfs, bundles, selected)
+        page_copilot(cell_ids, active_fdfs, bundles, selected)
     elif page == "consequences":
-        page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
+        page_consequences(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "recommendations":
-        page_recommendations(selected, df, featured_dfs, bundles, rul_reliable)
+        page_recommendations(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "sustainability":
         page_sustainability(selected, df)
     elif page == "passport":
@@ -4397,7 +4394,7 @@ def main():
     elif page == "reports":
         page_reports(selected, df, bundle, rul_reliable)
     elif page == "fleet":
-        page_fleet(featured_dfs, bundles)
+        page_fleet(active_fdfs, bundles)
     elif page == "settings":
         page_settings(
             featured_dfs_all,
