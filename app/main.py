@@ -429,6 +429,14 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             "letter-spacing:0.08em;padding:0 4px 8px'>Cell</div>",
             unsafe_allow_html=True,
         )
+        # Apply any pending Prev/Next navigation BEFORE the selectbox renders.
+        # Newer Streamlit raises StreamlitAPIException if you set a widget-keyed
+        # session state value after that widget has already been instantiated in
+        # the current run, so we use a proxy key "_nav_cell" and consume it here.
+        if "_nav_cell" in st.session_state:
+            _nav_target = st.session_state.pop("_nav_cell")
+            if _nav_target in cell_ids:
+                st.session_state["selected_cell"] = _nav_target
         # Determine default index — preserve current selection when cell list changes
         _cur_sel = st.session_state.get("selected_cell")
         _sel_idx = cell_ids.index(_cur_sel) if _cur_sel in cell_ids else 0
@@ -440,17 +448,18 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             label_visibility="collapsed",
         )
 
-        # Prev / Next quick navigation
+        # Prev / Next quick navigation — write to proxy key, not widget key
+        _cur_idx = cell_ids.index(selected)
         _nav_prev, _nav_next = st.columns(2)
         with _nav_prev:
             if st.button("← Prev", key="cell_prev", use_container_width=True,
-                         disabled=(cell_ids.index(selected) == 0)):
-                st.session_state["selected_cell"] = cell_ids[cell_ids.index(selected) - 1]
+                         disabled=(_cur_idx == 0)):
+                st.session_state["_nav_cell"] = cell_ids[_cur_idx - 1]
                 st.rerun()
         with _nav_next:
             if st.button("Next →", key="cell_next", use_container_width=True,
-                         disabled=(cell_ids.index(selected) == len(cell_ids) - 1)):
-                st.session_state["selected_cell"] = cell_ids[cell_ids.index(selected) + 1]
+                         disabled=(_cur_idx == len(cell_ids) - 1)):
+                st.session_state["_nav_cell"] = cell_ids[_cur_idx + 1]
                 st.rerun()
 
         # ── Cell annotation — varies by active mode ──
