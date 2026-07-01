@@ -268,41 +268,119 @@ LEGEND_H = dict(
     bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#718096"),
 )
 
-def render_sidebar(cell_ids: list[str], uploaded_cell_ids: set | None = None):
-    uploaded_cell_ids = uploaded_cell_ids or set()
-    nasa_available = [c for c in cell_ids if c in NASA_CELL_IDS and c not in uploaded_cell_ids]
-    uploaded_available = [c for c in cell_ids if c in uploaded_cell_ids]
-    n_cells = len(cell_ids)
-    subtitle = f"{n_cells} cells"
-    parts = []
-    synth_count = len([c for c in cell_ids if c not in NASA_CELL_IDS and c not in uploaded_cell_ids])
-    if synth_count:
-        parts.append(f"{synth_count} synthetic")
-    if nasa_available:
-        parts.append(f"{len(nasa_available)} NASA real")
-    if uploaded_available:
-        parts.append(f"{len(uploaded_available)} uploaded")
-    if parts:
-        subtitle += f" ({' + '.join(parts)})"
+def _upload_status_line(meta: dict) -> str:
+    """One-line status string for the My Data mode row."""
+    n = meta["n_cells"]
+    k = meta.get("calibrating_count", 0)
+    parts = [f"{n} cells"]
+    if k > 0:
+        parts.append(f"{k} Calibrating")
+    parts.append("uploaded today")
+    if meta.get("lco_limited"):
+        parts.append("limited LCO")
+    return " · ".join(parts)
 
+
+def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None):
+    """Persistent three-mode data source selector rendered inside the sidebar."""
+    current = st.session_state.get("data_mode", "nasa")
+
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding:0 4px 6px'>Data Source</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Mode descriptor ordered list
+    modes = [
+        {
+            "key":       "nasa",
+            "label":     "NASA Research Mode",
+            "status":    f"{nasa_n} cells · real measured data",
+            "available": nasa_n > 0,
+        },
+        {
+            "key":       "synthetic",
+            "label":     "Synthetic Fleet Mode",
+            "status":    f"{synth_n} cells · physics-informed synthetic",
+            "available": True,
+        },
+        {
+            "key":       "uploaded",
+            "label":     "My Data",
+            "status":    _upload_status_line(up_meta) if up_meta else "Not yet uploaded",
+            "available": up_meta is not None,
+        },
+    ]
+
+    for m in modes:
+        is_active    = current == m["key"]
+        is_available = m["available"]
+
+        if is_active:
+            # Active row: styled div — ● bold label + muted status
+            st.markdown(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
+                f"padding:9px 12px;margin-bottom:5px'>"
+                f"<div style='font-size:13px;font-weight:700;color:#e2e8f0'>"
+                f"● {m['label']}</div>"
+                f"<div style='font-size:11px;color:#718096;margin-top:2px'>{m['status']}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        elif is_available:
+            # Inactive available: button triggers mode switch
+            if st.button(
+                f"○  {m['label']}",
+                key=f"mode_btn_{m['key']}",
+                use_container_width=True,
+                type="secondary",
+            ):
+                st.session_state["data_mode"] = m["key"]
+                st.rerun()
+            st.markdown(
+                f"<div style='font-size:11px;color:#4a5568;margin:-8px 0 5px 4px'>"
+                f"{m['status']}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # Unavailable (My Data, no upload yet) — grayed out, not clickable
+            st.markdown(
+                f"<div style='padding:8px 12px;margin-bottom:5px;opacity:0.45'>"
+                f"<div style='font-size:13px;color:#718096'>○  {m['label']}</div>"
+                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{m['status']}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+
+def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
+                   up_meta: dict | None) -> str:
     with st.sidebar:
         st.markdown(
-            f"<div style='padding:0 4px 20px'>"
-            f"<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{subtitle} · multi-cell model</div>"
-            f"</div>",
+            "<div style='padding:0 4px 16px'>"
+            "<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
+            "<div style='font-size:11px;color:#4a5568;margin-top:2px'>"
+            "Multi-cell degradation platform</div>"
+            "</div>",
             unsafe_allow_html=True,
         )
 
+        # ── Mode switcher ──
+        render_mode_switcher(nasa_n, synth_n, up_meta)
+
+        # ── Nav ──
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         if "page" not in st.session_state:
             st.session_state.page = "overview"
-
-        current = st.session_state.page
+        current_page = st.session_state.page
         for label, key, enabled in NAV_ITEMS:
             if enabled:
                 if st.button(
                     label, key=f"nav_{key}", use_container_width=True,
-                    type="primary" if current == key else "secondary",
+                    type="primary" if current_page == key else "secondary",
                 ):
                     st.session_state.page = key
                     st.rerun()
@@ -317,7 +395,7 @@ def render_sidebar(cell_ids: list[str], uploaded_cell_ids: set | None = None):
                 )
 
         # ── Cell selector ──
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
             "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
             "letter-spacing:0.08em;padding:0 4px 8px'>Cell</div>",
@@ -331,21 +409,21 @@ def render_sidebar(cell_ids: list[str], uploaded_cell_ids: set | None = None):
             label_visibility="collapsed",
         )
 
-        # Cell annotation — differ for uploaded / NASA real / synthetic
-        if selected in uploaded_cell_ids:
-            meta = st.session_state.get("uploaded_meta", {})
-            temp_assumed = selected in meta.get("temperature_assumed_cells", [])
-            temp_note = "25°C (assumed)" if temp_assumed else "measured"
+        # ── Cell annotation — varies by active mode ──
+        if mode == "uploaded":
+            temp_assumed_cells = (up_meta or {}).get("temperature_assumed_cells", [])
+            temp_assumed = selected in temp_assumed_cells
+            temp_note    = "25°C (assumed)" if temp_assumed else "measured"
             st.markdown(
                 f"<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-                f"Source: User-uploaded data · this session only<br>"
+                f"Source: user upload · this session only<br>"
                 f"Temperature: <span style='color:{'#718096' if temp_assumed else '#a0aec0'}'>"
                 f"{temp_note}</span><br>"
                 f"<span style='color:#63b3ed'>Uploaded cell</span>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-        elif selected in NASA_CELL_IDS:
+        elif mode == "nasa":
             st.markdown(
                 "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
                 "Source: NASA PCoE Battery Aging Dataset<br>"
@@ -354,7 +432,7 @@ def render_sidebar(cell_ids: list[str], uploaded_cell_ids: set | None = None):
                 "</div>",
                 unsafe_allow_html=True,
             )
-        else:
+        else:  # synthetic
             p  = CELL_STRESS_PROFILES.get(selected, {})
             sf = _stress_factor(p.get("temp_mean", 25), p.get("c_rate", 1), p.get("dod", 1))
             st.markdown(
@@ -368,7 +446,7 @@ def render_sidebar(cell_ids: list[str], uploaded_cell_ids: set | None = None):
                 unsafe_allow_html=True,
             )
 
-        st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
         st.markdown(
             "<div style='font-size:11px;color:#2d3748;padding:0 4px;line-height:1.7'>"
             "Phase 1 · scikit-learn GBRT<br>"
@@ -2728,40 +2806,40 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # ────────────────────────────────────────────────────────────────────────
     up_fdfs = st.session_state.get("uploaded_featured_dfs", {})
     if up_fdfs:
-        _section("Uploaded Data")
-        up_meta = st.session_state.get("uploaded_meta", {})
-        n_up    = len(up_fdfs)
-        lco_lim = up_meta.get("lco_limited", False)
+        _section("My Data")
+        up_meta      = st.session_state.get("uploaded_mode_meta") or {}
+        n_up         = up_meta.get("n_cells", len(up_fdfs))
+        lco_lim      = up_meta.get("lco_limited", False)
         temp_assumed = up_meta.get("temperature_assumed_cells", [])
-        mode    = up_meta.get("mode", "replace")
+        calib_cnt    = up_meta.get("calibrating_count", 0)
+        cell_ids_up  = up_meta.get("cell_ids", list(up_fdfs.keys()))
 
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:18px 20px;margin-bottom:12px'>"
             f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
-            f"letter-spacing:0.07em;margin-bottom:8px'>User-uploaded cells · this session</div>"
-            f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{n_up}</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
-            f"Mode: <strong style='color:#a0aec0'>{'Replace' if mode == 'replace' else 'Add to existing'}</strong><br>"
+            f"letter-spacing:0.07em;margin-bottom:8px'>My Data · this session only</div>"
+            f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{n_up} cells</div>"
+            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.8'>"
             f"{'⚠ LCO limited — fewer than 3 cells<br>' if lco_lim else ''}"
+            f"{calib_cnt} Calibrating · {n_up - calib_cnt} reliable<br>"
             f"{'Temperature assumed 25°C for: ' + ', '.join(temp_assumed) if temp_assumed else 'Temperature measured for all cells'}"
             f"</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            f"{', '.join(up_fdfs.keys())}</div>"
+            f"{', '.join(cell_ids_up)}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-        if st.button("↺ Reset to original data", key="settings_reset", use_container_width=False):
-            for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_meta"]:
-                st.session_state.pop(k, None)
+        if st.button("✕ Clear uploaded data", key="settings_clear", use_container_width=False):
+            _clear_uploaded_data()
             st.rerun()
 
         st.markdown(
             "<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            "Uploaded data is stored in your browser session only. Refreshing the page or "
-            "opening a new tab will restore the original 12 cells. Other users on this "
-            "deployment see only the original data."
+            "Uploaded data is stored in your browser session only — it never touches the "
+            "filesystem and never persists between sessions or across users. "
+            "Clearing uploaded data switches you back to NASA Research Mode."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -2990,6 +3068,181 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
+    """Training pipeline wired to the Analyse button — called from page_import()."""
+    import datetime
+
+    step_labels = [
+        ("parse",       "Parsing uploaded data"),
+        ("features",    "Engineering features"),
+        ("soh",         "Training SOH model"),
+        ("rul",         "Training RUL model"),
+        ("lco",         "Running leave-cell-out validation"),
+        ("reliability", "Computing per-cell reliability"),
+        ("load",        "Loading results into dashboard"),
+    ]
+
+    if st.button(
+        "⚡ Analyse this data",
+        type="primary",
+        use_container_width=True,
+        key="import_run_analysis",
+    ):
+        st.markdown(
+            "<div style='font-size:11px;color:#718096;margin-bottom:12px'>~60–90 seconds</div>",
+            unsafe_allow_html=True,
+        )
+        slots = {k: st.empty() for k, _ in step_labels}
+
+        def _step(key: str, icon: str, text: str):
+            c = "#68d391" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
+            slots[key].markdown(
+                f"<div style='font-size:13px;color:{c};padding:3px 0'>{icon} {text}</div>",
+                unsafe_allow_html=True,
+            )
+
+        for key, label in step_labels:
+            _step(key, "☐", label)
+
+        try:
+            # 1 — Parse
+            _step("parse", "⏳", "Parsing uploaded data…")
+            battery = adapt_upload_to_pipeline(df_raw)
+            n_up    = len(battery["cells"])
+            total_cy = sum(len(c["cycles"]) for c in battery["cells"].values())
+            _step("parse", "✓", f"Parsed — {n_up} cells, {total_cy:,} cycles")
+
+            # 2 — Features
+            _step("features", "⏳", "Engineering features…")
+            all_X, all_y_soh, all_y_rul = [], [], []
+            cell_featured = {}
+            for cid, cell in battery["cells"].items():
+                df_feat = build_features(cell["cycles"])
+                X, y_soh, y_rul = get_model_matrix(df_feat)
+                all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+                cell_featured[cid] = (df_feat, X)
+            X_all     = pd.concat(all_X)
+            y_soh_all = pd.concat(all_y_soh)
+            y_rul_all = pd.concat(all_y_rul)
+            _step("features", "✓", f"Features built — {len(X_all):,} rows")
+
+            # 3+4 — Train (train_models trains both SOH and RUL in one call)
+            _step("soh", "⏳", "Training SOH model…")
+            _step("rul", "⏳", "Training RUL model…")
+            up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+            up_bndl["metrics"]["n_cells"] = n_up
+            up_bndl["metrics"]["n_rows"]  = len(X_all)
+            _step("soh", "✓", "SOH model trained")
+            _step("rul", "✓", "RUL model trained")
+
+            # 5 — LCO
+            _step("lco", "⏳", "Running leave-cell-out validation…")
+            cell_cycles = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
+            lco = run_lco(cell_cycles)
+            up_bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
+            up_bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
+            up_bndl["metrics"]["rul_reliable"]  = lco["rul_reliable"]
+            up_bndl["metrics"]["lco_per_cell"]  = lco["per_cell"]
+            _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
+
+            # 6 — Per-cell reliability
+            _step("reliability", "⏳", "Computing per-cell reliability…")
+            per_cell_ok = {
+                cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
+                for cid, fold in lco["per_cell"].items()
+            }
+            up_bndl["metrics"]["per_cell_rul_reliable"] = per_cell_ok
+            lco_limited     = n_up < 3
+            calibrating_cnt = sum(1 for ok in per_cell_ok.values() if not ok)
+            up_bndl["metrics"]["lco_limited"] = lco_limited
+            _step("reliability", "✓", "Per-cell reliability computed"
+                  + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
+
+            # 7 — Build featured_dfs / split_cycles
+            _step("load", "⏳", "Loading results into dashboard…")
+            up_fdfs, up_sc = {}, {}
+            for cid, (df_feat, X) in cell_featured.items():
+                preds = predict(up_bndl, X)
+                df_out = df_feat.loc[X.index].copy()
+                df_out["soh_pred"]       = preds["soh_pred"]
+                df_out["rul_pred"]       = preds["rul_pred"]
+                df_out["confidence_tag"] = preds["confidence_tag"]
+                up_fdfs[cid] = df_out
+                split_idx    = int(len(X) * 0.8)
+                up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
+
+            # ── Store in session_state ──────────────────────────────────────
+            # Uploaded data never touches the filesystem and never persists
+            # between sessions or across users — session_state only.
+            st.session_state["uploaded_featured_dfs"] = up_fdfs
+            st.session_state["uploaded_bundle"]       = up_bndl
+            st.session_state["uploaded_split_cycles"] = up_sc
+            st.session_state["uploaded_mode_meta"]    = {
+                "n_cells":                  n_up,
+                "cell_ids":                 list(up_fdfs.keys()),
+                "upload_date":              datetime.date.today().isoformat(),
+                "calibrating_count":        calibrating_cnt,
+                "lco_limited":              lco_limited,
+                "temperature_assumed_cells": battery["temperature_assumed_cells"],
+            }
+            # Auto-switch to My Data mode
+            st.session_state["data_mode"] = "uploaded"
+            _step("load", "✓", "Done — results loaded into all pages")
+            st.rerun()  # triggers _show_upload_summary() on next render
+
+        except Exception as exc:
+            import traceback
+            st.error(f"Pipeline error: {exc}")
+            st.code(traceback.format_exc())
+
+
+def _show_upload_summary():
+    """Post-analysis summary panel shown on the Import page after a successful upload."""
+    meta = st.session_state["uploaded_mode_meta"]
+    n    = meta["n_cells"]
+    k    = meta["calibrating_count"]
+    lco  = st.session_state["uploaded_bundle"]["metrics"]
+
+    lco_lim_note = (
+        "\n⚠ LCO run on fewer than 3 cells — reliability estimates are less stable than usual."
+        if meta.get("lco_limited") else ""
+    )
+    rul_reliable_count = n - k
+
+    st.markdown(
+        f"<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
+        f"border-radius:10px;padding:20px 24px;margin-bottom:16px'>"
+        f"<div style='font-size:16px;font-weight:700;color:#68d391;margin-bottom:12px'>"
+        f"✓ Analysis complete</div>"
+        f"<div style='font-size:13px;color:#a0aec0;line-height:2'>"
+        f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
+        f"SOH model R²: <strong style='color:#e2e8f0'>{lco.get('lco_soh_r2', 0):.2f}</strong> "
+        f"<span style='color:#4a5568'>(leave-cell-out)</span><br>"
+        f"RUL reliable: <strong style='color:#e2e8f0'>{rul_reliable_count} of {n}</strong> cells"
+        f"</div>"
+        f"{('<div style=\"font-size:12px;color:#f6ad55;margin-top:10px\">' + lco_lim_note + '</div>') if meta.get('lco_limited') else ''}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    col_view, col_clear = st.columns([2, 1])
+    with col_view:
+        if st.button("View results →", type="primary", use_container_width=True, key="import_view_results"):
+            st.session_state["page"] = "overview"
+            st.rerun()
+    with col_clear:
+        if st.button("✕ Clear uploaded data", use_container_width=True, key="import_clear"):
+            _clear_uploaded_data()
+            st.rerun()
+
+
+def _clear_uploaded_data():
+    """Remove all uploaded data from session state and revert to NASA mode."""
+    for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_mode_meta"]:
+        st.session_state.pop(k, None)
+    st.session_state["data_mode"] = "nasa"
 
 
 def page_import():
@@ -3253,135 +3506,16 @@ def page_import():
         unsafe_allow_html=True,
     )
 
-    mode = st.radio(
-        "How should uploaded cells appear in the dashboard?",
-        options=["Replace current data", "Add to existing cells"],
-        index=0,
-        key="import_mode_radio",
-        help="Replace: only uploaded cells visible. Add: uploaded cells appear alongside the original 12 cells.",
-    )
-    mode_key = "replace" if mode == "Replace current data" else "add"
-
-    if st.button(
-        "⚡ Analyse this data",
-        type="primary",
-        use_container_width=True,
-        key="import_run_analysis",
-    ):
-        step_labels = [
-            ("parse",       "Parsing uploaded data"),
-            ("features",    "Building features"),
-            ("soh",         "Training SOH model"),
-            ("rul",         "Training RUL model"),
-            ("lco",         "Running leave-cell-out validation"),
-            ("reliability", "Scoring per-cell reliability"),
-            ("load",        "Loading results into dashboard"),
-        ]
-        slots = {k: st.empty() for k, _ in step_labels}
-
-        def _step(key: str, icon: str, text: str):
-            colour = "#68d391" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
-            slots[key].markdown(
-                f"<div style='font-size:13px;color:{colour};padding:3px 0'>{icon} {text}</div>",
-                unsafe_allow_html=True,
-            )
-
-        for key, label in step_labels:
-            _step(key, "○", label)
-
-        try:
-            # 1 — Adapt upload to pipeline schema
-            _step("parse", "⏳", "Parsing uploaded data…")
-            battery = adapt_upload_to_pipeline(df_raw)
-            n_up = len(battery["cells"])
-            _step("parse", "✓", f"Parsed — {n_up} cells, {sum(len(c['cycles']) for c in battery['cells'].values()):,} cycles")
-
-            # 2 — Build features per cell
-            _step("features", "⏳", "Building features…")
-            all_X, all_y_soh, all_y_rul = [], [], []
-            cell_featured = {}
-            for cid, cell in battery["cells"].items():
-                df_feat = build_features(cell["cycles"])
-                X, y_soh, y_rul = get_model_matrix(df_feat)
-                all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
-                cell_featured[cid] = (df_feat, X)
-            X_all        = pd.concat(all_X)
-            y_soh_all    = pd.concat(all_y_soh)
-            y_rul_all    = pd.concat(all_y_rul)
-            _step("features", "✓", f"Features built — {len(X_all):,} rows")
-
-            # 3+4 — Train models (single call trains both SOH and RUL heads)
-            _step("soh", "⏳", "Training SOH model…")
-            _step("rul", "⏳", "Training RUL model…")
-            up_bundle = train_models(X_all, y_soh_all, y_rul_all)
-            up_bundle["metrics"]["n_cells"] = n_up
-            up_bundle["metrics"]["n_rows"]  = len(X_all)
-            _step("soh", "✓", "SOH model trained")
-            _step("rul", "✓", "RUL model trained")
-
-            # 5 — LCO
-            _step("lco", "⏳", "Running leave-cell-out validation…")
-            cell_cycles = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
-            lco = run_lco(cell_cycles)
-            up_bundle["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
-            up_bundle["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
-            up_bundle["metrics"]["rul_reliable"] = lco["rul_reliable"]
-            up_bundle["metrics"]["lco_per_cell"] = lco["per_cell"]
-            _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
-
-            # 6 — Per-cell reliability
-            _step("reliability", "⏳", "Scoring per-cell reliability…")
-            per_cell_rul_ok = {
-                cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
-                for cid, fold in lco["per_cell"].items()
-            }
-            up_bundle["metrics"]["per_cell_rul_reliable"] = per_cell_rul_ok
-            lco_limited = n_up < 3
-            up_bundle["metrics"]["lco_limited"] = lco_limited
-            _step("reliability", "✓", "Per-cell reliability scored" + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
-
-            # 7 — Build featured_dfs / split_cycles
-            _step("load", "⏳", "Loading results into dashboard…")
-            up_fdfs, up_sc = {}, {}
-            for cid, (df_feat, X) in cell_featured.items():
-                preds = predict(up_bundle, X)
-                df_out = df_feat.loc[X.index].copy()
-                df_out["soh_pred"]       = preds["soh_pred"]
-                df_out["rul_pred"]       = preds["rul_pred"]
-                df_out["confidence_tag"] = preds["confidence_tag"]
-                up_fdfs[cid] = df_out
-                split_idx = int(len(X) * 0.8)
-                up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
-
-            # Store in session_state — session-scoped only, never persists
-            st.session_state["uploaded_featured_dfs"]  = up_fdfs
-            st.session_state["uploaded_bundle"]        = up_bundle
-            st.session_state["uploaded_split_cycles"]  = up_sc
-            st.session_state["uploaded_meta"] = {
-                "lco_limited":                lco_limited,
-                "temperature_assumed_cells":  battery["temperature_assumed_cells"],
-                "mode":                       mode_key,
-            }
-            _step("load", "✓", "Done — results loaded into all pages")
-            st.success("✓ Analysis complete — use the sidebar to select your uploaded cells.")
-
-        except Exception as exc:
-            import traceback
-            st.error(f"Pipeline error: {exc}")
-            st.code(traceback.format_exc())
-
-    # Reset button — clears uploaded data and restores original 12 cells
-    if st.session_state.get("uploaded_featured_dfs"):
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        if st.button("↺ Reset to original data", key="import_reset", use_container_width=True):
-            for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_meta"]:
-                st.session_state.pop(k, None)
-            st.rerun()
+    # Show completion summary if upload has already been processed this session
+    if st.session_state.get("uploaded_featured_dfs") and st.session_state.get("uploaded_mode_meta"):
+        _show_upload_summary()
+    else:
+        _run_analysis_button(df_raw, summary)
 
     st.markdown(
         "<div style='font-size:11px;color:#4a5568;margin-top:12px;text-align:center'>"
-        "Analysis takes approximately 60–90 seconds. Uploaded data is session-scoped only — "
-        "refreshing the page restores the original NASA / synthetic data."
+        "Uploaded data is session-scoped only — refreshing the page reverts to NASA mode. "
+        "Switch between modes at any time using the sidebar without losing any data."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -3421,44 +3555,61 @@ def page_coming_soon(key: str):
 # ---------------------------------------------------------------------------
 
 def main():
-    featured_dfs_orig, bundles, split_cycles_orig = load_everything()
+    featured_dfs_all, bundles, split_cycles_all = load_everything()
 
-    # ── Merge uploaded data from session_state if present ──
+    # ── Separate built-in cells by type ──────────────────────────────────────
+    nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if k in NASA_CELL_IDS}
+    synth_fdfs = {k: v for k, v in featured_dfs_all.items() if k not in NASA_CELL_IDS}
+    nasa_sc    = {k: v for k, v in split_cycles_all.items() if k in NASA_CELL_IDS}
+    synth_sc   = {k: v for k, v in split_cycles_all.items() if k not in NASA_CELL_IDS}
+
+    # ── Session state init (first run per session only) ───────────────────────
+    # data_mode — which of the three workspaces is active
+    if "data_mode" not in st.session_state:
+        st.session_state["data_mode"] = "nasa"
+    # uploaded_mode_meta — populated after a successful upload, None otherwise
+    if "uploaded_mode_meta" not in st.session_state:
+        st.session_state["uploaded_mode_meta"] = None
+
+    # ── Resolve active data from current mode ─────────────────────────────────
+    mode      = st.session_state["data_mode"]
     up_fdfs   = st.session_state.get("uploaded_featured_dfs", {})
-    up_bundle = st.session_state.get("uploaded_bundle")
     up_sc     = st.session_state.get("uploaded_split_cycles", {})
-    up_meta   = st.session_state.get("uploaded_meta", {})
+    up_bundle = st.session_state.get("uploaded_bundle")
+    up_meta   = st.session_state["uploaded_mode_meta"]
 
-    if up_fdfs and up_bundle:
-        mode = up_meta.get("mode", "replace")
-        if mode == "replace":
-            featured_dfs = up_fdfs
-            split_cycles = up_sc
-        else:
-            featured_dfs = {**featured_dfs_orig, **up_fdfs}
-            split_cycles = {**split_cycles_orig, **up_sc}
-        bundles = {**bundles, "upload": up_bundle}
-    else:
-        featured_dfs = featured_dfs_orig
-        split_cycles = split_cycles_orig
+    # Guard: if mode is "uploaded" but the bundle was cleared (e.g. after reset),
+    # fall back silently to NASA mode.
+    if mode == "uploaded" and (not up_fdfs or up_bundle is None):
+        st.session_state["data_mode"] = "nasa"
+        mode = "nasa"
 
-    uploaded_cell_ids = set(up_fdfs.keys())
+    if mode == "nasa":
+        active_fdfs   = nasa_fdfs
+        active_sc     = nasa_sc
+        active_bundle = bundles["nasa"]
+    elif mode == "synthetic":
+        active_fdfs   = synth_fdfs
+        active_sc     = synth_sc
+        active_bundle = bundles["synth"]
+    else:  # uploaded
+        active_fdfs   = up_fdfs
+        active_sc     = up_sc
+        active_bundle = up_bundle
 
-    cell_ids     = list(featured_dfs.keys())
-    selected     = render_sidebar(cell_ids, uploaded_cell_ids=uploaded_cell_ids)
+    cell_ids = list(active_fdfs.keys())
+    selected = render_sidebar(
+        cell_ids  = cell_ids,
+        mode      = mode,
+        nasa_n    = len(nasa_fdfs),
+        synth_n   = len(synth_fdfs),
+        up_meta   = up_meta,
+    )
 
-    df           = featured_dfs[selected]
-    split_cycle  = split_cycles[selected]
-
-    # Bundle selection: uploaded cells use their dedicated bundle
-    if selected in uploaded_cell_ids and up_bundle is not None:
-        bundle = up_bundle
-    elif selected in NASA_CELL_IDS:
-        bundle = bundles["nasa"]
-    else:
-        bundle = bundles["synth"]
-
-    page         = st.session_state.get("page", "overview")
+    df          = active_fdfs[selected]
+    split_cycle = active_sc[selected]
+    bundle      = active_bundle
+    page        = st.session_state.get("page", "overview")
 
     # Per-cell reliability: use the specific fold R² for this cell, not the group average.
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
@@ -3485,7 +3636,10 @@ def main():
     elif page == "fleet":
         page_fleet(featured_dfs, bundles)
     elif page == "settings":
-        page_settings(featured_dfs, bundles)
+        page_settings(
+            featured_dfs_all,
+            {"nasa": bundles["nasa"], "synth": bundles["synth"], "uploaded": up_bundle},
+        )
     elif page == "import":
         page_import()
     elif page in COMING_SOON_META:
