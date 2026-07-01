@@ -279,8 +279,8 @@ def load_everything():
 # ---------------------------------------------------------------------------
 
 NAV_ITEMS = [
+    ("Import",          "import",          True),
     ("Overview",        "overview",        True),
-    ("Import",          "import",          True),   # also repeated at bottom
     ("Health",          "health",          True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
