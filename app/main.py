@@ -1558,81 +1558,133 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 
 def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
     import numpy as _np_grade
-    st.markdown("# 🏆 Cell Grading — Early-Cycle Lifetime Prediction")
-    st.markdown(
-        "Based on Severson et al. (2019, Nature Energy): early-cycle capacity variance and fade rate "
-        "predict full cell lifetime with high accuracy. Cells graded A–C based on first 100 cycles."
+
+    _md_html("""
+    <div style="margin-bottom:8px">
+        <div style="font-size:22px;font-weight:700;color:#e2e8f0">🏆 Cell Grading</div>
+        <div style="font-size:13px;color:#718096;margin-top:2px">
+            Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)
+        </div>
+    </div>""")
+    st.caption(
+        "Grades A–C are derived from the first 100 cycles only: fade rate, capacity variance, "
+        "and resistance slope. A high score predicts long life; a low score flags early replacement."
     )
 
-    _grade_rows = []
+    # ── Compute grades ──────────────────────────────────────────────────────
+    _GRADE_CFG = {
+        "A": {"color": "#48bb78", "bg": "#1a2e22", "border": "#2f6846",
+              "label": "Grade A", "lifetime": "> 800 cycles", "icon": "🟢"},
+        "B": {"color": "#ed8936", "bg": "#2d2012", "border": "#7b4a10",
+              "label": "Grade B", "lifetime": "400 – 800 cycles", "icon": "🟡"},
+        "C": {"color": "#fc8181", "bg": "#2d1515", "border": "#7b2020",
+              "label": "Grade C", "lifetime": "< 400 cycles", "icon": "🔴"},
+        "—": {"color": "#718096", "bg": "#1a202c", "border": "#2d3748",
+              "label": "No data", "lifetime": "Insufficient data", "icon": "⚪"},
+    }
+
+    _grade_results = []
     for _cid in cell_ids:
         _gdf = active_fdfs.get(_cid)
         if _gdf is None:
             continue
         _early = _gdf[_gdf["cycle_number"] <= 100]
         if len(_early) < 20:
-            _grade_rows.append({
-                "Cell ID": _cid,
-                "Grade": "—",
-                "Score": float("nan"),
-                "Early Fade Rate (Ah/cy)": float("nan"),
-                "Capacity Variance": float("nan"),
-                "Resistance Slope (Ω/cy)": float("nan"),
-                "Predicted Lifetime": "Insufficient data",
-            })
+            _grade_results.append({"cid": _cid, "grade": "—", "score": None,
+                                   "fade": None, "var": None, "slope": None})
             continue
-        _early_fade_rate     = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
-        _capacity_variance   = float(_early["capacity_ah"].var())
-        _resistance_slope    = float(_np_grade.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0])
-        _score = 100 - (_early_fade_rate * 50000) - (_capacity_variance * 100000) - (_resistance_slope * 20000)
-        _score = float(_np_grade.clip(_score, 0, 100))
-        if _score >= 75:
-            _grade    = "A"
-            _lifetime = "Long life (>800 cycles to EOL)"
-        elif _score >= 50:
-            _grade    = "B"
-            _lifetime = "Moderate life (400–800 cycles)"
-        else:
-            _grade    = "C"
-            _lifetime = "Short life (<400 cycles)"
-        _grade_rows.append({
-            "Cell ID": _cid,
-            "Grade": _grade,
-            "Score": round(_score, 1),
-            "Early Fade Rate (Ah/cy)": round(_early_fade_rate, 6),
-            "Capacity Variance": round(_capacity_variance, 6),
-            "Resistance Slope (Ω/cy)": round(_resistance_slope, 6),
-            "Predicted Lifetime": _lifetime,
-        })
+        _fade  = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
+        _var   = float(_early["capacity_ah"].var())
+        _slope = float(_np_grade.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0])
+        _score = float(_np_grade.clip(100 - _fade * 50000 - _var * 100000 - _slope * 20000, 0, 100))
+        _grade = "A" if _score >= 75 else ("B" if _score >= 50 else "C")
+        _grade_results.append({"cid": _cid, "grade": _grade, "score": _score,
+                                "fade": _fade, "var": _var, "slope": _slope})
 
-    _grade_df = pd.DataFrame(_grade_rows)
-    if len(_grade_df) > 0:
-        st.dataframe(_grade_df, use_container_width=True, hide_index=True)
+    if not _grade_results:
+        st.info("No cells available.")
+        return
 
-        # ── Score bar chart ──
-        _valid = _grade_df[_grade_df["Score"].notna()].copy()
-        if len(_valid) > 0:
-            _color_map = {"A": "#48bb78", "B": "#ed8936", "C": "#fc8181"}
-            _bar_colors = [_color_map.get(str(g), "#718096") for g in _valid["Grade"]]
-            _fig_grade = go.Figure(go.Bar(
-                x=_valid["Cell ID"].tolist(),
-                y=_valid["Score"].tolist(),
-                marker=dict(color=_bar_colors),
-                text=[f"{s:.0f}" for s in _valid["Score"].tolist()],
-                textposition="outside",
-                textfont=dict(color="#e2e8f0", size=11),
-                hovertemplate="<b>%{x}</b><br>Score: %{y:.1f}<extra></extra>",
-            ))
-            _fig_grade.update_layout(
-                **base_layout(
-                    height=320,
-                    xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                    yaxis=dict(title="Grade Score (0–100)", gridcolor="#232d3b", linecolor="#2d3748",
-                               zeroline=False, range=[0, 110]),
-                ),
-            )
-            _fig_grade.update_layout(title=dict(text="Cell Grade Score (A=green, B=amber, C=red)", font=dict(size=12, color="#a0aec0"), x=0))
-            st.plotly_chart(_fig_grade, use_container_width=True)
+    # Sort: A first, then by score descending
+    _grade_results.sort(key=lambda r: ({"A": 0, "B": 1, "C": 2, "—": 3}[r["grade"]],
+                                        -(r["score"] or 0)))
+
+    # ── Grade cards ─────────────────────────────────────────────────────────
+    _cols_per_row = 3
+    for _i in range(0, len(_grade_results), _cols_per_row):
+        _row_items = _grade_results[_i:_i + _cols_per_row]
+        _cols = st.columns(len(_row_items))
+        for _col, _r in zip(_cols, _row_items):
+            _cfg = _GRADE_CFG[_r["grade"]]
+            _score_bar = ""
+            if _r["score"] is not None:
+                _pct = _r["score"]
+                _score_bar = (
+                    f"<div style='margin:10px 0 4px;background:#0e1117;border-radius:4px;height:6px'>"
+                    f"<div style='width:{_pct:.0f}%;background:{_cfg['color']};height:6px;border-radius:4px'></div>"
+                    f"</div>"
+                    f"<div style='font-size:11px;color:#718096'>{_pct:.1f} / 100</div>"
+                )
+                _details = (
+                    f"<div style='margin-top:10px;font-size:11px;color:#718096;line-height:1.8'>"
+                    f"Fade rate: {_r['fade']*1000:.4f} mAh/cy<br>"
+                    f"Cap. variance: {_r['var']*1e6:.2f} µAh²<br>"
+                    f"R slope: {_r['slope']*1000:.4f} mΩ/cy"
+                    f"</div>"
+                )
+            else:
+                _details = "<div style='margin-top:8px;font-size:11px;color:#718096'>Need ≥ 20 early cycles</div>"
+            with _col:
+                _md_html(
+                    f"<div style='background:{_cfg['bg']};border:1px solid {_cfg['border']};"
+                    f"border-radius:10px;padding:16px 18px;margin-bottom:12px'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"<div style='font-size:15px;font-weight:700;color:#e2e8f0'>{_r['cid']}</div>"
+                    f"<div style='font-size:22px;font-weight:800;color:{_cfg['color']}'>{_r['grade']}</div>"
+                    f"</div>"
+                    f"<div style='font-size:11px;color:{_cfg['color']};margin-top:2px'>"
+                    f"{_cfg['icon']} Predicted lifetime: {_cfg['lifetime']}</div>"
+                    f"{_score_bar}"
+                    f"{_details}"
+                    f"</div>"
+                )
+
+    # ── Score bar chart ──────────────────────────────────────────────────────
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    _valid = [r for r in _grade_results if r["score"] is not None]
+    if _valid:
+        _color_map = {"A": "#48bb78", "B": "#ed8936", "C": "#fc8181"}
+        _fig_grade = go.Figure(go.Bar(
+            x=[r["cid"] for r in _valid],
+            y=[r["score"] for r in _valid],
+            marker=dict(color=[_color_map[r["grade"]] for r in _valid]),
+            text=[f"{r['score']:.0f}" for r in _valid],
+            textposition="outside",
+            textfont=dict(color="#e2e8f0", size=11),
+            hovertemplate="<b>%{x}</b><br>Score: %{y:.1f}<extra></extra>",
+        ))
+        _fig_grade.update_layout(
+            **base_layout(
+                height=300,
+                xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                yaxis=dict(title="Grade Score (0–100)", gridcolor="#232d3b",
+                           linecolor="#2d3748", zeroline=False, range=[0, 115]),
+            ),
+        )
+        _fig_grade.add_hline(y=75, line_dash="dot", line_color="#48bb78", line_width=1,
+                              annotation_text="A threshold", annotation_position="right")
+        _fig_grade.add_hline(y=50, line_dash="dot", line_color="#ed8936", line_width=1,
+                              annotation_text="B threshold", annotation_position="right")
+        _fig_grade.update_layout(title=dict(
+            text="Grade Score by Cell — sorted best to worst",
+            font=dict(size=12, color="#a0aec0"), x=0))
+        st.plotly_chart(_fig_grade, use_container_width=True)
+
+    st.caption(
+        "Methodology: simplified adaptation of Severson et al. (2019, Nature Energy). "
+        "Score = 100 − f(fade rate) − f(capacity variance) − f(resistance slope) over first 100 cycles. "
+        "Not a validated commercial grading system."
+    )
 
     st.caption(
         "Methodology: simplified adaptation of Severson et al. (2019). Score derived from early-cycle "
@@ -5172,7 +5224,7 @@ def main():
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
     rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
 
-    # ── Global fleet alerts ──
+    # ── Global fleet alerts — shown only in sidebar, not across every page ──
     _soh_thresh = float(st.session_state.get("soh_alert_pct", 85))
     _res_mult = float(st.session_state.get("resistance_alert_mult", 1.8))
     _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
@@ -5180,24 +5232,30 @@ def main():
 
     for _cid, _fdf in active_fdfs.items():
         _latest = _fdf.iloc[-1]
-        if _latest.get("soh_pct", 100) < _soh_thresh:
-            _alert_msgs.append(f"⚠️ **{_cid}**: SOH {_latest['soh_pct']:.1f}% — below {_soh_thresh:.0f}% warning threshold")
+        if float(_latest.get("soh_pct", 100)) < _soh_thresh:
+            _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
         if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
-            _r_init = _fdf["resistance_ohm"].iloc[0]
+            _r_init = float(_fdf["resistance_ohm"].iloc[0])
             _r_now = float(_latest["resistance_ohm"])
             if _r_init > 0 and _r_now > _r_init * _res_mult:
-                _alert_msgs.append(f"🔴 **{_cid}**: Resistance {_r_now/_r_init:.2f}× initial — above {_res_mult:.1f}× alert threshold")
+                _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
 
     if len(active_fdfs) > 1:
-        _soh_vals = [fdf["soh_pct"].iloc[-1] for fdf in active_fdfs.values()]
+        _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
         _spread = max(_soh_vals) - min(_soh_vals)
         if _spread > _spread_thresh:
-            _alert_msgs.append(f"⚡ **Fleet spread**: {_spread:.1f}% SOH range across cells — above {_spread_thresh:.0f}% threshold")
+            _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
 
+    # Render alerts as a compact collapsible block in the sidebar only
     if _alert_msgs:
-        with st.container():
-            for _msg in _alert_msgs[:5]:
-                st.warning(_msg)
+        with st.sidebar:
+            _label = f"🔔 {len(_alert_msgs)} Alert{'s' if len(_alert_msgs) > 1 else ''}"
+            with st.expander(_label, expanded=False):
+                for _kind, _msg in _alert_msgs:
+                    if _kind == "error":
+                        st.error(_msg)
+                    else:
+                        st.warning(_msg)
 
     if page == "overview":
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
