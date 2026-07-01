@@ -1560,7 +1560,7 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
     import numpy as _np_grade
 
     _md_html("""
-    <div style="margin-bottom:8px">
+    <div style="padding-top:8px;margin-bottom:8px">
         <div style="font-size:22px;font-weight:700;color:#e2e8f0">🏆 Cell Grading</div>
         <div style="font-size:13px;color:#718096;margin-top:2px">
             Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)
