@@ -715,17 +715,6 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 unsafe_allow_html=True,
             )
 
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size:11px;color:#2d3748;padding:0 4px;line-height:1.7'>"
-            "Phase 1 · scikit-learn GBRT<br>"
-            "8 synthetic + 4 NASA real cells<br>"
-            "Cell-to-cell stress variation (T, C-rate, DoD)<br>"
-            "<span style='color:#fc8181'>⚠ Synthetic cells: not real measured data</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
         # ── Fleet alerts ──
         if active_fdfs:
             _soh_thresh  = float(st.session_state.get("soh_alert_pct", 85))
@@ -755,6 +744,17 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                             st.error(_msg)
                         else:
                             st.warning(_msg)
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:11px;color:#2d3748;padding:0 4px;line-height:1.7'>"
+            "Phase 1 · scikit-learn GBRT<br>"
+            "8 synthetic + 4 NASA real cells<br>"
+            "Cell-to-cell stress variation (T, C-rate, DoD)<br>"
+            "<span style='color:#fc8181'>⚠ Synthetic cells: not real measured data</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     return selected
 
