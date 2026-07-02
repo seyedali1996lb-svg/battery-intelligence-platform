@@ -80,9 +80,15 @@ def train_models(
         A dict containing trained models, scalers, feature names, and metrics.
     """
     # Chronological split — no shuffling.
-    X_train, X_test, y_soh_train, y_soh_test, y_rul_train, y_rul_test = (
-        train_test_split(X, y_soh, y_rul, test_size=test_size, shuffle=False)
-    )
+    # Guard: if dataset is too small for a test split, train on all data.
+    if len(X) < max(4, int(1 / test_size) + 1):
+        X_train, X_test = X, X
+        y_soh_train, y_soh_test = y_soh, y_soh
+        y_rul_train, y_rul_test = y_rul, y_rul
+    else:
+        X_train, X_test, y_soh_train, y_soh_test, y_rul_train, y_rul_test = (
+            train_test_split(X, y_soh, y_rul, test_size=test_size, shuffle=False)
+        )
 
     # Scale features: gradient boosting is tree-based so it doesn't strictly
     # need scaling, but it makes feature importances more comparable across
