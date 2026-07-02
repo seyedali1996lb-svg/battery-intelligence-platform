@@ -613,6 +613,30 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                     unsafe_allow_html=True,
                 )
 
+        # ── Chemistry selector ──
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            "letter-spacing:0.08em;padding:0 4px 8px'>Chemistry</div>",
+            unsafe_allow_html=True,
+        )
+        _chem_options = ["Li-ion (LiCoO₂)", "Li-S (Lithium-Sulfur)", "SSB (Solid-State)"]
+        _chem_sel = st.selectbox(
+            "Chemistry", options=_chem_options,
+            index=0, key="chemistry_selector", label_visibility="collapsed",
+        )
+        st.session_state["active_chemistry"] = _chem_sel
+        if "Li-S" in _chem_sel:
+            st.markdown(
+                "<div style='font-size:11px;color:#f6ad55;padding:2px 4px'>⚠ Li-S: dual plateau, "
+                "shuttle-driven CE ~95–99%, faster fade</div>", unsafe_allow_html=True,
+            )
+        elif "SSB" in _chem_sel:
+            st.markdown(
+                "<div style='font-size:11px;color:#63b3ed;padding:2px 4px'>ℹ SSB: no Warburg "
+                "diffusion tail, interface resistance dominant, higher Ea</div>", unsafe_allow_html=True,
+            )
+
         # ── Cell selector ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
@@ -688,30 +712,6 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 f"<span style='color:#fc8181'>Synthetic</span>"
                 f"</div>",
                 unsafe_allow_html=True,
-            )
-
-        # ── Chemistry selector ──
-        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
-            "letter-spacing:0.08em;padding:0 4px 8px'>Chemistry</div>",
-            unsafe_allow_html=True,
-        )
-        _chem_options = ["Li-ion (LiCoO₂)", "Li-S (Lithium-Sulfur)", "SSB (Solid-State)"]
-        _chem_sel = st.selectbox(
-            "Chemistry", options=_chem_options,
-            index=0, key="chemistry_selector", label_visibility="collapsed",
-        )
-        st.session_state["active_chemistry"] = _chem_sel
-        if "Li-S" in _chem_sel:
-            st.markdown(
-                "<div style='font-size:11px;color:#f6ad55;padding:2px 4px'>⚠ Li-S: dual plateau, "
-                "shuttle-driven CE ~95–99%, faster fade</div>", unsafe_allow_html=True,
-            )
-        elif "SSB" in _chem_sel:
-            st.markdown(
-                "<div style='font-size:11px;color:#63b3ed;padding:2px 4px'>ℹ SSB: no Warburg "
-                "diffusion tail, interface resistance dominant, higher Ea</div>", unsafe_allow_html=True,
             )
 
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
