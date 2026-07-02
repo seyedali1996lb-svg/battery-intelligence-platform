@@ -18,7 +18,8 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --upgrade pip && pip install -r requirements.txt
+        continue-on-error: false
 
       - name: Syntax check all Python files
         run: |
@@ -47,6 +48,9 @@ jobs:
               ['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'],
               capture_output=True, text=True
           )
+          if result.returncode != 0:
+              print('FEATURE_VERSION check skipped (no prior commit).')
+              sys.exit(0)
           changed = result.stdout.strip().splitlines()
 
           features_changed = any('features.py' in f for f in changed)

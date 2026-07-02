@@ -5,5 +5,5 @@ plotly
 streamlit
 requests
 reportlab
-shap
+shap>=0.44.0
 anthropic
