@@ -79,8 +79,9 @@ def train_models(
     Returns:
         A dict containing trained models, scalers, feature names, and metrics.
     """
-    # Drop NaN rows (rolling-window warm-up cycles produce NaN features)
-    valid = X.notna().all(axis=1)
+    # Drop NaN/inf rows (rolling warm-up and division artefacts)
+    import numpy as np
+    valid = X.notna().all(axis=1) & ~np.isinf(X).any(axis=1)
     X, y_soh, y_rul = X[valid], y_soh[valid], y_rul[valid]
 
     if len(X) == 0:

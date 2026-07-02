@@ -161,8 +161,12 @@ TARGET_RUL = "rul"
 
 
 def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    import numpy as np
     available = [c for c in FEATURE_COLUMNS if c in df.columns]
     matrix = df[available + [TARGET_SOH, TARGET_RUL]].dropna()
+    # Also remove inf values that dropna misses
+    finite_mask = ~np.isinf(matrix[available]).any(axis=1)
+    matrix = matrix[finite_mask]
     return matrix[available], matrix[TARGET_SOH], matrix[TARGET_RUL]
 
 
