@@ -334,7 +334,7 @@ def load_everything():
 
     The dashboard selects the correct bundle based on which cell is chosen.
     """
-    with st.status("Initialising Battery Intelligence Platform…", expanded=True) as _status:
+    with st.status("Initialising platform…", expanded=True) as _status:
         # ── Step 1: Synthetic cells ──
         st.write("Step 1 / 4 — Loading synthetic cells (Cell1–Cell8)…")
         synth_ids     = list(CELL_STRESS_PROFILES.keys())
@@ -4260,7 +4260,7 @@ def page_recommendations(
     # ── ⚠️ Thermal Runaway Risk Proxy ─────────────────────────────────────────
     st.markdown("<div class='section-header'>⚠️ Thermal Runaway Risk Proxy</div>", unsafe_allow_html=True)
     _md_html(provenance_banner(
-        "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+        "simulated" if selected in NASA_CELL_IDS else "synthetic",
         "<strong>NOT a certified safety assessment.</strong> "
         "This score is a heuristic weighted sum of three observable signals "
         "(resistance growth 45%, fade acceleration 40%, temperature 15%). "
