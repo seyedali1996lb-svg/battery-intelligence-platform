@@ -162,11 +162,19 @@ TARGET_RUL = "rul"
 
 def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     import numpy as np
-    available = [c for c in FEATURE_COLUMNS if c in df.columns]
-    matrix = df[available + [TARGET_SOH, TARGET_RUL]].dropna()
-    # Also remove inf values that dropna misses
-    finite_mask = ~np.isinf(matrix[available]).any(axis=1)
-    matrix = matrix[finite_mask]
+    # Only use columns that exist AND are not entirely NaN/inf (e.g. NASA cells
+    # lack temperature_c, coulombic_efficiency — those columns are all-NaN)
+    available = [
+        c for c in FEATURE_COLUMNS
+        if c in df.columns
+        and df[c].notna().any()
+        and not np.isinf(df[c].replace([np.nan], 0)).all()
+    ]
+    cols = available + [TARGET_SOH, TARGET_RUL]
+    matrix = df[cols].copy()
+    # Replace remaining inf with NaN then drop incomplete rows
+    matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
+    matrix = matrix.dropna(subset=available)
     return matrix[available], matrix[TARGET_SOH], matrix[TARGET_RUL]
 
 

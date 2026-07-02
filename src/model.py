@@ -79,13 +79,8 @@ def train_models(
     Returns:
         A dict containing trained models, scalers, feature names, and metrics.
     """
-    # Drop NaN/inf rows (rolling warm-up and division artefacts)
-    import numpy as np
-    valid = X.notna().all(axis=1) & ~np.isinf(X).any(axis=1)
-    X, y_soh, y_rul = X[valid], y_soh[valid], y_rul[valid]
-
     if len(X) == 0:
-        raise ValueError("No valid (non-NaN) training rows after feature warm-up period.")
+        raise ValueError("Training dataset is empty — all rows were dropped during feature filtering.")
 
     # Chronological split — no shuffling.
     # Guard: if dataset is too small for a test split, train on all data.

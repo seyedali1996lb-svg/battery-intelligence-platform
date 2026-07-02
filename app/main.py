@@ -283,10 +283,6 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
     X_all = pd.concat(all_X)
     y_soh_all = pd.concat(all_y_soh)
     y_rul_all = pd.concat(all_y_rul)
-    # Drop rows with NaN or inf (rolling-window warm-up / division artefacts)
-    import numpy as np
-    valid_mask = X_all.notna().all(axis=1) & ~np.isinf(X_all).any(axis=1)
-    X_all, y_soh_all, y_rul_all = X_all[valid_mask], y_soh_all[valid_mask], y_rul_all[valid_mask]
     bndl = train_models(X_all, y_soh_all, y_rul_all)
     bndl["metrics"]["n_cells"] = len(battery_dict)
     bndl["metrics"]["n_rows"]  = len(X_all)
