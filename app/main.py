@@ -392,21 +392,21 @@ def load_everything():
         # then re-deploy with them committed to data/raw/severson/.
         bundle_sev, fdfs_sev, sc_sev = None, {}, {}
         try:
-            from severson_loader import load_severson_cells, SEVERSON_CELL_IDS, any_cached as _sev_any_cached
-            _SEV_KEY = {"source": "severson_batch1"}
-            cached_sev = load_cached("severson", _SEV_KEY)
-            if cached_sev is not None:
-                st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
-                bundle_sev, fdfs_sev, sc_sev = cached_sev
-            elif _sev_any_cached():
+            from severson_loader import load_severson_cells, any_cached as _sev_any_cached
+            if _sev_any_cached():
                 st.write("Step 4 / 4 — Loading Severson 2019 LFP cells from local CSVs…")
                 sev_cells = load_severson_cells(status_fn=lambda msg: st.write(f"  {msg}"))
                 if sev_cells:
-                    st.write(f"  {len(sev_cells)} cells loaded — training model…")
                     sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
-                    bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
-                    save_cached("severson", _SEV_KEY, (bundle_sev, fdfs_sev, sc_sev))
-                    st.write("Step 4 / 4 — Severson model: trained and cached ✓")
+                    cached_sev = load_cached("severson", sev_cell_dicts)
+                    if cached_sev is not None:
+                        st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
+                        bundle_sev, fdfs_sev, sc_sev = cached_sev
+                    else:
+                        st.write(f"  {len(sev_cells)} cells loaded — training model…")
+                        bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
+                        save_cached("severson", sev_cell_dicts, (bundle_sev, fdfs_sev, sc_sev))
+                        st.write("Step 4 / 4 — Severson model: trained and cached ✓")
                 else:
                     st.write("Step 4 / 4 — Severson CSVs unreadable — skipping")
             else:
@@ -727,6 +727,15 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
                 "Source: NASA PCoE Battery Aging Dataset<br>"
                 "T=24°C &nbsp; C-rate=2A &nbsp; DoD=100%<br>"
+                "<span style='color:#68d391'>Real measured data</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        elif mode == "severson":
+            st.markdown(
+                "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
+                "Source: Severson 2019 · Nature Energy<br>"
+                "LFP chemistry · 4 cycle-life bands<br>"
                 "<span style='color:#68d391'>Real measured data</span>"
                 "</div>",
                 unsafe_allow_html=True,
