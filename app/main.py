@@ -585,7 +585,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         )
 
         # ── Mode switcher ──
-        render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=len(sev_fdfs))
+        render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
 
         # ── Nav ──
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
