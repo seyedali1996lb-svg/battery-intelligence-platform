@@ -143,7 +143,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             _sc1, _sc2 = st.columns(2)
             for _col, _shap_df, _color, _model_lbl in [
                 (_sc1, _shap_df_soh, "#63b3ed", "SOH"),
-                (_sc2, _shap_df_rul, "#68d391", "RUL"),
+                (_sc2, _shap_df_rul, "#48bb78", "RUL"),
             ]:
                 with _col:
                     st.markdown(f"<div class='section-header'>SHAP Attribution — {_model_lbl} Model</div>", unsafe_allow_html=True)
@@ -190,7 +190,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                 }).sort_values("shap", key=abs, ascending=True).tail(10)
 
                 st.markdown("<div class='section-header'>SHAP Waterfall — Why is this cell's SOH predicted at this value?</div>", unsafe_allow_html=True)
-                _colors_wf = ["#68d391" if v > 0 else "#fc8181" for v in _wf_df["shap"]]
+                _colors_wf = ["#48bb78" if v > 0 else "#fc8181" for v in _wf_df["shap"]]
                 _fig_wf = go.Figure(go.Bar(
                     x=_wf_df["shap"], y=_wf_df["feature"],
                     orientation="h",
@@ -239,7 +239,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             st.markdown("<div class='section-header'>Split Importance — RUL Model</div>", unsafe_allow_html=True)
             fi_rul = feature_importance_df(bundle, model="rul")
             fi_rul["label"] = fi_rul["feature"].map(friendly)
-            st.plotly_chart(_importance_bar(fi_rul, "#68d391"), use_container_width=True)
+            st.plotly_chart(_importance_bar(fi_rul, "#48bb78"), use_container_width=True)
 
     # Explain the profile difference (uses whichever fi_soh/fi_rul were last computed)
     try:
@@ -409,7 +409,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 
             # Ea display boxes
             _ac1, _ac2, _ac3 = st.columns(3)
-            _ea_color = "#68d391" if 0.35 <= Ea_eV <= 0.75 else "#f6ad55"
+            _ea_color = "#48bb78" if 0.35 <= Ea_eV <= 0.75 else "#f6ad55"
             _ac1.metric("Ea — Capacity Fade", f"{Ea_eV:.3f} eV", help="Activation energy from ln(fade rate) vs 1/T. Literature: 0.4–0.6 eV for LiCoO₂ SEI.")
             if not _np_arr.isnan(Ea_eV_r):
                 _ac2.metric("Ea — Resistance Growth", f"{Ea_eV_r:.3f} eV", help="Activation energy from ln(resistance) vs 1/T.")

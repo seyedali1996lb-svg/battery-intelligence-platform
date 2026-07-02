@@ -114,7 +114,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Healthy</div>
-                <div class="metric-chip-value" style="color:#68d391">{n_healthy}</div>
+                <div class="metric-chip-value" style="color:#48bb78">{n_healthy}</div>
                 <div class="metric-chip-sub">above 90% SOH</div>
             </div>
             <div class="metric-chip">
@@ -129,9 +129,9 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     # ── Ranking table ──
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
 
-    STATUS_COLOUR = {"Healthy": "#68d391", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
+    STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {
-        "NASA":      "background:rgba(104,211,145,0.12);color:#68d391;border:1px solid rgba(104,211,145,0.25)",
+        "NASA":      "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
         "Synthetic": "background:rgba(74,85,104,0.3);color:#718096;border:1px solid #2d3748",
         "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }
@@ -156,7 +156,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         TREND_STYLE = {
             "Accelerating": ("⚡", "#fc8181"),
             "Stable":       ("→",  "#a0aec0"),
-            "Decelerating": ("↘",  "#68d391"),
+            "Decelerating": ("↘",  "#48bb78"),
         }
         trend_icon, trend_colour = TREND_STYLE.get(r["trend"], ("→", "#a0aec0"))
 
@@ -288,7 +288,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         def _quadrant(soh_v, rul_v):
             h_soh = soh_v >= soh_thresh
             h_rul = rul_v >= rul_med
-            if h_soh and h_rul:     return "Continue", "#68d391"
+            if h_soh and h_rul:     return "Continue", "#48bb78"
             if h_soh and not h_rul: return "Watch",    "#d69e2e"
             if not h_soh and h_rul: return "Act",      "#f6ad55"
             return "Critical", "#fc8181"
@@ -345,7 +345,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         y_hi        = max(rul_vals) * 1.05
         for (sx, sy, label, c) in [
             (soh_thresh - 1, rul_med + y_hi * 0.02, "ACT",      "#f6ad55"),
-            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#68d391"),
+            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#48bb78"),
             (soh_thresh - 1, y_hi * 0.04,           "CRITICAL", "#fc8181"),
             (soh_thresh + 1, y_hi * 0.04,           "WATCH",    "#d69e2e"),
         ]:
@@ -461,7 +461,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
 
     SL_BUCKETS = {
         "primary":    ("Primary Life",          "SOH > 85%",    "#4a5568", "#1a202c"),
-        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#68d391", "#1a2e22"),
+        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#48bb78", "#1a2e22"),
         "below_floor":("Below Floor",           "SOH < 70%",    "#fc8181", "#2d0f0f"),
     }
 
@@ -536,7 +536,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         rul_note = "" if pack_rul_rows else "RUL not calibrated for any selected cell"
         n_uncal = len(pack_rows) - len(pack_rul_rows)
         # Spread health: <2% is excellent, 2-5% is watch, >5% is high imbalance
-        spread_c = "#68d391" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
+        spread_c = "#48bb78" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
         spread_label = "Balanced" if pack_spread < 2 else ("Watch" if pack_spread < 5 else "Imbalanced")
 
         _md_html(
@@ -653,13 +653,16 @@ def page_fleet(featured_dfs: dict, bundles: dict):
                         "Poor — avoid pairing")
                 _match_rows.append({"Cell A": _ca, "Cell B": _cb, "Match Score": f"{_score:.0f}", "Recommendation": _rec})
         if _match_rows:
-            st.dataframe(pd.DataFrame(_match_rows), use_container_width=True, hide_index=True)
+            _match_df = pd.DataFrame(_match_rows)
+            st.dataframe(_match_df.head(200), use_container_width=True, hide_index=True)
+            if len(_match_df) > 200:
+                st.caption(f"Showing up to 200 rows — {len(_match_df)} total.")
 
         _bar_colors = []
         for _sv in _soh_values:
             _dist = abs(_sv - _pack_soh)
             if _dist <= 2:
-                _bar_colors.append("#68d391")
+                _bar_colors.append("#48bb78")
             elif _dist <= 5:
                 _bar_colors.append("#f6ad55")
             else:

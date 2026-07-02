@@ -321,7 +321,7 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
     return bndl, featured_dfs, split_cycles
 
 
-@st.cache_resource(show_spinner="Loading cells and training model...")
+@st.cache_resource(show_spinner=False)
 def load_everything():
     """
     Load synthetic cells (Cell1-Cell8) and NASA cells (B0005-B0018) separately.
@@ -334,27 +334,41 @@ def load_everything():
 
     The dashboard selects the correct bundle based on which cell is chosen.
     """
-    # ── Synthetic cells (disk-cached after first run) ──
-    synth_ids = list(CELL_STRESS_PROFILES.keys())
-    battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
-    cached = load_cached("synth", battery_synth["cells"])
-    if cached is not None:
-        bundle_synth, fdfs_synth, sc_synth = cached
-    else:
-        bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
-        save_cached("synth", battery_synth["cells"], (bundle_synth, fdfs_synth, sc_synth))
-
-    # ── NASA real cells (disk-cached after first run) ──
-    nasa_ids = _nasa_cells_available()
-    bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
-    if nasa_ids:
-        battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
-        cached_nasa = load_cached("nasa", battery_nasa["cells"])
-        if cached_nasa is not None:
-            bundle_nasa, fdfs_nasa, sc_nasa = cached_nasa
+    with st.status("Initialising Battery Intelligence Platform…", expanded=True) as _status:
+        # ── Step 1: Synthetic cells ──
+        st.write("Step 1 / 4 — Loading synthetic cells (Cell1–Cell8)…")
+        synth_ids     = list(CELL_STRESS_PROFILES.keys())
+        battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
+        cached        = load_cached("synth", battery_synth["cells"])
+        if cached is not None:
+            st.write("Step 2 / 4 — Synthetic model: loaded from cache ✓")
+            bundle_synth, fdfs_synth, sc_synth = cached
         else:
-            bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
-            save_cached("nasa", battery_nasa["cells"], (bundle_nasa, fdfs_nasa, sc_nasa))
+            st.write(f"Step 2 / 4 — Training SOH/RUL model on {len(synth_ids)} synthetic cells…")
+            bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
+            save_cached("synth", battery_synth["cells"], (bundle_synth, fdfs_synth, sc_synth))
+            st.write("Step 2 / 4 — Synthetic model: trained and cached ✓")
+
+        # ── Step 3: NASA real cells ──
+        nasa_ids = _nasa_cells_available()
+        bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
+        if nasa_ids:
+            st.write(f"Step 3 / 4 — Loading NASA real cells ({', '.join(nasa_ids)})…")
+            battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
+            cached_nasa  = load_cached("nasa", battery_nasa["cells"])
+            if cached_nasa is not None:
+                st.write("Step 3 / 4 — NASA model: loaded from cache ✓")
+                bundle_nasa, fdfs_nasa, sc_nasa = cached_nasa
+            else:
+                st.write(f"Step 4 / 4 — Training SOH/RUL model on {len(nasa_ids)} NASA cells…")
+                bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
+                save_cached("nasa", battery_nasa["cells"], (bundle_nasa, fdfs_nasa, sc_nasa))
+                st.write("Step 4 / 4 — NASA model: trained and cached ✓")
+        else:
+            st.write("Step 3 / 4 — NASA cells not found — run src/nasa_loader.py to enable")
+
+        st.write("Step 4 / 4 — Building feature matrices and applying predictions…")
+        _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
     # Merge cell outputs; keep bundles separate
     featured_dfs = {**fdfs_synth, **fdfs_nasa}

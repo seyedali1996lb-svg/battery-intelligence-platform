@@ -99,7 +99,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     hero_tiles = [
         (h1, "Manufacturing CO₂\n(one new cell)",    f"{co2_val:.2f} kg", "#f6ad55", BADGE_ESTIMATE),
         (h2, "Use phase CO₂\n(to date, this cell)",  f"{use_phase_co2:.2f} kg", "#718096", BADGE_ILLUST),
-        (h3, "Reuse saves\n(vs making a new cell)",  f"{sus['co2_avoided_by_reuse']:.2f} kg", "#68d391", BADGE_ESTIMATE),
+        (h3, "Reuse saves\n(vs making a new cell)",  f"{sus['co2_avoided_by_reuse']:.2f} kg", "#48bb78", BADGE_ESTIMATE),
         (h4, "Recycle credit\n(15% cathode, Dunn 2015)", f"{sus['co2_recycling_credit']:.2f} kg", "#f6e05e", BADGE_ESTIMATE),
     ]
     for col, label, val, colour, badge in hero_tiles:
@@ -164,7 +164,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         text=[f"{v:.3f}{bar_suffix}" for v in mfg_bars], textposition="inside", textfont=dict(size=10, color="#1a202c")))
     fig_lc.add_trace(go.Bar(name="Use phase CO₂ (illustrative)", x=scenarios, y=use_bars, marker_color="#718096",
         text=[f"{v:.3f}{bar_suffix}" for v in use_bars], textposition="inside", textfont=dict(size=10, color="#e2e8f0")))
-    fig_lc.add_trace(go.Bar(name="EOL credit (negative = saving)", x=scenarios, y=eol_credit_bars, marker_color="#68d391",
+    fig_lc.add_trace(go.Bar(name="EOL credit (negative = saving)", x=scenarios, y=eol_credit_bars, marker_color="#48bb78",
         text=[f"{v:.3f}{bar_suffix}" for v in eol_credit_bars], textposition="inside", textfont=dict(size=10, color="#1a202c")))
     fig_lc.update_layout(
         **base_layout(
@@ -220,7 +220,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 "This cell is recovering its embodied carbon effectively: a longer service "
                 "life means the fixed manufacturing cost is spread across more kWh delivered."
             )
-            fade_colour = "#68d391"
+            fade_colour = "#48bb78"
 
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
@@ -263,7 +263,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
         badge_html = make_badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
         rec_html = (
-            f"<div style='font-size:12px;color:#68d391;margin-top:4px'>"
+            f"<div style='font-size:12px;color:#48bb78;margin-top:4px'>"
             f"~{mat['recovery_pct']}% recovery<br>"
             f"<span style='font-size:11px;color:#4a5568'>{mat['recovery_note']}</span></div>"
             if mat["recovery_pct"] is not None else

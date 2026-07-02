@@ -28,6 +28,13 @@ C_ORANGE = "#c05621"   # uncertain confidence / recycle action
 C_BLUE   = "#63b3ed"   # info / continue action
 C_YELLOW = "#d69e2e"   # inspect action / warning
 
+# ── UI status colors — canonical single values for all pages ──
+# Use these (not ad-hoc hex literals) for health/status indicators.
+UI_GREEN  = "#48bb78"   # healthy / good / positive status
+UI_YELLOW = "#d69e2e"   # warning / watch / moderate
+UI_RED    = "#e53e3e"   # critical / error / end-of-life
+UI_BLUE   = "#63b3ed"   # info / neutral / continue
+
 
 # ---------------------------------------------------------------------------
 # Badge renderer — do not call directly; use the pre-built instances below

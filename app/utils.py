@@ -123,7 +123,7 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
         pts.append(f"{x:.1f},{y:.1f}")
     polyline = " ".join(pts)
     delta = vals[-1] - vals[0]
-    stroke = "#68d391" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
+    stroke = "#48bb78" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
     trend_word = "stable" if delta >= -0.5 else ("declining" if delta >= -2 else "fast-declining")
     aria_label = f"SOH sparkline: {trend_word}, {vals[-1]:.1f}% latest"
     return (

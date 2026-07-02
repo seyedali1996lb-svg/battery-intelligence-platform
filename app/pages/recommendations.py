@@ -202,7 +202,7 @@ def page_recommendations(
     _fade_pct_cy = fade_30 * 100
     if soh >= 95 and _fade_pct_cy < 0.02:
         _soc_lo, _soc_hi = 0, 100
-        _soc_label, _soc_colour = "Full range OK", "#68d391"
+        _soc_label, _soc_colour = "Full range OK", "#48bb78"
         _soc_reason = "Cell is healthy with low fade rate. 0–100% is acceptable for this usage profile."
     elif soh >= 90:
         _soc_lo, _soc_hi = 10, 90
@@ -271,7 +271,7 @@ def page_recommendations(
         _tr_label, _tr_colour, _tr_bg = "Moderate", "#f6ad55", "rgba(246,173,85,0.08)"
         _tr_action = "Monitor closely. Reduce operating temperature and C-rate if possible."
     else:
-        _tr_label, _tr_colour, _tr_bg = "Low", "#68d391", "rgba(104,211,145,0.08)"
+        _tr_label, _tr_colour, _tr_bg = "Low", "#48bb78", "rgba(104,211,145,0.08)"
         _tr_action = "No elevated thermal risk. Continue standard monitoring."
     _tr1, _tr2, _tr3, _tr4 = st.columns(4)
     _tr1.metric("TR Risk Score", f"{_tr_score:.0f} / 100")
@@ -300,7 +300,7 @@ def page_recommendations(
 
     with ev1:
         soh_status_label, soh_colour = (
-            ("Healthy", "#68d391")        if soh >= 90 else
+            ("Healthy", "#48bb78")        if soh >= 90 else
             ("Degrading", "#f6e05e")      if soh >= 80 else
             ("End of Life", "#fc8181")
         )
@@ -337,7 +337,7 @@ def page_recommendations(
 
     with ev3:
         fade_label  = "Accelerating ⚠" if result["fade_accelerating"] else "Stable"
-        fade_colour = "#fc8181" if result["fade_accelerating"] else "#68d391"
+        fade_colour = "#fc8181" if result["fade_accelerating"] else "#48bb78"
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:16px 20px'>"
@@ -510,7 +510,7 @@ def page_recommendations(
     with st.expander("All application fit scores", expanded=False):
         fit_cols = st.columns(len(fit_scores))
         for col, (app_key, app) in zip(fit_cols, fit_scores.items()):
-            colour = {"fit": "#68d391", "marginal": "#f6e05e", "not_fit": "#fc8181"}[app["fit"]]
+            colour = {"fit": "#48bb78", "marginal": "#f6e05e", "not_fit": "#fc8181"}[app["fit"]]
             with col:
                 st.markdown(
                     f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"

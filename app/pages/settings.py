@@ -95,7 +95,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:18px 20px'>"
-            f"<div style='font-size:12px;font-weight:600;color:#68d391;text-transform:uppercase;"
+            f"<div style='font-size:12px;font-weight:600;color:#48bb78;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
             f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
@@ -175,14 +175,14 @@ def page_settings(featured_dfs: dict, bundles: dict):
             lco_per = bundle["metrics"].get("lco_per_cell", {})
             per_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
             label   = "NASA PCoE" if source_key == "nasa" else "Synthetic"
-            colour  = "#68d391" if source_key == "nasa" else "#fc8181"
+            colour  = "#48bb78" if source_key == "nasa" else "#fc8181"
             st.markdown(f"<div style='font-size:12px;font-weight:600;color:{colour};margin:12px 0 6px'>{label} model · {bundle['metrics'].get('n_cells','?')} cells · {bundle['metrics'].get('n_rows',0):,} rows</div>", unsafe_allow_html=True)
             _hdr = st.columns([2, 1, 1, 1])
             for c, h in zip(_hdr, ["Cell", "SOH R²", "RUL R²", "RUL Status"]):
                 c.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em'>{h}</div>", unsafe_allow_html=True)
             for cell_id, fold in lco_per.items():
                 ok     = per_ok.get(cell_id, True)
-                s_col  = "#68d391" if ok else "#fc8181"
+                s_col  = "#48bb78" if ok else "#fc8181"
                 status = "Calibrated" if ok else f"Withheld (R²={fold.get('rul_r2',0):.2f} < 0.30)"
                 row    = st.columns([2, 1, 1, 1])
                 row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:3px 0'>{cell_id}</div>", unsafe_allow_html=True)
@@ -209,7 +209,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         lco_per    = m.get("lco_per_cell", {})
         per_cell_ok = m.get("per_cell_rul_reliable", {})
         label  = "NASA PCoE" if source_key == "nasa" else "Synthetic"
-        colour = "#68d391" if source_key == "nasa" else "#fc8181"
+        colour = "#48bb78" if source_key == "nasa" else "#fc8181"
 
         st.markdown(f"<div style='font-size:12px;font-weight:600;color:{colour};margin:16px 0 8px'>{label} model</div>", unsafe_allow_html=True)
 
@@ -512,7 +512,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
          "Critical"),
     ]
 
-    priority_color = {"Critical": "#fc8181", "High": "#f6ad55", "Medium": "#68d391"}
+    priority_color = {"Critical": "#fc8181", "High": "#f6ad55", "Medium": "#48bb78"}
 
     for title, detail, priority in roadmap_items:
         pc = priority_color.get(priority, "#718096")
@@ -538,7 +538,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
     if log_records:
         import pandas as _pd
         log_df = _pd.DataFrame(log_records)
-        st.dataframe(log_df, use_container_width=True, hide_index=True)
+        st.dataframe(log_df.head(200), use_container_width=True, hide_index=True)
+        if len(log_df) > 200:
+            st.caption(f"Showing up to 200 rows — {len(log_df)} total.")
         st.download_button(
             "Export audit log (CSV)",
             data=audit_csv(),

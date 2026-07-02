@@ -14,6 +14,40 @@ from design_system import (
 )
 
 
+def _r_code_recommendation(soh: float, fade_rate: float, cycles: int, calendar_age_days: int = 0) -> tuple:
+    """
+    Multi-signal EOL classification.
+    Returns (r_code_label, rationale).
+    """
+    fast_fade = fade_rate > 0.5  # mAh/cycle threshold
+    high_cycles = cycles > 800
+    old_calendar = calendar_age_days > 365 * 5  # >5 years
+
+    if soh >= 80 and not fast_fade and not high_cycles:
+        return ("R3 — Remanufacture / Second Life",
+                f"SOH {soh:.1f}% ≥ 80%, fade stable ({fade_rate:.2f} mAh/cy), "
+                f"{cycles} cycles — suitable for second-life stationary application.")
+    elif soh >= 70 and not fast_fade:
+        return ("R4 — Repurpose / Repack",
+                f"SOH {soh:.1f}% (70–80%) with stable fade — suitable for low-demand "
+                f"repacking or grid-buffer application.")
+    elif soh >= 60:
+        reason = []
+        if soh < 70:
+            reason.append(f"SOH {soh:.1f}% below 70%")
+        if fast_fade:
+            reason.append(f"fast fade ({fade_rate:.2f} mAh/cy)")
+        if high_cycles:
+            reason.append(f"high cycle count ({cycles})")
+        return ("R5 — Recycle",
+                f"{'· '.join(reason)} — material recovery recommended. "
+                f"Prioritise Co, Ni, Li hydrometallurgical extraction.")
+    else:
+        return ("R6 — Recover energy",
+                f"SOH {soh:.1f}% below 60% — deep discharge recovery only. "
+                f"Refer to certified handler.")
+
+
 def page_consequences(
     selected: str,
     df: pd.DataFrame,
@@ -125,7 +159,7 @@ def page_consequences(
     fit_results = application_fit(soh, fade_30, fleet_fade_median)
 
     FIT_STYLE = {
-        "fit":      ("#68d391", "#1a2e22", "Fit"),
+        "fit":      ("#48bb78", "#1a2e22", "Fit"),
         "marginal": ("#f6e05e", "#2d2a0a", "Marginal"),
         "not_fit":  ("#fc8181", "#2d0f0f", "Not Fit"),
     }
@@ -381,7 +415,7 @@ def page_consequences(
         bev_fig.add_annotation(
             x=bev_sohs[-1], y=bev_sl[-1],
             text="Reuse stays ahead to 62% SOH",
-            showarrow=False, font=dict(color="#68d391", size=11),
+            showarrow=False, font=dict(color="#48bb78", size=11),
             xanchor="left", yanchor="bottom",
         )
 
@@ -455,7 +489,7 @@ def page_consequences(
                     <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
                         CO₂ avoided by reuse vs making a new cell
                     </div>
-                    <div style="font-size:28px;font-weight:700;color:#68d391">
+                    <div style="font-size:28px;font-weight:700;color:#48bb78">
                         {sus['co2_avoided_by_reuse']:.2f} kg
                     </div>
                     <div style="font-size:11px;color:#4a5568;margin-top:4px">CO₂e avoided</div>
@@ -489,6 +523,43 @@ def page_consequences(
                 </div>
                 """
             )
+
+    st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 4: EOL R-Code Recommendation
+    # ────────────────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:20px'>EOL R-Code Recommendation (IEC 62902)</div>",
+        unsafe_allow_html=True,
+    )
+    fade_mah = float(latest.get("fade_rate_30cy", 0)) * 1000
+    cycles_n = int(latest.get("cycle_number", 0))
+    r_code_label, r_code_rationale = _r_code_recommendation(soh, fade_mah, cycles_n)
+    _r_color = (
+        "#48bb78" if "R3" in r_code_label else
+        "#63b3ed" if "R4" in r_code_label else
+        "#f6ad55" if "R5" in r_code_label else
+        "#fc8181"
+    )
+    _md_html(
+        f"""
+        <div style="background:#1e2a38;border:1px solid {_r_color}44;border-radius:10px;padding:20px 24px">
+            <div style="font-size:10px;color:#4a5568;text-transform:uppercase;letter-spacing:0.08em;
+                        margin-bottom:6px">Recommended disposal pathway</div>
+            <div style="font-size:18px;font-weight:700;color:{_r_color};margin-bottom:10px">
+                {r_code_label}
+            </div>
+            <div style="font-size:13px;color:#a0aec0;line-height:1.7">{r_code_rationale}</div>
+            <div style="font-size:11px;color:#4a5568;margin-top:10px;font-style:italic">
+                Multi-signal classification using SOH, 30-cycle fade rate, and cycle count.
+                IEC 62902 R0–R9 taxonomy.
+            </div>
+        </div>
+        """
+    )
 
     st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
 

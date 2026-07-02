@@ -166,7 +166,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     else:
         _plain_sentence = f"SOH is {current_soh:.1f}% — {status_label.lower()} condition."
 
-    _sentence_color = "#fc8181" if current_soh < 80 else ("#f6ad55" if current_soh < 85 else "#68d391")
+    _sentence_color = "#fc8181" if current_soh < 80 else ("#f6ad55" if current_soh < 85 else "#48bb78")
     _md_html(
         f"<div style='font-size:14px;color:{_sentence_color};margin:-4px 0 20px;"
         f"padding:10px 16px;background:rgba(0,0,0,0.2);border-radius:8px;"
@@ -298,7 +298,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     ))
     fig.add_trace(go.Scatter(
         x=df_test["cycle_number"], y=df_test["soh_pred"],
-        name="Model (test)", line=dict(color="#68d391", width=2, dash="dot"), mode="lines",
+        name="Model (test)", line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
         hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Model</extra>",
     ))
     fig.add_vline(

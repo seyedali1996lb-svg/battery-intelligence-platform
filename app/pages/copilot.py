@@ -45,7 +45,7 @@ def page_copilot(
     # ── Disclosure banner ──
     from copilot_llm import is_llm_available as _llm_avail
     _ai_note = (
-        " When <strong style='color:#68d391'>AI mode</strong> is active (ANTHROPIC_API_KEY set), "
+        " When <strong style='color:#48bb78'>AI mode</strong> is active (ANTHROPIC_API_KEY set), "
         "Claude Haiku narrates the data. Without it, deterministic templates are used instead."
         if _llm_avail() else
         " Set <code>ANTHROPIC_API_KEY</code> to enable AI narration; template mode is active now."
@@ -155,7 +155,7 @@ def page_copilot(
                 f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
                 f"letter-spacing:0.1em;margin:28px 0 4px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
                 f"{QUERY_LABELS.get(query, '')}{cell_label}"
-                f"<span style='float:right;font-size:10px;background:#1a3a2a;color:#68d391;"
+                f"<span style='float:right;font-size:10px;background:#1a3a2a;color:#48bb78;"
                 f"padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:0.05em'>"
                 f"AI · grounded narration</span></div>",
                 unsafe_allow_html=True,

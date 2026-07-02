@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check all Python files
+        run: |
+          python -c "
+          import ast, sys, pathlib
+          errors = []
+          for f in pathlib.Path('.').rglob('*.py'):
+              try:
+                  ast.parse(f.read_text(encoding='utf-8'))
+              except SyntaxError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              print('Syntax errors found:')
+              for e in errors: print(' ', e)
+              sys.exit(1)
+          print(f'All Python files OK')
+          "
+
+      - name: Check FEATURE_VERSION bumped when features.py changed
+        run: |
+          python -c "
+          import subprocess, re, sys
+
+          # Get list of changed files
+          result = subprocess.run(
+              ['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'],
+              capture_output=True, text=True
+          )
+          changed = result.stdout.strip().splitlines()
+
+          features_changed = any('features.py' in f for f in changed)
+          bundle_changed   = any('bundle_cache.py' in f for f in changed)
+
+          if features_changed and not bundle_changed:
+              print('WARNING: src/features.py changed but src/bundle_cache.py (FEATURE_VERSION) was not updated.')
+              print('Cache may serve stale feature matrices. Bump FEATURE_VERSION in bundle_cache.py.')
+              sys.exit(1)
+          else:
+              print('FEATURE_VERSION check passed.')
+          "
+        continue-on-error: true   # warning only, not blocking

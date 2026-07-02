@@ -43,7 +43,7 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
         slots = {k: st.empty() for k, _ in step_labels}
 
         def _step(key: str, icon: str, text: str):
-            c = "#68d391" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
+            c = "#48bb78" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
             slots[key].markdown(f"<div style='font-size:13px;color:{c};padding:3px 0'>{icon} {text}</div>", unsafe_allow_html=True)
 
         for key, label in step_labels:
@@ -144,7 +144,7 @@ def _show_upload_summary():
     st.markdown(
         f"<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
         f"border-radius:10px;padding:20px 24px;margin-bottom:16px'>"
-        f"<div style='font-size:16px;font-weight:700;color:#68d391;margin-bottom:12px'>✓ Analysis complete</div>"
+        f"<div style='font-size:16px;font-weight:700;color:#48bb78;margin-bottom:12px'>✓ Analysis complete</div>"
         f"<div style='font-size:13px;color:#a0aec0;line-height:2'>"
         f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
         f"SOH model R²: <strong style='color:#e2e8f0'>{lco.get('lco_soh_r2', 0):.2f}</strong> "
@@ -300,14 +300,14 @@ def page_import():
             f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
             f"<span style='color:#718096'>{orig}</span>"
             f"<span style='color:#4a5568;padding:0 8px'>→</span>"
-            f"<span style='color:#68d391'>{canon}</span>"
+            f"<span style='color:#48bb78'>{canon}</span>"
             f"</div>"
             for orig, canon in sorted(renames.items())
         )
         st.markdown(
             f"<div style='background:rgba(104,211,145,0.07);border:1px solid rgba(104,211,145,0.3);"
             f"border-radius:10px;padding:14px 18px;margin:12px 0'>"
-            f"<div style='font-size:13px;font-weight:600;color:#68d391;margin-bottom:8px'>"
+            f"<div style='font-size:13px;font-weight:600;color:#48bb78;margin-bottom:8px'>"
             f"✓ Auto-matched {len(renames)} column{'s' if len(renames) != 1 else ''}</div>"
             f"{rename_items}"
             f"<div style='font-size:11px;color:#4a5568;margin-top:10px'>"
@@ -385,7 +385,7 @@ def page_import():
         st.markdown(
             "<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
             "border-radius:10px;padding:14px 20px;margin:16px 0'>"
-            "<span style='font-size:14px;font-weight:700;color:#68d391'>✓ Upload validated — ready to analyse</span>"
+            "<span style='font-size:14px;font-weight:700;color:#48bb78'>✓ Upload validated — ready to analyse</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -415,7 +415,7 @@ def page_import():
         row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{n_cy}</div>", unsafe_allow_html=True)
         row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{cap_min:.3f} – {cap_max:.3f}</div>", unsafe_allow_html=True)
         row[3].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{res_min:.4f} – {res_max:.4f}</div>", unsafe_allow_html=True)
-        row[4].markdown(f"<div style='font-size:13px;padding:3px 0;color:{'#68d391' if temp_ok else '#4a5568'}'>{'Yes' if temp_ok else 'No'}</div>", unsafe_allow_html=True)
+        row[4].markdown(f"<div style='font-size:13px;padding:3px 0;color:{'#48bb78' if temp_ok else '#4a5568'}'>{'Yes' if temp_ok else 'No'}</div>", unsafe_allow_html=True)
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 

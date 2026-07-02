@@ -87,17 +87,51 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         "margin-bottom:4px;margin-top:20px'>5 · Critical Raw Materials (EU Reg. 2023/1542 Art. 13)</div>",
         unsafe_allow_html=True,
     )
+    with st.expander("Configure cell composition (optional)", expanded=False):
+        _crm_col1, _crm_col2, _crm_col3 = st.columns(3)
+        with _crm_col1:
+            st.number_input("Cobalt content (wt%)", 0.0, 100.0, step=0.1, key="crm_co_pct",
+                            value=st.session_state.get("crm_co_pct", 0.0))
+        with _crm_col2:
+            st.number_input("Nickel content (wt%)", 0.0, 100.0, step=0.1, key="crm_ni_pct",
+                            value=st.session_state.get("crm_ni_pct", 0.0))
+        with _crm_col3:
+            st.number_input("Lithium content (wt%)", 0.0, 100.0, step=0.1, key="crm_li_pct",
+                            value=st.session_state.get("crm_li_pct", 0.0))
+        st.caption("Enter values to replace default stoichiometric estimates. Leave at 0.0 to keep defaults.")
+
+    _co_pct = float(st.session_state.get("crm_co_pct", 0.0))
+    _ni_pct = float(st.session_state.get("crm_ni_pct", 0.0))
+    _li_pct = float(st.session_state.get("crm_li_pct", 0.0))
+
+    _co_value  = f"{_co_pct:.1f} wt% (user-entered)" if _co_pct > 0 else "~14 wt% (LiCoO₂ cathode, est.)"
+    _co_state  = "available" if _co_pct > 0 else "estimated"
+    _ni_value  = f"{_ni_pct:.1f} wt% (user-entered)" if _ni_pct > 0 else "~0 wt% (pure LiCoO₂ baseline)"
+    _ni_state  = "available" if _ni_pct > 0 else "estimated"
+    _li_value  = f"{_li_pct:.1f} wt% (user-entered)" if _li_pct > 0 else "~7 wt% (cathode + anode combined)"
+    _li_state  = "available" if _li_pct > 0 else "estimated"
+
+    # EU recycled content targets — use user-entered values when available
+    _rec_co_note = "Requires manufacturer supply-chain records. Threshold: 16% by 2031."
+    _rec_ni_note = "Threshold: 6% by 2031 (Annex X, EU 2023/1542)."
+    if _co_pct > 0:
+        _rec_co_note = (f"User-entered Co content: {_co_pct:.1f} wt%. "
+                        f"Recycled Co content record still requires supply-chain audit. Threshold: 16% by 2031.")
+    if _ni_pct > 0:
+        _rec_ni_note = (f"User-entered Ni content: {_ni_pct:.1f} wt%. "
+                        f"Recycled Ni content record still requires supply-chain audit. Threshold: 6% by 2031.")
+
     _crm_fields = [
-        {"label": "Cobalt (Co) content", "value": "~14 wt% (LiCoO₂ cathode, est.)", "state": "estimated",
-         "note": "Estimated from LiCoO₂ stoichiometry. Art. 13 requires supply-chain due diligence from 2026."},
-        {"label": "Nickel (Ni) content", "value": "~0 wt% (pure LiCoO₂ baseline)", "state": "estimated",
+        {"label": "Cobalt (Co) content", "value": _co_value, "state": _co_state,
+         "note": "Estimated from LiCoO₂ stoichiometry (or user-entered above). Art. 13 requires supply-chain due diligence from 2026."},
+        {"label": "Nickel (Ni) content", "value": _ni_value, "state": _ni_state,
          "note": "NMC variants would show 15–33 wt%. Supply chain disclosure required."},
-        {"label": "Lithium (Li) content", "value": "~7 wt% (cathode + anode combined)", "state": "estimated",
-         "note": "Calculated from stoichiometry. Recycled Li content threshold: 4% by 2027, 10% by 2031 (Annex X)."},
+        {"label": "Lithium (Li) content", "value": _li_value, "state": _li_state,
+         "note": "Calculated from stoichiometry (or user-entered above). Recycled Li content threshold: 4% by 2027, 10% by 2031 (Annex X)."},
         {"label": "Recycled Co content", "value": "Not available in demo", "state": "unavailable",
-         "note": "Requires manufacturer supply-chain records. Threshold: 16% by 2031."},
+         "note": _rec_co_note},
         {"label": "Recycled Ni content", "value": "Not available in demo", "state": "unavailable",
-         "note": "Threshold: 6% by 2031 (Annex X, EU 2023/1542)."},
+         "note": _rec_ni_note},
         {"label": "Article 52 due diligence", "value": "Not assessed", "state": "unavailable",
          "note": "Third-party audit of Co/Ni/Li supply chain required for market access in EU."},
     ]
@@ -117,7 +151,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         else "R4 — Recycle (hydrometallurgical / direct)" if _soh_now >= 60
         else "R5 — Recover (energy or material)"
     )
-    _eol_color  = "#68d391" if _soh_now >= 80 else "#f6ad55" if _soh_now >= 60 else "#fc8181"
+    _eol_color  = "#48bb78" if _soh_now >= 80 else "#f6ad55" if _soh_now >= 60 else "#fc8181"
     _r_fields = [
         {"label": "Recommended R-code", "value": _eol_r_code, "state": "estimated",
          "note": f"Based on current SOH = {_soh_now:.1f}%. IEC 62902 R0–R9 taxonomy."},
@@ -145,7 +179,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             <strong style="color:#e2e8f0">This is a data-structure demonstration, not a regulatory
             submission.</strong><br><br>
             Of {summ['n_total']} fields modelled on the EU Battery Regulation's data requirements:
-            <strong style="color:#68d391">{summ['n_available']} are available</strong> from this
+            <strong style="color:#48bb78">{summ['n_available']} are available</strong> from this
             platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
             cited estimates</strong> from the Consequences module, and
             <strong style="color:#718096">{summ['n_unavailable']} are not available</strong> in

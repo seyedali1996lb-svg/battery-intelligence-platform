@@ -153,7 +153,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         auth_name = st.session_state.get("auth_name", "")
         auth_role = st.session_state.get("auth_role", "")
         _role_color = {
-            "fleet": "#63b3ed", "compliance": "#68d391",
+            "fleet": "#63b3ed", "compliance": "#48bb78",
             "engineer": "#f6ad55", "admin": "#9f7aea",
         }.get(auth_role, "#718096")
 
@@ -265,7 +265,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
                 "Source: NASA PCoE Battery Aging Dataset<br>"
                 "T=24°C &nbsp; C-rate=2A &nbsp; DoD=100%<br>"
-                "<span style='color:#68d391'>Real measured data</span>"
+                "<span style='color:#48bb78'>Real measured data</span>"
                 "</div>",
                 unsafe_allow_html=True,
             )

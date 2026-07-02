@@ -171,7 +171,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     ))
     fig3.add_trace(go.Scatter(
         x=df["cycle_number"], y=df["fade_rate_50cy"] * 1000,
-        line=dict(color="#68d391", width=2), name="50-cycle window",
+        line=dict(color="#48bb78", width=2), name="50-cycle window",
     ))
     if first_accel is not None:
         fig3.add_vline(
@@ -238,7 +238,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     n_plateau = int(phase_counts.get("Plateau", 0))
     n_accel = int(phase_counts.get("Accelerating", 0))
     current_phase = knee["phase"]
-    PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#68d391", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
+    PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#48bb78", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
     pc = PHASE_COLOUR.get(current_phase, "#4a5568")
 
     _md_html(
@@ -256,7 +256,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
                     <div style="font-size:12px;color:#a0aec0;line-height:2">
                         <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
-                        <span style="color:#68d391">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
+                        <span style="color:#48bb78">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
                         <span style="color:#fc8181">Accelerating</span> — {n_accel} cycles (post-knee, rapid fade)
                     </div>
                 </div>
@@ -353,7 +353,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 fig_fwhm = go.Figure()
                 fig_fwhm.add_trace(go.Scatter(
                     x=df["cycle_number"], y=df["dqdv_fwhm"],
-                    line=dict(color="#68d391", width=2),
+                    line=dict(color="#48bb78", width=2),
                     hovertemplate="Cycle %{x}: %{y:.4f} Ah<extra>FWHM</extra>",
                     showlegend=False,
                 ))
@@ -561,7 +561,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
                 _FREQ = _np_eis.logspace(5, -2, 60)
                 _OMEGA = 2 * _np_eis.pi * _FREQ
-                _nyq_colors = ["#68d391", "#63b3ed", "#fc8181"]
+                _nyq_colors = ["#48bb78", "#63b3ed", "#fc8181"]
                 _fig_nyq = go.Figure()
                 for _si, (_idx, _lbl, _col) in enumerate(zip(_snap_idx, _snap_labels, _nyq_colors)):
                     _row = df.iloc[_idx]
@@ -597,7 +597,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 for _col_name, _label, _color in [
                     ("r_sei", "R_SEI (SEI layer)", "#f6ad55"),
                     ("r_ct",  "R_ct (charge transfer)", "#63b3ed"),
-                    ("r_ohm_eis", "R_ohm (electrolyte)", "#68d391"),
+                    ("r_ohm_eis", "R_ohm (electrolyte)", "#48bb78"),
                 ]:
                     _fig_eis_trend.add_trace(go.Scatter(
                         x=df["cycle_number"].tolist(), y=df[_col_name].tolist(),
@@ -629,7 +629,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     _mech_explain = "R_ct growth outpaces R_SEI — primary degradation is charge-transfer impedance from active-material loss and lithium plating."
                 else:
                     _mech = "Mixed SEI + charge-transfer"
-                    _mech_color = "#68d391"
+                    _mech_color = "#48bb78"
                     _mech_explain = "Balanced SEI and charge-transfer growth — both calendar and cycling contribute comparably."
                 _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_mech_color};font-weight:700">{_mech}</span><span style="color:#a0aec0;margin-left:10px">{_mech_explain}</span><br><span style="color:#718096;font-size:12px;margin-top:4px;display:block">R_SEI growth: {_sei_growth:.1f}% · R_ct growth: {_ct_growth:.1f}%</span></div>""")
         except Exception as _eis_e:
@@ -676,8 +676,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                         x=_form_plot["cycle_number"].tolist(),
                         y=(_form_plot["coulombic_efficiency"] * 100).tolist(),
                         mode="lines+markers",
-                        marker=dict(size=5, color="#68d391"),
-                        line=dict(color="#68d391", width=2),
+                        marker=dict(size=5, color="#48bb78"),
+                        line=dict(color="#48bb78", width=2),
                         name="CE",
                         hovertemplate="Cycle %{x}: CE = %{y:.3f}%<extra></extra>",
                     ))
@@ -693,7 +693,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     st.plotly_chart(_fig_form, use_container_width=True, config={**PLOTLY_CONFIG, "toImageButtonOptions": {**PLOTLY_CONFIG["toImageButtonOptions"], "filename": "ce_formation"}})
 
                 _icl_risk = "Low" if _icl < 1.5 else ("Moderate" if _icl < 3.0 else "High")
-                _risk_color = {"Low": "#68d391", "Moderate": "#f6ad55", "High": "#fc8181"}[_icl_risk]
+                _risk_color = {"Low": "#48bb78", "Moderate": "#f6ad55", "High": "#fc8181"}[_icl_risk]
                 _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_risk_color};font-weight:700">ICL Risk: {_icl_risk}</span><span style="color:#a0aec0;margin-left:10px">ICL = {_icl:.2f}% — literature correlation: cells with ICL &lt;1.5% retain &gt;90% SOH beyond 500 cycles (Severson et al. 2019).</span></div>""")
         except Exception as _form_e:
             st.info(f"Formation analysis unavailable: {_form_e}")
@@ -728,7 +728,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             _fig_rate = go.Figure()
             _fig_rate.add_trace(go.Bar(
                 x=_c_labels, y=_retention,
-                marker_color=["#68d391" if r >= 90 else "#f6ad55" if r >= 75 else "#fc8181" for r in _retention],
+                marker_color=["#48bb78" if r >= 90 else "#f6ad55" if r >= 75 else "#fc8181" for r in _retention],
                 text=[f"{r:.1f}%" for r in _retention],
                 textposition="outside",
                 hovertemplate="%{x}: %{y:.1f}% retention<extra></extra>",
@@ -745,7 +745,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
             _ret_2c = _retention[5]
             _ret_msg = f"At 2C (fast charge), this cell retains {_ret_2c:.1f}% of its C/5 capacity."
-            _ret_color = "#68d391" if _ret_2c >= 85 else "#f6ad55" if _ret_2c >= 70 else "#fc8181"
+            _ret_color = "#48bb78" if _ret_2c >= 85 else "#f6ad55" if _ret_2c >= 70 else "#fc8181"
             _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_ret_color};font-weight:700">{_ret_msg}</span><span style="color:#a0aec0;margin-left:10px">k_rate = {_k_rate:.3f} (resistance-scaled). >85% at 2C = good fast-charge fitness; &lt;70% = rate-limited application only.</span></div>""")
         except Exception as _rate_e:
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
