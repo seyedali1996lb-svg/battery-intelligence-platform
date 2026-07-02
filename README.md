@@ -61,10 +61,11 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 | 7 — Sustainability | Lifecycle CO₂ chart (3 scenarios), critical materials tracker (Co/Ni/Li), EU 2023/1542 Annex XII recycled-content targets |
 | 8 — Design system | `src/design_system.py`: single source of truth for badge HTML, color tokens, state badges, Recommendations metadata |
 | 9 — Settings | Per-cell LCO fold R² transparency table, RUL floor preview, data source panel |
-| 10 — Advanced features | EIS decomposition (SEI + charge-transfer resistance trends), formation efficiency, rate capability model, dQ/dV differential capacity, Li-S module, SSB chemistry |
+| 10 — Advanced features | Resistance component proxy (SEI + charge-transfer trends), formation efficiency, rate capability model, dQ/dV differential capacity |
 | 11 — Phase 11 | Knee detection (cycle where SOH derivative peaks), anomaly flags, SoP%, calendar aging, pack spread, cell grading (A/B/C/D), Compare page, Q10/Q90 confidence band, EU passport CRM fields |
 | 12 — Severson integration | h5py-based MATLAB v7.3 parser, 12 LFP cell CSVs extracted and committed, Severson mode routed through full pipeline, SHAP caching, Streamlit Cloud crash fixes |
 | 13 — Robustness audit | Full crash audit across all pages; 5 KeyError/ValueError bugs fixed; `build_features()` now produces all columns needed by every page regardless of data source; `dqdv.add_dqdv_features()` vectorized (14k row loop → NumPy broadcast, ~30× faster) |
+| 14 — Credibility audit | Honest labelling throughout: dQ/dV shows LFP warning for Severson cells; "EIS Impedance Analysis" renamed to "Resistance Component Proxy (simulated)"; Li-S / SSB fake chemistry selector removed; GDPR privacy banner on Import page; Severson provenance corrected from SYNTHETIC → MEASURED |
 
 ---
 
@@ -94,6 +95,14 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 
 **`dqdv.add_dqdv_features()` Python row loop.** The original implementation called `df.apply(axis=1)` — a Python-level loop — running `extract_dqdv_features()` once per cycle row. For Severson's 12 cells × ~1177 cycles each, that's ~14,000 Python calls, each simulating a 200-point VQ curve. Total: ~2.8 million point operations in a Python loop. The key insight: `V = OCV(soc) − I·R`. Since R is constant per row, the gradient `dV/dt = d(OCV)/dt` is identical across all rows — the IR offset cancels. Rewritten with NumPy broadcasting: compute the OCV derivative once on a `(200,)` array, broadcast across `(n_rows, 200)`. Feature engineering time for Severson dropped from ~30 s to <1 s.
 
+**dQ/dV simulation on LFP cells.** The dQ/dV expander ran the LiCoO₂ OCV polynomial on every cell regardless of chemistry. LFP has a flat ≈3.2 V plateau — no distinct dQ/dV peak exists. Applying a LiCoO₂ model to LFP data produces a physically meaningless peak artifact. A battery engineer would immediately flag this. Fix: check `cell_id.startswith("S-")` and replace the chart with an explicit warning explaining why the simulation is inapplicable for LFP. Non-LFP cells get updated provenance text labelling it a "Simulated proxy — not measured data."
+
+**"EIS Impedance Analysis" was not EIS.** The expander labelled "EIS Impedance Analysis" decomposed DC resistance into SEI and charge-transfer components using a circuit model fit to synthetic resistance trends — not an actual electrochemical impedance spectrum. EIS requires frequency sweep measurements (a potentiostat / FRA). Calling the section "EIS" implies frequency-domain measurements that were never taken. Renamed to "Resistance Component Proxy (simulated)" in both the expander title and chart title.
+
+**Li-S / SSB chemistry selector was a fake feature.** A selectbox let users choose "Li-ion (LiCoO₂)", "Li-S (Lithium-Sulfur)", or "SSB (Solid-State)". Selecting Li-S or SSB ran the same LiCoO₂ GBRT model regardless — only the visualisation on the Health page changed. A user selecting Li-S got SOH and RUL numbers from a model trained on LiCoO₂ data with no warning. Removed entirely. Chemistry is now a read-only label derived from the active data source (`LFP (Severson 2019)` / `LiCoO₂ NCA (NASA PCoE)` / `LiCoO₂ (synthetic)` / `User-defined`). The Li-S dual-plateau and SSB parameter expanders are deleted.
+
+**Severson cells labelled SYNTHETIC.** `_cell_provenance()` returned `"measured"` only for cells in `NASA_CELL_IDS` and fell through to `"synthetic"` for everything else. Severson cells (real LFP measurements from a Nature Energy paper) were displaying `"○ SYNTHETIC — no physical measurements underlie any value"` on both the Overview and Health pages. `_analysis_provenance()` had the same bug — Severson derived analyses were labelled SYNTHETIC instead of SIMULATED. Fix: both functions now check `cell_id.startswith("S-")` alongside the NASA check. The Health page provenance banner now cites "Severson 2019 LFP dataset (Nature Energy, 2019)" rather than NASA, and notes that dQ/dV is not shown because the LiCoO₂ model is inapplicable to LFP.
+
 **Unguarded column accesses found in audit.** A structured audit of all page functions identified six unsafe patterns: `_latest["resistance_ohm"]` in the sidebar alert loop (column-check on the DataFrame doesn't protect Series subscript); dot-notation `df.fade_rate_50cy` instead of bracket syntax on a pandas DataFrame; unguarded `df_a["resistance_ohm"]` and `df_b["resistance_ohm"]` in the Compare page metrics and resistance chart; `min()` over a generator that could be empty in the Fleet spread chart. All six fixed — resistance metrics now show "N/A" when the column is absent, the resistance chart shows an info message instead of crashing, and the fleet chart filters empty DataFrames before taking min/max.
 
 ---
@@ -122,7 +131,7 @@ flowchart TD
     RUL & NC --> PAGES
 
     PAGES --> OV[Overview\nSOH hero · RUL · knee · anomaly · SoP · calendar age]
-    PAGES --> HL[Health\ndQ/dV · EIS · formation · rate capability · SPM]
+    PAGES --> HL[Health\ndQ/dV · Resistance Proxy · formation · rate capability]
     PAGES --> CP[Compare\nside-by-side · correlation heatmap]
     PAGES --> IN[Insights\nSHAP attribution · feature importance]
     PAGES --> CO[Copilot\ntemplate narration · 8 query types]
