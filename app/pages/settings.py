@@ -119,6 +119,77 @@ def page_settings(featured_dfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
+    # ── Section 1b: Model Card ──
+    _section("Model Card — GBRT SOH / RUL Estimator")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "A model card discloses what the model is, what data it was trained on, "
+        "how it was validated, and what it should and should not be used for. "
+        "This card follows the Mitchell et al. (2019) model card format."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    import datetime as _dt
+    _train_date = "2024-01 (initial) → updated each app start if cache invalid"
+    _mc_rows = [
+        ("Model type",        "Gradient-Boosted Regression Trees (scikit-learn GradientBoostingRegressor)"),
+        ("Targets",           "SOH (% capacity remaining) and RUL (cycles to 80% EOL threshold)"),
+        ("Architecture",      "Two separate GBRT instances — one for NASA PCoE cells, one for synthetic cells. Combined model R²=−0.49 due to incompatible resistance scales (0.04–0.07 Ω vs 0.15–0.40 Ω)."),
+        ("Hyperparameters",   "n_estimators=300, max_depth=4, learning_rate=0.05, subsample=0.8, loss=squared_error (SOH); same with quantile loss for RUL uncertainty bounds"),
+        ("Training data",     "NASA PCoE Battery Aging Dataset (Saha & Goebel 2007): 4 LiCoO₂ 18650 cells (~2 Ah, 24°C, 2A discharge) · 8 synthetic cells (physics-informed: Arrhenius SEI, empirical C-rate, Rainflow DoD)"),
+        ("Validation method", "Leave-Cell-Out (LCO) cross-validation: train on N−1 cells, test on held-out cell. Row-level train/test split is not used — it leaks cell identity into training."),
+        ("EOL definition",    "80% of initial capacity (industry standard; configurable in Settings)"),
+        ("Feature set",       "cycle_number, fade_rate_{10,30,50}cy, fade_acceleration, soh_velocity_50cy, resistance_{ohm,normalized,trend_30cy}, temp_rolling_30cy, dqdv_{peak_value,peak_soc,area,fwhm}, ce_rolling_30cy, ce_drop_rate"),
+        ("Intended use",      "Engineering decision support — prioritisation, inspection scheduling, second-life routing. Not for safety-critical go/no-go decisions."),
+        ("Known limitations", (
+            "1. RUL is unreliable below fold R²=0.30 (B0018: R²=0.22, withheld). "
+            "2. Model was not tested on NMC/NCA/LFP — transfer to other chemistries is unknown. "
+            "3. Only 4 real cells — fleet-level statistics are indicative, not statistically robust. "
+            "4. Synthetic cells share the same physics model used for generation — they cannot reveal model failure modes outside that model's assumptions. "
+            "5. Temperature assumed 25°C for cells without measured temperature column."
+        )),
+        ("Out-of-scope uses", "Certified safety assessments · Regulatory compliance claims · Financial warranty calculations without independent validation"),
+        ("Bias / fairness",   "No demographic bias considerations apply (physical cells). Cell-to-cell manufacturing variation is a known source of model error — real batteries vary more than the synthetic fleet captures."),
+        ("Last trained",      _train_date),
+    ]
+
+    for field, value in _mc_rows:
+        is_limit = field in ("Known limitations", "Out-of-scope uses")
+        val_colour = "#fc8181" if is_limit else "#a0aec0"
+        st.markdown(
+            f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
+            f"<div style='min-width:160px;font-size:11px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.06em;padding-top:2px;flex-shrink:0'>{field}</div>"
+            f"<div style='flex:1;font-size:12px;color:{val_colour};line-height:1.7'>{value}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Per-cell LCO summary inside model card
+    with st.expander("Per-cell validation results", expanded=False):
+        for source_key, bundle in bundles.items():
+            if bundle is None:
+                continue
+            lco_per = bundle["metrics"].get("lco_per_cell", {})
+            per_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
+            label   = "NASA PCoE" if source_key == "nasa" else "Synthetic"
+            colour  = "#68d391" if source_key == "nasa" else "#fc8181"
+            st.markdown(f"<div style='font-size:12px;font-weight:600;color:{colour};margin:12px 0 6px'>{label} model · {bundle['metrics'].get('n_cells','?')} cells · {bundle['metrics'].get('n_rows',0):,} rows</div>", unsafe_allow_html=True)
+            _hdr = st.columns([2, 1, 1, 1])
+            for c, h in zip(_hdr, ["Cell", "SOH R²", "RUL R²", "RUL Status"]):
+                c.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em'>{h}</div>", unsafe_allow_html=True)
+            for cell_id, fold in lco_per.items():
+                ok     = per_ok.get(cell_id, True)
+                s_col  = "#68d391" if ok else "#fc8181"
+                status = "Calibrated" if ok else f"Withheld (R²={fold.get('rul_r2',0):.2f} < 0.30)"
+                row    = st.columns([2, 1, 1, 1])
+                row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:3px 0'>{cell_id}</div>", unsafe_allow_html=True)
+                row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{fold.get('soh_r2',0):.3f}</div>", unsafe_allow_html=True)
+                row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{fold.get('rul_r2',0):.3f}</div>", unsafe_allow_html=True)
+                row[3].markdown(f"<div style='font-size:13px;color:{s_col};padding:3px 0'>{status}</div>", unsafe_allow_html=True)
+
     # ── Section 2: Model transparency ──
     _section("Model Transparency — Leave-Cell-Out Validation")
 

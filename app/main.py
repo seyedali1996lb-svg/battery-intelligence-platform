@@ -191,6 +191,44 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── Light mode override (injected when toggle is on) ──
+if st.session_state.get("light_mode", False):
+    st.markdown(
+        """
+        <style>
+        /* ── Background & surface ── */
+        .stApp, [data-testid="stAppViewContainer"] { background: #f7f8fa !important; }
+        section[data-testid="stSidebar"] { background: #ffffff !important; border-right: 1px solid #e2e8f0 !important; }
+        /* ── Text ── */
+        .stApp, .stApp p, .stApp li, .stApp label,
+        div[data-testid="stMarkdownContainer"] { color: #1a202c !important; }
+        h1, h2, h3 { color: #1a202c !important; }
+        /* ── Sidebar nav buttons ── */
+        section[data-testid="stSidebar"] button[kind="secondary"] { color: #4a5568 !important; }
+        section[data-testid="stSidebar"] button[kind="secondary"]:hover { background: rgba(0,0,0,0.05) !important; color: #1a202c !important; }
+        section[data-testid="stSidebar"] button[kind="primary"] { background: rgba(49,130,206,0.12) !important; color: #2b6cb0 !important; }
+        section[data-testid="stSidebar"] button[kind="primary"]:hover { background: rgba(49,130,206,0.2) !important; }
+        /* ── Cards & chips ── */
+        .hero-card { background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%) !important; border-color: #cbd5e0 !important; }
+        .metric-chip { background: #ffffff !important; border-color: #e2e8f0 !important; }
+        .metric-chip-value { color: #1a202c !important; }
+        .metric-chip-label, .metric-chip-sub { color: #718096 !important; }
+        .hero-sub { color: #4a5568 !important; }
+        /* ── Section headers ── */
+        .section-header { color: #718096 !important; border-color: #e2e8f0 !important; }
+        /* ── Streamlit widgets ── */
+        div[data-testid="stMetricValue"] { color: #1a202c !important; }
+        .stSelectbox label, .stSlider label { color: #4a5568 !important; }
+        /* ── Expanders ── */
+        div[data-testid="stExpander"] { border-color: #e2e8f0 !important; }
+        /* ── Sidebar info text ── */
+        section[data-testid="stSidebar"] div[style*="color:#4a5568"] { color: #718096 !important; }
+        section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color: #718096 !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Data + model — cached for the session lifetime

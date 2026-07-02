@@ -43,8 +43,15 @@ def page_copilot(
     st.markdown("# Copilot")
 
     # ── Disclosure banner ──
+    from copilot_llm import is_llm_available as _llm_avail
+    _ai_note = (
+        " When <strong style='color:#68d391'>AI mode</strong> is active (ANTHROPIC_API_KEY set), "
+        "Claude Haiku narrates the data. Without it, deterministic templates are used instead."
+        if _llm_avail() else
+        " Set <code>ANTHROPIC_API_KEY</code> to enable AI narration; template mode is active now."
+    )
     _md_html(
-        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#718096;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.</div>"""
+        f"""<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#718096;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.{_ai_note}</div>"""
     )
 
     query = st.session_state.get("copilot_query", None)
@@ -102,45 +109,92 @@ def page_copilot(
             "Compare with:", options=other_ids, key="copilot_compare_cell",
         )
 
-    # ── Generate response ──
+    # ── Determine contexts + template fallback ──
+    ctx_b = None
     if query == "health":
-        response = answer_health(ctx)
+        template_fn = lambda: answer_health(ctx)
         contexts = [ctx]
     elif query == "drivers":
-        response = answer_prediction_drivers(ctx)
+        template_fn = lambda: answer_prediction_drivers(ctx)
         contexts = [ctx]
     elif query == "rul":
-        response = answer_rul(ctx)
+        template_fn = lambda: answer_rul(ctx)
         contexts = [ctx]
     elif query == "compare":
         ctx_b    = build_cell_context(compare_with, featured_dfs, bundles)
-        response = answer_compare(ctx, ctx_b)
+        template_fn = lambda: answer_compare(ctx, ctx_b)
         contexts = [ctx, ctx_b]
     elif query == "recent":
-        response = answer_recent_trajectory(ctx, featured_dfs[selected])
+        template_fn = lambda: answer_recent_trajectory(ctx, featured_dfs[selected])
         contexts = [ctx]
     elif query == "anomaly":
-        response = answer_anomaly(ctx, fleet_stats)
+        template_fn = lambda: answer_anomaly(ctx, fleet_stats)
         contexts = [ctx]
     elif query == "fleet_compare":
-        response = answer_fleet_compare(ctx, fleet_stats)
+        template_fn = lambda: answer_fleet_compare(ctx, fleet_stats)
         contexts = [ctx]
     elif query == "alerts":
-        response = answer_alerts(fleet_stats)
+        template_fn = lambda: answer_alerts(fleet_stats)
         contexts = []
     else:
-        response = f"Unknown query: {query}"
+        template_fn = lambda: f"Unknown query: {query}"
         contexts = []
+
+    # ── LLM or template ──
+    from copilot_llm import is_llm_available, llm_answer_stream
 
     # ── Response header ──
     cell_label = f" &nbsp;·&nbsp; {selected}" if not fleet_only else " &nbsp;·&nbsp; all cells"
-    st.markdown(
-        f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
-        f"letter-spacing:0.1em;margin:28px 0 16px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
-        f"{QUERY_LABELS.get(query, '')}{cell_label}</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(response)
+
+    _used_llm = False
+    _llm_error = None
+
+    if is_llm_available():
+        try:
+            st.markdown(
+                f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+                f"letter-spacing:0.1em;margin:28px 0 4px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
+                f"{QUERY_LABELS.get(query, '')}{cell_label}"
+                f"<span style='float:right;font-size:10px;background:#1a3a2a;color:#68d391;"
+                f"padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:0.05em'>"
+                f"AI · grounded narration</span></div>",
+                unsafe_allow_html=True,
+            )
+            with st.spinner(""):
+                response = "".join(
+                    llm_answer_stream(
+                        query, ctx,
+                        ctx_b=ctx_b,
+                        fleet_stats=fleet_stats if query in ("anomaly", "fleet_compare", "alerts") else None,
+                    )
+                )
+            st.markdown(response)
+            _used_llm = True
+        except Exception as e:
+            _llm_error = str(e)
+
+    if not _used_llm:
+        badge_html = (
+            "<span style='float:right;font-size:10px;background:#2d3748;color:#718096;"
+            "padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:0.05em'>"
+            "Template narration</span>"
+        )
+        if _llm_error:
+            badge_html = (
+                "<span style='float:right;font-size:10px;background:#3d1c1c;color:#fc8181;"
+                "padding:2px 8px;border-radius:10px;font-weight:500;letter-spacing:0.05em'>"
+                f"AI error — template fallback</span>"
+            )
+        st.markdown(
+            f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            f"letter-spacing:0.1em;margin:28px 0 4px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
+            f"{QUERY_LABELS.get(query, '')}{cell_label}{badge_html}</div>",
+            unsafe_allow_html=True,
+        )
+        if _llm_error:
+            st.caption(f"API error: {_llm_error}")
+        response = template_fn()
+        st.markdown(response)
 
     # ── Copy / export button ──
     st.download_button(

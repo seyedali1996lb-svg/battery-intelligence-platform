@@ -15,19 +15,19 @@ from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from design_system import make_badge, make_state_badge
 
 NAV_ITEMS = [
-    ("Import",          "import",          True),
     ("Overview",        "overview",        True),
+    ("Fleet",           "fleet",           True),
     ("Health",          "health",          True),
-    ("Compare",         "compare",         True),
     ("Insights",        "insights",        True),
     ("Copilot",         "copilot",         True),
-    ("Consequences",    "consequences",    True),
+    ("Compare",         "compare",         True),
     ("Recommendations", "recommendations", True),
+    ("Consequences",    "consequences",    True),
     ("Sustainability",  "sustainability",  True),
     ("Passport",        "passport",        True),
-    ("Reports",         "reports",         True),
-    ("Fleet",           "fleet",           True),
     ("Grading",         "grading",         True),
+    ("Reports",         "reports",         True),
+    ("Import",          "import",          True),
     ("Settings",        "settings",        True),
 ]
 
@@ -267,5 +267,8 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             "</div>",
             unsafe_allow_html=True,
         )
+
+        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+        st.toggle("Light mode", key="light_mode", value=False)
 
     return selected

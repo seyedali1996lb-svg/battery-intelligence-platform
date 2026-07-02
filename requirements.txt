@@ -6,3 +6,4 @@ streamlit
 requests
 reportlab
 shap
+anthropic
