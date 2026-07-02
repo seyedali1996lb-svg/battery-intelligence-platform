@@ -1841,10 +1841,11 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                 {friendly(top_feature)}
             </div>
             <div class="hero-sub">
-                Explains <strong style="color:#e2e8f0">{top_pct:.0f}%</strong>
-                of the model's SOH prediction across all cells.
-                Internal resistance is a direct proxy for SEI layer growth —
-                the dominant degradation mechanism in LiCoO&#x2082; cells.
+                Top-ranked by <strong style="color:#e2e8f0">split importance ({top_pct:.0f}%)</strong>
+                — see the SHAP Attribution tab below for correct feature attribution
+                that handles correlated fade-rate features.
+                Internal resistance tracks SEI layer growth, the dominant degradation
+                mechanism in LiCoO&#x2082; cells.
             </div>
         </div>
         """
@@ -1878,35 +1879,169 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
         )
         return fig
 
-    col1, col2 = st.columns(2)
+    # ── SHAP feature attribution ─────────────────────────────────────────────
+    # SHAP (SHapley Additive exPlanations) correctly handles correlated features,
+    # unlike split-based importances which over-credit the first feature in a
+    # correlated group (e.g. fade_rate_10cy / _30cy / _50cy all measure the same
+    # signal; split importance splits credit unpredictably among them).
+    # SHAP uses the Shapley value from cooperative game theory: each feature's
+    # contribution is its average marginal contribution across all feature subsets.
+    _shap_tab, _imp_tab = st.tabs(["SHAP Attribution (recommended)", "Split Importance (legacy)"])
 
-    with col1:
-        st.markdown("<div class='section-header'>Feature Importance — SOH Model</div>", unsafe_allow_html=True)
-        fi_soh = feature_importance_df(bundle, model="soh")
-        fi_soh["label"] = fi_soh["feature"].map(friendly)
-        st.plotly_chart(_importance_bar(fi_soh, "#63b3ed"), use_container_width=True)
+    with _shap_tab:
+        _md_html(provenance_banner(
+            "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+            "SHAP values are computed from the trained GBRT model. They describe which features "
+            "pushed this cell's SOH prediction higher or lower than the population average, "
+            "correctly accounting for correlated features. "
+            "<strong>Split-based importances (legacy tab) over-credit the first feature in a "
+            "correlated group and are not reliable for feature selection.</strong>"
+        ))
+        try:
+            import shap as _shap
+            import numpy as _np_shap
+            _scaler = bundle["scaler"]
+            _feat_names = bundle["feature_names"]
+            _X_test = bundle["test_data"]["X_test"]
+            _X_test_sc = _scaler.transform(_X_test)
 
-    with col2:
-        st.markdown("<div class='section-header'>Feature Importance — RUL Model</div>", unsafe_allow_html=True)
-        fi_rul = feature_importance_df(bundle, model="rul")
-        fi_rul["label"] = fi_rul["feature"].map(friendly)
-        st.plotly_chart(_importance_bar(fi_rul, "#68d391"), use_container_width=True)
+            # Compute SHAP for SOH model — TreeExplainer is exact for GBRT
+            _expl_soh = _shap.TreeExplainer(bundle["soh_model"])
+            _shap_soh  = _expl_soh.shap_values(_X_test_sc)
+            _mean_abs_soh = _np_shap.abs(_shap_soh).mean(axis=0)
+            _shap_df_soh  = pd.DataFrame({
+                "feature": _feat_names,
+                "mean_abs_shap": _mean_abs_soh,
+                "label": [friendly(f) for f in _feat_names],
+            }).sort_values("mean_abs_shap", ascending=True).tail(12)
 
-    # Explain the profile difference
-    top_soh_feat = fi_soh.iloc[0]["label"]
-    top_rul_feat = fi_rul.iloc[0]["label"]
-    if top_soh_feat != top_rul_feat:
-        st.markdown(
-            f"<div style='font-size:12px;color:#718096;background:#1a202c;border-left:3px solid #2d3748;"
-            f"padding:10px 14px;border-radius:4px;margin-bottom:12px'>"
-            f"<strong style='color:#a0aec0'>Why the profiles differ:</strong> "
-            f"{top_soh_feat} dominates SOH prediction because it tracks cumulative degradation. "
-            f"{top_rul_feat} dominates RUL prediction because it determines how fast the remaining "
-            f"life gets consumed — a different question. This divergence is the honest explanation "
-            f"for why RUL is harder to calibrate than SOH: it requires the model to extrapolate "
-            f"future rate, not just describe current state.</div>",
-            unsafe_allow_html=True,
-        )
+            # Compute SHAP for RUL model
+            _expl_rul = _shap.TreeExplainer(bundle["rul_model"])
+            _shap_rul  = _expl_rul.shap_values(_X_test_sc)
+            _mean_abs_rul = _np_shap.abs(_shap_rul).mean(axis=0)
+            _shap_df_rul  = pd.DataFrame({
+                "feature": _feat_names,
+                "mean_abs_shap": _mean_abs_rul,
+                "label": [friendly(f) for f in _feat_names],
+            }).sort_values("mean_abs_shap", ascending=True).tail(12)
+
+            _sc1, _sc2 = st.columns(2)
+            for _col, _shap_df, _color, _model_lbl in [
+                (_sc1, _shap_df_soh, "#63b3ed", "SOH"),
+                (_sc2, _shap_df_rul, "#68d391", "RUL"),
+            ]:
+                with _col:
+                    st.markdown(f"<div class='section-header'>SHAP Attribution — {_model_lbl} Model</div>", unsafe_allow_html=True)
+                    _max_shap = _shap_df["mean_abs_shap"].max()
+                    _fig_shap = go.Figure(go.Bar(
+                        x=_shap_df["mean_abs_shap"],
+                        y=_shap_df["label"],
+                        orientation="h",
+                        marker=dict(
+                            color=_shap_df["mean_abs_shap"],
+                            colorscale=[[0, "#1e2a38"], [0.4, "#1e2a38"], [1, _color]],
+                            showscale=False,
+                        ),
+                        text=[f"{v:.4f}" for v in _shap_df["mean_abs_shap"]],
+                        textposition="inside", insidetextanchor="end",
+                        textfont=dict(color="#ffffff", size=10),
+                        hovertemplate="<b>%{y}</b><br>Mean |SHAP|: %{x:.4f}<extra></extra>",
+                    ))
+                    _fig_shap.update_layout(
+                        height=340,
+                        **base_layout(
+                            xaxis=dict(title="Mean |SHAP value|", gridcolor="#232d3b", linecolor="#2d3748",
+                                       zeroline=False, range=[0, _max_shap * 1.12]),
+                            yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
+                        ),
+                    )
+                    _fig_shap.update_layout(title=dict(
+                        text=f"SHAP Mean |φ| — {_model_lbl} · Top 12 features",
+                        font=dict(size=12, color="#a0aec0"), x=0,
+                    ))
+                    st.plotly_chart(_fig_shap, use_container_width=True,
+                                   config={**PLOTLY_CONFIG, "toImageButtonOptions": {**PLOTLY_CONFIG["toImageButtonOptions"], "filename": f"shap_{_model_lbl.lower()}"}})
+
+            # Single-cell SHAP waterfall for the selected cell's latest cycle
+            _X_this = df[bundle["feature_names"]].dropna().tail(1)
+            if len(_X_this) > 0:
+                _X_this_sc = _scaler.transform(_X_this)
+                _shap_this  = _expl_soh.shap_values(_X_this_sc)[0]
+                _base_val   = float(_expl_soh.expected_value)
+                _pred_val   = _base_val + float(_shap_this.sum())
+                _wf_df = pd.DataFrame({
+                    "feature": [friendly(f) for f in _feat_names],
+                    "shap": _shap_this,
+                }).sort_values("shap", key=abs, ascending=True).tail(10)
+
+                st.markdown("<div class='section-header'>SHAP Waterfall — Why is this cell's SOH predicted at this value?</div>", unsafe_allow_html=True)
+                _colors_wf = ["#68d391" if v > 0 else "#fc8181" for v in _wf_df["shap"]]
+                _fig_wf = go.Figure(go.Bar(
+                    x=_wf_df["shap"], y=_wf_df["feature"],
+                    orientation="h",
+                    marker_color=_colors_wf,
+                    hovertemplate="<b>%{y}</b><br>SHAP: %{x:+.4f}<extra></extra>",
+                    text=[f"{v:+.4f}" for v in _wf_df["shap"]],
+                    textposition="outside",
+                    textfont=dict(size=10, color="#a0aec0"),
+                ))
+                _fig_wf.update_layout(
+                    height=320,
+                    **base_layout(
+                        xaxis=dict(title="SHAP value (impact on SOH prediction)", gridcolor="#232d3b",
+                                   linecolor="#2d3748", zeroline=True, zerolinecolor="#4a5568"),
+                        yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
+                    ),
+                )
+                _fig_wf.update_layout(title=dict(
+                    text=f"Waterfall: {cell_id} latest cycle · E[f(X)]={_base_val:.1f}% → prediction={_pred_val:.1f}%",
+                    font=dict(size=12, color="#a0aec0"), x=0,
+                ))
+                st.plotly_chart(_fig_wf, use_container_width=True,
+                               config={**PLOTLY_CONFIG, "toImageButtonOptions": {**PLOTLY_CONFIG["toImageButtonOptions"], "filename": "shap_waterfall"}})
+
+        except ImportError:
+            st.warning("SHAP not installed. Run `pip install shap` to enable SHAP attribution.")
+        except Exception as _shap_e:
+            st.info(f"SHAP computation unavailable: {_shap_e}")
+
+    with _imp_tab:
+        _md_html(provenance_banner(
+            "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+            "<strong>⚠ Split-based importances are unreliable for correlated features.</strong> "
+            "fade_rate_10cy / _30cy / _50cy are heavily correlated; importance is distributed "
+            "unpredictably among them based on which split the tree chooses first. "
+            "Use the SHAP tab for correct attribution. "
+            "These are shown here for reference only."
+        ))
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("<div class='section-header'>Split Importance — SOH Model</div>", unsafe_allow_html=True)
+            fi_soh = feature_importance_df(bundle, model="soh")
+            fi_soh["label"] = fi_soh["feature"].map(friendly)
+            st.plotly_chart(_importance_bar(fi_soh, "#63b3ed"), use_container_width=True)
+        with col2:
+            st.markdown("<div class='section-header'>Split Importance — RUL Model</div>", unsafe_allow_html=True)
+            fi_rul = feature_importance_df(bundle, model="rul")
+            fi_rul["label"] = fi_rul["feature"].map(friendly)
+            st.plotly_chart(_importance_bar(fi_rul, "#68d391"), use_container_width=True)
+
+    # Explain the profile difference (uses whichever fi_soh/fi_rul were last computed)
+    try:
+        top_soh_feat = fi_soh.iloc[0]["label"]
+        top_rul_feat = fi_rul.iloc[0]["label"]
+        if top_soh_feat != top_rul_feat:
+            st.markdown(
+                f"<div style='font-size:12px;color:#718096;background:#1a202c;border-left:3px solid #2d3748;"
+                f"padding:10px 14px;border-radius:4px;margin-bottom:12px'>"
+                f"<strong style='color:#a0aec0'>Why the profiles differ:</strong> "
+                f"{top_soh_feat} dominates SOH prediction because it tracks cumulative degradation. "
+                f"{top_rul_feat} dominates RUL prediction because it determines how fast the remaining "
+                f"life gets consumed — a different question.</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        pass
 
     # ── Model metrics ──
     st.markdown("<div class='section-header'>Model Performance — Multi-cell Training</div>", unsafe_allow_html=True)
