@@ -322,6 +322,23 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
 
 
 @st.cache_resource(show_spinner=False)
+def _get_shap_values(bundle_id: str, bundle: dict):
+    """Cache SHAP TreeExplainer results keyed by bundle_id (avoids rebuilding on every render)."""
+    try:
+        import shap as _shap
+        import numpy as _np_shap
+        scaler = bundle["scaler"]
+        X_test_sc = scaler.transform(bundle["test_data"]["X_test"])
+        expl_soh = _shap.TreeExplainer(bundle["soh_model"])
+        expl_rul = _shap.TreeExplainer(bundle["rul_model"])
+        shap_soh = _np_shap.abs(expl_soh.shap_values(X_test_sc)).mean(axis=0)
+        shap_rul = _np_shap.abs(expl_rul.shap_values(X_test_sc)).mean(axis=0)
+        return shap_soh, shap_rul
+    except Exception:
+        return None, None
+
+
+@st.cache_resource(show_spinner=False)
 def load_everything():
     """
     Load synthetic cells (Cell1-Cell8) and NASA cells (B0005-B0018) separately.
@@ -371,7 +388,8 @@ def load_everything():
         bundle_sev, fdfs_sev, sc_sev = None, {}, {}
         try:
             from severson_loader import load_severson_cells, SEVERSON_CELL_IDS
-            cached_sev = load_cached("severson", {})
+            _SEV_KEY = {"source": "severson_batch1"}
+            cached_sev = load_cached("severson", _SEV_KEY)
             if cached_sev is not None:
                 st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
                 bundle_sev, fdfs_sev, sc_sev = cached_sev
@@ -383,7 +401,7 @@ def load_everything():
                     # Convert to cycles-dict format _train_on_cells expects
                     sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
                     bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
-                    save_cached("severson", {}, (bundle_sev, fdfs_sev, sc_sev))
+                    save_cached("severson", _SEV_KEY, (bundle_sev, fdfs_sev, sc_sev))
                     st.write("Step 4 / 4 — Severson model: trained and cached ✓")
                 else:
                     st.write("Step 4 / 4 — Severson download unavailable — using NASA + synthetic only")
@@ -454,8 +472,9 @@ def _upload_status_line(meta: dict) -> str:
     return " · ".join(parts)
 
 
-def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None):
-    """Persistent three-mode data source selector rendered inside the sidebar."""
+def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
+                         sev_n: int = 0):
+    """Persistent data-source selector rendered inside the sidebar."""
     current = st.session_state.get("data_mode", "nasa")
 
     st.markdown(
@@ -464,18 +483,23 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None):
         unsafe_allow_html=True,
     )
 
-    # Mode descriptor ordered list
     modes = [
         {
+            "key":       "severson",
+            "label":     "Severson 2019 (LFP)",
+            "status":    f"{sev_n} cells · real measured · Nature Energy 2019",
+            "available": sev_n > 0,
+        },
+        {
             "key":       "nasa",
-            "label":     "NASA Research Mode",
-            "status":    f"{nasa_n} cells · real measured data",
+            "label":     "NASA PCoE",
+            "status":    f"{nasa_n} cells · real measured · NCA chemistry",
             "available": nasa_n > 0,
         },
         {
             "key":       "synthetic",
-            "label":     "Synthetic Fleet Mode",
-            "status":    f"{synth_n} cells · physics-informed synthetic",
+            "label":     "Synthetic Fleet",
+            "status":    f"{synth_n} cells · physics-informed",
             "available": True,
         },
         {
@@ -534,7 +558,9 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
     with st.sidebar:
         # Dynamic subtitle based on active mode
         n_cells = len(cell_ids)
-        if mode == "nasa":
+        if mode == "severson":
+            subtitle = f"{n_cells} Severson 2019 LFP cells · real measured"
+        elif mode == "nasa":
             subtitle = f"{n_cells} NASA real cells · leave-cell-out model"
         elif mode == "synthetic":
             subtitle = f"{n_cells} synthetic cells · leave-cell-out model"
@@ -553,7 +579,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         )
 
         # ── Mode switcher ──
-        render_mode_switcher(nasa_n, synth_n, up_meta)
+        render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=len(sev_fdfs))
 
         # ── Nav ──
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
@@ -1992,27 +2018,17 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             "correlated group and are not reliable for feature selection.</strong>"
         ))
         try:
-            import shap as _shap
-            import numpy as _np_shap
-            _scaler = bundle["scaler"]
             _feat_names = bundle["feature_names"]
-            _X_test = bundle["test_data"]["X_test"]
-            _X_test_sc = _scaler.transform(_X_test)
-
-            # Compute SHAP for SOH model — TreeExplainer is exact for GBRT
-            _expl_soh = _shap.TreeExplainer(bundle["soh_model"])
-            _shap_soh  = _expl_soh.shap_values(_X_test_sc)
-            _mean_abs_soh = _np_shap.abs(_shap_soh).mean(axis=0)
+            _bundle_id = mode  # stable key per data source
+            _mean_abs_soh, _mean_abs_rul = _get_shap_values(_bundle_id, bundle)
+            if _mean_abs_soh is None:
+                raise RuntimeError("SHAP computation failed")
             _shap_df_soh  = pd.DataFrame({
                 "feature": _feat_names,
                 "mean_abs_shap": _mean_abs_soh,
                 "label": [friendly(f) for f in _feat_names],
             }).sort_values("mean_abs_shap", ascending=True).tail(12)
 
-            # Compute SHAP for RUL model
-            _expl_rul = _shap.TreeExplainer(bundle["rul_model"])
-            _shap_rul  = _expl_rul.shap_values(_X_test_sc)
-            _mean_abs_rul = _np_shap.abs(_shap_rul).mean(axis=0)
             _shap_df_rul  = pd.DataFrame({
                 "feature": _feat_names,
                 "mean_abs_shap": _mean_abs_rul,
@@ -6240,13 +6256,18 @@ def main():
 
     # ── Separate built-in cells by type ──────────────────────────────────────
     nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if k in NASA_CELL_IDS}
-    synth_fdfs = {k: v for k, v in featured_dfs_all.items() if k not in NASA_CELL_IDS}
+    sev_fdfs   = {k: v for k, v in featured_dfs_all.items() if k.startswith("S-")}
+    synth_fdfs = {k: v for k, v in featured_dfs_all.items()
+                  if k not in NASA_CELL_IDS and not k.startswith("S-")}
     nasa_sc    = {k: v for k, v in split_cycles_all.items() if k in NASA_CELL_IDS}
-    synth_sc   = {k: v for k, v in split_cycles_all.items() if k not in NASA_CELL_IDS}
+    sev_sc     = {k: v for k, v in split_cycles_all.items() if k.startswith("S-")}
+    synth_sc   = {k: v for k, v in split_cycles_all.items()
+                  if k not in NASA_CELL_IDS and not k.startswith("S-")}
 
     # ── Session state init (first run per session only) ───────────────────────
     if "data_mode" not in st.session_state:
-        st.session_state["data_mode"] = "nasa"
+        default_mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
+        st.session_state["data_mode"] = default_mode
     if "uploaded_mode_meta" not in st.session_state:
         st.session_state["uploaded_mode_meta"] = None
     # Application EOL threshold — user-configurable in Settings.
@@ -6268,13 +6289,16 @@ def main():
         st.session_state["data_mode"] = "nasa"
         mode = "nasa"
 
-    # Guard: unknown mode value (can appear from stale browser session state after
-    # a server restart). Reset to the default rather than hitting the else branch.
-    if mode not in ("nasa", "synthetic", "uploaded"):
-        st.session_state["data_mode"] = "nasa"
-        mode = "nasa"
+    # Guard: unknown mode value (stale session state after server restart)
+    if mode not in ("nasa", "synthetic", "severson", "uploaded"):
+        mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
+        st.session_state["data_mode"] = mode
 
-    if mode == "nasa":
+    if mode == "severson":
+        active_fdfs   = sev_fdfs
+        active_sc     = sev_sc
+        active_bundle = bundles.get("severson") or bundles.get("nasa")
+    elif mode == "nasa":
         active_fdfs   = nasa_fdfs
         active_sc     = nasa_sc
         active_bundle = bundles["nasa"]

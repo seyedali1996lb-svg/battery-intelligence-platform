@@ -18,7 +18,6 @@ from design_system import make_badge, make_state_badge
 # Each group: (group_label, [(display_label, page_key, enabled), ...])
 NAV_GROUPS = [
     ("Account", [
-        ("Login",    "login",    True),
         ("Import",   "import",   True),
         ("Overview", "overview", True),
     ]),

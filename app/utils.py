@@ -76,7 +76,7 @@ def _cell_provenance(cell_id: str) -> str:
 
 def _analysis_provenance(cell_id: str, analysis: str = "derived") -> str:
     """Return the provenance token for a specific analysis type."""
-    if cell_id in NASA_CELL_IDS:
+    if cell_id in NASA_CELL_IDS or cell_id.startswith(SEVERSON_CELL_PREFIX):
         return "measured" if analysis == "cycle" else "simulated"
     return "synthetic"
 
