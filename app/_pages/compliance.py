@@ -4,8 +4,8 @@ import streamlit as st
 
 
 def page_compliance(selected: str, df, bundle, rul_reliable: bool):
-    from pages.passport import page_passport
-    from pages.reports  import page_reports
+    from _pages.passport import page_passport
+    from _pages.reports  import page_reports
 
     st.markdown("# Compliance")
     st.markdown("##### EU Battery Regulation 2023/1542 · Passport fields · PDF report export")

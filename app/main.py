@@ -6202,7 +6202,7 @@ def page_coming_soon(key: str):
 
 def main():
     # ── Authentication gate ───────────────────────────────────────────────────
-    from pages.login import render_login
+    from _pages.login import render_login
     if not render_login():
         return   # login form rendered; stop until credentials provided
 
