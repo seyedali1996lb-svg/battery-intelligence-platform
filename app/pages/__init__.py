@@ -13,3 +13,4 @@ from pages.sustainability  import page_sustainability
 from pages.copilot         import page_copilot
 from pages.import_page     import page_import
 from pages.settings        import page_settings
+from pages.compliance      import page_compliance

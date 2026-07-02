@@ -31,9 +31,8 @@ NAV_GROUPS = [
         ("Grading",        "grading",         True),
     ]),
     ("Comply", [
-        ("Passport",     "passport",     True),
+        ("Compliance",    "compliance",   True),
         ("Sustainability","sustainability",True),
-        ("Reports",      "reports",      True),
     ]),
     ("Configure", [
         ("Import",   "import",   True),
@@ -47,7 +46,7 @@ NAV_ITEMS = [item for _, group in NAV_GROUPS for item in group]
 # Pages visible to each role (others are shown greyed out)
 _ROLE_NAV = {
     "fleet":      {"fleet", "recommendations", "consequences", "grading", "overview", "copilot", "settings"},
-    "compliance": {"passport", "sustainability", "reports", "overview", "settings"},
+    "compliance": {"passport", "sustainability", "reports", "compliance", "overview", "settings"},
     "engineer":   {"health", "compare", "insights", "copilot", "overview", "fleet", "grading", "settings"},
     "admin":      {item[1] for _, group in NAV_GROUPS for item in group},
 }

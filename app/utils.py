@@ -124,9 +124,13 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
     polyline = " ".join(pts)
     delta = vals[-1] - vals[0]
     stroke = "#68d391" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
+    trend_word = "stable" if delta >= -0.5 else ("declining" if delta >= -2 else "fast-declining")
+    aria_label = f"SOH sparkline: {trend_word}, {vals[-1]:.1f}% latest"
     return (
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
-        f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle">'
+        f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle" '
+        f'role="img" aria-label="{aria_label}">'
+        f'<title>{aria_label}</title>'
         f'<polyline points="{polyline}" fill="none" stroke="{stroke}" stroke-width="1.5" '
         f'stroke-linecap="round" stroke-linejoin="round"/>'
         f'</svg>'

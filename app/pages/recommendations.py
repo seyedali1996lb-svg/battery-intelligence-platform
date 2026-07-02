@@ -103,6 +103,34 @@ def page_recommendations(
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
+    # Application Profile
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;margin-bottom:8px'>Application Profile</div>",
+        unsafe_allow_html=True,
+    )
+    _profiles = ["EV", "Stationary Storage", "Industrial UPS", "Second-Life"]
+    _eol_by_profile = {"EV": 80, "Stationary Storage": 70, "Industrial UPS": 75, "Second-Life": 65}
+    _profile_cols = st.columns(4)
+    _cur_profile = st.session_state.get("app_profile", "EV")
+    for _pi, (_pname, _pcol) in enumerate(zip(_profiles, _profile_cols)):
+        with _pcol:
+            if st.button(
+                _pname, key=f"profile_btn_{_pi}",
+                type="primary" if _cur_profile == _pname else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["app_profile"] = _pname
+                st.session_state["eol_threshold_pct"] = float(_eol_by_profile[_pname])
+                st.rerun()
+    _profile_eol = _eol_by_profile.get(_cur_profile, 80)
+    st.markdown(
+        f"<div style='font-size:11px;color:#4a5568;margin-bottom:20px'>"
+        f"Profile: <strong style='color:#718096'>{_cur_profile}</strong> · "
+        f"EOL threshold: <strong style='color:#a0aec0'>{_profile_eol}% SOH</strong></div>",
+        unsafe_allow_html=True,
+    )
+
     # ── Hero card ──
     reason_html = "".join(
         f"<div style='margin-top:6px;font-size:13px;color:{action_colour}cc'>"
@@ -126,6 +154,34 @@ def page_recommendations(
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    _action_detail = {
+        "CRITICAL":  "Schedule immediate cell replacement — SOH below safe operating threshold.",
+        "ACT":       "Reduce max charge voltage to 4.1 V and schedule inspection within 30 days.",
+        "WATCH":     "Increase monitoring frequency to every 10 cycles. No immediate action required.",
+        "CONTINUE":  "Continue normal operation. Next review at 80% of estimated RUL.",
+    }.get(action, "Review recommended.")
+    st.markdown(
+        f"<div style='font-size:13px;color:#a0aec0;background:#1e2a38;border-radius:8px;"
+        f"padding:10px 16px;margin-bottom:12px'>{_action_detail}</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    _log_col1, _log_col2 = st.columns([3, 1])
+    with _log_col2:
+        if st.button("Log this decision", key="rec_log_decision", type="secondary"):
+            try:
+                from audit import log_decision
+                _rul_display = f"{rul_pred:.0f} cy" if rul_pred is not None else "N/A"
+                log_decision(
+                    action=action,
+                    cell=selected,
+                    notes=f"Profile: {_cur_profile} · SOH: {soh:.1f}% · RUL: {_rul_display}",
+                )
+                st.success("Decision logged — visible in Settings → Audit Log.")
+            except Exception as _log_err:
+                st.warning(f"Audit log unavailable: {_log_err}")
 
     if result["confidence_reasons"]:
         for note in result["confidence_reasons"]:

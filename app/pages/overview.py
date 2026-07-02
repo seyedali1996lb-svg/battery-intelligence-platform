@@ -150,9 +150,92 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _ce = float(latest["coulombic_efficiency"]) if "coulombic_efficiency" in latest.index else None
     ce_display = f"{_ce*100:.3f}%" if _ce is not None else "—"
 
+    # ── Plain-English action sentence ──
+    _fade_50 = float(latest.get("fade_rate_50cy", 0)) * 100
+    _fade_accel = float(latest.get("fade_rate_30cy", 0)) > float(latest.get("fade_rate_10cy", 0)) * 1.3
+    if not rul_calibrating and months_remaining is not None:
+        if months_remaining < 2:
+            _plain_sentence = f"This cell is near end of life — replacement within weeks is likely needed."
+        elif months_remaining < 6:
+            _plain_sentence = f"This cell will need replacement in approximately {months_remaining:.0f} months if current usage continues."
+        else:
+            _trend = " Fade is accelerating — monitor closely." if _fade_accel else ""
+            _plain_sentence = f"This cell has an estimated {months_remaining:.0f} months of useful life remaining.{_trend}"
+    elif rul_calibrating:
+        _plain_sentence = f"SOH is {current_soh:.1f}% — RUL cannot be estimated for this cell (model not calibrated). Monitor fade rate trend."
+    else:
+        _plain_sentence = f"SOH is {current_soh:.1f}% — {status_label.lower()} condition."
+
+    _sentence_color = "#fc8181" if current_soh < 80 else ("#f6ad55" if current_soh < 85 else "#68d391")
     _md_html(
-        f"""<div class="metric-row"><div class="metric-chip"><div class="metric-chip-label">State of Health</div><div class="metric-chip-value">{current_soh:.1f}%</div><div class="metric-chip-sub">vs 100% at cycle 1</div></div><div class="metric-chip"><div class="metric-chip-label">Cycles Completed</div><div class="metric-chip-value">{current_cycle:,}</div><div class="metric-chip-sub">charge / discharge</div></div><div class="metric-chip"><div class="metric-chip-label">Est. Remaining Life</div><div class="metric-chip-value">{rul_display}</div><div class="metric-chip-sub">{rul_sub}</div>{months_html}</div><div class="metric-chip"><div class="metric-chip-label">Capacity Lost</div><div class="metric-chip-value">{total_fade*1000:.0f} mAh</div><div class="metric-chip-sub">since commissioning</div></div><div class="metric-chip"><div class="metric-chip-label">Peak Power</div><div class="metric-chip-value" style="font-size:20px">{sop_display}</div><div class="metric-chip-sub">of initial capability</div></div><div class="metric-chip"><div class="metric-chip-label">Energy Delivered</div><div class="metric-chip-value" style="font-size:18px">{kwh_display}</div><div class="metric-chip-sub">cumulative throughput</div></div><div class="metric-chip"><div class="metric-chip-label">Equiv. Cycles</div><div class="metric-chip-value" style="font-size:18px">{eq_cy_display}</div><div class="metric-chip-sub">{eq_cy_sub}</div></div><div class="metric-chip"><div class="metric-chip-label">Coulombic Eff.</div><div class="metric-chip-value" style="font-size:18px">{ce_display}</div><div class="metric-chip-sub">last cycle Q_d / Q_c</div></div></div>"""
+        f"<div style='font-size:14px;color:{_sentence_color};margin:-4px 0 20px;"
+        f"padding:10px 16px;background:rgba(0,0,0,0.2);border-radius:8px;"
+        f"border-left:3px solid {_sentence_color}'>{_plain_sentence}</div>"
     )
+
+    # ── 3 primary metric chips (SOH, RUL, Fade Rate) ──
+    _fade_rate_30 = float(latest.get("fade_rate_30cy", 0)) * 1000
+    _res_now = float(latest.get("resistance_ohm", 0)) * 1000
+    _md_html(
+        f"""<div class="metric-row">
+        <div class="metric-chip">
+            <div class="metric-chip-label">State of Health</div>
+            <div class="metric-chip-value" style="color:{_sentence_color}">{current_soh:.1f}%</div>
+            <div class="metric-chip-sub">vs 100% at cycle 1 · {current_cycle:,} cycles completed</div>
+        </div>
+        <div class="metric-chip">
+            <div class="metric-chip-label">Remaining Useful Life</div>
+            <div class="metric-chip-value">{rul_display}</div>
+            <div class="metric-chip-sub">{rul_sub}</div>{months_html}
+        </div>
+        <div class="metric-chip">
+            <div class="metric-chip-label">Fade Rate (30-cycle avg)</div>
+            <div class="metric-chip-value" style="font-size:28px">{'↑' if _fade_accel else ''}{_fade_rate_30:.2f}</div>
+            <div class="metric-chip-sub">mAh/cycle · {'accelerating' if _fade_accel else 'stable'}</div>
+        </div>
+        <div class="metric-chip">
+            <div class="metric-chip-label">Internal Resistance</div>
+            <div class="metric-chip-value" style="font-size:28px">{_res_now:.1f}</div>
+            <div class="metric-chip-sub">mΩ current</div>
+        </div>
+        </div>"""
+    )
+
+    # ── Secondary metrics in collapsible expander ──
+    with st.expander("Cell details — throughput, efficiency, stress", expanded=False):
+        _md_html(
+            f"""<div class="metric-row">
+            <div class="metric-chip"><div class="metric-chip-label">Capacity Lost</div><div class="metric-chip-value" style="font-size:22px">{total_fade*1000:.0f} mAh</div><div class="metric-chip-sub">since commissioning</div></div>
+            <div class="metric-chip"><div class="metric-chip-label">Peak Power (SoP)</div><div class="metric-chip-value" style="font-size:22px">{sop_display}</div><div class="metric-chip-sub">of initial capability</div></div>
+            <div class="metric-chip"><div class="metric-chip-label">Energy Delivered</div><div class="metric-chip-value" style="font-size:22px">{kwh_display}</div><div class="metric-chip-sub">cumulative throughput</div></div>
+            <div class="metric-chip"><div class="metric-chip-label">Equiv. Cycles</div><div class="metric-chip-value" style="font-size:22px">{eq_cy_display}</div><div class="metric-chip-sub">{eq_cy_sub}</div></div>
+            <div class="metric-chip"><div class="metric-chip-label">Coulombic Eff.</div><div class="metric-chip-value" style="font-size:22px">{ce_display}</div><div class="metric-chip-sub">last cycle Q_d / Q_c</div></div>
+            </div>"""
+        )
+
+    # ── Contextual action bar ──
+    _action_links = [
+        ("Deep health analysis", "health"),
+        ("Degradation drivers (SHAP)", "insights"),
+        ("Recommendations", "recommendations"),
+        ("Fleet comparison", "fleet"),
+    ]
+    _link_html = " &nbsp;·&nbsp; ".join(
+        f"<span style='cursor:pointer;color:#63b3ed;text-decoration:underline dotted' "
+        f"onclick=\"window.location.href='?page={key}'\">{label}</span>"
+        for label, key in _action_links
+    )
+    _md_html(
+        f"<div style='font-size:12px;color:#4a5568;margin-bottom:20px'>"
+        f"From this view you can → {_link_html}</div>"
+    )
+    # Streamlit button version (onclick JS doesn't work in Streamlit — use buttons instead)
+    _act_cols = st.columns(len(_action_links))
+    for (_label, _key), _col in zip(_action_links, _act_cols):
+        with _col:
+            if st.button(_label, key=f"ov_link_{_key}", use_container_width=True, type="secondary"):
+                st.session_state["page"] = _key
+                st.rerun()
 
     if "cumulative_days" in df.columns:
         with st.expander("📅 Calendar Age Analysis", expanded=False):

@@ -365,7 +365,20 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             ),
         )
         fig_risk.update_layout(legend=dict(font=dict(size=11, color="#718096")))
-        st.plotly_chart(fig_risk, use_container_width=True)
+        _risk_event = st.plotly_chart(
+            fig_risk, use_container_width=True,
+            on_select="rerun", key="fleet_risk_chart",
+            selection_mode="points",
+        )
+        # Navigate to Health page for the clicked cell
+        _risk_sel = (_risk_event or {}).get("selection", {})
+        _risk_pts  = _risk_sel.get("points", []) if _risk_sel else []
+        if _risk_pts:
+            _clicked_cell = _risk_pts[0].get("customdata", [None])[0]
+            if _clicked_cell:
+                st.session_state["selected_cell"] = _clicked_cell
+                st.session_state["page"] = "health"
+                st.rerun()
 
         if uncal_rows:
             st.markdown(
@@ -376,6 +389,8 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             )
     else:
         st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
+
+    st.caption("Click any cell in the risk matrix to open its Health page.")
 
     # ── Cell-to-Cell Spread Trending ────────────────────────────────────────
     st.markdown("<div class='section-header'>📉 Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)

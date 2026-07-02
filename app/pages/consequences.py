@@ -43,8 +43,8 @@ def page_consequences(
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
 
     # ── Page header ──
-    st.markdown("# Consequences")
-    st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
+    st.markdown("# EOL Economics")
+    st.markdown("##### End-of-life value recovery · second-life fit scores · circular economy")
 
     _md_html(
         f"""

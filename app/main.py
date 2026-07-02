@@ -185,7 +185,26 @@ st.markdown(
         border: 1px solid rgba(104,211,145,0.25);
     }
     .block-container { padding-top: 24px !important; }
-    h1 { font-size: 22px !important; font-weight: 700 !important; color: #e2e8f0 !important; }
+    h1 { font-size: 28px !important; font-weight: 800 !important; color: #e2e8f0 !important; }
+    h2 { font-size: 20px !important; font-weight: 700 !important; color: #e2e8f0 !important; }
+    h3 { font-size: 16px !important; font-weight: 600 !important; color: #cbd5e0 !important; }
+    /* ── Accessibility: contrast fix — #8896a8 on #1a202c = 5.2:1 (WCAG AA pass) ── */
+    .metric-chip-sub, .hero-sub { color: #8896a8 !important; }
+    /* ── Accessibility: focus styles for all interactive elements ── */
+    button:focus-visible, [role="button"]:focus-visible,
+    input:focus-visible, select:focus-visible, a:focus-visible {
+        outline: 2px solid #63b3ed !important;
+        outline-offset: 2px !important;
+    }
+    section[data-testid="stSidebar"] button:focus-visible {
+        outline: 2px solid #63b3ed !important;
+        outline-offset: 2px !important;
+        border-radius: 6px !important;
+    }
+    /* ── Accessibility: status badge text supplement (color + shape + text) ── */
+    .status-good::before    { content: "✓ "; }
+    .status-warning::before { content: "⚠ "; }
+    .status-critical::before{ content: "✕ "; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -6302,6 +6321,14 @@ def main():
         page_recommendations(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "sustainability":
         page_sustainability(selected, df)
+    elif page == "compliance":
+        st.markdown("# Compliance")
+        st.markdown("##### EU Battery Regulation 2023/1542 · Passport fields · PDF report export")
+        _tab_passport, _tab_reports = st.tabs(["EU Battery Passport", "Reports & Export"])
+        with _tab_passport:
+            page_passport(selected, df, bundle, rul_reliable)
+        with _tab_reports:
+            page_reports(selected, df, bundle, rul_reliable)
     elif page == "passport":
         page_passport(selected, df, bundle, rul_reliable)
     elif page == "reports":
