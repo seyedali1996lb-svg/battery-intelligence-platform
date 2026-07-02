@@ -360,20 +360,43 @@ def load_everything():
                 st.write("Step 3 / 4 — NASA model: loaded from cache ✓")
                 bundle_nasa, fdfs_nasa, sc_nasa = cached_nasa
             else:
-                st.write(f"Step 4 / 4 — Training SOH/RUL model on {len(nasa_ids)} NASA cells…")
+                st.write(f"Step 3 / 4 — Training SOH/RUL model on {len(nasa_ids)} NASA cells…")
                 bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
                 save_cached("nasa", battery_nasa["cells"], (bundle_nasa, fdfs_nasa, sc_nasa))
-                st.write("Step 4 / 4 — NASA model: trained and cached ✓")
+                st.write("Step 3 / 4 — NASA model: trained and cached ✓")
         else:
-            st.write("Step 3 / 4 — NASA cells not found — run src/nasa_loader.py to enable")
+            st.write("Step 3 / 4 — NASA cells not found — skipping")
 
-        st.write("Step 4 / 4 — Building feature matrices and applying predictions…")
+        # ── Step 4: Severson 2019 LFP cells ──
+        bundle_sev, fdfs_sev, sc_sev = None, {}, {}
+        try:
+            from severson_loader import load_severson_cells, SEVERSON_CELL_IDS
+            cached_sev = load_cached("severson", {})
+            if cached_sev is not None:
+                st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
+                bundle_sev, fdfs_sev, sc_sev = cached_sev
+            else:
+                st.write("Step 4 / 4 — Loading Severson 2019 LFP cells (first run: ~115 MB download)…")
+                sev_cells = load_severson_cells(status_fn=lambda msg: st.write(f"  {msg}"))
+                if sev_cells:
+                    st.write(f"  {len(sev_cells)} cells loaded — training model…")
+                    # Convert to cycles-dict format _train_on_cells expects
+                    sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
+                    bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
+                    save_cached("severson", {}, (bundle_sev, fdfs_sev, sc_sev))
+                    st.write("Step 4 / 4 — Severson model: trained and cached ✓")
+                else:
+                    st.write("Step 4 / 4 — Severson download unavailable — using NASA + synthetic only")
+        except Exception as _sev_err:
+            st.write(f"Step 4 / 4 — Severson load skipped ({_sev_err})")
+
+        st.write("Finalising — building feature matrices…")
         _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
-    # Merge cell outputs; keep bundles separate
-    featured_dfs = {**fdfs_synth, **fdfs_nasa}
-    split_cycles = {**sc_synth, **sc_nasa}
-    bundles = {"synth": bundle_synth, "nasa": bundle_nasa}
+    # Merge all cell outputs; keep bundles separate by source
+    featured_dfs = {**fdfs_synth, **fdfs_nasa, **fdfs_sev}
+    split_cycles = {**sc_synth, **sc_nasa, **sc_sev}
+    bundles = {"synth": bundle_synth, "nasa": bundle_nasa, "severson": bundle_sev}
 
     return featured_dfs, bundles, split_cycles
 

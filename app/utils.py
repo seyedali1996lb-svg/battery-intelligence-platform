@@ -19,6 +19,8 @@ from design_system import provenance_banner, BADGE_MEASURED, BADGE_SIMULATED, BA
 # ---------------------------------------------------------------------------
 
 NASA_CELL_IDS = ["B0005", "B0006", "B0007", "B0018"]
+SEVERSON_CELL_PREFIX = "S-"   # all Severson cells start with "S-"
+MEASURED_CELL_IDS = set(NASA_CELL_IDS)  # extended at load time
 
 LEGEND_H = dict(
     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
@@ -67,7 +69,9 @@ def _md_html(html: str) -> None:
 
 def _cell_provenance(cell_id: str) -> str:
     """Return the data-origin token for a given cell."""
-    return "measured" if cell_id in NASA_CELL_IDS else "synthetic"
+    if cell_id in NASA_CELL_IDS or cell_id.startswith(SEVERSON_CELL_PREFIX):
+        return "measured"
+    return "synthetic"
 
 
 def _analysis_provenance(cell_id: str, analysis: str = "derived") -> str:

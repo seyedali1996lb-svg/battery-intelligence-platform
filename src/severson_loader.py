@@ -1,123 +1,111 @@
 """
-Severson 2019 (Nature Energy) dataset loader.
+Severson 2019 LFP dataset loader.
 
-Download from: https://data.matr.io/1/ (Severson et al., Nature Energy 2019).
-Place batch1.pkl, batch2.pkl, batch3.pkl in data/severson/
+Reference: Severson et al., "Data-driven prediction of battery cycle life
+before capacity degradation", Nature Energy 2019.
+Data: https://data.matr.io/1/  (research use)
 
-Dataset structure (Python pickle, list of cell dicts):
-    {
-      'summary': {
-        'QD':    np.array,   # discharge capacity per cycle (Ah)
-        'IR':    np.array,   # internal resistance (Ohm)
-        'Tavg':  np.array,   # average temperature (°C)
-        'cycle': np.array,   # cycle numbers
-      },
-      'cycles': {
-        '2': {'Qd': array, 'V': array, 't': array, ...},
-        ...
-      },
-      'barcode': str,
-    }
+Downloads Batch 1 of the MATLAB file on first call, extracts per-cycle
+discharge capacity, resistance, and temperature for 12 representative cells,
+and caches them as CSVs in data/raw/severson/.
+
+Cell selection spans 4 cycle-life bands:
+  Short  (<500 cy):   b1c2, b1c3, b1c4
+  Medium (500-900):   b1c7, b1c8, b1c9
+  Long   (900-1200):  b1c13, b1c14, b1c15
+  Extra  (>1200):     b1c26, b1c27, b1c28
 """
 
-import os
-import pickle
+from __future__ import annotations
+import io, pathlib
 import numpy as np
 import pandas as pd
+import requests
+
+_BATCH1_URL = "https://data.matr.io/1/api/v1/file/5c86c0b5fa2ede00015ddf66/download"
+
+_CELL_KEYS = [
+    "b1c2",  "b1c3",  "b1c4",
+    "b1c7",  "b1c8",  "b1c9",
+    "b1c13", "b1c14", "b1c15",
+    "b1c26", "b1c27", "b1c28",
+]
+
+_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "raw" / "severson"
+SEVERSON_CELL_IDS: list[str] = [f"S-{k}" for k in _CELL_KEYS]
 
 
-def load_severson_batch(pkl_path: str) -> dict[str, pd.DataFrame]:
-    """
-    Load one Severson batch pickle file.
-
-    Parameters
-    ----------
-    pkl_path : str
-        Absolute or relative path to a batch*.pkl file.
-
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Mapping of cell_id -> DataFrame with columns:
-        cycle_number, capacity_ah, resistance_ohm, temperature_c.
-        Cells with fewer than 100 cycles are skipped.
-    """
-    with open(pkl_path, "rb") as f:
-        batch = pickle.load(f)
-
-    cells: dict[str, pd.DataFrame] = {}
-
-    for i, cell in enumerate(batch):
-        # Determine cell ID
-        barcode = cell.get("barcode", None)
-        if barcode:
-            cell_id = f"SEV_{barcode}"
-        else:
-            cell_id = f"SEV_{i:03d}"
-
-        summary = cell.get("summary", {})
-
-        # Extract cycle numbers
-        cycle_arr = summary.get("cycle", None)
-        if cycle_arr is None or len(cycle_arr) < 100:
-            continue
-
-        n = len(cycle_arr)
-
-        # Capacity (QD)
-        qd = summary.get("QD", None)
-        capacity_ah = np.array(qd, dtype=float) if qd is not None else np.full(n, np.nan)
-
-        # Internal resistance (IR)
-        ir = summary.get("IR", None)
-        resistance_ohm = np.array(ir, dtype=float) if ir is not None else np.full(n, np.nan)
-
-        # Temperature (Tavg)
-        tavg = summary.get("Tavg", None)
-        temperature_c = np.array(tavg, dtype=float) if tavg is not None else np.full(n, np.nan)
-
-        # Align lengths (some arrays may differ by ±1 row)
-        min_len = min(n, len(capacity_ah), len(resistance_ohm), len(temperature_c))
-        df = pd.DataFrame({
-            "cycle_number":  np.array(cycle_arr[:min_len], dtype=int),
-            "capacity_ah":   capacity_ah[:min_len],
-            "resistance_ohm": resistance_ohm[:min_len],
-            "temperature_c": temperature_c[:min_len],
-        })
-
-        if len(df) < 100:
-            continue
-
-        cells[cell_id] = df
-
-    return cells
+def _csv_path(k: str) -> pathlib.Path:
+    return _RAW_DIR / f"{k}_summary.csv"
 
 
-def load_severson_directory(directory: str) -> dict[str, pd.DataFrame]:
-    """
-    Load all batch*.pkl files found in `directory`.
+def _all_cached() -> bool:
+    return all(_csv_path(k).exists() for k in _CELL_KEYS)
 
-    Parameters
-    ----------
-    directory : str
-        Path to a directory containing one or more .pkl files.
 
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        Merged mapping of all cell_id -> DataFrame across all batches.
-    """
-    all_cells: dict[str, pd.DataFrame] = {}
+def _download_and_cache(status_fn=None) -> None:
+    try:
+        import scipy.io
+    except ImportError:
+        raise ImportError("scipy required to parse Severson dataset.")
 
-    for fname in sorted(os.listdir(directory)):
-        if not fname.endswith(".pkl"):
-            continue
-        fpath = os.path.join(directory, fname)
+    _RAW_DIR.mkdir(parents=True, exist_ok=True)
+    if status_fn:
+        status_fn("Downloading Severson 2019 Batch 1 (~115 MB, one-time)…")
+
+    resp = requests.get(_BATCH1_URL, stream=True, timeout=300)
+    resp.raise_for_status()
+    raw = b"".join(resp.iter_content(chunk_size=1 << 20))
+
+    if status_fn:
+        status_fn("Parsing Severson cell summaries…")
+
+    mat = scipy.io.loadmat(
+        io.BytesIO(raw),
+        squeeze_me=True, struct_as_record=False, simplify_cells=True,
+    )
+    batch = mat.get("batch", mat)
+
+    for key in _CELL_KEYS:
         try:
-            batch_cells = load_severson_batch(fpath)
-            all_cells.update(batch_cells)
-            print(f"  [severson] Loaded {len(batch_cells)} cells from {fname}")
-        except Exception as exc:
-            print(f"  [severson] Warning: could not load {fname}: {exc}")
+            s = batch[key]["summary"]
+            cycles = np.atleast_1d(s["cycle"]).astype(int)
+            qd     = np.atleast_1d(s["QDischarge"]).astype(float)
+            ir     = np.atleast_1d(s.get("IR",      np.full(len(cycles), np.nan))).astype(float)
+            tavg   = np.atleast_1d(s.get("Tavg",    np.full(len(cycles), 30.0))).astype(float)
+            q0     = float(qd[0]) if float(qd[0]) > 0 else 1.0
+            pd.DataFrame({
+                "cycle_number":   cycles,
+                "capacity_ah":    qd,
+                "soh_pct":        qd / q0 * 100.0,
+                "resistance_ohm": ir,
+                "temperature_c":  tavg,
+            }).to_csv(_csv_path(key), index=False)
+        except (KeyError, TypeError, IndexError):
+            continue
 
-    return all_cells
+
+def _load_cached(key: str) -> dict | None:
+    path = _csv_path(key)
+    if not path.exists():
+        return None
+    df = pd.read_csv(path)
+    if len(df) < 5:
+        return None
+    return {"cell_id": f"S-{key}", "source": "severson2019", "chemistry": "LFP", "cycles": df}
+
+
+def load_severson_cells(status_fn=None) -> dict[str, dict]:
+    """Download-and-cache on first call, then load from CSV. Returns {} on failure."""
+    if not _all_cached():
+        try:
+            _download_and_cache(status_fn=status_fn)
+        except Exception as exc:
+            print(f"[severson] Download failed — skipping real data: {exc}")
+            return {}
+    cells = {}
+    for key in _CELL_KEYS:
+        c = _load_cached(key)
+        if c:
+            cells[c["cell_id"]] = c
+    return cells
