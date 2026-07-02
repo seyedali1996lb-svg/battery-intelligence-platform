@@ -51,6 +51,60 @@ BADGE_ESTIMATE  = make_badge("Cited estimate",           C_AMBER)
 BADGE_ILLUST    = make_badge("Illustrative — not sourced", C_MUTED)
 BADGE_UNAVAIL   = make_badge("Not available in demo",    C_MUTED)
 
+# ---------------------------------------------------------------------------
+# Data-origin provenance badges — MUST appear on every analysis chart/section
+#
+#   MEASURED   = direct physical measurement (NASA cycle data, real EIS file)
+#   SIMULATED  = physics model applied to real measured inputs
+#   SYNTHETIC  = physics model applied to generated (fake) inputs
+#
+# Rule: if you cannot cite a real instrument measurement as the source,
+# the output is SIMULATED or SYNTHETIC, never MEASURED.
+# ---------------------------------------------------------------------------
+
+C_MEASURED  = "#276749"   # dark green — real instrument data
+C_SIMULATED = "#b7791f"   # amber — physics model on real inputs
+C_SYNTHETIC = "#c53030"   # red — physics model on generated inputs
+
+BADGE_MEASURED   = make_badge("● MEASURED",   C_MEASURED)
+BADGE_SIMULATED  = make_badge("◐ SIMULATED",  C_SIMULATED)
+BADGE_SYNTHETIC  = make_badge("○ SYNTHETIC",  C_SYNTHETIC)
+
+
+def provenance_banner(
+    source: str,          # "measured" | "simulated" | "synthetic"
+    detail: str = "",     # one-line explanation shown inline
+) -> str:
+    """
+    Return a full-width HTML banner declaring the data origin of the analysis
+    below it.  Call this at the top of every expander or chart section.
+
+    source must be one of "measured", "simulated", "synthetic".
+    detail is the human-readable explanation shown in the banner body.
+    """
+    cfg = {
+        "measured":  (C_MEASURED,  "● MEASURED",
+                      detail or "Derived from real physical measurements."),
+        "simulated": (C_SIMULATED, "◐ SIMULATED",
+                      detail or "Computed by a physics model applied to real measured inputs. "
+                                "Not a direct instrument reading."),
+        "synthetic": (C_SYNTHETIC, "○ SYNTHETIC",
+                      detail or "Computed by a physics model applied to generated (synthetic) cell data. "
+                                "No real measurements underlie this analysis. "
+                                "Do not use for engineering decisions on real cells."),
+    }
+    c, label, msg = cfg[source]
+    return (
+        f"<div style='background:{c}18;border:1px solid {c}44;"
+        f"border-radius:8px;padding:9px 14px;margin-bottom:12px;"
+        f"display:flex;align-items:flex-start;gap:10px'>"
+        f"<span style='background:{c}33;color:{c};font-size:10px;font-weight:800;"
+        f"padding:2px 8px;border-radius:6px;letter-spacing:0.07em;white-space:nowrap;"
+        f"margin-top:1px'>{label}</span>"
+        f"<span style='font-size:12px;color:{c}cc;line-height:1.5'>{msg}</span>"
+        f"</div>"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Three-state availability badge (Passport + EU Green Deal pages)
