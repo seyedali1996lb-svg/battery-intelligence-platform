@@ -14,22 +14,43 @@ from utils import NASA_CELL_IDS, _md_html, LEGEND_H
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from design_system import make_badge, make_state_badge
 
-NAV_ITEMS = [
-    ("Overview",        "overview",        True),
-    ("Fleet",           "fleet",           True),
-    ("Health",          "health",          True),
-    ("Insights",        "insights",        True),
-    ("Copilot",         "copilot",         True),
-    ("Compare",         "compare",         True),
-    ("Recommendations", "recommendations", True),
-    ("Consequences",    "consequences",    True),
-    ("Sustainability",  "sustainability",  True),
-    ("Passport",        "passport",        True),
-    ("Grading",         "grading",         True),
-    ("Reports",         "reports",         True),
-    ("Import",          "import",          True),
-    ("Settings",        "settings",        True),
+# Grouped navigation — 4 workflow sections
+# Each group: (group_label, [(display_label, page_key, enabled), ...])
+NAV_GROUPS = [
+    ("Analyse", [
+        ("Overview",   "overview",  True),
+        ("Health",     "health",    True),
+        ("Compare",    "compare",   True),
+        ("Insights",   "insights",  True),
+        ("Copilot",    "copilot",   True),
+    ]),
+    ("Operate", [
+        ("Fleet",          "fleet",           True),
+        ("Recommendations","recommendations", True),
+        ("EOL Economics",  "consequences",    True),
+        ("Grading",        "grading",         True),
+    ]),
+    ("Comply", [
+        ("Passport",     "passport",     True),
+        ("Sustainability","sustainability",True),
+        ("Reports",      "reports",      True),
+    ]),
+    ("Configure", [
+        ("Import",   "import",   True),
+        ("Settings", "settings", True),
+    ]),
 ]
+
+# Flat list for backwards-compatible code that iterates NAV_ITEMS
+NAV_ITEMS = [item for _, group in NAV_GROUPS for item in group]
+
+# Pages visible to each role (others are shown greyed out)
+_ROLE_NAV = {
+    "fleet":      {"fleet", "recommendations", "consequences", "grading", "overview", "copilot", "settings"},
+    "compliance": {"passport", "sustainability", "reports", "overview", "settings"},
+    "engineer":   {"health", "compare", "insights", "copilot", "overview", "fleet", "grading", "settings"},
+    "admin":      {item[1] for _, group in NAV_GROUPS for item in group},
+}
 
 
 def _upload_status_line(meta: dict) -> str:
@@ -130,40 +151,69 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         else:
             subtitle = f"{nasa_n + synth_n} cells ({synth_n} synthetic + {nasa_n} NASA real) · multi-cell model"
 
+        auth_name = st.session_state.get("auth_name", "")
+        auth_role = st.session_state.get("auth_role", "")
+        _role_color = {
+            "fleet": "#63b3ed", "compliance": "#68d391",
+            "engineer": "#f6ad55", "admin": "#9f7aea",
+        }.get(auth_role, "#718096")
+
         st.markdown(
-            f"<div style='padding:0 4px 16px'>"
+            f"<div style='padding:0 4px 12px;display:flex;justify-content:space-between;align-items:flex-start'>"
+            f"<div>"
             f"<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{subtitle}</div>"
+            f"</div>"
+            f"<div style='text-align:right'>"
+            f"<div style='font-size:11px;font-weight:600;color:{_role_color}'>{auth_name}</div>"
+            f"<div style='font-size:10px;color:#4a5568'>{auth_role}</div>"
+            f"</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
+
+        if st.button("Sign out", key="signout_btn", use_container_width=False):
+            for k in ["authenticated", "auth_user", "auth_role", "auth_name"]:
+                st.session_state.pop(k, None)
+            st.rerun()
 
         render_mode_switcher(nasa_n, synth_n, up_meta)
 
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
         if "page" not in st.session_state:
-            st.session_state.page = "overview"
+            # Default page: Fleet for fleet role, else Overview
+            _role = st.session_state.get("auth_role", "admin")
+            st.session_state.page = "fleet" if _role == "fleet" else "overview"
         current_page = st.session_state.page
-        _nav_key_counts: dict[str, int] = {}
-        for label, key, enabled in NAV_ITEMS:
-            _nav_key_counts[key] = _nav_key_counts.get(key, 0) + 1
-            btn_key = f"nav_{key}" if _nav_key_counts[key] == 1 else f"nav_{key}_b"
-            if enabled:
-                if st.button(
-                    label, key=btn_key, use_container_width=True,
-                    type="primary" if current_page == key else "secondary",
-                ):
-                    st.session_state.page = key
-                    st.rerun()
-            else:
-                st.markdown(
-                    f"<div style='padding:7px 12px;color:#4a5568;font-size:14px;"
-                    f"font-weight:500;display:flex;justify-content:space-between;align-items:center'>"
-                    f"<span>{label}</span>"
-                    f"<span style='font-size:10px;background:#1a202c;color:#4a5568;"
-                    f"padding:1px 7px;border-radius:10px'>Soon</span></div>",
-                    unsafe_allow_html=True,
-                )
+        _role        = st.session_state.get("auth_role", "admin")
+        _allowed     = _ROLE_NAV.get(_role, _ROLE_NAV["admin"])
+
+        for group_label, group_items in NAV_GROUPS:
+            # Group separator
+            st.markdown(
+                f"<div style='font-size:10px;font-weight:600;color:#2d3748;text-transform:uppercase;"
+                f"letter-spacing:0.1em;padding:10px 4px 4px'>{group_label}</div>",
+                unsafe_allow_html=True,
+            )
+            for label, key, enabled in group_items:
+                in_role = key in _allowed
+                if enabled and in_role:
+                    if st.button(
+                        label, key=f"nav_{key}", use_container_width=True,
+                        type="primary" if current_page == key else "secondary",
+                    ):
+                        st.session_state.page = key
+                        st.rerun()
+                else:
+                    tag = "Soon" if not enabled else "Role"
+                    st.markdown(
+                        f"<div style='padding:7px 12px;color:#2d3748;font-size:14px;"
+                        f"font-weight:500;display:flex;justify-content:space-between;align-items:center'>"
+                        f"<span>{label}</span>"
+                        f"<span style='font-size:10px;background:#1a202c;color:#2d3748;"
+                        f"padding:1px 7px;border-radius:10px'>{tag}</span></div>",
+                        unsafe_allow_html=True,
+                    )
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(

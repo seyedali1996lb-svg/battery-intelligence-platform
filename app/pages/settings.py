@@ -458,3 +458,97 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "</div>",
         unsafe_allow_html=True,
     )
+
+    # ── Section 5: Production Roadmap ──
+    _section("Production Roadmap")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#718096;line-height:1.6;margin-bottom:16px'>"
+        "This platform is a functional Phase 1 product. The gaps below are documented honestly — "
+        "each has a defined path to resolution for a production deployment.</div>",
+        unsafe_allow_html=True,
+    )
+
+    roadmap_items = [
+        ("Authentication & RBAC",
+         "Current state: demo login wall (session-scoped). Production: OAuth 2.0 via Okta or Azure AD; "
+         "role-based UI rendering per user identity; JWT session tokens.",
+         "High"),
+        ("Multi-tenancy",
+         "Current state: global st.cache_resource shared across all sessions — user A's uploads are "
+         "visible to user B in a multi-worker deployment. Production: tenant-scoped data isolation "
+         "via PostgreSQL row-level security or separate schema per tenant.",
+         "High"),
+        ("Data persistence",
+         "Current state: uploaded data is session-scoped and lost on page refresh. Production: "
+         "PostgreSQL + TimescaleDB for time-series cycle data; S3/blob for raw files. "
+         "SQLite is an acceptable intermediate step for single-user local deployment.",
+         "High"),
+        ("REST API / BMS integration",
+         "Current state: no external interface. Production: FastAPI layer over the model pipeline; "
+         "webhook endpoints for real-time BMS telemetry (MQTT or Kafka ingest); "
+         "versioned REST API for SCADA / CMMS integration.",
+         "Medium"),
+        ("Audit log persistence",
+         "Current state: in-memory session log (see Audit Log section below). "
+         "Production: append-only PostgreSQL audit table with user identity, timestamp, "
+         "action, and cell reference. Required for regulated-industry deployment.",
+         "Medium"),
+        ("Scalability",
+         "Current state: all cells loaded into memory at startup; synchronous model training "
+         "blocks UI for 20–60 s. Production: lazy per-cell data loading; background training "
+         "thread with progress websocket; pre-aggregated summary metrics in database; "
+         "Parquet columnar storage for cycle data.",
+         "Medium"),
+        ("Real EIS data",
+         "Current state: Nyquist plots and EIS decomposition are physics approximations on DC "
+         "resistance values — not measured impedance spectra. Production: Gamry / BioLogic "
+         "potentiostat integration; impedance.py for DRT fitting; Warburg from real frequency-domain data.",
+         "High"),
+        ("Dataset expansion",
+         "Current state: 12 cells (8 synthetic + 4 NASA 18650 from 2007). Production: "
+         "Severson 2019 (124 LFP cells, publicly available); CALCE NMC/LFP; Oxford LiCoO₂; "
+         "minimum 50+ real cells for a defensible RUL model.",
+         "Critical"),
+    ]
+
+    priority_color = {"Critical": "#fc8181", "High": "#f6ad55", "Medium": "#68d391"}
+
+    for title, detail, priority in roadmap_items:
+        pc = priority_color.get(priority, "#718096")
+        with st.expander(f"{title}  —  priority: {priority}"):
+            st.markdown(
+                f"<div style='font-size:12px;color:#a0aec0;line-height:1.7'>{detail}</div>",
+                unsafe_allow_html=True,
+            )
+
+    # ── Section 6: Audit Log ──
+    _section("Session Audit Log")
+
+    st.markdown(
+        "<div style='font-size:12px;color:#4a5568;line-height:1.6;margin-bottom:12px'>"
+        "Records page views, Copilot queries, and logged decisions for this session. "
+        "Cleared when the session ends. A production deployment would persist this to a database.</div>",
+        unsafe_allow_html=True,
+    )
+
+    from audit import get_log, export_csv as audit_csv
+    log_records = get_log()
+
+    if log_records:
+        import pandas as _pd
+        log_df = _pd.DataFrame(log_records)
+        st.dataframe(log_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Export audit log (CSV)",
+            data=audit_csv(),
+            file_name="battery_intel_audit.csv",
+            mime="text/csv",
+            key="settings_audit_export",
+        )
+    else:
+        st.markdown(
+            "<div style='font-size:12px;color:#2d3748;padding:16px;text-align:center'>"
+            "No activity recorded yet in this session.</div>",
+            unsafe_allow_html=True,
+        )

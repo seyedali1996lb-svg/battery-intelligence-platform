@@ -6168,6 +6168,11 @@ def page_coming_soon(key: str):
 # ---------------------------------------------------------------------------
 
 def main():
+    # ── Authentication gate ───────────────────────────────────────────────────
+    from pages.login import render_login
+    if not render_login():
+        return   # login form rendered; stop until credentials provided
+
     featured_dfs_all, bundles, split_cycles_all = load_everything()
 
     # ── Separate built-in cells by type ──────────────────────────────────────
@@ -6232,6 +6237,17 @@ def main():
     split_cycle = active_sc[selected]
     bundle      = active_bundle
     page        = st.session_state.get("page", "overview")
+
+    # ── Audit logging ─────────────────────────────────────────────────────────
+    import sys as _sys
+    _src = os.path.join(os.path.dirname(__file__), "..", "src")
+    if _src not in _sys.path:
+        _sys.path.insert(0, _src)
+    from audit import log_page_view
+    _last_audited = st.session_state.get("_audit_last", "")
+    if f"{page}:{selected}" != _last_audited:
+        log_page_view(page, selected)
+        st.session_state["_audit_last"] = f"{page}:{selected}"
 
     # Per-cell reliability: use the specific fold R² for this cell, not the group average.
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
