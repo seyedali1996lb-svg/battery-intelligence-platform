@@ -560,7 +560,8 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
 
 
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
-                   up_meta: dict | None, sev_n: int = 0) -> str:
+                   up_meta: dict | None, sev_n: int = 0,
+                   active_fdfs: dict | None = None) -> str:
     with st.sidebar:
         # Dynamic subtitle based on active mode
         n_cells = len(cell_ids)
@@ -724,6 +725,36 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             "</div>",
             unsafe_allow_html=True,
         )
+
+        # ── Fleet alerts ──
+        if active_fdfs:
+            _soh_thresh  = float(st.session_state.get("soh_alert_pct", 85))
+            _res_mult    = float(st.session_state.get("resistance_alert_mult", 1.8))
+            _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
+            _alert_msgs  = []
+            for _cid, _fdf in active_fdfs.items():
+                _latest = _fdf.iloc[-1]
+                if float(_latest.get("soh_pct", 100)) < _soh_thresh:
+                    _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
+                if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
+                    _r_init = float(_fdf["resistance_ohm"].iloc[0])
+                    _r_now  = float(_latest["resistance_ohm"])
+                    if _r_init > 0 and _r_now > _r_init * _res_mult:
+                        _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
+            if len(active_fdfs) > 1:
+                _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
+                _spread   = max(_soh_vals) - min(_soh_vals)
+                if _spread > _spread_thresh:
+                    _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
+            if _alert_msgs:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                _label = f"🔔 {len(_alert_msgs)} Alert{'s' if len(_alert_msgs) > 1 else ''}"
+                with st.expander(_label, expanded=False):
+                    for _kind, _msg in _alert_msgs:
+                        if _kind == "error":
+                            st.error(_msg)
+                        else:
+                            st.warning(_msg)
 
     return selected
 
@@ -6319,12 +6350,13 @@ def main():
 
     cell_ids = list(active_fdfs.keys())
     selected = render_sidebar(
-        cell_ids  = cell_ids,
-        mode      = mode,
-        nasa_n    = len(nasa_fdfs),
-        synth_n   = len(synth_fdfs),
-        up_meta   = up_meta,
-        sev_n     = len(sev_fdfs),
+        cell_ids    = cell_ids,
+        mode        = mode,
+        nasa_n      = len(nasa_fdfs),
+        synth_n     = len(synth_fdfs),
+        up_meta     = up_meta,
+        sev_n       = len(sev_fdfs),
+        active_fdfs = active_fdfs,
     )
 
     df          = active_fdfs[selected]
@@ -6346,39 +6378,6 @@ def main():
     # Per-cell reliability: use the specific fold R² for this cell, not the group average.
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
     rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
-
-    # ── Global fleet alerts — shown only in sidebar, not across every page ──
-    _soh_thresh = float(st.session_state.get("soh_alert_pct", 85))
-    _res_mult = float(st.session_state.get("resistance_alert_mult", 1.8))
-    _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
-    _alert_msgs = []
-
-    for _cid, _fdf in active_fdfs.items():
-        _latest = _fdf.iloc[-1]
-        if float(_latest.get("soh_pct", 100)) < _soh_thresh:
-            _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
-        if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
-            _r_init = float(_fdf["resistance_ohm"].iloc[0])
-            _r_now = float(_latest["resistance_ohm"])
-            if _r_init > 0 and _r_now > _r_init * _res_mult:
-                _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
-
-    if len(active_fdfs) > 1:
-        _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
-        _spread = max(_soh_vals) - min(_soh_vals)
-        if _spread > _spread_thresh:
-            _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
-
-    # Render alerts as a compact collapsible block in the sidebar only
-    if _alert_msgs:
-        with st.sidebar:
-            _label = f"🔔 {len(_alert_msgs)} Alert{'s' if len(_alert_msgs) > 1 else ''}"
-            with st.expander(_label, expanded=False):
-                for _kind, _msg in _alert_msgs:
-                    if _kind == "error":
-                        st.error(_msg)
-                    else:
-                        st.warning(_msg)
 
     if page == "overview":
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
