@@ -43,7 +43,10 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
         df["resistance_trend_30cy"] = (
             df["resistance_ohm"].diff().rolling(30, min_periods=1).mean()
         )
-        initial_r = df["resistance_ohm"].iloc[0]
+        # Use first non-zero value as reference; avoids div-by-zero when cycle 1
+        # has a missing IR measurement stored as 0 (e.g. Severson LFP cells).
+        _r_pos = df["resistance_ohm"][df["resistance_ohm"] > 0]
+        initial_r = float(_r_pos.iloc[0]) if len(_r_pos) else 1.0
         df["resistance_normalized"] = df["resistance_ohm"] / initial_r
     else:
         df["resistance_trend_30cy"] = np.nan
@@ -72,7 +75,8 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
     # percentage of the cell's initial power capability so it's dimensionless
     # and comparable across resistance scales (NASA vs synthetic).
     if "resistance_ohm" in df.columns:
-        initial_r   = df["resistance_ohm"].iloc[0]
+        _r_pos2   = df["resistance_ohm"][df["resistance_ohm"] > 0]
+        initial_r = float(_r_pos2.iloc[0]) if len(_r_pos2) else 1.0
         df["sop_pct"] = (initial_r / df["resistance_ohm"].clip(lower=1e-6)) * 100.0
     else:
         df["sop_pct"] = np.nan

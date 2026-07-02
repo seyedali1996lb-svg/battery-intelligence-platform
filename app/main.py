@@ -578,8 +578,8 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
 
         st.markdown(
             f"<div style='padding:0 4px 16px'>"
-            f"<div style='font-size:16px;font-weight:700;color:#e2e8f0'>⚡ Battery Intel</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{subtitle}</div>"
+            f"<div style='font-size:17px;font-weight:800;color:#ffffff;letter-spacing:0.01em'>⚡ Battery Intel</div>"
+            f"<div style='font-size:11px;color:#718096;margin-top:3px'>{subtitle}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
