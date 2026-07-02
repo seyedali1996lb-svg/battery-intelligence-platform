@@ -690,7 +690,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                     _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
                 if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
                     _r_init = float(_fdf["resistance_ohm"].iloc[0])
-                    _r_now  = float(_latest["resistance_ohm"])
+                    _r_now  = float(_latest.get("resistance_ohm", 0))
                     if _r_init > 0 and _r_now > _r_init * _res_mult:
                         _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
             if len(active_fdfs) > 1:
@@ -1069,10 +1069,10 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
     # ── Scenario projections ──
     import numpy as np
-    last_cycle = df.cycle_number.iloc[-1]
-    last_soh   = df.soh_pct.iloc[-1]
+    last_cycle = df["cycle_number"].iloc[-1]
+    last_soh   = df["soh_pct"].iloc[-1]
     eol_line   = float(st.session_state.get("eol_threshold_pct", 80.0))
-    nominal_rate    = float(df.fade_rate_50cy.iloc[-1]) * 100   # % SOH / cycle
+    nominal_rate    = float(df["fade_rate_50cy"].iloc[-1]) * 100   # % SOH / cycle
     optimistic_rate = nominal_rate * 0.6
     pessimistic_rate = nominal_rate * 1.5
 
@@ -2900,8 +2900,11 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     _md_html("""<div style="font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
     try:
         import numpy as _np_sp
-        _cy_min = int(max(df.iloc[0]["cycle_number"] if len(df) > 0 else 1 for df in featured_dfs.values()))
-        _cy_max = int(min(df.iloc[-1]["cycle_number"] for df in featured_dfs.values()))
+        _nonempty = [df for df in featured_dfs.values() if len(df) > 0]
+        if not _nonempty:
+            raise ValueError("No cycle data available")
+        _cy_min = int(max(df.iloc[0]["cycle_number"] for df in _nonempty))
+        _cy_max = int(min(df.iloc[-1]["cycle_number"] for df in _nonempty))
         if _cy_max > _cy_min + 20 and len(featured_dfs) >= 2:
             _check_cycles = list(range(_cy_min, _cy_max + 1, max(1, (_cy_max - _cy_min) // 80)))
             _sigma_data = []
@@ -6094,8 +6097,8 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     _soh_b = float(df_b["soh_pct"].iloc[-1])
     _cyc_a = int(df_a["cycle_number"].iloc[-1])
     _cyc_b = int(df_b["cycle_number"].iloc[-1])
-    _res_a = float(df_a["resistance_ohm"].iloc[-1])
-    _res_b = float(df_b["resistance_ohm"].iloc[-1])
+    _res_a = float(df_a["resistance_ohm"].iloc[-1]) if "resistance_ohm" in df_a.columns else float("nan")
+    _res_b = float(df_b["resistance_ohm"].iloc[-1]) if "resistance_ohm" in df_b.columns else float("nan")
     _fade_a = float(df_a["fade_rate_50cy"].iloc[-1])
     _fade_b = float(df_b["fade_rate_50cy"].iloc[-1])
 
@@ -6105,8 +6108,11 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     _mc4.metric(f"Cycles — {cell_b}", f"{_cyc_b:,}")
 
     _mc5, _mc6, _mc7, _mc8 = st.columns(4)
-    _mc5.metric(f"Resistance — {cell_a}", f"{_res_a*1000:.1f} mΩ", delta=f"{(_res_a - _res_b)*1000:+.1f} mΩ")
-    _mc6.metric(f"Resistance — {cell_b}", f"{_res_b*1000:.1f} mΩ")
+    _res_a_str = f"{_res_a*1000:.1f} mΩ" if not (isinstance(_res_a, float) and _res_a != _res_a) else "N/A"
+    _res_b_str = f"{_res_b*1000:.1f} mΩ" if not (isinstance(_res_b, float) and _res_b != _res_b) else "N/A"
+    _res_delta_str = f"{(_res_a - _res_b)*1000:+.1f} mΩ" if _res_a == _res_a and _res_b == _res_b else None
+    _mc5.metric(f"Resistance — {cell_a}", _res_a_str, delta=_res_delta_str)
+    _mc6.metric(f"Resistance — {cell_b}", _res_b_str)
     _mc7.metric(f"Fade rate — {cell_a}", f"{_fade_a*1000:.2f} mSOH/cy", delta=f"{(_fade_a - _fade_b)*1000:+.2f}")
     _mc8.metric(f"Fade rate — {cell_b}", f"{_fade_b*1000:.2f} mSOH/cy")
 
@@ -6140,28 +6146,31 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
     # ── Resistance trajectory comparison ──
     st.markdown("<div class='section-header'>Resistance Trajectory Comparison</div>", unsafe_allow_html=True)
-    _fig_res = go.Figure()
-    _fig_res.add_trace(go.Scatter(
-        x=df_a["cycle_number"], y=df_a["resistance_ohm"] * 1000,
-        name=cell_a, line=dict(color="#63b3ed", width=2),
-        hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
-    ))
-    _fig_res.add_trace(go.Scatter(
-        x=df_b["cycle_number"], y=df_b["resistance_ohm"] * 1000,
-        name=cell_b, line=dict(color="#fc8181", width=2),
-        hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
-    ))
-    _fig_res.update_layout(
-        height=280,
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="#e2e8f0"),
-        margin=dict(l=10, r=10, t=36, b=10),
-        hovermode="x unified",
-        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-        yaxis=dict(title="Resistance (mΩ)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-        legend=dict(font=dict(size=11, color="#718096")),
-    )
-    st.plotly_chart(_fig_res, use_container_width=True)
+    if "resistance_ohm" in df_a.columns and "resistance_ohm" in df_b.columns:
+        _fig_res = go.Figure()
+        _fig_res.add_trace(go.Scatter(
+            x=df_a["cycle_number"], y=df_a["resistance_ohm"] * 1000,
+            name=cell_a, line=dict(color="#63b3ed", width=2),
+            hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
+        ))
+        _fig_res.add_trace(go.Scatter(
+            x=df_b["cycle_number"], y=df_b["resistance_ohm"] * 1000,
+            name=cell_b, line=dict(color="#fc8181", width=2),
+            hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
+        ))
+        _fig_res.update_layout(
+            height=280,
+            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+            font=dict(color="#e2e8f0"),
+            margin=dict(l=10, r=10, t=36, b=10),
+            hovermode="x unified",
+            xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="Resistance (mΩ)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+            legend=dict(font=dict(size=11, color="#718096")),
+        )
+        st.plotly_chart(_fig_res, use_container_width=True)
+    else:
+        st.info("Resistance data not available for one or both selected cells.")
 
     # ── Engineering Radar Chart (CATL / A123 format) ─────────────────────────
     st.markdown("<div class='section-header'>Engineering Radar — Multi-Metric Health Profile</div>", unsafe_allow_html=True)
