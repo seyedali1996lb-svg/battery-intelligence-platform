@@ -385,26 +385,32 @@ def load_everything():
             st.write("Step 3 / 4 — NASA cells not found — skipping")
 
         # ── Step 4: Severson 2019 LFP cells ──
+        # Only load if CSVs are already pre-cached locally. The raw MATLAB file
+        # is ~115 MB — downloading it at startup would block Streamlit Cloud for
+        # several minutes and trigger an OOM/timeout kill. Run
+        # `python src/severson_loader.py` locally to pre-generate the CSVs,
+        # then re-deploy with them committed to data/raw/severson/.
         bundle_sev, fdfs_sev, sc_sev = None, {}, {}
         try:
-            from severson_loader import load_severson_cells, SEVERSON_CELL_IDS
+            from severson_loader import load_severson_cells, SEVERSON_CELL_IDS, any_cached as _sev_any_cached
             _SEV_KEY = {"source": "severson_batch1"}
             cached_sev = load_cached("severson", _SEV_KEY)
             if cached_sev is not None:
                 st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
                 bundle_sev, fdfs_sev, sc_sev = cached_sev
-            else:
-                st.write("Step 4 / 4 — Loading Severson 2019 LFP cells (first run: ~115 MB download)…")
+            elif _sev_any_cached():
+                st.write("Step 4 / 4 — Loading Severson 2019 LFP cells from local CSVs…")
                 sev_cells = load_severson_cells(status_fn=lambda msg: st.write(f"  {msg}"))
                 if sev_cells:
                     st.write(f"  {len(sev_cells)} cells loaded — training model…")
-                    # Convert to cycles-dict format _train_on_cells expects
                     sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
                     bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
                     save_cached("severson", _SEV_KEY, (bundle_sev, fdfs_sev, sc_sev))
                     st.write("Step 4 / 4 — Severson model: trained and cached ✓")
                 else:
-                    st.write("Step 4 / 4 — Severson download unavailable — using NASA + synthetic only")
+                    st.write("Step 4 / 4 — Severson CSVs unreadable — skipping")
+            else:
+                st.write("Step 4 / 4 — Severson data not available — using NASA + synthetic")
         except Exception as _sev_err:
             st.write(f"Step 4 / 4 — Severson load skipped ({_sev_err})")
 

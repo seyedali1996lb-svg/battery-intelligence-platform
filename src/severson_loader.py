@@ -43,6 +43,11 @@ def _all_cached() -> bool:
     return all(_csv_path(k).exists() for k in _CELL_KEYS)
 
 
+def any_cached() -> bool:
+    """Return True if at least one cell CSV exists locally."""
+    return any(_csv_path(k).exists() for k in _CELL_KEYS)
+
+
 def _download_and_cache(status_fn=None) -> None:
     try:
         import scipy.io
@@ -95,6 +100,18 @@ def _load_cached(key: str) -> dict | None:
     return {"cell_id": f"S-{key}", "source": "severson2019", "chemistry": "LFP", "cycles": df}
 
 
+def download_and_prepare(status_fn=None) -> bool:
+    """Download Batch 1, extract CSVs, and return True on success.
+    Call this once locally, then commit data/raw/severson/ to the repo.
+    """
+    try:
+        _download_and_cache(status_fn=status_fn or print)
+        return _all_cached()
+    except Exception as exc:
+        print(f"[severson] Failed: {exc}")
+        return False
+
+
 def load_severson_cells(status_fn=None) -> dict[str, dict]:
     """Download-and-cache on first call, then load from CSV. Returns {} on failure."""
     if not _all_cached():
@@ -109,3 +126,13 @@ def load_severson_cells(status_fn=None) -> dict[str, dict]:
         if c:
             cells[c["cell_id"]] = c
     return cells
+
+
+if __name__ == "__main__":
+    print("Downloading Severson 2019 Batch 1 and extracting cell CSVs…")
+    ok = download_and_prepare(status_fn=print)
+    if ok:
+        print(f"Done — CSVs written to {_RAW_DIR}")
+        print("Commit data/raw/severson/ to the repo to enable Severson mode on Streamlit Cloud.")
+    else:
+        print("Download failed — see errors above.")
