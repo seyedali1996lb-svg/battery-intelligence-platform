@@ -554,7 +554,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
 
 
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
-                   up_meta: dict | None) -> str:
+                   up_meta: dict | None, sev_n: int = 0) -> str:
     with st.sidebar:
         # Dynamic subtitle based on active mode
         n_cells = len(cell_ids)
@@ -6318,6 +6318,7 @@ def main():
         nasa_n    = len(nasa_fdfs),
         synth_n   = len(synth_fdfs),
         up_meta   = up_meta,
+        sev_n     = len(sev_fdfs),
     )
 
     df          = active_fdfs[selected]
