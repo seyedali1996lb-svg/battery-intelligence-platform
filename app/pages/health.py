@@ -822,3 +822,93 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             _ssb_c3.metric("Interface resistance", "High (0.5–5 Ω·cm²)", help="Solid-solid interface kinetics limit rate capability at low temperature.")
             _ssb_c4.metric("Failure mode", "Dendrite / delamination", help="Li dendrites grow through grain boundaries under high current density. Interfacial delamination from volume change.")
             _md_html("""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px;margin-top:8px"><span style="color:#63b3ed;font-weight:700">SSB degradation model not yet implemented</span><span style="color:#a0aec0;margin-left:10px">SSB-specific cycle data (ORNL / Toyota / QuantumScape datasets) required for quantitative analysis. EIS component decomposition will differ: R_SEI replaced by R_SElI (solid electrolyte interphase), no sigma_w Warburg term.</span></div>""")
+
+    # ── Physics-based projection (SPM-inspired) ──
+    _md_html(provenance_banner(
+        "simulated",
+        "Arrhenius + power-law fade model fitted to observed SOH trajectory. "
+        "Not a full electrochemical simulation — parameters (A, β, Eₐ) are data-fitted, "
+        "not derived from electrode geometry or electrolyte kinetics."
+    ))
+    with st.expander("Physics-based RUL Projection (SPM-inspired)", expanded=False):
+        try:
+            from spm_projection import fit_and_project as _fit_and_project
+
+            cyc_arr = df["cycle_number"].values
+            soh_arr = df["soh_pct"].values
+            temp_c  = float(df["temp_rolling_30cy"].dropna().iloc[-1]) if "temp_rolling_30cy" in df.columns else 25.0
+            eol_thr = float(st.session_state.get("eol_threshold_pct", 80.0))
+
+            result = _fit_and_project(cyc_arr, soh_arr, current_temp_c=temp_c, eol_threshold=eol_thr)
+
+            if result is None:
+                st.info("Insufficient data for physics-based projection (need ≥10 cycles with SOH data).")
+            else:
+                # Model quality
+                r2_color = "#48bb78" if result.r2 > 0.90 else ("#f6ad55" if result.r2 > 0.75 else "#fc8181")
+                st.markdown(
+                    f"<div style='font-size:12px;color:#718096;margin-bottom:12px'>"
+                    f"Fitted model: SOH(n) = 100 − A·n^β·exp(−Eₐ/kT) &nbsp;·&nbsp; "
+                    f"A={result.A:.4f} &nbsp; β={result.beta:.3f} &nbsp; Eₐ={result.Ea_eV:.3f} eV &nbsp;·&nbsp; "
+                    f"Fit R² = <strong style='color:{r2_color}'>{result.r2:.3f}</strong></div>",
+                    unsafe_allow_html=True,
+                )
+
+                COLORS = ["#48bb78", "#63b3ed", "#fc8181"]
+                DASH   = ["solid",   "dash",    "dot"]
+
+                fig_spm = go.Figure()
+                # Historical trace
+                fig_spm.add_trace(go.Scatter(
+                    x=cyc_arr, y=soh_arr,
+                    name="Observed SOH", mode="lines",
+                    line=dict(color="#a0aec0", width=1.5),
+                    hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Observed</extra>",
+                ))
+
+                for proj, color, dash in zip(result.projections, COLORS, DASH):
+                    eol_label = f" → EOL at cycle {proj.eol_cycle}" if proj.eol_cycle else " → EOL beyond projection window"
+                    fig_spm.add_trace(go.Scatter(
+                        x=proj.cycles, y=proj.soh_pct,
+                        name=f"{proj.scenario}{eol_label}",
+                        mode="lines",
+                        line=dict(color=color, width=2, dash=dash),
+                        hovertemplate=f"Cycle %{{x}}: %{{y:.1f}}%<extra>{proj.scenario}</extra>",
+                    ))
+
+                fig_spm.add_hline(y=eol_thr, line_dash="dash", line_color="#fc8181", line_width=1,
+                                  annotation_text=f"EOL {eol_thr:.0f}%", annotation_position="right")
+
+                fig_spm.update_layout(
+                    **base_layout(
+                        height=320, legend=LEGEND_H,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="SOH (%)", gridcolor="#232d3b", linecolor="#2d3748",
+                                   zeroline=False, range=[max(0, eol_thr - 15), 101]),
+                    ),
+                )
+                st.plotly_chart(fig_spm, use_container_width=True, config=PLOTLY_CONFIG)
+
+                # EOL summary table
+                eol_rows = []
+                for proj in result.projections:
+                    if proj.eol_cycle:
+                        remaining = proj.eol_cycle - int(cyc_arr[-1])
+                        eol_rows.append(f"| {proj.scenario} | {proj.eol_cycle} | {remaining} |")
+                if eol_rows:
+                    st.markdown(
+                        "| Scenario | EOL Cycle | Remaining cycles |\n"
+                        "|----------|-----------|------------------|\n" +
+                        "\n".join(eol_rows)
+                    )
+
+                st.caption(
+                    "Projection assumes constant cycling rate and no step-changes in temperature or C-rate. "
+                    "Eₐ range for LiCoO₂: 0.3–0.6 eV (SEI-limited); 0.6–0.9 eV (lithium plating). "
+                    "Use conservative scenario for high-reliability applications."
+                )
+
+        except ImportError:
+            st.info("Install scipy to enable physics-based projection.")
+        except Exception as _spm_e:
+            st.info(f"Physics projection unavailable: {_spm_e}")

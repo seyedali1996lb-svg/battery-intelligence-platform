@@ -781,3 +781,192 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             )
     else:
         st.success("No anomaly flags detected across the fleet.")
+
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+
+    # ── Live BMS Feed ──────────────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>Live BMS Feed — Simulated Telemetry</div>", unsafe_allow_html=True)
+
+    _live_note = (
+        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "Simulated real-time BMS telemetry at 2-second intervals. "
+        "In production: replace with MQTT subscriber (topic: <code>battery/telemetry/{cell_id}</code>). "
+        "<span style='color:#fc8181'>⚠ Demo feed — not real instrument data.</span></div>"
+    )
+    st.markdown(_live_note, unsafe_allow_html=True)
+
+    try:
+        from live_feed import start_feed, get_latest_readings, is_running
+
+        # Start feed using current cell data
+        _base_sohs   = {cid: float(fdf["soh_pct"].iloc[-1]) for cid, fdf in featured_dfs.items()}
+        _base_cycles = {cid: int(fdf["cycle_number"].iloc[-1]) for cid, fdf in featured_dfs.items()}
+        start_feed(list(featured_dfs.keys()), _base_sohs, _base_cycles)
+
+        _feed_col1, _feed_col2 = st.columns([3, 1])
+        with _feed_col2:
+            _auto = st.checkbox("Auto-refresh (5s)", key="live_feed_auto", value=False)
+        with _feed_col1:
+            if is_running():
+                st.markdown(
+                    "<span style='font-size:12px;color:#48bb78'>● LIVE</span> "
+                    "<span style='font-size:11px;color:#4a5568'>feed active · simulated BMS telemetry</span>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("<span style='font-size:12px;color:#fc8181'>● STOPPED</span>", unsafe_allow_html=True)
+
+        _readings = get_latest_readings(max_items=50)
+        if _readings:
+            import pandas as _pd
+            _feed_df = _pd.DataFrame([{
+                "Time":       r.timestamp,
+                "Cell":       r.cell_id,
+                "V (V)":      r.voltage_v,
+                "I (A)":      r.current_a,
+                "T (°C)":     r.temp_c,
+                "SOH est. %": r.soh_estimate,
+                "Cycle":      r.cycle_count,
+            } for r in _readings])
+            st.dataframe(_feed_df.head(50), use_container_width=True, hide_index=True)
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#4a5568;padding:16px;text-align:center'>"
+                "Waiting for telemetry… (feed starts on first page load)</div>",
+                unsafe_allow_html=True,
+            )
+
+        if _auto:
+            import time as _t
+            _t.sleep(5)
+            st.rerun()
+
+    except ImportError as _e:
+        st.info(f"Live feed module unavailable: {_e}")
+    except Exception as _e:
+        st.info(f"Live feed error: {_e}")
+
+    # ── Cross-Fleet Degradation Clustering ─────────────────────────────────────
+    st.markdown("<div class='section-header'>Degradation Archetypes — Cross-Fleet Clustering</div>", unsafe_allow_html=True)
+    _md_html(
+        "<div style='font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6'>"
+        "KMeans clustering on each cell's degradation fingerprint (fade rate, resistance "
+        "growth, temperature, acceleration). Cells in the same cluster have similar "
+        "degradation histories — their trajectories inform each other's RUL outlook.</div>"
+    )
+
+    try:
+        from fleet_clustering import cluster_fleet, archetype_color
+
+        _cr = cluster_fleet(featured_dfs, n_clusters=min(3, len(featured_dfs)))
+
+        if _cr is None:
+            st.info("Cross-fleet clustering requires at least 2 cells and scikit-learn.")
+        else:
+            # Summary chips — one per cluster archetype
+            _archetypes_seen = {}
+            for cid, cl in _cr.assignments.items():
+                if cl.archetype not in _archetypes_seen:
+                    _archetypes_seen[cl.archetype] = cl
+
+            _arch_cols = st.columns(len(_archetypes_seen))
+            for col, (arch, cl) in zip(_arch_cols, _archetypes_seen.items()):
+                members = [c for c, a in _cr.assignments.items() if a.archetype == arch]
+                _md_html(
+                    f"<div style='background:#1e2a38;border:1px solid {cl.color}44;"
+                    f"border-left:4px solid {cl.color};border-radius:10px;"
+                    f"padding:14px 16px;margin-bottom:8px'>"
+                    f"<div style='font-size:11px;font-weight:600;color:{cl.color};"
+                    f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px'>"
+                    f"{arch}</div>"
+                    f"<div style='font-size:20px;font-weight:700;color:#e2e8f0'>"
+                    f"{len(members)} cell{'s' if len(members) != 1 else ''}</div>"
+                    f"<div style='font-size:12px;color:#718096;margin-top:4px'>"
+                    f"SOH median: {cl.cluster_soh_median:.1f}%</div>"
+                    f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>"
+                    f"{', '.join(members)}</div>"
+                    f"</div>"
+                )
+
+            # Per-cell cluster assignment table
+            with st.expander("Cell-level cluster assignments and peer context", expanded=False):
+                for cid, cl in sorted(_cr.assignments.items(), key=lambda x: x[1].cluster_id):
+                    peer_str = ", ".join(cl.peer_cells) if cl.peer_cells else "no peers (unique cluster)"
+                    _rul_peer = f"{cl.cluster_rul_median:.0f} cy" if cl.cluster_rul_median else "not calibrated"
+                    _md_html(
+                        f"<div style='display:flex;align-items:flex-start;gap:16px;"
+                        f"padding:10px 0;border-bottom:1px solid #2d3748'>"
+                        f"<div style='min-width:80px;font-size:13px;font-weight:600;"
+                        f"color:#e2e8f0'>{cid}</div>"
+                        f"<div style='min-width:90px;font-size:12px;font-weight:600;"
+                        f"color:{cl.color}'>{cl.archetype}</div>"
+                        f"<div style='flex:1;font-size:11px;color:#718096;line-height:1.7'>"
+                        f"Peers: {peer_str}<br>"
+                        f"Cluster SOH median: {cl.cluster_soh_median:.1f}% · "
+                        f"Cluster RUL median: {_rul_peer}</div>"
+                        f"</div>"
+                    )
+
+            # Radar chart of cluster fingerprints
+            try:
+                import plotly.graph_objects as go
+                from utils import base_layout, LEGEND_H, PLOTLY_CONFIG
+
+                _feat_display = {
+                    "fade_rate_30cy":        "Fade Rate",
+                    "resistance_normalized": "Resistance",
+                    "temp_rolling_30cy":     "Temperature",
+                    "fade_acceleration":     "Fade Accel.",
+                    "soh_pct":               "SOH",
+                    "cycle_normalized":      "Cycle Age",
+                }
+                _cats = list(_feat_display.values())
+
+                _radar_fig = go.Figure()
+                _arch_done = set()
+                for cid, cl in _cr.assignments.items():
+                    if cl.archetype in _arch_done:
+                        continue
+                    _arch_done.add(cl.archetype)
+                    # Average fingerprint for this archetype
+                    _peers_all = [c for c, a in _cr.assignments.items() if a.archetype == cl.archetype]
+                    _fp_avg = {}
+                    for feat in _cr.feature_names:
+                        vals = [_cr.assignments[p].fingerprint[feat] for p in _peers_all]
+                        _fp_avg[feat] = float(np.mean(vals)) if vals else 0.0
+                    _vals = [_fp_avg.get(f, 0) for f in _cr.feature_names]
+                    _vmax = max(abs(v) for v in _vals) or 1.0
+                    _vals_norm = [v / _vmax for v in _vals]
+
+                    _radar_fig.add_trace(go.Scatterpolar(
+                        r=_vals_norm + [_vals_norm[0]],
+                        theta=_cats + [_cats[0]],
+                        name=cl.archetype,
+                        fill="toself",
+                        fillcolor=cl.color + "22",
+                        line=dict(color=cl.color, width=2),
+                    ))
+
+                _radar_fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(visible=True, range=[-0.2, 1.2],
+                                        gridcolor="#2d3748", linecolor="#2d3748"),
+                        angularaxis=dict(gridcolor="#2d3748", linecolor="#2d3748"),
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#a0aec0", size=12),
+                    legend=LEGEND_H,
+                    height=320,
+                    margin=dict(l=20, r=20, t=20, b=20),
+                )
+                st.plotly_chart(_radar_fig, use_container_width=True, config=PLOTLY_CONFIG)
+                st.caption("Radar chart: archetype centroid fingerprint (normalised). "
+                           "Wider area = more extreme degradation signature on that dimension.")
+            except Exception:
+                pass
+
+    except ImportError:
+        st.info("fleet_clustering module not found — ensure src/ is on the path.")
+    except Exception as _ce:
+        st.info(f"Clustering unavailable: {_ce}")

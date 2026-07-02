@@ -6206,7 +6206,14 @@ def main():
     if not render_login():
         return   # login form rendered; stop until credentials provided
 
+    _train_placeholder = st.empty()
+    _train_placeholder.markdown(
+        "<div style='text-align:center;padding:40px;color:#4a5568;font-size:14px'>"
+        "Initialising models… (first run only — cached on subsequent loads)</div>",
+        unsafe_allow_html=True,
+    )
     featured_dfs_all, bundles, split_cycles_all = load_everything()
+    _train_placeholder.empty()
 
     # ── Separate built-in cells by type ──────────────────────────────────────
     nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if k in NASA_CELL_IDS}
