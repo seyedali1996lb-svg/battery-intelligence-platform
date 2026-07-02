@@ -678,6 +678,36 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 st.session_state["_nav_cell"] = cell_ids[_cur_idx + 1]
                 st.rerun()
 
+        # ── Fleet alerts (directly after Prev/Next) ──
+        if active_fdfs:
+            _soh_thresh  = float(st.session_state.get("soh_alert_pct", 85))
+            _res_mult    = float(st.session_state.get("resistance_alert_mult", 1.8))
+            _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
+            _alert_msgs  = []
+            for _cid, _fdf in active_fdfs.items():
+                _latest = _fdf.iloc[-1]
+                if float(_latest.get("soh_pct", 100)) < _soh_thresh:
+                    _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
+                if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
+                    _r_init = float(_fdf["resistance_ohm"].iloc[0])
+                    _r_now  = float(_latest["resistance_ohm"])
+                    if _r_init > 0 and _r_now > _r_init * _res_mult:
+                        _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
+            if len(active_fdfs) > 1:
+                _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
+                _spread   = max(_soh_vals) - min(_soh_vals)
+                if _spread > _spread_thresh:
+                    _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
+            if _alert_msgs:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                _label = f"🔔 {len(_alert_msgs)} Alert{'s' if len(_alert_msgs) > 1 else ''}"
+                with st.expander(_label, expanded=False):
+                    for _kind, _msg in _alert_msgs:
+                        if _kind == "error":
+                            st.error(_msg)
+                        else:
+                            st.warning(_msg)
+
         # ── Cell annotation — varies by active mode ──
         if mode == "uploaded":
             temp_assumed_cells = (up_meta or {}).get("temperature_assumed_cells", [])
@@ -714,36 +744,6 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-        # ── Fleet alerts ──
-        if active_fdfs:
-            _soh_thresh  = float(st.session_state.get("soh_alert_pct", 85))
-            _res_mult    = float(st.session_state.get("resistance_alert_mult", 1.8))
-            _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
-            _alert_msgs  = []
-            for _cid, _fdf in active_fdfs.items():
-                _latest = _fdf.iloc[-1]
-                if float(_latest.get("soh_pct", 100)) < _soh_thresh:
-                    _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
-                if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
-                    _r_init = float(_fdf["resistance_ohm"].iloc[0])
-                    _r_now  = float(_latest["resistance_ohm"])
-                    if _r_init > 0 and _r_now > _r_init * _res_mult:
-                        _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
-            if len(active_fdfs) > 1:
-                _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
-                _spread   = max(_soh_vals) - min(_soh_vals)
-                if _spread > _spread_thresh:
-                    _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
-            if _alert_msgs:
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                _label = f"🔔 {len(_alert_msgs)} Alert{'s' if len(_alert_msgs) > 1 else ''}"
-                with st.expander(_label, expanded=False):
-                    for _kind, _msg in _alert_msgs:
-                        if _kind == "error":
-                            st.error(_msg)
-                        else:
-                            st.warning(_msg)
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
