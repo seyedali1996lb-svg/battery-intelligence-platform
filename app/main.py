@@ -614,29 +614,30 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                     unsafe_allow_html=True,
                 )
 
-        # ── Chemistry selector ──
+        # ── Chemistry display (read-only — model is chemistry-specific per data source) ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
             "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
             "letter-spacing:0.08em;padding:0 4px 8px'>Chemistry</div>",
             unsafe_allow_html=True,
         )
-        _chem_options = ["Li-ion (LiCoO₂)", "Li-S (Lithium-Sulfur)", "SSB (Solid-State)"]
-        _chem_sel = st.selectbox(
-            "Chemistry", options=_chem_options,
-            index=0, key="chemistry_selector", label_visibility="collapsed",
+        # Derive chemistry from the active data mode — no user override.
+        # Allowing users to select Li-S or SSB while the model is trained on
+        # LiCoO₂/LFP data would produce physically incorrect results silently.
+        _mode_chem = st.session_state.get("data_mode", "synthetic")
+        _chem_label = {
+            "severson":  "LFP (Severson 2019)",
+            "nasa":      "LiCoO₂ NCA (NASA PCoE)",
+            "synthetic": "LiCoO₂ (synthetic)",
+            "uploaded":  "User-defined",
+        }.get(_mode_chem, "LiCoO₂")
+        st.markdown(
+            f"<div style='font-size:13px;color:#a0aec0;padding:4px 4px 2px'>{_chem_label}</div>"
+            f"<div style='font-size:10px;color:#4a5568;padding:0 4px 8px'>Set by data source · "
+            f"Multi-chemistry selector on roadmap</div>",
+            unsafe_allow_html=True,
         )
-        st.session_state["active_chemistry"] = _chem_sel
-        if "Li-S" in _chem_sel:
-            st.markdown(
-                "<div style='font-size:11px;color:#f6ad55;padding:2px 4px'>⚠ Li-S: dual plateau, "
-                "shuttle-driven CE ~95–99%, faster fade</div>", unsafe_allow_html=True,
-            )
-        elif "SSB" in _chem_sel:
-            st.markdown(
-                "<div style='font-size:11px;color:#63b3ed;padding:2px 4px'>ℹ SSB: no Warburg "
-                "diffusion tail, interface resistance dominant, higher Ea</div>", unsafe_allow_html=True,
-            )
+        st.session_state["active_chemistry"] = _chem_label
 
         # ── Cell selector ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
@@ -1399,16 +1400,36 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     )
 
     # ── dQ/dV Degradation Analysis ──────────────────────────────────────────
+    # LFP cells (Severson) have a flat discharge plateau — the LiCoO₂ OCV
+    # polynomial used in simulate_vq_curve() does not apply to LFP chemistry.
+    # Showing simulated LiCoO₂ dQ/dV peaks for an LFP cell is physically wrong.
+    _is_lfp = cell_id.startswith("S-")   # Severson cells are all LFP
     _dqdv_prov = _analysis_provenance(cell_id, "derived")
     _dqdv_badge = {"measured": "◐ SIMULATED", "simulated": "◐ SIMULATED", "synthetic": "○ SYNTHETIC"}[_dqdv_prov]
-    with st.expander(f"🔬 dQ/dV Degradation Analysis — {_dqdv_badge}", expanded=False):
-        try:
+    _dqdv_title = (
+        "dQ/dV Proxy — LiCoO₂ model only (not applicable to LFP)"
+        if _is_lfp
+        else f"dQ/dV Simulated Proxy (LiCoO₂ model) — {_dqdv_badge}"
+    )
+    with st.expander(f"🔬 {_dqdv_title}", expanded=False):
+        if _is_lfp:
+            st.warning(
+                "**dQ/dV analysis is not available for LFP cells (Severson 2019).**\n\n"
+                "The simulation uses a LiCoO₂ OCV polynomial with a well-defined voltage peak. "
+                "LFP has a flat ≈3.2 V plateau — no peak exists, so the simulated features carry "
+                "no physical meaning for this chemistry. "
+                "Real dQ/dV for LFP requires per-cycle measured V(Q) curves from the cycler."
+            )
+        else:
+          try:
             from dqdv import simulate_vq_curve
             _prov_dqdv = _analysis_provenance(cell_id, "derived")
             _md_html(provenance_banner(_prov_dqdv,
-                "V(Q) and dQ/dV curves are computed by <code>simulate_vq_curve()</code> — a physics "
-                "model parameterised from the cell's measured capacity and resistance. "
-                "No voltage traces were logged during cycling; these are not oscilloscope measurements."
+                "<strong>Simulated proxy — not measured data.</strong> "
+                "V(Q) and dQ/dV curves are computed by <code>simulate_vq_curve()</code>, a "
+                "LiCoO&#x2082; OCV polynomial model parameterised from the cell's measured "
+                "capacity and resistance. No voltage traces were logged during cycling. "
+                "These features are physically meaningful only for LiCoO&#x2082;-family chemistries."
             ))
 
             n_cycles = len(df)
@@ -1530,7 +1551,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     st.info("Insufficient dQ/dV data to classify degradation mechanism.")
             else:
                 st.info("dQ/dV columns unavailable for mechanism interpretation.")
-        except Exception as _e:
+          except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")
 
     # ── ⚡ Coulombic Efficiency ──────────────────────────────────────────────
@@ -1660,9 +1681,9 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             except Exception as _te:
                 st.info(f"Throughput analysis unavailable: {_te}")
 
-    # ── 🔬 EIS Impedance Analysis ──────────────────────────────────────────
+    # ── 🔬 Resistance Component Proxy ──────────────────────────────────────
     _eis_badge = "◐ SIMULATED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
-    with st.expander(f"🔬 EIS Impedance Analysis — {_eis_badge}", expanded=False):
+    with st.expander(f"🔬 Resistance Component Proxy (simulated) — {_eis_badge}", expanded=False):
         try:
             import numpy as _np_eis
             _md_html(provenance_banner(
@@ -1745,7 +1766,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                         yaxis=dict(title="Resistance (Ω)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
                     ),
                 )
-                _fig_eis_trend.update_layout(title=dict(text="EIS Component Trends — Mechanism Attribution", font=dict(size=12, color="#a0aec0"), x=0))
+                _fig_eis_trend.update_layout(title=dict(text="Resistance Component Trends — Simulated Proxy", font=dict(size=12, color="#a0aec0"), x=0))
                 st.plotly_chart(_fig_eis_trend, use_container_width=True, config={**PLOTLY_CONFIG, "toImageButtonOptions": {**PLOTLY_CONFIG["toImageButtonOptions"], "filename": "eis_component_trends"}})
 
                 # Mechanism interpretation
@@ -1890,80 +1911,6 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         except Exception as _rate_e:
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
 
-    # ── 🔋 Li-S Module ───────────────────────────────────────────────────────
-    _active_chem = st.session_state.get("active_chemistry", "Li-ion (LiCoO₂)")
-    if "Li-S" in _active_chem:
-        with st.expander("🔋 Li-S Dual Plateau Analysis — ○ SYNTHETIC", expanded=True):
-            try:
-                import sys as _sys_lis
-                import os as _os_lis
-                _src = _os_lis.path.join(_os_lis.path.dirname(__file__), "..", "src")
-                if _src not in _sys_lis.path:
-                    _sys_lis.path.insert(0, _src)
-                from lis_model import simulate_lis_vq_curve, lis_degradation_mechanism, generate_lis_cell_data
-                import numpy as _np_lis
-
-                _md_html(provenance_banner("synthetic",
-                    "The V(Q) dual-plateau curve and shuttle degradation diagnosis are generated by "
-                    "<code>lis_model.py</code> using parameterised physics equations. "
-                    "<strong>No Li-S cell measurements are connected to this platform.</strong> "
-                    "Real Li-S characterisation requires cells from, e.g., Oxis Energy / Lyten / "
-                    "Sion Power datasets, with measured plateau capacities and CE from a cell tester."
-                ))
-                st.caption(
-                    "Li-S cells exhibit a dual-plateau discharge: upper plateau (~2.35 V) "
-                    "from S₈→Li₂S₄, lower plateau (~2.1 V) from Li₂S₄→Li₂S. "
-                    "The polysulfide shuttle reduces CE to 95–99% and accelerates capacity fade."
-                )
-                _q_now = float(df["capacity_ah"].iloc[-1]) if "capacity_ah" in df.columns else 2.5
-                _r_now = float(df["resistance_ohm"].iloc[-1]) if "resistance_ohm" in df.columns else 0.30
-                _Q_vq, _V_vq = simulate_lis_vq_curve(_q_now, _r_now)
-
-                _fig_lis = go.Figure()
-                _fig_lis.add_trace(go.Scatter(
-                    x=_Q_vq.tolist(), y=_V_vq.tolist(),
-                    mode="lines", name="V-Q curve",
-                    line=dict(color="#f6ad55", width=2.5),
-                    hovertemplate="Q = %{x:.3f} Ah, V = %{y:.3f} V<extra></extra>",
-                ))
-                _fig_lis.add_hrect(y0=2.28, y1=2.45, fillcolor="rgba(246,173,85,0.08)",
-                                   line_width=0, annotation_text="Upper plateau (S₈→Li₂S₄)",
-                                   annotation_position="top right")
-                _fig_lis.add_hrect(y0=2.0,  y1=2.18, fillcolor="rgba(99,179,237,0.08)",
-                                   line_width=0, annotation_text="Lower plateau (Li₂S₄→Li₂S)",
-                                   annotation_position="bottom right")
-                _fig_lis.update_layout(
-                    **base_layout(
-                        height=300, legend=LEGEND_H,
-                        xaxis=dict(title="Capacity (Ah)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Voltage (V)", range=[1.8, 2.55], gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                    ),
-                )
-                _fig_lis.update_layout(title=dict(text="Li-S Dual Plateau Discharge Curve", font=dict(size=12, color="#a0aec0"), x=0))
-                st.plotly_chart(_fig_lis, use_container_width=True)
-
-                # Generate a short Li-S cycle set for mechanism diagnosis
-                _lis_df = generate_lis_cell_data(n_cycles=min(len(df), 300), seed=42)
-                _mech   = lis_degradation_mechanism(_lis_df)
-                _mech_color = "#f6ad55" if "Shuttle" in _mech["mechanism"] else "#fc8181" if "Anode" in _mech["mechanism"] else "#63b3ed"
-                _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_mech_color};font-weight:700">{_mech['mechanism']}</span><span style="color:#a0aec0;margin-left:10px">{_mech['explanation']}</span><br><span style="color:#718096;font-size:12px;margin-top:4px;display:block">Confidence: {_mech['confidence']:.0%}</span></div>""")
-            except Exception as _lis_e:
-                st.info(f"Li-S module unavailable: {_lis_e}")
-
-    elif "SSB" in _active_chem:
-        with st.expander("🧱 Solid-State Battery (SSB) Parameters", expanded=True):
-            st.caption(
-                "SSBs replace liquid electrolyte with a solid ionic conductor. Key differences: "
-                "no Warburg diffusion tail in EIS (solid-solid interface), higher interfacial resistance, "
-                "no SEI (but solid electrolyte interphase SElI forms), different failure modes (dendrites, delamination)."
-            )
-            _ssb_c1, _ssb_c2 = st.columns(2)
-            _ssb_c1.metric("Electrolyte", "Solid (LLZO / LIPON / sulfide)", help="No liquid electrolyte — eliminates thermal runaway risk from electrolyte combustion.")
-            _ssb_c2.metric("EIS signature", "No 45° Warburg tail", help="Solid electrolyte eliminates semi-infinite diffusion. Nyquist shows only high-freq arc.")
-            _ssb_c3, _ssb_c4 = st.columns(2)
-            _ssb_c3.metric("Interface resistance", "High (0.5–5 Ω·cm²)", help="Solid-solid interface kinetics limit rate capability at low temperature.")
-            _ssb_c4.metric("Failure mode", "Dendrite / delamination", help="Li dendrites grow through grain boundaries under high current density. Interfacial delamination from volume change.")
-            _md_html("""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px;margin-top:8px"><span style="color:#63b3ed;font-weight:700">SSB degradation model not yet implemented</span><span style="color:#a0aec0;margin-left:10px">SSB-specific cycle data (ORNL / Toyota / QuantumScape datasets) required for quantitative analysis. EIS component decomposition will differ: R_SEI replaced by R_SElI (solid electrolyte interphase), no sigma_w Warburg term.</span></div>""")
 
 
 # ---------------------------------------------------------------------------
@@ -5674,6 +5621,7 @@ def page_import():
         st.markdown(section_header_html(title), unsafe_allow_html=True)
 
     st.markdown("# Import Your Battery Data")
+    st.warning("Uploaded data is processed in a shared session environment — do not upload proprietary or personal data in this demonstration.")
     st.markdown("##### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
 
     # ── Section 1: Hero card ────────────────────────────────────────────────
