@@ -29,6 +29,21 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
         initial_cap = float(df["capacity_ah"].iloc[0])
         df["capacity_fade_ah"] = (initial_cap - df["capacity_ah"]).clip(lower=0)
 
+    if "soh_rolling_avg" not in df.columns:
+        df["soh_rolling_avg"] = df["soh_pct"].rolling(10, min_periods=1).mean()
+
+    # is_eol and cumulative_days are added by data_loader for synthetic/NASA;
+    # compute fallbacks here for Severson/uploaded cells.
+    if "is_eol" not in df.columns:
+        df["is_eol"] = df["soh_pct"] < eol_threshold_pct
+
+    if "capacity_fade_rate" not in df.columns:
+        df["capacity_fade_rate"] = df["capacity_ah"].diff().abs().rolling(5, min_periods=1).mean()
+
+    if "cumulative_days" not in df.columns:
+        # No real timestamp data — approximate 1 day per cycle as a neutral fallback
+        df["cumulative_days"] = df["cycle_number"].astype(float)
+
     # ── Fade rate at multiple windows ──
     for window in [10, 30, 50]:
         df[f"fade_rate_{window}cy"] = (
