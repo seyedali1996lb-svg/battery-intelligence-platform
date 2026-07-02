@@ -144,7 +144,7 @@ st.markdown(
         padding: 28px 32px;
         margin-bottom: 24px;
     }
-    .hero-label  { font-size: 12px; color: #718096; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+    .hero-label  { font-size: 12px; color: #8896a8; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
     .hero-value  { font-size: 48px; font-weight: 700; line-height: 1.1; margin-bottom: 8px; }
     .hero-sub    { font-size: 14px; color: #a0aec0; }
     .hero-green  { color: #48bb78; }
@@ -160,9 +160,9 @@ st.markdown(
         min-width: 150px;
         flex: 1;
     }
-    .metric-chip-label { font-size: 11px; color: #718096; text-transform: uppercase; letter-spacing: 0.06em; }
+    .metric-chip-label { font-size: 11px; color: #8896a8; text-transform: uppercase; letter-spacing: 0.06em; }
     .metric-chip-value { font-size: 26px; font-weight: 700; color: #e2e8f0; margin-top: 4px; }
-    .metric-chip-sub   { font-size: 12px; color: #718096; margin-top: 2px; }
+    .metric-chip-sub   { font-size: 12px; color: #8896a8; margin-top: 2px; }
     div[data-testid="stMetricValue"] {
         font-size: 18px;
         white-space: normal;
@@ -234,18 +234,19 @@ if st.session_state.get("light_mode", False):
         .hero-card { background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%) !important; border-color: #cbd5e0 !important; }
         .metric-chip { background: #ffffff !important; border-color: #e2e8f0 !important; }
         .metric-chip-value { color: #1a202c !important; }
-        .metric-chip-label, .metric-chip-sub { color: #718096 !important; }
+        .metric-chip-label, .metric-chip-sub { color: #4a5568 !important; }
         .hero-sub { color: #4a5568 !important; }
+        .hero-label { color: #4a5568 !important; }
         /* ── Section headers ── */
-        .section-header { color: #718096 !important; border-color: #e2e8f0 !important; }
+        .section-header { color: #4a5568 !important; border-color: #e2e8f0 !important; }
         /* ── Streamlit widgets ── */
         div[data-testid="stMetricValue"] { color: #1a202c !important; }
         .stSelectbox label, .stSlider label { color: #4a5568 !important; }
         /* ── Expanders ── */
         div[data-testid="stExpander"] { border-color: #e2e8f0 !important; }
         /* ── Sidebar info text ── */
-        section[data-testid="stSidebar"] div[style*="color:#4a5568"] { color: #718096 !important; }
-        section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color: #718096 !important; }
+        section[data-testid="stSidebar"] div[style*="color:#4a5568"] { color: #4a5568 !important; }
+        section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color: #4a5568 !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -566,7 +567,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
                 f"padding:9px 12px;margin-bottom:5px'>"
                 f"<div style='font-size:13px;font-weight:700;color:#e2e8f0'>"
                 f"● {m['label']}</div>"
-                f"<div style='font-size:11px;color:#718096;margin-top:2px'>{m['status']}</div>"
+                f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{m['status']}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -589,7 +590,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
             # Unavailable (My Data, no upload yet) — grayed out, not clickable
             st.markdown(
                 f"<div style='padding:8px 12px;margin-bottom:5px;opacity:0.45'>"
-                f"<div style='font-size:13px;color:#718096'>○  {m['label']}</div>"
+                f"<div style='font-size:13px;color:#8896a8'>○  {m['label']}</div>"
                 f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{m['status']}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
@@ -619,7 +620,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         st.markdown(
             f"<div style='padding:0 4px 16px'>"
             f"<div style='font-size:17px;font-weight:800;color:#ffffff;letter-spacing:0.01em'>⚡ Battery Intel</div>"
-            f"<div style='font-size:11px;color:#718096;margin-top:3px'>{subtitle}</div>"
+            f"<div style='font-size:11px;color:#8896a8;margin-top:3px'>{subtitle}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -981,19 +982,19 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     interval_html = ""
     if not rul_calibrating and rul_q10 is not None and rul_q90 is not None and rul_q90 > rul_q10:
         interval_html = (
-            f"<div style='font-size:11px;color:#718096;margin-top:4px'>"
+            f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
             f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
             f"</div>"
         )
 
     _md_html(
         f"""
-        <div class="hero-card">
-            <div class="hero-label">Battery Status · {cell_id}</div>
-            <div class="hero-value {status_colour}">{status_label}</div>
+        <div class="hero-card" role="region" aria-label="Battery status for cell {cell_id}">
+            <div class="hero-label" aria-hidden="true">Battery Status · {cell_id}</div>
+            <div class="hero-value {status_colour}" role="status" aria-label="Health status: {status_label}">{status_label}</div>
             <div class="hero-sub">
                 SOH: <strong style="color:#e2e8f0">{current_soh:.1f}%</strong>
-                &nbsp;{sparkline_svg}&nbsp;
+                &nbsp;<span role="img" aria-label="SOH trend sparkline">{sparkline_svg}</span>&nbsp;
                 &nbsp;·&nbsp; {rul_hero}
                 &nbsp;·&nbsp; {source_tag}
                 &nbsp;·&nbsp; {conf_html}
@@ -1012,29 +1013,117 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             unsafe_allow_html=True,
         )
 
-    is_nasa_src = cell_id in NASA_CELL_IDS
-    src_val = "NASA" if is_nasa_src else f"{sf:.2f}x"
-    src_sub = "real measured" if is_nasa_src else "vs baseline (synthetic)"
-    sop_display = f"{sop_pct:.0f}%" if sop_pct is not None else "—"
-    months_html = (
-        f"<div class='metric-chip-sub' style='margin-top:2px;color:#4a5568'>"
+    # ── Plain-English summary sentence ───────────────────────────────────────
+    if rul_calibrating:
+        _plain_sentence = (
+            f"This cell has completed {current_cycle:,} cycles at {current_soh:.1f}% SOH — "
+            f"RUL cannot be estimated reliably for this cell's degradation profile."
+        )
+    elif months_remaining is not None and months_remaining > 0:
+        _action = (
+            "no immediate action required" if current_soh >= 85
+            else "consider inspection or load reduction" if current_soh >= 80
+            else "replacement or second-life evaluation recommended"
+        )
+        _plain_sentence = (
+            f"This cell is estimated to need replacement in approximately "
+            f"{months_remaining:.0f} months ({current_rul:.0f} cycles) at current usage — {_action}."
+        )
+    else:
+        _plain_sentence = (
+            f"This cell has completed {current_cycle:,} cycles at {current_soh:.1f}% SOH."
+        )
+    st.markdown(
+        f"<div style='font-size:14px;color:#a0aec0;margin:-4px 0 18px;"
+        f"padding:10px 16px;background:#1a202c;border-radius:8px;"
+        f"border-left:3px solid #2d3748'>{_plain_sentence}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── 3 primary secondary metrics: RUL · Fade Rate · Resistance ────────────
+    _fade_30 = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else None
+    _res_ohm = float(latest["resistance_ohm"]) if "resistance_ohm" in latest.index else None
+    fade_display = f"{_fade_30 * 1000:.2f} mAh/cy" if _fade_30 is not None else "—"
+    fade_sub     = "30-cycle rolling window" if _fade_30 is not None else "not available"
+    res_display  = f"{_res_ohm * 1000:.1f} mΩ" if _res_ohm is not None else "—"
+    res_sub      = "DC internal resistance" if _res_ohm is not None else "not available"
+    months_chip_html = (
+        f"<div class='metric-chip-sub' style='margin-top:2px'>"
         f"~{months_remaining:.0f} months · {rate_note}</div>"
         if months_remaining is not None else ""
     )
-    # Energy throughput
-    _cum_kwh = float(latest["cumulative_kwh"]) if "cumulative_kwh" in latest.index else None
-    kwh_display = f"{_cum_kwh:.2f} kWh" if _cum_kwh is not None else "—"
-    # Equivalent cycles
-    _eq_cy = float(latest["equivalent_cycles"]) if "equivalent_cycles" in latest.index and not pd.isna(latest["equivalent_cycles"]) else None
-    eq_cy_display = f"{_eq_cy:,.0f}" if _eq_cy is not None else "—"
-    eq_cy_sub = "stress-normalized (CATL/BYD metric)" if _eq_cy is not None else "not available"
-    # Current CE
-    _ce = float(latest["coulombic_efficiency"]) if "coulombic_efficiency" in latest.index else None
-    ce_display = f"{_ce*100:.3f}%" if _ce is not None else "—"
 
     _md_html(
-        f"""<div class="metric-row"><div class="metric-chip"><div class="metric-chip-label">State of Health</div><div class="metric-chip-value">{current_soh:.1f}%</div><div class="metric-chip-sub">vs 100% at cycle 1</div></div><div class="metric-chip"><div class="metric-chip-label">Cycles Completed</div><div class="metric-chip-value">{current_cycle:,}</div><div class="metric-chip-sub">charge / discharge</div></div><div class="metric-chip"><div class="metric-chip-label">Est. Remaining Life</div><div class="metric-chip-value">{rul_display}</div><div class="metric-chip-sub">{rul_sub}</div>{months_html}</div><div class="metric-chip"><div class="metric-chip-label">Capacity Lost</div><div class="metric-chip-value">{total_fade*1000:.0f} mAh</div><div class="metric-chip-sub">since commissioning</div></div><div class="metric-chip"><div class="metric-chip-label">Peak Power</div><div class="metric-chip-value" style="font-size:20px">{sop_display}</div><div class="metric-chip-sub">of initial capability</div></div><div class="metric-chip"><div class="metric-chip-label">Energy Delivered</div><div class="metric-chip-value" style="font-size:18px">{kwh_display}</div><div class="metric-chip-sub">cumulative throughput</div></div><div class="metric-chip"><div class="metric-chip-label">Equiv. Cycles</div><div class="metric-chip-value" style="font-size:18px">{eq_cy_display}</div><div class="metric-chip-sub">{eq_cy_sub}</div></div><div class="metric-chip"><div class="metric-chip-label">Coulombic Eff.</div><div class="metric-chip-value" style="font-size:18px">{ce_display}</div><div class="metric-chip-sub">last cycle Q_d / Q_c</div></div></div>"""
+        f"""<div class="metric-row" role="list" aria-label="Key performance metrics">
+          <div class="metric-chip" role="listitem">
+            <div class="metric-chip-label">Est. Remaining Life</div>
+            <div class="metric-chip-value" aria-label="Estimated remaining life: {rul_display} {rul_sub}">{rul_display}</div>
+            <div class="metric-chip-sub">{rul_sub}</div>
+            {months_chip_html}
+          </div>
+          <div class="metric-chip" role="listitem">
+            <div class="metric-chip-label">Fade Rate</div>
+            <div class="metric-chip-value" style="font-size:20px" aria-label="Fade rate: {fade_display}">{fade_display}</div>
+            <div class="metric-chip-sub">{fade_sub}</div>
+          </div>
+          <div class="metric-chip" role="listitem">
+            <div class="metric-chip-label">Internal Resistance</div>
+            <div class="metric-chip-value" style="font-size:20px" aria-label="Internal resistance: {res_display}">{res_display}</div>
+            <div class="metric-chip-sub">{res_sub}</div>
+          </div>
+        </div>"""
     )
+
+    # ── Cell Details expander: secondary metrics ──────────────────────────────
+    sop_display = f"{sop_pct:.0f}%" if sop_pct is not None else "—"
+    _cum_kwh    = float(latest["cumulative_kwh"]) if "cumulative_kwh" in latest.index else None
+    kwh_display = f"{_cum_kwh:.2f} kWh" if _cum_kwh is not None else "—"
+    _eq_cy      = float(latest["equivalent_cycles"]) if "equivalent_cycles" in latest.index and not pd.isna(latest["equivalent_cycles"]) else None
+    eq_cy_display = f"{_eq_cy:,.0f}" if _eq_cy is not None else "—"
+    eq_cy_sub   = "stress-normalized (CATL/BYD metric)" if _eq_cy is not None else "not available"
+    _ce         = float(latest["coulombic_efficiency"]) if "coulombic_efficiency" in latest.index else None
+    ce_display  = f"{_ce*100:.3f}%" if _ce is not None else "—"
+
+    with st.expander("Cell Details", expanded=False):
+        _md_html(
+            f"""<div class="metric-row" role="list" aria-label="Cell detail metrics">
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">State of Health</div>
+                <div class="metric-chip-value">{current_soh:.1f}%</div>
+                <div class="metric-chip-sub">vs 100% at cycle 1</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Cycles Completed</div>
+                <div class="metric-chip-value">{current_cycle:,}</div>
+                <div class="metric-chip-sub">charge / discharge</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Capacity Lost</div>
+                <div class="metric-chip-value">{total_fade*1000:.0f} mAh</div>
+                <div class="metric-chip-sub">since commissioning</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Peak Power (SoP)</div>
+                <div class="metric-chip-value" style="font-size:20px">{sop_display}</div>
+                <div class="metric-chip-sub">of initial capability</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Energy Delivered</div>
+                <div class="metric-chip-value" style="font-size:18px">{kwh_display}</div>
+                <div class="metric-chip-sub">cumulative throughput</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Equiv. Cycles</div>
+                <div class="metric-chip-value" style="font-size:18px">{eq_cy_display}</div>
+                <div class="metric-chip-sub">{eq_cy_sub}</div>
+              </div>
+              <div class="metric-chip" role="listitem">
+                <div class="metric-chip-label">Coulombic Eff.</div>
+                <div class="metric-chip-value" style="font-size:18px">{ce_display}</div>
+                <div class="metric-chip-sub">last cycle Q_d / Q_c</div>
+              </div>
+            </div>"""
+        )
 
     # ── Calendar Age Analysis ─────────────────────────────────────────────────
     if "cumulative_days" in df.columns:
@@ -1048,13 +1137,13 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 cal_c1, cal_c2, cal_c3 = st.columns(3)
                 with cal_c1:
                     st.metric("Total Calendar Time", f"{cal_last:.0f} days", help="since first cycle")
-                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>since first cycle</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:11px;color:#8896a8;margin-top:-8px'>since first cycle</div>", unsafe_allow_html=True)
                 with cal_c2:
                     st.metric("Avg Rest Between Cycles", f"{avg_rest:.1f} days", help="mean rest period")
-                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>mean rest period</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:11px;color:#8896a8;margin-top:-8px'>mean rest period</div>", unsafe_allow_html=True)
                 with cal_c3:
                     st.metric("Calendar vs Cycle Fade", f"~{calendar_fade_pct:.0f}% calendar", help="remainder from cycling")
-                    st.markdown("<div style='font-size:11px;color:#718096;margin-top:-8px'>remainder from cycling</div>", unsafe_allow_html=True)
+                    st.markdown("<div style='font-size:11px;color:#8896a8;margin-top:-8px'>remainder from cycling</div>", unsafe_allow_html=True)
 
                 fig_cal = go.Figure()
                 fig_cal.add_trace(go.Scatter(
@@ -1433,7 +1522,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 </div>
                 <div style="border-left:1px solid #2d3748;padding-left:24px;max-width:280px">
                     <div style="font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
-                    <div style="font-size:11px;color:#718096;line-height:1.7">
+                    <div style="font-size:11px;color:#8896a8;line-height:1.7">
                         {"The cell is past its knee point — degradation has entered the rapid-fade regime. "
                          "Remaining life estimates are shorter and less predictable than in the plateau phase. "
                          "Prioritise replacement planning."
@@ -1628,7 +1717,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     st.metric("Lithium Loss Risk", ce_risk,
                               help="< 99.7%: moderate SEI growth; < 99.3%: accelerated LLI")
 
-                _md_html("""<div style="font-size:12px;color:#718096;margin:8px 0 12px;line-height:1.6"><strong style="color:#a0aec0">Why CE matters:</strong> Every cycle where CE &lt; 100% permanently loses cyclable lithium to the SEI layer. A CE drop from 99.95% → 99.30% may seem small but represents ~0.65% lithium lost per cycle — the dominant degradation mechanism in calendar-aged cells. CATL and BYD track cumulative CE deficit as the primary warranty signal for LLI-dominated failures.</div>""")
+                _md_html("""<div style="font-size:12px;color:#8896a8;margin:8px 0 12px;line-height:1.6"><strong style="color:#a0aec0">Why CE matters:</strong> Every cycle where CE &lt; 100% permanently loses cyclable lithium to the SEI layer. A CE drop from 99.95% → 99.30% may seem small but represents ~0.65% lithium lost per cycle — the dominant degradation mechanism in calendar-aged cells. CATL and BYD track cumulative CE deficit as the primary warranty signal for LLI-dominated failures.</div>""")
 
                 # CE trend chart
                 fig_ce = go.Figure()
@@ -1837,7 +1926,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     _mech = "Mixed SEI + charge-transfer"
                     _mech_color = "#48bb78"
                     _mech_explain = "Balanced SEI and charge-transfer growth — both calendar and cycling contribute comparably."
-                _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_mech_color};font-weight:700">{_mech}</span><span style="color:#a0aec0;margin-left:10px">{_mech_explain}</span><br><span style="color:#718096;font-size:12px;margin-top:4px;display:block">R_SEI growth: {_sei_growth:.1f}% · R_ct growth: {_ct_growth:.1f}%</span></div>""")
+                _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_mech_color};font-weight:700">{_mech}</span><span style="color:#a0aec0;margin-left:10px">{_mech_explain}</span><br><span style="color:#8896a8;font-size:12px;margin-top:4px;display:block">R_SEI growth: {_sei_growth:.1f}% · R_ct growth: {_ct_growth:.1f}%</span></div>""")
         except Exception as _eis_e:
             st.info(f"EIS analysis unavailable: {_eis_e}")
 
@@ -2186,7 +2275,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
         top_rul_feat = fi_rul.iloc[0]["label"]
         if top_soh_feat != top_rul_feat:
             st.markdown(
-                f"<div style='font-size:12px;color:#718096;background:#1a202c;border-left:3px solid #2d3748;"
+                f"<div style='font-size:12px;color:#8896a8;background:#1a202c;border-left:3px solid #2d3748;"
                 f"padding:10px 14px;border-radius:4px;margin-bottom:12px'>"
                 f"<strong style='color:#a0aec0'>Why the profiles differ:</strong> "
                 f"{top_soh_feat} dominates SOH prediction because it tracks cumulative degradation. "
@@ -2383,7 +2472,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
     import numpy as _np_grade
 
-    _md_html("""<div style="padding-top:32px;margin-bottom:8px"><div style="font-size:22px;font-weight:700;color:#e2e8f0">⏳ Cell Grading</div><div style="font-size:13px;color:#718096;margin-top:2px">Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)</div></div>""")
+    _md_html("""<div style="padding-top:32px;margin-bottom:8px"><div style="font-size:22px;font-weight:700;color:#e2e8f0">⏳ Cell Grading</div><div style="font-size:13px;color:#8896a8;margin-top:2px">Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)</div></div>""")
     st.caption(
         "Grades A–C are derived from the first 100 cycles only: fade rate, capacity variance, "
         "and resistance slope. A high score predicts long life; a low score flags early replacement."
@@ -2451,17 +2540,17 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
                     f"<div style='margin:10px 0 4px;background:#0e1117;border-radius:4px;height:6px'>"
                     f"<div style='width:{_pct:.0f}%;background:{_cfg['color']};height:6px;border-radius:4px'></div>"
                     f"</div>"
-                    f"<div style='font-size:11px;color:#718096'>{_pct:.1f} / 100</div>"
+                    f"<div style='font-size:11px;color:#8896a8'>{_pct:.1f} / 100</div>"
                 )
                 _details = (
-                    f"<div style='margin-top:10px;font-size:11px;color:#718096;line-height:1.8'>"
+                    f"<div style='margin-top:10px;font-size:11px;color:#8896a8;line-height:1.8'>"
                     f"Fade rate: {_r['fade']*1000:.4f} mAh/cy<br>"
                     f"Cap. variance: {_r['var']*1e6:.2f} µAh²<br>"
                     f"R slope: {_r['slope']*1000:.4f} mΩ/cy"
                     f"</div>"
                 )
             else:
-                _details = "<div style='margin-top:8px;font-size:11px;color:#718096'>Need ≥ 20 early cycles</div>"
+                _details = "<div style='margin-top:8px;font-size:11px;color:#8896a8'>Need ≥ 20 early cycles</div>"
             with _col:
                 _md_html(
                     f"<div style='background:{_cfg['bg']};border:1px solid {_cfg['border']};"
@@ -2648,7 +2737,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {
         "NASA":      "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
-        "Synthetic": "background:rgba(74,85,104,0.3);color:#718096;border:1px solid #2d3748",
+        "Synthetic": "background:rgba(74,85,104,0.3);color:#8896a8;border:1px solid #2d3748",
         "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }
 
@@ -2895,7 +2984,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
 
     # ── Cell-to-Cell Spread Trending ────────────────────────────────────────
     st.markdown("<div class='section-header'>📉 Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)
-    _md_html("""<div style="font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
+    _md_html("""<div style="font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
     try:
         import numpy as _np_sp
         _nonempty = [df for df in featured_dfs.values() if len(df) > 0]
@@ -2956,7 +3045,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='font-size:13px;color:#718096;margin-bottom:20px;line-height:1.6'>"
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:20px;line-height:1.6'>"
         "Conventional second-life assessment window: <strong style='color:#e2e8f0'>SOH 70–85%</strong>. "
         "Cells above 85% are still in primary life. Below 70% is below most application floors. "
         "Click a cell in the sidebar to open the Consequences page for detailed economics.</div>",
@@ -3009,7 +3098,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     # ── Virtual Pack Builder ──
     st.markdown("<div class='section-header'>Virtual Pack Builder</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='font-size:13px;color:#718096;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "Select cells to model as a series/parallel pack. Pack health is constrained by "
         "the weakest cell — the cell with lowest SOH determines effective pack capacity, "
         "and the cell with fewest remaining cycles determines when the pack needs service."
@@ -3314,7 +3403,7 @@ def page_copilot(
 
     # ── Disclosure banner ──
     _md_html(
-        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#718096;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.</div>"""
+        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#8896a8;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.</div>"""
     )
 
     query = st.session_state.get("copilot_query", None)
@@ -3347,7 +3436,7 @@ def page_copilot(
         st.markdown(
             "<div style='text-align:center;padding:56px 24px;color:#4a5568;font-size:14px'>"
             "Select a question above — the Copilot will explain using only the numbers "
-            "already in the model bundle for <strong style='color:#718096'>"
+            "already in the model bundle for <strong style='color:#8896a8'>"
             + selected + "</strong>.</div>",
             unsafe_allow_html=True,
         )
@@ -3500,7 +3589,7 @@ def page_consequences(
         f"""
         <div style="background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);
                     border-radius:10px;padding:14px 20px;margin-bottom:28px;
-                    font-size:13px;color:#718096;line-height:1.7">
+                    font-size:13px;color:#8896a8;line-height:1.7">
             <strong style="color:#d69e2e">Assumption transparency.</strong>
             SOH, fade rate, and the RUL reliability flag are {BADGE_VALIDATED} outputs
             from the leave-cell-out validated pipeline.<br>
@@ -3548,7 +3637,7 @@ def page_consequences(
                         padding:10px 18px;min-width:160px">
                 <div style="font-size:10px;color:#4a5568;margin-bottom:4px">Fade rate (30-cy)</div>
                 <div style="font-size:20px;font-weight:700;color:#e2e8f0">
-                    {fade_30*1000:.2f} <span style="font-size:13px;color:#718096">mAh/cy</span>
+                    {fade_30*1000:.2f} <span style="font-size:13px;color:#8896a8">mAh/cy</span>
                 </div>
                 <div style="margin-top:6px">{BADGE_VALIDATED}</div>
             </div>
@@ -3710,7 +3799,7 @@ def page_consequences(
         for col, (name, value, colour, _, badge_label) in zip(opt_cols, options):
             badge_html   = make_badge(badge_label, "#b7791f" if "Cited" in badge_label else "#718096")
             repack_note  = (
-                f"<div style='font-size:11px;color:#718096;margin-top:6px'>"
+                f"<div style='font-size:11px;color:#8896a8;margin-top:6px'>"
                 f"after −${repack_cost:.0f}/cell repack &nbsp;"
                 f"{make_badge(a['repack_cost']['label'], '#718096')}</div>"
                 if name == "Reuse (second-life)" else
@@ -3739,7 +3828,7 @@ def page_consequences(
                     <div style="background:{bg};border:{border};border-radius:10px;
                                 padding:20px;text-align:center">
                         {best_tag}
-                        <div style="font-size:12px;color:#718096;margin-bottom:8px">{name}</div>
+                        <div style="font-size:12px;color:#8896a8;margin-bottom:8px">{name}</div>
                         <div style="font-size:26px;font-weight:700;color:{colour}">
                             {pack_sign}${abs(pack_value):.2f}
                         </div>
@@ -3752,7 +3841,7 @@ def page_consequences(
 
         if not rul_reliable:
             st.markdown(
-                "<div style='font-size:12px;color:#718096;margin-top:14px;font-style:italic'>"
+                "<div style='font-size:12px;color:#8896a8;margin-top:14px;font-style:italic'>"
                 "ℹ RUL is not calibrated for this cell (fold R² below reliability floor). "
                 "The break-even chart projects value by SOH only — not by time or cycle count. "
                 "A cycle-based timeline would require a reliable RUL estimate.</div>",
@@ -3952,7 +4041,7 @@ def page_consequences(
                 f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
                 f"{asmp['unit']} &nbsp;—&nbsp; default {asmp['value']} &nbsp; {badge_html}"
                 f"</div>"
-                f"<div style='font-size:12px;color:#718096;line-height:1.6'>"
+                f"<div style='font-size:12px;color:#8896a8;line-height:1.6'>"
                 f"{asmp['source']}"
                 f"</div>"
                 f"</div>",
@@ -3972,7 +4061,7 @@ def _passport_field_row(f: dict) -> str:
         f"<div style='display:flex;justify-content:space-between;align-items:flex-start;"
         f"gap:16px;padding:12px 0;border-bottom:1px solid #2d3748'>"
         f"<div style='flex:1;min-width:0'>"
-        f"<div style='font-size:12px;color:#718096'>{f['label']}</div>"
+        f"<div style='font-size:12px;color:#8896a8'>{f['label']}</div>"
         f"<div style='font-size:14px;font-weight:600;color:{value_colour};margin-top:2px;"
         f"font-style:{font_style}'>{f['value']}</div>"
         f"{note_html}"
@@ -3996,7 +4085,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         f"""
         <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
                     border-radius:10px;padding:14px 20px;margin-bottom:28px;
-                    font-size:13px;color:#718096;line-height:1.7">
+                    font-size:13px;color:#8896a8;line-height:1.7">
             <strong style="color:#63b3ed">Battery Passport Interface</strong> — demonstrating the
             EU Battery Regulation (EU) 2023/1542 data structure. This is <strong>not</strong> a
             compliance claim: every field below is marked {make_state_badge("available")},
@@ -4086,7 +4175,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             <strong style="color:#48bb78">{summ['n_available']} are available</strong> from this
             platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
             cited estimates</strong> from the Consequences module, and
-            <strong style="color:#718096">{summ['n_unavailable']} are not available</strong> in
+            <strong style="color:#8896a8">{summ['n_unavailable']} are not available</strong> in
             this demonstration.<br><br>
             An actual regulatory submission under (EU) 2023/1542 would additionally require:
             manufacturer-submitted identity and supply-chain records, a third-party accredited
@@ -4112,7 +4201,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     st.markdown("# Reports")
     st.markdown(f"##### Demonstration report export · {selected}")
 
-    _md_html("""<div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);border-radius:10px;padding:14px 20px;margin-bottom:28px;font-size:13px;color:#718096;line-height:1.7"><strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory document. Exports the current battery's identity, SOH/RUL with reliability flags, second-life recommendation (if applicable), and the assumption register, with the same Available / Estimate / Not-available-in-demo labelling used throughout this platform.</div>""")
+    _md_html("""<div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);border-radius:10px;padding:14px 20px;margin-bottom:28px;font-size:13px;color:#8896a8;line-height:1.7"><strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory document. Exports the current battery's identity, SOH/RUL with reliability flags, second-life recommendation (if applicable), and the assumption register, with the same Available / Estimate / Not-available-in-demo labelling used throughout this platform.</div>""")
 
     second_life = None
     if soh <= 85.0:
@@ -4337,7 +4426,7 @@ def page_recommendations(
         )
     with _soc_c3:
         st.metric("Upper Limit", f"{_soc_hi}% SOC")
-    _md_html(f"<div style='font-size:12px;color:#718096;margin:8px 0 4px;padding:10px 14px;background:#1e2a38;border-radius:8px;border-left:3px solid {_soc_colour}'><strong style='color:{_soc_colour}'>{_soc_label}</strong> — {_soc_reason}</div>")
+    _md_html(f"<div style='font-size:12px;color:#8896a8;margin:8px 0 4px;padding:10px 14px;background:#1e2a38;border-radius:8px;border-left:3px solid {_soc_colour}'><strong style='color:{_soc_colour}'>{_soc_label}</strong> — {_soc_reason}</div>")
 
     # ── ⚠️ Thermal Runaway Risk Proxy ─────────────────────────────────────────
     st.markdown("<div class='section-header'>⚠️ Thermal Runaway Risk Proxy</div>", unsafe_allow_html=True)
@@ -4440,7 +4529,7 @@ def page_recommendations(
             f"padding:16px 20px'>"
             f"<div style='font-size:11px;color:#4a5568'>Fade Rate (30-cycle)</div>"
             f"<div style='font-size:28px;font-weight:700;color:#e2e8f0;margin-top:4px'>"
-            f"{fade_30*1000:.2f} <span style='font-size:14px;color:#718096'>mAh/cy</span></div>"
+            f"{fade_30*1000:.2f} <span style='font-size:14px;color:#8896a8'>mAh/cy</span></div>"
             f"<div style='font-size:12px;color:{fade_colour};margin-top:2px'>"
             f"{fade_label} ({result['fade_ratio']:.1f}× baseline)</div>"
             f"<div style='margin-top:10px'>{BADGE_VALIDATED}</div>"
@@ -4520,7 +4609,7 @@ def page_recommendations(
             )
         else:
             sl_timeline_html = (
-                f"<div style='font-size:12px;color:#718096;margin-top:10px'>"
+                f"<div style='font-size:12px;color:#8896a8;margin-top:10px'>"
                 f"Timeline unavailable — RUL not calibrated for this cell."
                 f"</div>"
             )
@@ -4572,7 +4661,7 @@ def page_recommendations(
             )
         else:
             rec_timeline_html = (
-                f"<div style='font-size:12px;color:#718096;margin-top:10px'>"
+                f"<div style='font-size:12px;color:#8896a8;margin-top:10px'>"
                 f"Timeline unavailable — RUL not calibrated for this cell."
                 f"</div>"
             )
@@ -4603,7 +4692,7 @@ def page_recommendations(
     )
     st.markdown(
         "<div style='background:#1a202c;border:1px solid #2d3748;border-radius:10px;"
-        "padding:16px 24px;font-size:13px;color:#718096;line-height:1.9'>"
+        "padding:16px 24px;font-size:13px;color:#8896a8;line-height:1.9'>"
         "This recommendation is based on observed cycle data and leave-cell-out validated "
         "model outputs. It does not account for: operating conditions going forward (temperature, "
         "C-rate, and depth-of-discharge significantly affect future degradation); real-world "
@@ -4658,7 +4747,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     st.markdown(
         f"<div style='background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);"
         f"border-radius:10px;padding:14px 20px;margin-bottom:28px;"
-        f"font-size:13px;color:#718096;line-height:1.7'>"
+        f"font-size:13px;color:#8896a8;line-height:1.7'>"
         f"<strong style='color:#d69e2e'>Figure transparency.</strong> "
         f"All CO₂ and material figures are estimates from literature sources — "
         f"not measurements from this specific cell. Each figure is labeled "
@@ -4916,7 +5005,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     if not is_nasa:
         st.markdown(
             "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
-            "font-size:12px;color:#718096;margin-bottom:12px'>"
+            "font-size:12px;color:#8896a8;margin-bottom:12px'>"
             "Synthetic cells model electrochemical behaviour only — material content "
             "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
             "</div>",
@@ -4950,7 +5039,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{mat['formula']}</div>"
                 f"<div style='font-size:22px;font-weight:700;color:#e2e8f0;margin-top:8px'>"
                 f"{scaled_g:.1f} g</div>"
-                f"<div style='font-size:11px;color:#718096'>est. per cell ({mat['g_range']} @ 2 Ah)</div>"
+                f"<div style='font-size:11px;color:#8896a8'>est. per cell ({mat['g_range']} @ 2 Ah)</div>"
                 f"{rec_html}"
                 f"<div style='margin-top:10px'>{badge_html}</div>"
                 f"</div>",
@@ -4963,7 +5052,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         st.markdown(
             f"<div style='font-size:11px;color:#4a5568;margin-top:10px;padding:8px 14px;"
             f"background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
-            f"<strong style='color:#718096'>Nickel (Ni)</strong> — EU critical material, but trace-only in LiCoO₂ chemistry "
+            f"<strong style='color:#8896a8'>Nickel (Ni)</strong> — EU critical material, but trace-only in LiCoO₂ chemistry "
             f"(est. {ni_g:.2f} g per cell, {BADGE_ILLUST}). "
             f"EU 2023/1542 nickel recycled-content targets apply to NMC/NCA chemistries where nickel is a primary cathode material, "
             f"not to LiCoO₂. Shown here for completeness only."
@@ -5058,7 +5147,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:6px'>"
                 f"{a['unit']} — default {a['value']} &nbsp; {make_badge(a['label'], badge_colour)}"
                 f"</div>"
-                f"<div style='font-size:12px;color:#718096;line-height:1.6'>{a['source']}</div>"
+                f"<div style='font-size:12px;color:#8896a8;line-height:1.6'>{a['source']}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -5093,7 +5182,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>My Data · this session only</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{n_up} cells</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.8'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.8'>"
             f"{'⚠ LCO limited — fewer than 3 cells<br>' if lco_lim else ''}"
             f"{calib_cnt} Calibrating · {n_up - calib_cnt} reliable<br>"
             f"{'Temperature assumed 25°C for: ' + ', '.join(temp_assumed) if temp_assumed else 'Temperature measured for all cells'}"
@@ -5133,7 +5222,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#fc8181;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>Synthetic cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(synth_ids)}</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
             f"Physics-informed simulation (Arrhenius SEI growth, empirical C-rate factor, "
             f"Rainflow DoD scaling). Resistance: 0.15–0.40 Ω internal. "
             f"<strong>Not real measured data.</strong></div>"
@@ -5149,7 +5238,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#48bb78;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
             f"LiCoO₂ 18650 cells, ~2 Ah, 24°C, 2A constant discharge. "
             f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
@@ -5162,7 +5251,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;margin-top:12px;padding:10px 14px;"
         "background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
-        "<strong style='color:#718096'>Why two separate models?</strong> "
+        "<strong style='color:#8896a8'>Why two separate models?</strong> "
         "Synthetic and NASA cells use incompatible resistance scales (0.15–0.40 Ω vs 0.04–0.07 Ω Re). "
         "A combined model produced R²=−0.49. Two separate GBRT models, each trained and validated "
         "on its own data source, keep the predictions honest. Fleet ranking uses SOH "
@@ -5222,7 +5311,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             row_cols[4].markdown(f"<div style='font-size:11px;color:#4a5568;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
 
         st.markdown(
-            f"<div style='display:flex;gap:24px;font-size:12px;color:#718096;"
+            f"<div style='display:flex;gap:24px;font-size:12px;color:#8896a8;"
             f"padding:8px 0;border-top:1px solid #2d3748;margin-top:4px'>"
             f"<span>Dataset SOH R²: <strong style='color:#e2e8f0'>{m.get('lco_soh_r2', 0):.3f}</strong></span>"
             f"<span>Dataset RUL R²: <strong style='color:#e2e8f0'>{m.get('lco_rul_r2', 0):.3f}</strong></span>"
@@ -5240,11 +5329,11 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
         "The EOL threshold defines when a cell is 'retired' for your application. "
-        "The standard industry convention is <strong style='color:#718096'>80% SOH</strong>, "
+        "The standard industry convention is <strong style='color:#8896a8'>80% SOH</strong>, "
         "but this is not universal — a delivery van needing 90% range may retire at 88%, "
         "while stationary grid storage may run to 70%. "
         "Changing this threshold adjusts the displayed RUL on the Overview page "
-        "using the current fade rate — <strong style='color:#718096'>it does not retrain the model</strong>. "
+        "using the current fade rate — <strong style='color:#8896a8'>it does not retrain the model</strong>. "
         "The model was trained on 80% EOL; the adjusted RUL is a fade-rate projection, not a new model prediction.</div>",
         unsafe_allow_html=True,
     )
@@ -5329,7 +5418,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "Cells whose held-out fold R² falls below this value have RUL withheld across "
         "all pages — shown as 'Not calibrated' instead of a cycle count. "
         "Adjusting the slider below shows which cells would flip at different thresholds. "
-        "<strong style='color:#718096'>This is a read-only preview</strong> — "
+        "<strong style='color:#8896a8'>This is a read-only preview</strong> — "
         "the active floor is hardcoded at "
         f"<code style='color:#63b3ed'>{RUL_RELIABLE_FLOOR}</code> in "
         "<code style='color:#63b3ed'>src/lco_eval.py</code> and requires a code change to modify.</div>",
@@ -5526,7 +5615,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
             f"<div style='min-width:64px;font-size:11px;font-weight:600;color:#4a5568;padding-top:2px'>{ph}</div>"
             f"<div style='min-width:120px;font-size:13px;font-weight:600;color:#e2e8f0'>{name}</div>"
-            f"<div style='flex:1;font-size:12px;color:#718096;line-height:1.5'>{desc}</div>"
+            f"<div style='flex:1;font-size:12px;color:#8896a8;line-height:1.5'>{desc}</div>"
             f"<div style='min-width:48px;font-size:12px;font-weight:600;color:{status_c};text-align:right'>{status}</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -5536,16 +5625,16 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;line-height:1.8;padding:14px 18px;"
         "background:#1a202c;border-radius:8px'>"
-        "<strong style='color:#718096'>Stack</strong> — "
+        "<strong style='color:#8896a8'>Stack</strong> — "
         "scikit-learn GBRT · Streamlit · Plotly · reportlab<br>"
-        "<strong style='color:#718096'>Model</strong> — "
+        "<strong style='color:#8896a8'>Model</strong> — "
         "Two separate GBRT instances (synthetic / NASA); leave-cell-out cross-validation<br>"
-        "<strong style='color:#718096'>Data</strong> — "
+        "<strong style='color:#8896a8'>Data</strong> — "
         "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007)<br>"
-        "<strong style='color:#718096'>Regulatory</strong> — "
+        "<strong style='color:#8896a8'>Regulatory</strong> — "
         "EU Battery Regulation (EU) 2023/1542 — field structure demonstration only; "
         "not a compliance claim<br>"
-        "<strong style='color:#718096'>Source</strong> — "
+        "<strong style='color:#8896a8'>Source</strong> — "
         "<a href='https://github.com/seyedali1996lb-svg/battery-intelligence-platform' "
         "style='color:#63b3ed'>github.com/seyedali1996lb-svg/battery-intelligence-platform</a>"
         "</div>",
@@ -5574,7 +5663,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
         key="import_run_analysis",
     ):
         st.markdown(
-            "<div style='font-size:11px;color:#718096;margin-bottom:12px'>~60–90 seconds</div>",
+            "<div style='font-size:11px;color:#8896a8;margin-bottom:12px'>~60–90 seconds</div>",
             unsafe_allow_html=True,
         )
         slots = {k: st.empty() for k, _ in step_labels}
@@ -5899,7 +5988,7 @@ def page_import():
     if renames:
         rename_items = "".join(
             f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
-            f"<span style='color:#718096'>{orig}</span>"
+            f"<span style='color:#8896a8'>{orig}</span>"
             f"<span style='color:#4a5568;padding:0 8px'>→</span>"
             f"<span style='color:#48bb78'>{canon}</span>"
             f"</div>"
@@ -5959,7 +6048,7 @@ def page_import():
             )
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div style='font-size:12px;color:#718096;margin-top:8px'>"
+            "<div style='font-size:12px;color:#8896a8;margin-top:8px'>"
             "Fix these issues in your CSV and re-upload.</div>",
             unsafe_allow_html=True,
         )
@@ -5986,7 +6075,7 @@ def page_import():
 
         # One checkbox per warning — all must be ticked before proceeding
         st.markdown(
-            "<div style='font-size:12px;color:#718096;margin:12px 0 8px'>"
+            "<div style='font-size:12px;color:#8896a8;margin:12px 0 8px'>"
             "Acknowledge each note to continue:</div>",
             unsafe_allow_html=True,
         )
@@ -6000,7 +6089,7 @@ def page_import():
 
         if not all_acked:
             st.markdown(
-                "<div style='font-size:12px;color:#718096;margin-top:12px'>"
+                "<div style='font-size:12px;color:#8896a8;margin-top:12px'>"
                 "Tick all boxes above to enable the Proceed button.</div>",
                 unsafe_allow_html=True,
             )
@@ -6020,7 +6109,7 @@ def page_import():
 
     # Summary table — one row per cell
     st.markdown(
-        "<div style='font-size:12px;color:#718096;margin-bottom:10px'>One row per cell:</div>",
+        "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>One row per cell:</div>",
         unsafe_allow_html=True,
     )
 
@@ -6241,7 +6330,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
     # ── Engineering Radar Chart (CATL / A123 format) ─────────────────────────
     st.markdown("<div class='section-header'>Engineering Radar — Multi-Metric Health Profile</div>", unsafe_allow_html=True)
-    _md_html("""<div style="font-size:12px;color:#718096;margin-bottom:10px">Normalized 0–1 scale. <strong style="color:#e2e8f0">Outer = better</strong> for SOH, CE, dQ/dV; <strong style="color:#e2e8f0">Inner = better</strong> for resistance and fade rate (inverted). Standard CATL / A123 engineering review format.</div>""")
+    _md_html("""<div style="font-size:12px;color:#8896a8;margin-bottom:10px">Normalized 0–1 scale. <strong style="color:#e2e8f0">Outer = better</strong> for SOH, CE, dQ/dV; <strong style="color:#e2e8f0">Inner = better</strong> for resistance and fade rate (inverted). Standard CATL / A123 engineering review format.</div>""")
     try:
         def _radar_val(df, col, invert=False, scale=1.0, floor=0.0):
             if col not in df.columns:

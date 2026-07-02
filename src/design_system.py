@@ -43,7 +43,8 @@ UI_BLUE   = "#63b3ed"   # info / neutral / continue
 def make_badge(label: str, colour: str = C_AMBER) -> str:
     """Return an inline HTML pill badge with the given label and colour."""
     return (
-        f"<span style='background:{colour}22;border:1px solid {colour}55;"
+        f"<span role='img' aria-label='{label}' "
+        f"style='background:{colour}22;border:1px solid {colour}55;"
         f"color:{colour};font-size:10px;font-weight:700;padding:1px 7px;"
         f"border-radius:10px;letter-spacing:0.06em'>{label}</span>"
     )
