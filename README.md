@@ -64,6 +64,7 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 | 10 — Advanced features | EIS decomposition (SEI + charge-transfer resistance trends), formation efficiency, rate capability model, dQ/dV differential capacity, Li-S module, SSB chemistry |
 | 11 — Phase 11 | Knee detection (cycle where SOH derivative peaks), anomaly flags, SoP%, calendar aging, pack spread, cell grading (A/B/C/D), Compare page, Q10/Q90 confidence band, EU passport CRM fields |
 | 12 — Severson integration | h5py-based MATLAB v7.3 parser, 12 LFP cell CSVs extracted and committed, Severson mode routed through full pipeline, SHAP caching, Streamlit Cloud crash fixes |
+| 13 — Robustness audit | Full crash audit across all pages; 5 KeyError/ValueError bugs fixed; `build_features()` now produces all columns needed by every page regardless of data source; `dqdv.add_dqdv_features()` vectorized (14k row loop → NumPy broadcast, ~30× faster) |
 
 ---
 
@@ -88,6 +89,12 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 **Silent zero from a wrong column name.** The Consequences page read fade rate as `latest.get("fade_30_mah_cy", 0.0)` — but the actual column is `fade_rate_30cy`. The `.get()` default silently returned 0.0 on every render. Every application-fit score and fade-rate display was wrong for weeks. Caught only when Phase 5 passport forced a careful read of the actual DataFrame schema.
 
 **Three Plotly 6 errors in one page.** (1) `legend` and `title` as kwargs through `**base_layout()` — Plotly 6 strict validation rejects them. (2) `yaxis=dict(titlefont=dict(...))` — `titlefont` removed in Plotly 6. (3) Stale `.pyc` on Streamlit Cloud serving old code after adding a new ASSUMPTIONS key. All three in separate commits so the traceback history is clean. `base_layout()` now has an explicit comment blocking the legend/title kwarg pattern.
+
+**Columns missing from Severson cells.** `data_loader.enrich_cycles()` adds `capacity_fade_ah`, `soh_rolling_avg`, `is_eol`, `capacity_fade_rate`, and `cumulative_days`. Synthetic and NASA cells go through that function; Severson cells load from CSVs and go straight into `build_features()`, bypassing it entirely. Pages hard-accessed these columns (`latest["soh_rolling_avg"]`, `df[df["is_eol"]]`) and crashed on every Severson cell switch. Fix: `build_features()` now computes all five as fallbacks when the column isn't already present, so every data source gets a complete feature DataFrame.
+
+**`dqdv.add_dqdv_features()` Python row loop.** The original implementation called `df.apply(axis=1)` — a Python-level loop — running `extract_dqdv_features()` once per cycle row. For Severson's 12 cells × ~1177 cycles each, that's ~14,000 Python calls, each simulating a 200-point VQ curve. Total: ~2.8 million point operations in a Python loop. The key insight: `V = OCV(soc) − I·R`. Since R is constant per row, the gradient `dV/dt = d(OCV)/dt` is identical across all rows — the IR offset cancels. Rewritten with NumPy broadcasting: compute the OCV derivative once on a `(200,)` array, broadcast across `(n_rows, 200)`. Feature engineering time for Severson dropped from ~30 s to <1 s.
+
+**Unguarded column accesses found in audit.** A structured audit of all page functions identified six unsafe patterns: `_latest["resistance_ohm"]` in the sidebar alert loop (column-check on the DataFrame doesn't protect Series subscript); dot-notation `df.fade_rate_50cy` instead of bracket syntax on a pandas DataFrame; unguarded `df_a["resistance_ohm"]` and `df_b["resistance_ohm"]` in the Compare page metrics and resistance chart; `min()` over a generator that could be empty in the Fleet spread chart. All six fixed — resistance metrics now show "N/A" when the column is absent, the resistance chart shows an info message instead of crashing, and the fleet chart filters empty DataFrames before taking min/max.
 
 ---
 
