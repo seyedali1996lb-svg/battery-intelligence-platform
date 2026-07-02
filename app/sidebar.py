@@ -17,25 +17,28 @@ from design_system import make_badge, make_state_badge
 # Grouped navigation — 4 workflow sections
 # Each group: (group_label, [(display_label, page_key, enabled), ...])
 NAV_GROUPS = [
+    ("Account", [
+        ("Login",    "login",    True),
+        ("Import",   "import",   True),
+        ("Overview", "overview", True),
+    ]),
     ("Analyse", [
-        ("Overview",   "overview",  True),
         ("Health",     "health",    True),
         ("Compare",    "compare",   True),
         ("Insights",   "insights",  True),
         ("Copilot",    "copilot",   True),
     ]),
     ("Operate", [
-        ("Fleet",          "fleet",           True),
-        ("Recommendations","recommendations", True),
-        ("EOL Economics",  "consequences",    True),
-        ("Grading",        "grading",         True),
+        ("Fleet",           "fleet",           True),
+        ("Recommendations", "recommendations", True),
+        ("EOL Economics",   "consequences",    True),
+        ("Grading",         "grading",         True),
     ]),
     ("Comply", [
-        ("Compliance",    "compliance",   True),
-        ("Sustainability","sustainability",True),
+        ("Compliance",    "compliance",    True),
+        ("Sustainability","sustainability", True),
     ]),
     ("Configure", [
-        ("Import",   "import",   True),
         ("Settings", "settings", True),
     ]),
 ]
