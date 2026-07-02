@@ -66,6 +66,7 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 | 12 — Severson integration | h5py-based MATLAB v7.3 parser, 12 LFP cell CSVs extracted and committed, Severson mode routed through full pipeline, SHAP caching, Streamlit Cloud crash fixes |
 | 13 — Robustness audit | Full crash audit across all pages; 5 KeyError/ValueError bugs fixed; `build_features()` now produces all columns needed by every page regardless of data source; `dqdv.add_dqdv_features()` vectorized (14k row loop → NumPy broadcast, ~30× faster) |
 | 14 — Credibility audit | Honest labelling throughout: dQ/dV shows LFP warning for Severson cells; "EIS Impedance Analysis" renamed to "Resistance Component Proxy (simulated)"; Li-S / SSB fake chemistry selector removed; GDPR privacy banner on Import page; Severson provenance corrected from SYNTHETIC → MEASURED |
+| 15 — Design review (medium items) | **#7 UI**: all greens consolidated to `#48bb78` (10 instances replaced); `st.progress()` bar added to startup with per-step labels. **#12 CRM**: Passport CRM section now reads from `ChemistryProfile.for_cell()` — LFP shows cobalt-free/nickel-free correctly, NCA shows configurable wt% values; Settings page gains a CRM Configuration section with `number_input` widgets for all chemistry types. **#14 Performance**: feature engineering split from model training (`_compute_features_only` + `_train_and_predict`); `load_everything()` uses 3-tier cache (full bundle → features-only → cold start) so model retrains skip feature computation; import preview dataframe row-limited to 200. **#18 Expandability**: `ChemistryProfile` class hierarchy in `src/chemistry_profiles.py` — adding a new chemistry = one subclass, no page edits required. |
 
 ---
 
@@ -145,7 +146,8 @@ flowchart TD
 
     DS[design_system.py\nbadge tokens · color constants\nACTION_META · CONF_META] --> RC & EC & CL & SU
 
-    CACHE[bundle_cache.py\nSHA256 disk cache\nFEATURE_VERSION key] --> M1 & M2 & M3 & M4
+    CACHE[bundle_cache.py\nSHA256 disk cache — 2-tier\nbundle + features separately] --> M1 & M2 & M3 & M4
+    CP2[chemistry_profiles.py\nChemistryProfile per cell\nCRM fields · dQ/dV gate] --> CL & HL
 ```
 
 ---
@@ -160,7 +162,8 @@ flowchart TD
 - **Data — synthetic**: 8 cells with stress variation (T, C-rate, DoD) via Arrhenius SEI, power-law C-rate factor, Rainflow DoD scaling
 - **Feature engineering**: `src/features.py` — 17-column feature matrix including dQ/dV peaks, EIS component trends, Coulombic Efficiency, SoP%, calendar aging
 - **Dashboard**: Streamlit + Plotly dark theme — all pages in `app/main.py`
-- **Cache**: `src/bundle_cache.py` — SHA256 keyed by cell IDs + cycle counts + `FEATURE_VERSION`; joblib compression level 3
+- **Cache**: `src/bundle_cache.py` — SHA256 keyed by cell IDs + cycle counts + `FEATURE_VERSION`; joblib compression level 3; two tiers: full bundle + separate features cache so model retrains skip feature engineering
+- **Chemistry profiles**: `src/chemistry_profiles.py` — `ChemistryProfile.for_cell(cell_id)` factory dispatches to `LFPSeversonProfile` / `LiCoO2NASAProfile` / `LiCoO2SyntheticProfile` / `UserDefinedProfile`; each subclass owns CRM fields and health section list; adding a new chemistry = one subclass, no page edits
 - **Copilot**: Template narration (`src/copilot.py`) — no LLM, no external calls; every sentence traces to a bundle value
 - **EOL Economics**: Literature-grounded assumption layer — 8 financial/environmental figures, each sourced or flagged as engineering judgment, badged at render time
 - **Recommendations**: Threshold-based classification — all thresholds are named constants; no scoring function buries the logic
