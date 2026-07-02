@@ -91,8 +91,8 @@ def extract_dqdv_features(capacity_ah: float, resistance_ohm: float) -> dict:
     dqdv_peak_soc = float(soc_array[peak_idx])
 
     # Area under dQ/dV curve (trapz over Q)
-    # np.trapezoid is NumPy 2.0+; np.trapz works on both 1.x and 2.x
-    _trapz = getattr(np, "trapezoid", np.trapz)
+    # np.trapezoid is NumPy 2.0+; np.trapz removed in NumPy 2.0
+    _trapz = getattr(np, "trapezoid", None) or getattr(np, "trapz")
     dqdv_area = float(_trapz(dq_dv, Q))
 
     # FWHM: find indices where dQ/dV > peak / 2
