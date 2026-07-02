@@ -184,7 +184,7 @@ st.markdown(
         padding: 2px 8px; border-radius: 4px; letter-spacing: 0.06em;
         border: 1px solid rgba(104,211,145,0.25);
     }
-    .block-container { padding-top: 24px !important; }
+    .block-container { padding-top: 56px !important; }
     h1 { font-size: 28px !important; font-weight: 800 !important; color: #e2e8f0 !important; }
     h2 { font-size: 20px !important; font-weight: 700 !important; color: #e2e8f0 !important; }
     h3 { font-size: 16px !important; font-weight: 600 !important; color: #cbd5e0 !important; }
