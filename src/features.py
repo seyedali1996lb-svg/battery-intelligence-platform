@@ -22,6 +22,13 @@ from dqdv import add_dqdv_features
 def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.DataFrame:
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 
+    # ── Capacity fade — ensure present for all data sources ──
+    # data_loader.build_battery() adds this for synthetic/NASA; Severson/uploaded
+    # cells arrive without it, so we compute it here as a fallback.
+    if "capacity_fade_ah" not in df.columns:
+        initial_cap = float(df["capacity_ah"].iloc[0])
+        df["capacity_fade_ah"] = (initial_cap - df["capacity_ah"]).clip(lower=0)
+
     # ── Fade rate at multiple windows ──
     for window in [10, 30, 50]:
         df[f"fade_rate_{window}cy"] = (

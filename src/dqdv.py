@@ -113,32 +113,67 @@ def extract_dqdv_features(capacity_ah: float, resistance_ohm: float) -> dict:
 
 def add_dqdv_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply dQ/dV feature extraction to every row of a cycle DataFrame.
+    Vectorized dQ/dV feature extraction across all cycle rows.
 
-    Expects columns: capacity_ah, resistance_ohm.
-    Adds columns: dqdv_peak_value, dqdv_peak_soc, dqdv_area, dqdv_fwhm.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Cycle-level DataFrame (one row per cycle).
-
-    Returns
-    -------
-    pd.DataFrame
-        Modified copy with four new dQ/dV columns appended.
+    dV/dQ = d(OCV)/dt · (1/cap) where t = Q/cap is normalised charge.
+    The OCV derivative is identical for every row (IR offset cancels in
+    the gradient), so we compute it once on a (N,) array and broadcast
+    across all rows — replacing a Python-level loop with pure NumPy ops.
     """
     df = df.copy()
 
-    results = df.apply(
-        lambda row: extract_dqdv_features(
-            row["capacity_ah"], row["resistance_ohm"]
-        ),
-        axis=1,
-        result_type="expand",
+    caps = df["capacity_ah"].to_numpy(dtype=float)
+    n, N = len(caps), 200
+
+    t   = np.linspace(0, 1, N)          # normalised Q  (0 → 1)
+    soc = 1.0 - t                        # SOC decreases as Q increases
+
+    # LiCoO2 OCV model — same for all rows
+    ocv = (
+        3.7
+        + 0.7 * soc - 0.5 * soc**2 + 0.3 * soc**3
+        - 0.1 * (1 - soc)**3
+        + 0.08 * np.exp(-20 * soc)
+        - 0.05 * np.exp(-20 * (1 - soc))
     )
 
-    for col in ["dqdv_peak_value", "dqdv_peak_soc", "dqdv_area", "dqdv_fwhm"]:
-        df[col] = results[col]
+    # d(OCV)/dt  — uniform spacing dt = 1/(N-1), compute once
+    docv_dt = np.gradient(ocv, t)
+    docv_dt = np.where(np.abs(docv_dt) < 1e-4,
+                       np.sign(docv_dt + 1e-12) * 1e-4, docv_dt)
+
+    # dQ/dV[i, j] = caps[i] / docv_dt[j]   shape (n, N)
+    dqdv = caps[:, np.newaxis] / docv_dt[np.newaxis, :]
+
+    # Q arrays for each row   shape (n, N)
+    Q = caps[:, np.newaxis] * t[np.newaxis, :]
+
+    # ── Peak value + SOC position ──
+    peak_idx        = np.argmax(dqdv, axis=1)
+    dqdv_peak_value = dqdv[np.arange(n), peak_idx]
+    dqdv_peak_soc   = soc[peak_idx]
+
+    # ── Area: trapz over Q (uniform spacing per row) ──
+    dq        = caps / (N - 1)
+    dqdv_area = np.sum(
+        (dqdv[:, 1:] + dqdv[:, :-1]) * 0.5 * dq[:, np.newaxis], axis=1
+    )
+
+    # ── FWHM ──
+    half_max  = dqdv_peak_value / 2.0
+    above     = dqdv > half_max[:, np.newaxis]           # (n, N) bool
+    has_any   = above.any(axis=1)
+    first_idx = np.argmax(above, axis=1)
+    last_idx  = N - 1 - np.argmax(above[:, ::-1], axis=1)
+    dqdv_fwhm = np.where(
+        has_any,
+        Q[np.arange(n), last_idx] - Q[np.arange(n), first_idx],
+        0.0,
+    )
+
+    df["dqdv_peak_value"] = dqdv_peak_value
+    df["dqdv_peak_soc"]   = dqdv_peak_soc
+    df["dqdv_area"]       = dqdv_area
+    df["dqdv_fwhm"]       = dqdv_fwhm
 
     return df

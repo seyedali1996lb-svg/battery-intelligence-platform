@@ -21,7 +21,7 @@ CACHE_DIR = pathlib.Path(__file__).parent.parent / ".cache" / "bundles"
 # that makes cached featured_dfs or bundles incompatible with the current code.
 # The version is mixed into the cache signature so old caches are automatically
 # invalidated and rebuilt on the next app start.
-FEATURE_VERSION = "v7-severson-ir-fix"
+FEATURE_VERSION = "v8-capacity-fade-vectorized-dqdv"
 
 
 def _signature(battery_dict: dict) -> str:
