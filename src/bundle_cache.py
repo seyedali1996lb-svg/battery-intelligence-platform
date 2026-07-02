@@ -71,16 +71,62 @@ def save_cached(key: str, battery_dict: dict, triple: tuple):
     joblib.dump(triple, bundle_path, compress=3)
 
 
-def clear_cache(key: str | None = None):
+def load_features_cached(key: str, battery_dict: dict):
+    """Load (raw_fdfs, model_inputs) cached independently of the model bundle.
+
+    raw_fdfs:     {cell_id: df_feat} — build_features() output, no predictions
+    model_inputs: {cell_id: (X, y_soh, y_rul)} — ready for train_models()
+
+    Returns None if no cache exists or the signature doesn't match.
     """
-    Delete cached files. If key is None, clears all bundles.
-    Called from Settings page when the user wants to force a retrain.
+    meta_path = CACHE_DIR / f"{key}-features.meta.json"
+    data_path = CACHE_DIR / f"{key}-features.joblib"
+    if not meta_path.exists() or not data_path.exists():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return None
+    if meta.get("sig") != _signature(battery_dict):
+        return None
+    try:
+        return joblib.load(data_path)
+    except Exception:
+        return None
+
+
+def save_features_cached(key: str, battery_dict: dict, raw_fdfs: dict, model_inputs: dict):
+    """Save (raw_fdfs, model_inputs) independently of the model bundle.
+
+    Allows the model to be retrained (e.g. hyperparameter tuning) without
+    re-running the full feature engineering pipeline.
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    meta_path = CACHE_DIR / f"{key}-features.meta.json"
+    data_path = CACHE_DIR / f"{key}-features.joblib"
+    sig = _signature(battery_dict)
+    meta_path.write_text(json.dumps({"sig": sig, "key": key, "type": "features"}))
+    joblib.dump((raw_fdfs, model_inputs), data_path, compress=3)
+
+
+def clear_cache(key: str | None = None, features_only: bool = False):
+    """Delete cached files.
+
+    key=None clears all bundles.  features_only=True preserves model bundles
+    and only removes feature caches — useful when retraining without changing
+    the feature engineering pipeline.
     """
     if not CACHE_DIR.exists():
         return
     if key is None:
         for f in CACHE_DIR.iterdir():
+            if features_only and "-features." not in f.name:
+                continue
             f.unlink(missing_ok=True)
     else:
-        for suffix in (".meta.json", ".joblib"):
+        if features_only:
+            suffixes = ("-features.meta.json", "-features.joblib")
+        else:
+            suffixes = (".meta.json", ".joblib", "-features.meta.json", "-features.joblib")
+        for suffix in suffixes:
             (CACHE_DIR / f"{key}{suffix}").unlink(missing_ok=True)

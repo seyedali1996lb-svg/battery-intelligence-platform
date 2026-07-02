@@ -66,7 +66,8 @@ def _analysis_provenance(cell_id: str, analysis: str = "derived") -> str:
         return "measured" if analysis == "cycle" else "simulated"
     return "synthetic"
 from import_adapter import adapt_upload_to_pipeline
-from bundle_cache import load_cached, save_cached, clear_cache as clear_bundle_cache
+from bundle_cache import (load_cached, save_cached, clear_cache as clear_bundle_cache,
+                          load_features_cached, save_features_cached)
 from knee_detection import detect_knee, degradation_phases
 
 
@@ -146,7 +147,7 @@ st.markdown(
     .hero-label  { font-size: 12px; color: #718096; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
     .hero-value  { font-size: 48px; font-weight: 700; line-height: 1.1; margin-bottom: 8px; }
     .hero-sub    { font-size: 14px; color: #a0aec0; }
-    .hero-green  { color: #68d391; }
+    .hero-green  { color: #48bb78; }
     .hero-yellow { color: #f6e05e; }
     .hero-red    { color: #fc8181; }
     .hero-blue   { color: #63b3ed; }
@@ -182,7 +183,7 @@ st.markdown(
     }
     .tag-model {
         display: inline-block; background: rgba(104,211,145,0.12);
-        color: #68d391; font-size: 11px; font-weight: 600;
+        color: #48bb78; font-size: 11px; font-weight: 600;
         padding: 2px 8px; border-radius: 4px; letter-spacing: 0.06em;
         border: 1px solid rgba(104,211,145,0.25);
     }
@@ -268,40 +269,47 @@ def _nasa_cells_available() -> list[str]:
     ]
 
 
-def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
-    """Train SOH+RUL models and run LCO on a battery_dict of enriched cells.
+def _compute_features_only(battery_dict: dict) -> tuple[dict, dict]:
+    """Feature engineering pass — no model training.
 
-    Called by load_everything() for built-in data and by page_import() for
-    user-uploaded data. Must not be modified to accommodate uploaded data —
-    the adapter transforms uploaded data to fit this function's expected format.
+    Returns (raw_fdfs, model_inputs) where:
+      raw_fdfs:     {cell_id: df_feat}         — build_features() output, no predictions
+      model_inputs: {cell_id: (X, y_soh, y_rul)} — ready for train_models()
+
+    Separated from model training so the output can be cached independently,
+    allowing the model to be retrained without re-running feature engineering.
     """
-    all_X, all_y_soh, all_y_rul = [], [], []
-    cell_featured = {}
+    raw_fdfs     = {}
+    model_inputs = {}
     for cell_id, cell in battery_dict.items():
         df_feat = build_features(cell["cycles"])
         X, y_soh, y_rul = get_model_matrix(df_feat)
-        all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
-        cell_featured[cell_id] = (df_feat, X)
-    X_all = pd.concat(all_X)
-    y_soh_all = pd.concat(all_y_soh)
-    y_rul_all = pd.concat(all_y_rul)
+        raw_fdfs[cell_id]     = df_feat
+        model_inputs[cell_id] = (X, y_soh, y_rul)
+    return raw_fdfs, model_inputs
+
+
+def _train_and_predict(battery_dict: dict, raw_fdfs: dict,
+                       model_inputs: dict) -> tuple[dict, dict, dict]:
+    """Train SOH+RUL models on pre-computed features and apply predictions.
+
+    Separated from feature engineering so load_everything() can use a features
+    cache hit to skip build_features() while still running LCO + model training.
+    """
+    X_all     = pd.concat([m[0] for m in model_inputs.values()])
+    y_soh_all = pd.concat([m[1] for m in model_inputs.values()])
+    y_rul_all = pd.concat([m[2] for m in model_inputs.values()])
+
     bndl = train_models(X_all, y_soh_all, y_rul_all)
     bndl["metrics"]["n_cells"] = len(battery_dict)
     bndl["metrics"]["n_rows"]  = len(X_all)
 
-    # LCO validation: only honest generalisation metric for this data structure.
-    # Per-cell fold R² is stored individually — the dataset-average can pass
-    # while a specific cell's fold fails. RUL display is gated per cell.
     cell_cycles = {cid: cell["cycles"] for cid, cell in battery_dict.items()}
     lco = run_lco(cell_cycles)
     bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
     bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
-    bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]   # dataset average (for Insights display)
+    bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]
     bndl["metrics"]["lco_per_cell"] = lco["per_cell"]
-
-    # Per-cell reliability: each cell checked against the floor independently.
-    # A cell whose held-out fold R² is below the floor gets rul_reliable=False
-    # even if the dataset-average passes.
     per_cell_rul_ok = {
         cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
         for cid, fold in lco["per_cell"].items()
@@ -309,18 +317,31 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
     bndl["metrics"]["per_cell_rul_reliable"] = per_cell_rul_ok
 
     featured_dfs, split_cycles = {}, {}
-    for cell_id, (df_feat, X) in cell_featured.items():
-        preds = predict(bndl, X)
-        df_out = df_feat.loc[X.index].copy()
+    for cell_id, (X, y_soh, y_rul) in model_inputs.items():
+        df_feat = raw_fdfs[cell_id]
+        preds   = predict(bndl, X)
+        df_out  = df_feat.loc[X.index].copy()
         df_out["soh_pred"]       = preds["soh_pred"]
         df_out["rul_pred"]       = preds["rul_pred"]
         df_out["rul_q10"]        = preds.get("rul_q10", preds["rul_pred"])
         df_out["rul_q90"]        = preds.get("rul_q90", preds["rul_pred"])
         df_out["confidence_tag"] = preds["confidence_tag"]
-        featured_dfs[cell_id] = df_out
+        featured_dfs[cell_id]  = df_out
         split_idx = int(len(X) * 0.8)
-        split_cycles[cell_id] = int(X["cycle_number"].iloc[split_idx])
+        split_cycles[cell_id]  = int(X["cycle_number"].iloc[split_idx])
+
     return bndl, featured_dfs, split_cycles
+
+
+def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
+    """Full pipeline: feature engineering + model training + predictions.
+
+    Called by page_import() for user-uploaded data. For built-in data,
+    load_everything() uses _compute_features_only + _train_and_predict
+    so each stage can be cached independently.
+    """
+    raw_fdfs, model_inputs = _compute_features_only(battery_dict)
+    return _train_and_predict(battery_dict, raw_fdfs, model_inputs)
 
 
 @st.cache_resource(show_spinner=False)
@@ -354,39 +375,60 @@ def load_everything():
     The dashboard selects the correct bundle based on which cell is chosen.
     """
     with st.status("Initialising platform…", expanded=True) as _status:
-        # ── Step 1: Synthetic cells ──
+        _prog = st.progress(0, text="Starting…")
+
+        def _load_or_train(key: str, cell_dict: dict, step_label: str) -> tuple[dict, dict, dict]:
+            """3-tier cache: full bundle → features-only → full pipeline."""
+            # Tier 1: full bundle cache (fastest — no computation at all)
+            cached = load_cached(key, cell_dict)
+            if cached is not None:
+                st.write(f"{step_label} — loaded from cache ✓")
+                return cached
+
+            # Tier 2: features cached; retrain model only (skips build_features)
+            feat_cached = load_features_cached(key, cell_dict)
+            if feat_cached is not None:
+                raw_fdfs, model_inputs = feat_cached
+                st.write(f"{step_label} — features cached; retraining model…")
+                result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
+                save_cached(key, cell_dict, result)
+                return result
+
+            # Tier 3: full pipeline
+            st.write(f"{step_label} — computing features…")
+            raw_fdfs, model_inputs = _compute_features_only(cell_dict)
+            save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
+            st.write(f"{step_label} — training model…")
+            result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
+            save_cached(key, cell_dict, result)
+            st.write(f"{step_label} — trained and cached ✓")
+            return result
+
+        # ── Step 1 / 4: Synthetic cells ──
+        _prog.progress(5, text="Step 1 / 4 — Loading synthetic cells…")
         st.write("Step 1 / 4 — Loading synthetic cells (Cell1–Cell8)…")
         synth_ids     = list(CELL_STRESS_PROFILES.keys())
         battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
-        cached        = load_cached("synth", battery_synth["cells"])
-        if cached is not None:
-            st.write("Step 2 / 4 — Synthetic model: loaded from cache ✓")
-            bundle_synth, fdfs_synth, sc_synth = cached
-        else:
-            st.write(f"Step 2 / 4 — Training SOH/RUL model on {len(synth_ids)} synthetic cells…")
-            bundle_synth, fdfs_synth, sc_synth = _train_on_cells(battery_synth["cells"])
-            save_cached("synth", battery_synth["cells"], (bundle_synth, fdfs_synth, sc_synth))
-            st.write("Step 2 / 4 — Synthetic model: trained and cached ✓")
+        bundle_synth, fdfs_synth, sc_synth = _load_or_train(
+            "synth", battery_synth["cells"],
+            f"Step 2 / 4 — Synthetic model ({len(synth_ids)} cells)")
+        _prog.progress(40, text="Step 2 / 4 — Synthetic model ready")
 
-        # ── Step 3: NASA real cells ──
+        # ── Step 3 / 4: NASA real cells ──
         nasa_ids = _nasa_cells_available()
         bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
         if nasa_ids:
+            _prog.progress(45, text=f"Step 3 / 4 — NASA cells ({', '.join(nasa_ids)})…")
             st.write(f"Step 3 / 4 — Loading NASA real cells ({', '.join(nasa_ids)})…")
             battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
-            cached_nasa  = load_cached("nasa", battery_nasa["cells"])
-            if cached_nasa is not None:
-                st.write("Step 3 / 4 — NASA model: loaded from cache ✓")
-                bundle_nasa, fdfs_nasa, sc_nasa = cached_nasa
-            else:
-                st.write(f"Step 3 / 4 — Training SOH/RUL model on {len(nasa_ids)} NASA cells…")
-                bundle_nasa, fdfs_nasa, sc_nasa = _train_on_cells(battery_nasa["cells"])
-                save_cached("nasa", battery_nasa["cells"], (bundle_nasa, fdfs_nasa, sc_nasa))
-                st.write("Step 3 / 4 — NASA model: trained and cached ✓")
+            bundle_nasa, fdfs_nasa, sc_nasa = _load_or_train(
+                "nasa", battery_nasa["cells"],
+                f"Step 3 / 4 — NASA model ({len(nasa_ids)} cells)")
         else:
             st.write("Step 3 / 4 — NASA cells not found — skipping")
+        _prog.progress(70, text="Step 3 / 4 — NASA model ready")
 
-        # ── Step 4: Severson 2019 LFP cells ──
+        # ── Step 4 / 4: Severson 2019 LFP cells ──
         # Only load if CSVs are already pre-cached locally. The raw MATLAB file
         # is ~115 MB — downloading it at startup would block Streamlit Cloud for
         # several minutes and trigger an OOM/timeout kill. Run
@@ -396,19 +438,14 @@ def load_everything():
         try:
             from severson_loader import load_severson_cells, any_cached as _sev_any_cached
             if _sev_any_cached():
+                _prog.progress(72, text="Step 4 / 4 — Loading Severson 2019 LFP cells…")
                 st.write("Step 4 / 4 — Loading Severson 2019 LFP cells from local CSVs…")
                 sev_cells = load_severson_cells(status_fn=lambda msg: st.write(f"  {msg}"))
                 if sev_cells:
                     sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
-                    cached_sev = load_cached("severson", sev_cell_dicts)
-                    if cached_sev is not None:
-                        st.write("Step 4 / 4 — Severson 2019 model: loaded from cache ✓")
-                        bundle_sev, fdfs_sev, sc_sev = cached_sev
-                    else:
-                        st.write(f"  {len(sev_cells)} cells loaded — training model…")
-                        bundle_sev, fdfs_sev, sc_sev = _train_on_cells(sev_cell_dicts)
-                        save_cached("severson", sev_cell_dicts, (bundle_sev, fdfs_sev, sc_sev))
-                        st.write("Step 4 / 4 — Severson model: trained and cached ✓")
+                    bundle_sev, fdfs_sev, sc_sev = _load_or_train(
+                        "severson", sev_cell_dicts,
+                        f"Step 4 / 4 — Severson model ({len(sev_cells)} cells)")
                 else:
                     st.write("Step 4 / 4 — Severson CSVs unreadable — skipping")
             else:
@@ -416,7 +453,7 @@ def load_everything():
         except Exception as _sev_err:
             st.write(f"Step 4 / 4 — Severson load skipped ({_sev_err})")
 
-        st.write("Finalising — building feature matrices…")
+        _prog.progress(100, text="Platform ready ✓")
         _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
     # Merge all cell outputs; keep bundles separate by source
@@ -730,7 +767,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
                 "Source: NASA PCoE Battery Aging Dataset<br>"
                 "T=24°C &nbsp; C-rate=2A &nbsp; DoD=100%<br>"
-                "<span style='color:#68d391'>Real measured data</span>"
+                "<span style='color:#48bb78'>Real measured data</span>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -739,7 +776,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
                 "Source: Severson 2019 · Nature Energy<br>"
                 "LFP chemistry · 4 cycle-life bands<br>"
-                "<span style='color:#68d391'>Real measured data</span>"
+                "<span style='color:#48bb78'>Real measured data</span>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -838,7 +875,7 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
     polyline = " ".join(pts)
     # Colour: green if last >= first, red if declining steeply
     delta = vals[-1] - vals[0]
-    stroke = "#68d391" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
+    stroke = "#48bb78" if delta >= -0.5 else ("#f6ad55" if delta >= -2 else "#fc8181")
     return (
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
         f'xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle">'
@@ -1061,7 +1098,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     ))
     fig.add_trace(go.Scatter(
         x=df_test["cycle_number"], y=df_test["soh_pred"],
-        name="Model (test)", line=dict(color="#68d391", width=2, dash="dot"), mode="lines",
+        name="Model (test)", line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
         hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Model</extra>",
     ))
     fig.add_vline(
@@ -1302,7 +1339,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     ))
     fig3.add_trace(go.Scatter(
         x=df["cycle_number"], y=df["fade_rate_50cy"] * 1000,
-        line=dict(color="#68d391", width=2), name="50-cycle window",
+        line=dict(color="#48bb78", width=2), name="50-cycle window",
     ))
     if first_accel is not None:
         fig3.add_vline(
@@ -1372,7 +1409,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     n_plateau = int(phase_counts.get("Plateau", 0))
     n_accel = int(phase_counts.get("Accelerating", 0))
     current_phase = knee["phase"]
-    PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#68d391", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
+    PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#48bb78", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
     pc = PHASE_COLOUR.get(current_phase, "#4a5568")
 
     _md_html(
@@ -1390,7 +1427,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
                     <div style="font-size:12px;color:#a0aec0;line-height:2">
                         <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
-                        <span style="color:#68d391">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
+                        <span style="color:#48bb78">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
                         <span style="color:#fc8181">Accelerating</span> — {n_accel} cycles (post-knee, rapid fade)
                     </div>
                 </div>
@@ -1511,7 +1548,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 fig_fwhm = go.Figure()
                 fig_fwhm.add_trace(go.Scatter(
                     x=df["cycle_number"], y=df["dqdv_fwhm"],
-                    line=dict(color="#68d391", width=2),
+                    line=dict(color="#48bb78", width=2),
                     hovertemplate="Cycle %{x}: %{y:.4f} Ah<extra>FWHM</extra>",
                     showlegend=False,
                 ))
@@ -1727,7 +1764,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 # Nyquist simulation
                 _FREQ = _np_eis.logspace(5, -2, 60)
                 _OMEGA = 2 * _np_eis.pi * _FREQ
-                _nyq_colors = ["#68d391", "#63b3ed", "#fc8181"]
+                _nyq_colors = ["#48bb78", "#63b3ed", "#fc8181"]
                 _fig_nyq = go.Figure()
                 for _si, (_idx, _lbl, _col) in enumerate(zip(_snap_idx, _snap_labels, _nyq_colors)):
                     _row = df.iloc[_idx]
@@ -1765,7 +1802,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 for _col_name, _label, _color in [
                     ("r_sei", "R_SEI (SEI layer)", "#f6ad55"),
                     ("r_ct",  "R_ct (charge transfer)", "#63b3ed"),
-                    ("r_ohm_eis", "R_ohm (electrolyte)", "#68d391"),
+                    ("r_ohm_eis", "R_ohm (electrolyte)", "#48bb78"),
                 ]:
                     _fig_eis_trend.add_trace(go.Scatter(
                         x=df["cycle_number"].tolist(), y=df[_col_name].tolist(),
@@ -1798,7 +1835,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     _mech_explain = "R_ct growth outpaces R_SEI — primary degradation is charge-transfer impedance from active-material loss and lithium plating."
                 else:
                     _mech = "Mixed SEI + charge-transfer"
-                    _mech_color = "#68d391"
+                    _mech_color = "#48bb78"
                     _mech_explain = "Balanced SEI and charge-transfer growth — both calendar and cycling contribute comparably."
                 _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_mech_color};font-weight:700">{_mech}</span><span style="color:#a0aec0;margin-left:10px">{_mech_explain}</span><br><span style="color:#718096;font-size:12px;margin-top:4px;display:block">R_SEI growth: {_sei_growth:.1f}% · R_ct growth: {_ct_growth:.1f}%</span></div>""")
         except Exception as _eis_e:
@@ -1847,8 +1884,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                         x=_form_plot["cycle_number"].tolist(),
                         y=(_form_plot["coulombic_efficiency"] * 100).tolist(),
                         mode="lines+markers",
-                        marker=dict(size=5, color="#68d391"),
-                        line=dict(color="#68d391", width=2),
+                        marker=dict(size=5, color="#48bb78"),
+                        line=dict(color="#48bb78", width=2),
                         name="CE",
                         hovertemplate="Cycle %{x}: CE = %{y:.3f}%<extra></extra>",
                     ))
@@ -1865,7 +1902,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
                 # Lifetime prediction from formation metrics
                 _icl_risk = "Low" if _icl < 1.5 else ("Moderate" if _icl < 3.0 else "High")
-                _risk_color = {"Low": "#68d391", "Moderate": "#f6ad55", "High": "#fc8181"}[_icl_risk]
+                _risk_color = {"Low": "#48bb78", "Moderate": "#f6ad55", "High": "#fc8181"}[_icl_risk]
                 _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_risk_color};font-weight:700">ICL Risk: {_icl_risk}</span><span style="color:#a0aec0;margin-left:10px">ICL = {_icl:.2f}% — literature correlation: cells with ICL &lt;1.5% retain &gt;90% SOH beyond 500 cycles (Severson et al. 2019).</span></div>""")
         except Exception as _form_e:
             st.info(f"Formation analysis unavailable: {_form_e}")
@@ -1903,7 +1940,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             _fig_rate = go.Figure()
             _fig_rate.add_trace(go.Bar(
                 x=_c_labels, y=_retention,
-                marker_color=["#68d391" if r >= 90 else "#f6ad55" if r >= 75 else "#fc8181" for r in _retention],
+                marker_color=["#48bb78" if r >= 90 else "#f6ad55" if r >= 75 else "#fc8181" for r in _retention],
                 text=[f"{r:.1f}%" for r in _retention],
                 textposition="outside",
                 hovertemplate="%{x}: %{y:.1f}% retention<extra></extra>",
@@ -1920,7 +1957,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
             _ret_2c = _retention[5]
             _ret_msg = f"At 2C (fast charge), this cell retains {_ret_2c:.1f}% of its C/5 capacity."
-            _ret_color = "#68d391" if _ret_2c >= 85 else "#f6ad55" if _ret_2c >= 70 else "#fc8181"
+            _ret_color = "#48bb78" if _ret_2c >= 85 else "#f6ad55" if _ret_2c >= 70 else "#fc8181"
             _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_ret_color};font-weight:700">{_ret_msg}</span><span style="color:#a0aec0;margin-left:10px">k_rate = {_k_rate:.3f} (resistance-scaled). >85% at 2C = good fast-charge fitness; &lt;70% = rate-limited application only.</span></div>""")
         except Exception as _rate_e:
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
@@ -2045,7 +2082,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             _sc1, _sc2 = st.columns(2)
             for _col, _shap_df, _color, _model_lbl in [
                 (_sc1, _shap_df_soh, "#63b3ed", "SOH"),
-                (_sc2, _shap_df_rul, "#68d391", "RUL"),
+                (_sc2, _shap_df_rul, "#48bb78", "RUL"),
             ]:
                 with _col:
                     st.markdown(f"<div class='section-header'>SHAP Attribution — {_model_lbl} Model</div>", unsafe_allow_html=True)
@@ -2092,7 +2129,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                 }).sort_values("shap", key=abs, ascending=True).tail(10)
 
                 st.markdown("<div class='section-header'>SHAP Waterfall — Why is this cell's SOH predicted at this value?</div>", unsafe_allow_html=True)
-                _colors_wf = ["#68d391" if v > 0 else "#fc8181" for v in _wf_df["shap"]]
+                _colors_wf = ["#48bb78" if v > 0 else "#fc8181" for v in _wf_df["shap"]]
                 _fig_wf = go.Figure(go.Bar(
                     x=_wf_df["shap"], y=_wf_df["feature"],
                     orientation="h",
@@ -2141,7 +2178,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             st.markdown("<div class='section-header'>Split Importance — RUL Model</div>", unsafe_allow_html=True)
             fi_rul = feature_importance_df(bundle, model="rul")
             fi_rul["label"] = fi_rul["feature"].map(friendly)
-            st.plotly_chart(_importance_bar(fi_rul, "#68d391"), use_container_width=True)
+            st.plotly_chart(_importance_bar(fi_rul, "#48bb78"), use_container_width=True)
 
     # Explain the profile difference (uses whichever fi_soh/fi_rul were last computed)
     try:
@@ -2311,7 +2348,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 
             # Ea display boxes
             _ac1, _ac2, _ac3 = st.columns(3)
-            _ea_color = "#68d391" if 0.35 <= Ea_eV <= 0.75 else "#f6ad55"
+            _ea_color = "#48bb78" if 0.35 <= Ea_eV <= 0.75 else "#f6ad55"
             _ac1.metric("Ea — Capacity Fade", f"{Ea_eV:.3f} eV", help="Activation energy from ln(fade rate) vs 1/T. Literature: 0.4–0.6 eV for LiCoO₂ SEI.")
             if not _np_arr.isnan(Ea_eV_r):
                 _ac2.metric("Ea — Resistance Growth", f"{Ea_eV_r:.3f} eV", help="Activation energy from ln(resistance) vs 1/T.")
@@ -2593,7 +2630,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             </div>
             <div class="metric-chip">
                 <div class="metric-chip-label">Healthy</div>
-                <div class="metric-chip-value" style="color:#68d391">{n_healthy}</div>
+                <div class="metric-chip-value" style="color:#48bb78">{n_healthy}</div>
                 <div class="metric-chip-sub">above 90% SOH</div>
             </div>
             <div class="metric-chip">
@@ -2608,9 +2645,9 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     # ── Ranking table ──
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
 
-    STATUS_COLOUR = {"Healthy": "#68d391", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
+    STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {
-        "NASA":      "background:rgba(104,211,145,0.12);color:#68d391;border:1px solid rgba(104,211,145,0.25)",
+        "NASA":      "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
         "Synthetic": "background:rgba(74,85,104,0.3);color:#718096;border:1px solid #2d3748",
         "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }
@@ -2635,7 +2672,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         TREND_STYLE = {
             "Accelerating": ("⚡", "#fc8181"),
             "Stable":       ("→",  "#a0aec0"),
-            "Decelerating": ("↘",  "#68d391"),
+            "Decelerating": ("↘",  "#48bb78"),
         }
         trend_icon, trend_colour = TREND_STYLE.get(r["trend"], ("→", "#a0aec0"))
 
@@ -2767,7 +2804,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         def _quadrant(soh_v, rul_v):
             h_soh = soh_v >= soh_thresh
             h_rul = rul_v >= rul_med
-            if h_soh and h_rul:     return "Continue", "#68d391"
+            if h_soh and h_rul:     return "Continue", "#48bb78"
             if h_soh and not h_rul: return "Watch",    "#d69e2e"
             if not h_soh and h_rul: return "Act",      "#f6ad55"
             return "Critical", "#fc8181"
@@ -2824,7 +2861,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         y_hi        = max(rul_vals) * 1.05
         for (sx, sy, label, c) in [
             (soh_thresh - 1, rul_med + y_hi * 0.02, "ACT",      "#f6ad55"),
-            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#68d391"),
+            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#48bb78"),
             (soh_thresh - 1, y_hi * 0.04,           "CRITICAL", "#fc8181"),
             (soh_thresh + 1, y_hi * 0.04,           "WATCH",    "#d69e2e"),
         ]:
@@ -2928,7 +2965,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
 
     SL_BUCKETS = {
         "primary":    ("Primary Life",          "SOH > 85%",    "#4a5568", "#1a202c"),
-        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#68d391", "#1a2e22"),
+        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#48bb78", "#1a2e22"),
         "below_floor":("Below Floor",           "SOH < 70%",    "#fc8181", "#2d0f0f"),
     }
 
@@ -3003,7 +3040,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         rul_note = "" if pack_rul_rows else "RUL not calibrated for any selected cell"
         n_uncal = len(pack_rows) - len(pack_rul_rows)
         # Spread health: <2% is excellent, 2-5% is watch, >5% is high imbalance
-        spread_c = "#68d391" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
+        spread_c = "#48bb78" if pack_spread < 2 else ("#f6ad55" if pack_spread < 5 else "#fc8181")
         spread_label = "Balanced" if pack_spread < 2 else ("Watch" if pack_spread < 5 else "Imbalanced")
 
         _md_html(
@@ -3126,7 +3163,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         for _sv in _soh_values:
             _dist = abs(_sv - _pack_soh)
             if _dist <= 2:
-                _bar_colors.append("#68d391")
+                _bar_colors.append("#48bb78")
             elif _dist <= 5:
                 _bar_colors.append("#f6ad55")
             else:
@@ -3538,7 +3575,7 @@ def page_consequences(
     fit_results = application_fit(soh, fade_30, fleet_fade_median)
 
     FIT_STYLE = {
-        "fit":      ("#68d391", "#1a2e22", "Fit"),
+        "fit":      ("#48bb78", "#1a2e22", "Fit"),
         "marginal": ("#f6e05e", "#2d2a0a", "Marginal"),
         "not_fit":  ("#fc8181", "#2d0f0f", "Not Fit"),
     }
@@ -3794,7 +3831,7 @@ def page_consequences(
         bev_fig.add_annotation(
             x=bev_sohs[-1], y=bev_sl[-1],
             text="Reuse stays ahead to 62% SOH",
-            showarrow=False, font=dict(color="#68d391", size=11),
+            showarrow=False, font=dict(color="#48bb78", size=11),
             xanchor="left", yanchor="bottom",
         )
 
@@ -3868,7 +3905,7 @@ def page_consequences(
                     <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
                         CO₂ avoided by reuse vs making a new cell
                     </div>
-                    <div style="font-size:28px;font-weight:700;color:#68d391">
+                    <div style="font-size:28px;font-weight:700;color:#48bb78">
                         {sus['co2_avoided_by_reuse']:.2f} kg
                     </div>
                     <div style="font-size:11px;color:#4a5568;margin-top:4px">CO₂e avoided</div>
@@ -3992,20 +4029,16 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         "margin-bottom:4px;margin-top:20px'>5 · Critical Raw Materials (EU Reg. 2023/1542 Art. 13)</div>",
         unsafe_allow_html=True,
     )
-    _crm_fields = [
-        {"label": "Cobalt (Co) content", "value": "~14 wt% (LiCoO₂ cathode, est.)", "state": "estimated",
-         "note": "Estimated from LiCoO₂ stoichiometry. Art. 13 requires supply-chain due diligence from 2026."},
-        {"label": "Nickel (Ni) content", "value": "~0 wt% (pure LiCoO₂ baseline)", "state": "estimated",
-         "note": "NMC variants would show 15–33 wt%. Supply chain disclosure required."},
-        {"label": "Lithium (Li) content", "value": "~7 wt% (cathode + anode combined)", "state": "estimated",
-         "note": "Calculated from stoichiometry. Recycled Li content threshold: 4% by 2027, 10% by 2031 (Annex X)."},
-        {"label": "Recycled Co content", "value": "Not available in demo", "state": "unavailable",
-         "note": "Requires manufacturer supply-chain records. Threshold: 16% by 2031."},
-        {"label": "Recycled Ni content", "value": "Not available in demo", "state": "unavailable",
-         "note": "Threshold: 6% by 2031 (Annex X, EU 2023/1542)."},
-        {"label": "Article 52 due diligence", "value": "Not assessed", "state": "unavailable",
-         "note": "Third-party audit of Co/Ni/Li supply chain required for market access in EU."},
-    ]
+    _crm_settings = {k: st.session_state.get(k) for k in [
+        "crm_lfp_li_pct", "crm_nca_co_pct", "crm_nca_ni_pct", "crm_nca_li_pct",
+        "crm_nca_recycled_co_pct", "crm_nca_recycled_ni_pct",
+        "crm_synth_co_pct", "crm_synth_ni_pct", "crm_synth_li_pct",
+        "crm_user_co_pct", "crm_user_ni_pct", "crm_user_li_pct",
+        "crm_user_recycled_co_pct", "crm_user_recycled_ni_pct",
+    ]}
+    _crm_settings_clean = {k: v for k, v in _crm_settings.items() if v is not None}
+    from chemistry_profiles import ChemistryProfile as _ChemProfile  # noqa: E402
+    _crm_fields = _ChemProfile.for_cell(selected).get_crm_fields(_crm_settings_clean)
     _crm_html = "".join(_passport_field_row(f) for f in _crm_fields)
     st.markdown(f"<div>{_crm_html}</div>", unsafe_allow_html=True)
 
@@ -4022,7 +4055,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         else "R4 — Recycle (hydrometallurgical / direct)" if _soh_now >= 60
         else "R5 — Recover (energy or material)"
     )
-    _eol_color  = "#68d391" if _soh_now >= 80 else "#f6ad55" if _soh_now >= 60 else "#fc8181"
+    _eol_color  = "#48bb78" if _soh_now >= 80 else "#f6ad55" if _soh_now >= 60 else "#fc8181"
     _r_fields = [
         {"label": "Recommended R-code", "value": _eol_r_code, "state": "estimated",
          "note": f"Based on current SOH = {_soh_now:.1f}%. IEC 62902 R0–R9 taxonomy."},
@@ -4050,7 +4083,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             <strong style="color:#e2e8f0">This is a data-structure demonstration, not a regulatory
             submission.</strong><br><br>
             Of {summ['n_total']} fields modelled on the EU Battery Regulation's data requirements:
-            <strong style="color:#68d391">{summ['n_available']} are available</strong> from this
+            <strong style="color:#48bb78">{summ['n_available']} are available</strong> from this
             platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
             cited estimates</strong> from the Consequences module, and
             <strong style="color:#718096">{summ['n_unavailable']} are not available</strong> in
@@ -4263,7 +4296,7 @@ def page_recommendations(
     # Determine recommended window (Tesla adaptive charging logic)
     if soh >= 95 and _fade_pct_cy < 0.02:
         _soc_lo, _soc_hi = 0, 100
-        _soc_label, _soc_colour = "Full range OK", "#68d391"
+        _soc_label, _soc_colour = "Full range OK", "#48bb78"
         _soc_reason = "Cell is healthy with low fade rate. 0–100% is acceptable for this usage profile."
     elif soh >= 90:
         _soc_lo, _soc_hi = 10, 90
@@ -4335,7 +4368,7 @@ def page_recommendations(
         _tr_label, _tr_colour, _tr_bg = "Moderate", "#f6ad55", "rgba(246,173,85,0.08)"
         _tr_action = "Monitor closely. Reduce operating temperature and C-rate if possible."
     else:
-        _tr_label, _tr_colour, _tr_bg = "Low", "#68d391", "rgba(104,211,145,0.08)"
+        _tr_label, _tr_colour, _tr_bg = "Low", "#48bb78", "rgba(104,211,145,0.08)"
         _tr_action = "No elevated thermal risk. Continue standard monitoring."
     _tr1, _tr2, _tr3, _tr4 = st.columns(4)
     _tr1.metric("TR Risk Score", f"{_tr_score:.0f} / 100")
@@ -4364,7 +4397,7 @@ def page_recommendations(
 
     with ev1:
         soh_status_label, soh_colour = (
-            ("Healthy", "#68d391")        if soh >= 90 else
+            ("Healthy", "#48bb78")        if soh >= 90 else
             ("Degrading", "#f6e05e")      if soh >= 80 else
             ("End of Life", "#fc8181")
         )
@@ -4401,7 +4434,7 @@ def page_recommendations(
 
     with ev3:
         fade_label = "Accelerating ⚠" if result["fade_accelerating"] else "Stable"
-        fade_colour = "#fc8181" if result["fade_accelerating"] else "#68d391"
+        fade_colour = "#fc8181" if result["fade_accelerating"] else "#48bb78"
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:16px 20px'>"
@@ -4585,7 +4618,7 @@ def page_recommendations(
     with st.expander("All application fit scores", expanded=False):
         fit_cols = st.columns(len(fit_scores))
         for col, (app_key, app) in zip(fit_cols, fit_scores.items()):
-            colour = {"fit": "#68d391", "marginal": "#f6e05e", "not_fit": "#fc8181"}[app["fit"]]
+            colour = {"fit": "#48bb78", "marginal": "#f6e05e", "not_fit": "#fc8181"}[app["fit"]]
             with col:
                 st.markdown(
                     f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
@@ -4689,7 +4722,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     hero_tiles = [
         (h1, "Manufacturing CO₂\n(one new cell)",   f"{co2_val:.2f} kg", "#f6ad55", BADGE_ESTIMATE),
         (h2, "Use phase CO₂\n(to date, this cell)", f"{use_phase_co2:.2f} kg", "#718096", BADGE_ILLUST),
-        (h3, "Reuse saves\n(vs making a new cell)", f"{sus['co2_avoided_by_reuse']:.2f} kg", "#68d391", BADGE_ESTIMATE),
+        (h3, "Reuse saves\n(vs making a new cell)", f"{sus['co2_avoided_by_reuse']:.2f} kg", "#48bb78", BADGE_ESTIMATE),
         (h4, "Recycle credit\n(15% cathode, Dunn 2015)", f"{sus['co2_recycling_credit']:.2f} kg", "#f6e05e", BADGE_ESTIMATE),
     ]
     for col, label, val, colour, badge in hero_tiles:
@@ -4778,7 +4811,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     fig_lc.add_trace(go.Bar(
         name="EOL credit (negative = saving)",
         x=scenarios, y=eol_credit_bars,
-        marker_color="#68d391",
+        marker_color="#48bb78",
         text=[f"{v:.3f}{bar_suffix}" for v in eol_credit_bars],
         textposition="inside", textfont=dict(size=10, color="#1a202c"),
     ))
@@ -4848,7 +4881,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 "This cell is recovering its embodied carbon effectively: a longer service "
                 "life means the fixed manufacturing cost is spread across more kWh delivered."
             )
-            fade_colour = "#68d391"
+            fade_colour = "#48bb78"
 
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
@@ -4896,7 +4929,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
         badge_html = make_badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
         rec_html = (
-            f"<div style='font-size:12px;color:#68d391;margin-top:4px'>"
+            f"<div style='font-size:12px;color:#48bb78;margin-top:4px'>"
             f"~{mat['recovery_pct']}% recovery<br>"
             f"<span style='font-size:11px;color:#4a5568'>{mat['recovery_note']}</span></div>"
             if mat["recovery_pct"] is not None else
@@ -5113,7 +5146,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
             f"padding:18px 20px'>"
-            f"<div style='font-size:12px;font-weight:600;color:#68d391;text-transform:uppercase;"
+            f"<div style='font-size:12px;font-weight:600;color:#48bb78;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
             f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
@@ -5158,7 +5191,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         lco_per = m.get("lco_per_cell", {})
         per_cell_ok = m.get("per_cell_rul_reliable", {})
         label = "NASA PCoE" if source_key == "nasa" else "Synthetic"
-        colour = "#68d391" if source_key == "nasa" else "#fc8181"
+        colour = "#48bb78" if source_key == "nasa" else "#fc8181"
 
         st.markdown(
             f"<div style='font-size:12px;font-weight:600;color:{colour};"
@@ -5402,7 +5435,76 @@ def page_settings(featured_dfs: dict, bundles: dict):
             st.rerun()
 
     # ────────────────────────────────────────────────────────────────────────
-    # Section 4: About
+    # Section 4: CRM Configuration (Critical Raw Materials)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("CRM Configuration (EU Battery Regulation Art. 13)")
+    st.caption(
+        "Configure the critical raw material percentages for your cell chemistries. "
+        "These values feed the Passport page CRM section and can be updated as supply-chain "
+        "audit data becomes available. Leave blank to use built-in estimates."
+    )
+
+    with st.expander("LFP (Severson cells — LiFePO4)", expanded=False):
+        st.number_input(
+            "Lithium (Li) content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+            value=float(st.session_state.get("crm_lfp_li_pct", 4.4)),
+            key="crm_lfp_li_pct",
+            help="LFP cathode + graphite anode. Default 4.4 wt% from literature.",
+        )
+
+    with st.expander("LiCoO2 / NCA (NASA cells)", expanded=False):
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_co_pct", 14.0)), key="crm_nca_co_pct",
+                help="LiCoO2 baseline ~14 wt%.")
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_ni_pct", 0.0)), key="crm_nca_ni_pct",
+                help="Pure LiCoO2 has no Ni. NMC variants: 15–33 wt%.")
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_li_pct", 7.0)), key="crm_nca_li_pct",
+                help="Cathode + anode combined estimate.")
+        with _c2:
+            st.number_input("Recycled Co — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_nca_recycled_co_pct", 0.0)),
+                key="crm_nca_recycled_co_pct",
+                help="EU 2030 target: 12%. Enter actual audit figure.")
+            st.number_input("Recycled Ni — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_nca_recycled_ni_pct", 0.0)),
+                key="crm_nca_recycled_ni_pct",
+                help="EU 2030 target: 4%. Enter actual audit figure.")
+
+    with st.expander("Synthetic cells (LiCoO2 model)", expanded=False):
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_co_pct", 14.0)), key="crm_synth_co_pct")
+        with _c2:
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_ni_pct", 0.0)), key="crm_synth_ni_pct")
+        with _c3:
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_li_pct", 7.0)), key="crm_synth_li_pct")
+
+    with st.expander("User-uploaded cells", expanded=False):
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_user_co_pct", 0.0)), key="crm_user_co_pct")
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_user_ni_pct", 0.0)), key="crm_user_ni_pct")
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_user_li_pct", 0.0)), key="crm_user_li_pct")
+        with _c2:
+            st.number_input("Recycled Co — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_user_recycled_co_pct", 0.0)),
+                key="crm_user_recycled_co_pct")
+            st.number_input("Recycled Ni — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_user_recycled_ni_pct", 0.0)),
+                key="crm_user_recycled_ni_pct")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 5: About
     # ────────────────────────────────────────────────────────────────────────
     _section("About")
 
@@ -5478,7 +5580,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
         slots = {k: st.empty() for k, _ in step_labels}
 
         def _step(key: str, icon: str, text: str):
-            c = "#68d391" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
+            c = "#48bb78" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
             slots[key].markdown(
                 f"<div style='font-size:13px;color:{c};padding:3px 0'>{icon} {text}</div>",
                 unsafe_allow_html=True,
@@ -5595,7 +5697,7 @@ def _show_upload_summary():
     st.markdown(
         f"<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
         f"border-radius:10px;padding:20px 24px;margin-bottom:16px'>"
-        f"<div style='font-size:16px;font-weight:700;color:#68d391;margin-bottom:12px'>"
+        f"<div style='font-size:16px;font-weight:700;color:#48bb78;margin-bottom:12px'>"
         f"✓ Analysis complete</div>"
         f"<div style='font-size:13px;color:#a0aec0;line-height:2'>"
         f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
@@ -5727,7 +5829,10 @@ def page_import():
                 }
                 for cid, _df in cell_dfs.items()
             ]
-            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
+            _preview_df = pd.DataFrame(preview_rows)
+            st.dataframe(_preview_df.head(200), use_container_width=True)
+            if len(_preview_df) > 200:
+                st.caption(f"Showing 200 of {len(_preview_df)} rows. All rows are loaded into the model.")
             st.session_state["severson_cells"] = cell_dfs
             st.info("Severson cells loaded. Switch to Overview to analyze individual cells (pipeline integration coming in next phase).")
         except Exception as _e:
@@ -5796,14 +5901,14 @@ def page_import():
             f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
             f"<span style='color:#718096'>{orig}</span>"
             f"<span style='color:#4a5568;padding:0 8px'>→</span>"
-            f"<span style='color:#68d391'>{canon}</span>"
+            f"<span style='color:#48bb78'>{canon}</span>"
             f"</div>"
             for orig, canon in sorted(renames.items())
         )
         st.markdown(
             f"<div style='background:rgba(104,211,145,0.07);border:1px solid rgba(104,211,145,0.3);"
             f"border-radius:10px;padding:14px 18px;margin:12px 0'>"
-            f"<div style='font-size:13px;font-weight:600;color:#68d391;margin-bottom:8px'>"
+            f"<div style='font-size:13px;font-weight:600;color:#48bb78;margin-bottom:8px'>"
             f"✓ Auto-matched {len(renames)} column{'s' if len(renames) != 1 else ''}</div>"
             f"{rename_items}"
             f"<div style='font-size:11px;color:#4a5568;margin-top:10px'>"
@@ -5905,7 +6010,7 @@ def page_import():
         st.markdown(
             "<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
             "border-radius:10px;padding:14px 20px;margin:16px 0'>"
-            "<span style='font-size:14px;font-weight:700;color:#68d391'>✓ Upload validated — ready to analyse</span>"
+            "<span style='font-size:14px;font-weight:700;color:#48bb78'>✓ Upload validated — ready to analyse</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -5945,7 +6050,7 @@ def page_import():
         row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{cap_min:.3f} – {cap_max:.3f}</div>", unsafe_allow_html=True)
         row[3].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{res_min:.4f} – {res_max:.4f}</div>", unsafe_allow_html=True)
         row[4].markdown(
-            f"<div style='font-size:13px;padding:3px 0;color:{'#68d391' if temp_ok else '#4a5568'}'>"
+            f"<div style='font-size:13px;padding:3px 0;color:{'#48bb78' if temp_ok else '#4a5568'}'>"
             f"{'Yes' if temp_ok else 'No'}</div>",
             unsafe_allow_html=True,
         )
