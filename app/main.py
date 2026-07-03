@@ -519,27 +519,23 @@ def load_everything():
 # "Consequences" is renamed "EOL Economics" — routing key unchanged.
 NAV_GROUPS = [
     ("Analyse", [
-        ("Overview",        "overview"),
-        ("Health",          "health"),
-        ("Compare",         "compare"),
-        ("Insights",        "insights"),
-        ("Copilot",         "copilot"),
+        ("Overview",   "overview"),
+        ("Health",     "health"),
+        ("Compare",    "compare"),
+        ("Copilot",    "copilot"),
     ]),
     ("Operate", [
-        ("Executive Summary", "exec_summary"),
-        ("Fleet",           "fleet"),
-        ("Recommendations", "recommendations"),
-        ("EOL Economics",   "consequences"),
-        ("Grading",         "grading"),
-        ("Live Monitor",    "live_monitor"),
+        ("Fleet",        "fleet"),
+        ("Decision",     "decision"),
+        ("Grading",      "grading"),
+        ("Live Monitor", "live_monitor"),
     ]),
     ("Comply", [
-        ("Compliance",      "compliance"),
-        ("Sustainability",  "sustainability"),
+        ("Compliance", "compliance"),
     ]),
     ("Configure", [
-        ("Import",          "import"),
-        ("Settings",        "settings"),
+        ("Import",    "import"),
+        ("Settings",  "settings"),
     ]),
 ]
 
@@ -1417,7 +1413,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 # Page: Health
 # ---------------------------------------------------------------------------
 
-def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
+def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
+                bundle: dict = None, rul_reliable: bool = True):
     _action_bar("health")
     st.markdown("# Health")
     _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/masks
@@ -1568,6 +1565,102 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             ),
         )
         st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Section 2: Mechanism (always visible) ───────────────────────────────
+    _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
+    try:
+        import numpy as _np_ms
+        _ms = {}
+        if "coulombic_efficiency" in df.columns:
+            _ce_v2 = df[["cycle_number", "coulombic_efficiency"]].dropna()
+            if len(_ce_v2) >= 10:
+                _ms["ce_slope"] = float(_np_ms.polyfit(
+                    _ce_v2["cycle_number"].values.astype(float),
+                    _ce_v2["coulombic_efficiency"].values, 1)[0])
+        if "soh_pct" in df.columns:
+            _sv2 = df[["cycle_number", "soh_pct"]].dropna()
+            if len(_sv2) >= 20:
+                _cy2 = _sv2["cycle_number"].values.astype(float)
+                _cy2n = (_cy2 - _cy2.min()) / max(_cy2.max() - _cy2.min(), 1)
+                _ms["nonlin"] = float(_np_ms.polyfit(_cy2n, _sv2["soh_pct"].values, 2)[0])
+        if "resistance_normalized" in df.columns:
+            _rv2 = df[["cycle_number", "resistance_normalized"]].dropna()
+            if len(_rv2) >= 10:
+                _ms["r_slope"] = float(_np_ms.polyfit(
+                    _rv2["cycle_number"].values.astype(float),
+                    _rv2["resistance_normalized"].values, 1)[0]) * 1000
+        _lli2, _lam2 = 0, 0
+        if _ms.get("ce_slope", 0) < -1e-6: _lli2 += 3
+        if _ms.get("nonlin", 0) < -0.5: _lam2 += 3
+        elif _ms.get("nonlin", 0) > 0.5: _lli2 += 1
+        if _ms.get("r_slope", 0) > 0.02: _lam2 += 2
+        elif 0.005 < _ms.get("r_slope", 0) <= 0.02: _lli2 += 1
+        if _lli2 + _lam2 == 0:
+            _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
+        elif _lli2 > _lam2 * 1.5:
+            _mech_v, _mech_c, _mech_icon = "LLI — Loss of Lithium Inventory", "#f6ad55", "◑"
+        elif _lam2 > _lli2 * 1.5:
+            _mech_v, _mech_c, _mech_icon = "LAM — Loss of Active Material", "#fc8181", "◕"
+        else:
+            _mech_v, _mech_c, _mech_icon = "Mixed LLI + LAM", "#b794f4", "●"
+    except Exception:
+        pass
+
+    _mc_left, _mc_right = st.columns([3, 2])
+    with _mc_left:
+        _md_html(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:14px 20px;display:flex;align-items:center;gap:12px'>"
+            f"<span style='font-size:22px'>{_mech_icon}</span>"
+            f"<div>"
+            f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+            f"letter-spacing:0.1em;margin-bottom:2px'>Degradation Mechanism</div>"
+            f"<div style='font-size:15px;font-weight:700;color:{_mech_c}'>{_mech_v}</div>"
+            f"</div></div>"
+        )
+
+    # ── Section 3: Action (always visible) ──────────────────────────────────
+    with _mc_right:
+        try:
+            from recommendations import classify as _rec_classify
+            from consequences import application_fit as _app_fit
+            _lat_h  = df.iloc[-1]
+            _soh_h  = float(_lat_h["soh_pct"])
+            _f30_h  = float(_lat_h.get("fade_rate_30cy", 0.0))
+            _f50_h  = float(_lat_h.get("fade_rate_50cy", 0.0))
+            _rul_h  = float(_lat_h.get("rul_pred")) if (rul_reliable and _lat_h.get("rul_pred") is not None) else None
+            _fit_h  = _app_fit(_soh_h, _f30_h, None)
+            _rec_h  = _rec_classify(_soh_h, _f30_h, _f50_h, rul_reliable, _rul_h, _fit_h)
+            _al_h, _ac_h, _abg_h = ACTION_META[_rec_h["action"]]
+            _cc_h, _cl_h = CONF_META[_rec_h["confidence"]]
+            _md_html(
+                f"<div style='background:{_abg_h};border:2px solid {_ac_h}55;border-radius:10px;"
+                f"padding:14px 20px'>"
+                f"<div style='font-size:10px;font-weight:700;color:{_ac_h}99;"
+                f"text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px'>Recommended Action</div>"
+                f"<div style='font-size:18px;font-weight:800;color:{_ac_h}'>{_al_h}</div>"
+                f"<div style='margin-top:6px'>"
+                f"<span style='background:{_cc_h}22;border:1px solid {_cc_h}55;color:{_cc_h};"
+                f"font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px'>{_cl_h}</span>"
+                f"</div></div>"
+            )
+            if st.button("Full decision analysis →", key=f"h_to_dec_{cell_id}", use_container_width=True):
+                st.session_state.page = "decision"
+                st.rerun()
+        except Exception:
+            pass
+
+    # ── Engineering Details toggle ───────────────────────────────────────────
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    _default_eng = st.session_state.get("user_role", "Engineer") == "Engineer"
+    _show_eng = st.checkbox(
+        "Engineering details",
+        key=f"health_eng_{cell_id}",
+        value=_default_eng,
+        help="Fade rate analysis, dQ/dV, resistance model, PyBaMM projection, and all diagnostic expanders.",
+    )
+    if not _show_eng:
+        return
 
     # ── Fade acceleration detection (compute before fig3 so we can annotate it) ──
     # Heuristic: first cycle after cycle 30 where the 30-cycle rolling fade rate
@@ -3555,6 +3648,60 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     _action_bar("fleet")
     st.markdown("# Fleet")
 
+    # ── Executive summary bar (always visible) ──────────────────────────────
+    _fe_rows = []
+    for _fid, _fdf in featured_dfs.items():
+        if _fdf is None or _fdf.empty:
+            continue
+        _flast = _fdf.iloc[-1]
+        _fe_rows.append({
+            "soh": float(_flast.get("soh_pct", _flast.get("soh", 100))),
+            "cell_id": _fid,
+        })
+    if _fe_rows:
+        _fn         = len(_fe_rows)
+        _feol       = [r for r in _fe_rows if r["soh"] < 80]
+        _fdeg       = [r for r in _fe_rows if 80 <= r["soh"] < 90]
+        _fhealthy   = _fn - len(_feol) - len(_fdeg)
+        _fscore     = sum(r["soh"] for r in _fe_rows) / _fn
+        _score_col  = "#48bb78" if _fscore >= 90 else ("#ed8936" if _fscore >= 80 else "#fc8181")
+        _REPL_COST  = 150
+        _capex12    = (len(_feol) + len(_fdeg)) * _REPL_COST
+
+        _fe1, _fe2, _fe3, _fe4, _fe5 = st.columns(5)
+        with _fe1:
+            _md_html(
+                f"<div style='text-align:center;padding:8px 0'>"
+                f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+                f"letter-spacing:0.1em;margin-bottom:4px'>Fleet Health</div>"
+                f"<div style='font-size:36px;font-weight:900;color:{_score_col};line-height:1'>"
+                f"{_fscore:.1f}%</div>"
+                f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+                f"{_fhealthy} healthy · {len(_fdeg)} degrading · {len(_feol)} EOL"
+                f"</div></div>"
+            )
+        with _fe2:
+            st.metric("Cells at Risk", f"{len(_feol) + len(_fdeg)}", f"of {_fn}")
+        with _fe3:
+            st.metric("CAPEX (12 mo)", f"${_capex12:,.0f}", f"{len(_feol)+len(_fdeg)} replacements")
+        with _fe4:
+            if _feol:
+                st.error(f"{len(_feol)} cell{'s' if len(_feol)!=1 else ''} need immediate replacement")
+            elif _fdeg:
+                st.warning(f"{len(_fdeg)} cell{'s' if len(_fdeg)!=1 else ''} degrading")
+            else:
+                st.success("All cells healthy")
+        with _fe5:
+            if st.button("Business analysis →", key="fleet_to_copilot_biz", use_container_width=True):
+                st.session_state.page = "copilot"
+                st.session_state.copilot_query = "fleet_risk"
+                st.rerun()
+
+        st.markdown(
+            "<div style='height:1px;background:#2d3748;margin:16px 0'></div>",
+            unsafe_allow_html=True,
+        )
+
     # ── Build fleet summary row per cell ──
     # Bundle and per-cell reliability lookup is source-aware; uploaded cells use
     # the "upload" bundle, NASA cells the "nasa" bundle, synthetic the "synth" bundle.
@@ -4489,47 +4636,70 @@ def page_copilot(
 
     query = st.session_state.get("copilot_query", None)
 
-    def _qbtn(key: str, col):
-        with col:
-            if st.button(
-                QUERY_LABELS[key], key=f"cpq_{key}", use_container_width=True,
-                type="primary" if query == key else "secondary",
-            ):
-                st.session_state.copilot_query = key
-                st.rerun()
+    # ── Ask bar ────────────────────────────────────────────────────────────
+    _ask_input = st.text_input(
+        "Ask a question",
+        value="",
+        placeholder="Type a question or choose below — e.g. 'What is this cell's health?'",
+        label_visibility="collapsed",
+        key="copilot_ask_bar",
+    )
+    if _ask_input:
+        # Match typed text against query labels (case-insensitive substring)
+        _typed_lower = _ask_input.lower()
+        _matched = next(
+            (k for k, v in QUERY_LABELS.items() if _typed_lower in v.lower()),
+            None,
+        )
+        if _matched and _matched != query:
+            st.session_state.copilot_query = _matched
+            st.rerun()
 
-    # ── Row 1: cell-level queries ──
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-    _qbtn("health",  r1c1)
-    _qbtn("drivers", r1c2)
-    _qbtn("rul",     r1c3)
-    _qbtn("compare", r1c4)
-
-    # ── Row 2: deeper queries + fleet ──
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-    _qbtn("recent",        r2c1)
-    _qbtn("anomaly",       r2c2)
-    _qbtn("fleet_compare", r2c3)
-    _qbtn("alerts",        r2c4)
-
-    # ── Row 3: business questions ──
+    # ── Chip grid ──────────────────────────────────────────────────────────
+    # Technical questions
     st.markdown(
         "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-        "letter-spacing:0.1em;padding:14px 0 6px'>Business Questions</div>",
+        "letter-spacing:0.1em;padding:10px 0 4px'>Cell questions</div>",
         unsafe_allow_html=True,
     )
-    r3c1, r3c2, r3c3, r3c4 = st.columns(4)
-    _qbtn("replacement_budget", r3c1)
-    _qbtn("fleet_risk",         r3c2)
-    _qbtn("business_case",      r3c3)
+    _tech_keys = ["health", "drivers", "rul", "compare", "recent", "anomaly", "fleet_compare"]
+    _trows = [_tech_keys[:4], _tech_keys[4:]]
+    for _row_keys in _trows:
+        _cols = st.columns(len(_row_keys))
+        for _key, _col in zip(_row_keys, _cols):
+            with _col:
+                if st.button(
+                    QUERY_LABELS[_key], key=f"cpq_{_key}",
+                    use_container_width=True,
+                    type="primary" if query == _key else "secondary",
+                ):
+                    st.session_state.copilot_query = _key
+                    st.rerun()
+
+    # Fleet & business questions
+    st.markdown(
+        "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.1em;padding:10px 0 4px'>Fleet &amp; business</div>",
+        unsafe_allow_html=True,
+    )
+    _biz_keys = ["alerts", "replacement_budget", "fleet_risk", "business_case"]
+    _bcols = st.columns(len(_biz_keys))
+    for _key, _col in zip(_biz_keys, _bcols):
+        with _col:
+            if st.button(
+                QUERY_LABELS[_key], key=f"cpq_{_key}",
+                use_container_width=True,
+                type="primary" if query == _key else "secondary",
+            ):
+                st.session_state.copilot_query = _key
+                st.rerun()
 
     if not query:
         st.markdown(
-            "<div style='text-align:center;padding:56px 24px;color:#4a5568;font-size:14px'>"
-            "Select a question above — the Copilot will explain using only the numbers "
-            "already in the model bundle for <strong style='color:#8896a8'>"
-            + selected + "</strong>.</div>",
+            "<div style='text-align:center;padding:40px 24px;color:#4a5568;font-size:14px'>"
+            "Choose a question above or type one. The Copilot answers using only "
+            "values already computed by the model pipeline for "
+            "<strong style='color:#8896a8'>" + selected + "</strong>.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -4631,6 +4801,51 @@ def page_copilot(
                     st.session_state.copilot_query = fu_key
                     st.rerun()
 
+    # ── Feature Attribution (Insights merged in) ────────────────────────────
+    if not fleet_only and ctx is not None:
+        with st.expander("Feature attribution — why does the model predict this?", expanded=False):
+            try:
+                _shap_bundle = bundles.get(
+                    "nasa" if selected in NASA_CELL_IDS else
+                    ("severson" if selected.startswith("S-") else "synth"),
+                    list(bundles.values())[0],
+                )
+                _drivers = top_drivers(_shap_bundle, model="soh", top_n=8)
+                _fi = feature_importance_df(_shap_bundle, model="soh", top_n=8)
+                _top_feat = _drivers[0]["feature"] if _drivers else "—"
+                _top_pct  = _drivers[0]["importance_pct"] if _drivers else 0
+                st.markdown(
+                    f"**Top predictor: {friendly(_top_feat)}** ({_top_pct:.0f}% split importance)"
+                )
+                _bar_fig = go.Figure(go.Bar(
+                    x=_fi["importance_pct"], y=_fi["label"],
+                    orientation="h",
+                    marker=dict(
+                        color=_fi["importance_pct"],
+                        colorscale=[[0, "#1e2a38"], [0.4, "#1e2a38"], [1, "#63b3ed"]],
+                        showscale=False,
+                    ),
+                    text=_fi["importance_pct"].apply(lambda v: f"{v:.1f}%"),
+                    textposition="inside", insidetextanchor="end",
+                    textfont=dict(color="#ffffff", size=11),
+                    hovertemplate="<b>%{y}</b><br>Importance: %{x:.2f}%<extra></extra>",
+                ))
+                _bar_fig.update_layout(
+                    height=300,
+                    **base_layout(
+                        xaxis=dict(title="% importance", gridcolor="#232d3b", zeroline=False),
+                        yaxis=dict(autorange="reversed", gridcolor="#232d3b"),
+                    ),
+                )
+                st.plotly_chart(_bar_fig, use_container_width=True)
+                st.caption(
+                    "Split importance from GradientBoostingRegressor. For correlated features "
+                    "(fade_rate_10/30/50cy), SHAP values give a more accurate attribution — "
+                    "available when the model bundle includes SHAP data."
+                )
+            except Exception as _si_e:
+                st.info(f"Feature attribution unavailable: {_si_e}")
+
     # ── Transparency footer ──
     if contexts:
         with st.expander("Context used — what data drove this response", expanded=False):
@@ -4648,6 +4863,220 @@ def page_copilot(
                 f"Uncalibrated RUL: {', '.join(fleet_stats['unreliable_rul']) or 'none'}",
             ]
             st.code("\n".join(lines), language=None)
+
+
+# ---------------------------------------------------------------------------
+# Page: Decision  (merged Recommendations + EOL Economics)
+# ---------------------------------------------------------------------------
+
+def page_decision(
+    selected: str,
+    df: pd.DataFrame,
+    featured_dfs: dict,
+    bundles: dict,
+    rul_reliable: bool,
+):
+    """Merged Recommendations + EOL Economics page.
+
+    Layout:
+      1. Hero recommendation card (action + confidence)
+      2. NPV 3-column decision table (Replace / Wait / Repurpose)
+      3. Maintenance calendar
+      4. Application fit scores
+      5. Log decision + SoC window
+      Full economics in expander below.
+    """
+    _action_bar("decision")
+    from recommendations import classify, SOH_PRIMARY_FLOOR, SOH_INSPECT_FLOOR, SOH_SECONDLIFE_FLOOR
+    from consequences import (
+        ASSUMPTIONS, SECOND_LIFE_APPS, CELL_NOMINAL_KWH,
+        application_fit, financial_comparison, sustainability_snapshot, breakeven_curve,
+    )
+
+    latest          = df.iloc[-1]
+    soh             = float(latest["soh_pct"])
+    fade_30         = float(latest.get("fade_rate_30cy", 0.0))
+    fade_50         = float(latest.get("fade_rate_50cy", 0.0))
+    is_nasa         = selected in NASA_CELL_IDS
+    source          = "nasa" if is_nasa else "synth"
+    rul_pred_raw    = latest.get("rul_pred", None)
+    rul_pred        = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
+
+    peer_fades = [
+        float(fdf.iloc[-1].get("fade_rate_30cy", 0))
+        for cid, fdf in featured_dfs.items()
+        if (cid in NASA_CELL_IDS) == is_nasa and cid != selected
+    ]
+    fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
+    fit_scores = application_fit(soh, fade_30, fleet_fade_median)
+    result     = classify(soh, fade_30, fade_50, rul_reliable, rul_pred, fit_scores)
+
+    action          = result["action"]
+    action_label, action_colour, action_bg = ACTION_META[action]
+    conf_colour, conf_label = CONF_META[result["confidence"]]
+
+    st.markdown("# Decision")
+    st.markdown(f"##### {selected}")
+
+    # ── 1. Hero recommendation ──────────────────────────────────────────────
+    reason_html = "".join(
+        f"<div style='margin-top:6px;font-size:13px;color:{action_colour}cc'>· {r}</div>"
+        for r in result["action_reasons"]
+    )
+    _md_html(
+        f"<div style='background:{action_bg};border:2px solid {action_colour}55;"
+        f"border-radius:14px;padding:24px 28px;margin-bottom:20px'>"
+        f"<div style='font-size:10px;font-weight:700;color:{action_colour}99;"
+        f"text-transform:uppercase;letter-spacing:0.1em;margin-bottom:8px'>Recommended Action</div>"
+        f"<div style='font-size:32px;font-weight:800;color:{action_colour}'>{action_label}</div>"
+        f"<div style='margin-top:8px'>"
+        f"<span style='background:{conf_colour}22;border:1px solid {conf_colour}55;color:{conf_colour};"
+        f"font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px'>{conf_label}</span>"
+        f"</div>{reason_html}</div>"
+    )
+
+    # ── 2. NPV Decision Table (3 options, no chart) ─────────────────────────
+    st.markdown("<div class='section-header'>Financial Decision</div>", unsafe_allow_html=True)
+    _npv_rate   = 0.08
+    _energy_usd = 80.0
+    _repl_cost  = 150.0
+    _years      = list(range(1, 6))
+    def _pv(r, t): return 1.0 / ((1 + r) ** t)
+    _rul_yrs = min((rul_pred / 200.0 / 12.0) if rul_pred else 1.5, 5.0)
+
+    _cap_now  = CELL_NOMINAL_KWH.get(source, 0.0057)
+    _a_npv = sum(_cap_now * _energy_usd * _pv(_npv_rate, t) for t in _years) - _repl_cost
+
+    _b_cap = _cap_now * (soh / 100.0)
+    _b_npv = (
+        sum(_b_cap * _energy_usd * _pv(_npv_rate, t) for t in range(1, max(1, int(_rul_yrs)) + 1))
+        + sum(_cap_now * _energy_usd * _pv(_npv_rate, t) for t in range(max(1, int(_rul_yrs)) + 1, 6))
+        - _repl_cost * _pv(_npv_rate, _rul_yrs)
+    )
+
+    _sl_cap   = _cap_now * (soh / 100.0) * 0.85
+    _repack   = 30.0
+    _c_npv    = sum(_sl_cap * _energy_usd * 0.6 * _pv(_npv_rate, t) for t in _years) - _repack
+
+    _opts = [
+        ("Replace Now",          _a_npv, "#fc8181",
+         "Immediate outlay. New cell, full life ahead.", f"${_repl_cost:.0f} upfront"),
+        ("Wait to EOL",          _b_npv, "#f6ad55",
+         f"~{_rul_yrs:.1f} yr remaining at current fade rate.", "Risk of degraded performance"),
+        ("Repurpose (2nd life)", _c_npv, "#68d391",
+         "Lower-demand application (stationary storage).", f"${_repack:.0f} repack cost"),
+    ]
+    _best_npv = max(_opts, key=lambda x: x[1])
+    _nd_cols  = st.columns(3)
+    for _col, (_lbl, _npv_v, _col_v, _desc, _cost_note) in zip(_nd_cols, _opts):
+        _is_best = _lbl == _best_npv[0]
+        with _col:
+            _md_html(
+                f"<div style='background:#1e2a38;border:{'2px' if _is_best else '1px'} solid "
+                f"{_col_v if _is_best else '#2d3748'};border-radius:10px;padding:16px 18px;height:100%'>"
+                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:{_col_v}'>${_npv_v:,.0f}</div>"
+                f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV</div>"
+                f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
+                f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>"
+                + (f"<div style='font-size:11px;font-weight:700;color:{_col_v};margin-top:8px'>★ Optimal NPV</div>" if _is_best else "")
+                + "</div>"
+            )
+
+    st.caption(
+        f"5-yr NPV at {_npv_rate*100:.0f}% discount rate · $80/kWh·yr energy value · "
+        f"${_repl_cost:.0f}/cell replacement. "
+        + make_badge("Illustrative", "#718096") + " — not financial advice."
+    , unsafe_allow_html=True)
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    # ── 3. Maintenance Calendar ─────────────────────────────────────────────
+    st.markdown("<div class='section-header'>Maintenance Calendar</div>", unsafe_allow_html=True)
+    _eol_thr    = float(st.session_state.get("eol_threshold_pct", 80.0))
+    _cur_soh    = float(df["soh_pct"].iloc[-1])
+    _fp_cy      = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
+    _rul_cy     = max(0, (_cur_soh - _eol_thr) / _fp_cy) if _fp_cy > 1e-6 else None
+
+    if "test_date" in df.columns and df["test_date"].notna().any():
+        _dates = pd.to_datetime(df["test_date"].dropna())
+        _cpd   = len(df) / max((_dates.iloc[-1] - _dates.iloc[0]).days, 1)
+    else:
+        _cpd   = 1.0
+
+    if _rul_cy is not None and _rul_cy > 0:
+        from datetime import date as _date, timedelta as _td
+        _days    = _rul_cy / _cpd
+        _rep_dt  = _date.today() + _td(days=_days)
+        _c1, _c2, _c3 = st.columns(3)
+        _c1.metric("Recommended Replacement", _rep_dt.strftime("%B %Y"))
+        _c2.metric("Cycles Remaining", f"{_rul_cy:.0f}")
+        _c3.metric("Days Remaining",   f"{_days:.0f}")
+    else:
+        _empty_state(
+            "Replacement timeline unavailable",
+            "Insufficient cycle history to compute a fade-based schedule. "
+            "At least 50 cycles with a measurable fade trend are required.",
+            "", "📅",
+        )
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+    # ── 4. Application Fit ──────────────────────────────────────────────────
+    if soh <= 90:
+        st.markdown("<div class='section-header'>Application Fit Scores</div>", unsafe_allow_html=True)
+        _af_cols = st.columns(min(len(fit_scores), 4))
+        for _i, (_app_name, _score) in enumerate(fit_scores.items()):
+            with _af_cols[_i % len(_af_cols)]:
+                _acol = "#48bb78" if _score >= 70 else ("#f6ad55" if _score >= 40 else "#fc8181")
+                st.metric(_app_name.replace("_", " ").title(), f"{_score:.0f}%")
+
+    # ── 5. Log Decision ─────────────────────────────────────────────────────
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    if result["confidence_reasons"]:
+        for note in result["confidence_reasons"]:
+            note_colour = "#b7791f" if "fit scores" in note else "#718096"
+            st.markdown(
+                f"<div style='background:{note_colour}11;border:1px solid {note_colour}33;"
+                f"border-radius:8px;padding:10px 16px;margin-bottom:8px;"
+                f"font-size:12px;color:#a0aec0'>{note}</div>",
+                unsafe_allow_html=True,
+            )
+
+    _log_col, _ = st.columns([1, 3])
+    if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
+        _entry = {
+            "cell_id":    selected,
+            "action":     action_label,
+            "confidence": conf_label,
+            "soh_pct":    round(soh, 1),
+            "timestamp":  datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        if "decision_log" not in st.session_state:
+            st.session_state["decision_log"] = []
+        st.session_state["decision_log"].append(_entry)
+        st.success(f"Logged: {action_label} for {selected} at {_entry['timestamp']}")
+
+    _dlog = st.session_state.get("decision_log", [])
+    if _dlog:
+        with st.expander(f"Decision Log ({len(_dlog)} entries)"):
+            import pandas as _pd_log
+            st.dataframe(
+                _pd_log.DataFrame(_dlog)[["timestamp","cell_id","action","confidence","soh_pct"]],
+                use_container_width=True, hide_index=True,
+            )
+            st.download_button(
+                "Export log as CSV",
+                data=_pd_log.DataFrame(_dlog).to_csv(index=False).encode(),
+                file_name="battery_decision_log.csv",
+                mime="text/csv",
+                key="dec_export_log",
+            )
+
+    # ── Full Economics (expander) ────────────────────────────────────────────
+    with st.expander("Full economics & breakeven analysis", expanded=False):
+        page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
 
 
 # ---------------------------------------------------------------------------
@@ -5285,6 +5714,10 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         """
     )
 
+    _show_unavail = st.checkbox(
+        "Show unavailable fields", key="passport_show_unavail", value=False
+    )
+
     groups = [
         ("identity",  "1 · Battery Identity"),
         ("soh",       "2 · State of Health"),
@@ -5292,13 +5725,16 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         ("carbon",    "4 · Carbon Footprint"),
     ]
     for key, title in groups:
+        _fields = p[key] if _show_unavail else [f for f in p[key] if f.get("state") != "unavailable"]
+        if not _fields:
+            continue
         st.markdown(
             f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
             f"letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
             f"margin-bottom:4px;margin-top:20px'>{title}</div>",
             unsafe_allow_html=True,
         )
-        rows_html = "".join(_passport_field_row(f) for f in p[key])
+        rows_html = "".join(_passport_field_row(f) for f in _fields)
         st.markdown(f"<div>{rows_html}</div>", unsafe_allow_html=True)
 
     # ── 5: Critical Raw Materials (EU Battery Regulation Art. 13) ──
@@ -5318,7 +5754,8 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     _crm_settings_clean = {k: v for k, v in _crm_settings.items() if v is not None}
     from chemistry_profiles import ChemistryProfile as _ChemProfile  # noqa: E402
     _crm_fields = _ChemProfile.for_cell(selected).get_crm_fields(_crm_settings_clean)
-    _crm_html = "".join(_passport_field_row(f) for f in _crm_fields)
+    _crm_visible = _crm_fields if _show_unavail else [f for f in _crm_fields if f.get("state") != "unavailable"]
+    _crm_html = "".join(_passport_field_row(f) for f in _crm_visible)
     st.markdown(f"<div>{_crm_html}</div>", unsafe_allow_html=True)
 
     # ── 6: End-of-Life R-code Taxonomy ──
@@ -5344,7 +5781,8 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         {"label": "Recycled content declaration", "value": "IEC 63338 audit required", "state": "unavailable",
          "note": "Carbon footprint per kWh must be declared for market access (IEC 63338, from 2025)."},
     ]
-    _r_html = "".join(_passport_field_row(f) for f in _r_fields)
+    _r_visible = _r_fields if _show_unavail else [f for f in _r_fields if f.get("state") != "unavailable"]
+    _r_html = "".join(_passport_field_row(f) for f in _r_visible)
     st.markdown(f"<div style='margin-bottom:4px'><span style='color:{_eol_color};font-weight:700;font-size:13px'>Recommended: {_eol_r_code}</span></div>", unsafe_allow_html=True)
     st.markdown(f"<div>{_r_html}</div>", unsafe_allow_html=True)
 
@@ -8310,33 +8748,30 @@ def main():
     if page == "overview":
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
     elif page == "health":
-        page_health(df, split_cycle, selected)
+        page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable)
     elif page == "compare":
         page_compare(cell_ids, active_fdfs, bundles)
-    elif page == "insights":
-        page_insights(df, bundle, selected, cell_ids=cell_ids, active_fdfs=active_fdfs)
-    elif page == "copilot":
+    elif page in ("copilot", "insights"):
         page_copilot(cell_ids, active_fdfs, bundles, selected)
-    elif page == "consequences":
-        page_consequences(selected, df, active_fdfs, bundles, rul_reliable)
-    elif page == "recommendations":
-        page_recommendations(selected, df, active_fdfs, bundles, rul_reliable)
-    elif page == "sustainability":
-        page_sustainability(selected, df)
-    elif page in ("compliance", "passport", "reports"):
+    elif page in ("decision", "consequences", "recommendations"):
+        page_decision(selected, df, active_fdfs, bundles, rul_reliable)
+    elif page in ("compliance", "sustainability", "passport", "reports"):
         _action_bar("compliance")
         st.markdown("# Compliance")
-        st.markdown("##### EU Battery Regulation 2023/1542 · Passport fields · PDF report export")
-        _default_tab = 1 if page == "reports" else 0
-        _tab_passport, _tab_reports = st.tabs(["EU Battery Passport", "Reports & Export"])
+        st.markdown("##### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
+        _tab_passport, _tab_reports, _tab_sus = st.tabs(
+            ["EU Battery Passport", "Reports & Export", "Sustainability"]
+        )
         with _tab_passport:
             page_passport(selected, df, bundle, rul_reliable)
         with _tab_reports:
             page_reports(selected, df, bundle, rul_reliable)
-    elif page == "exec_summary":
-        page_executive_summary(active_fdfs, bundles)
-    elif page == "fleet":
+        with _tab_sus:
+            page_sustainability(selected, df)
+    elif page in ("fleet", "exec_summary"):
         page_fleet(active_fdfs, bundles)
+    elif page == "decision":
+        page_decision(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "grading":
         page_grading(cell_ids, active_fdfs, bundles, selected)
     elif page == "live_monitor":
