@@ -274,6 +274,16 @@ def parse_mat_file(mat_path: str, cell_id: str) -> pd.DataFrame:
     discharge_df = discharge_df[["cycle_number", "capacity_ah", "resistance_ohm", "temperature_c"]]
     discharge_df = discharge_df.round({"capacity_ah": 5, "resistance_ohm": 5, "temperature_c": 2})
 
+    # ── Protocol-known C-rate (T3 fix) ──────────────────────────────────────
+    # B0005–B0018: discharged at 2A CC to cutoff voltage. Nominal capacity is
+    # ~2 Ah (initial measured value), giving a discharge C-rate of 2/2 = 1.0C.
+    # Charge was at 1.5A CC/CV, i.e. 0.75C — we use the discharge C-rate as it
+    # is the primary aging-relevant load (higher rate, deeper lithium extraction).
+    # Source: Saha & Goebel (2007), NASA PCoE Battery Dataset #5 documentation.
+    _nominal_cap_ah = float(discharge_df["capacity_ah"].iloc[0]) if len(discharge_df) else 2.0
+    _nominal_cap_ah = max(_nominal_cap_ah, 1.0)  # guard against very first noisy cycle
+    discharge_df["c_rate"] = 2.0 / _nominal_cap_ah  # discharge current / nominal capacity
+
     return discharge_df
 
 

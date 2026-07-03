@@ -974,6 +974,9 @@ FEATURE_LABELS = {
     "resistance_normalized": "Resistance (norm.)",
     "resistance_trend_30cy": "Resistance trend",
     "temp_rolling_30cy":   "Temperature (30-cy avg)",
+    "c_rate_rolling_10cy": "C-rate (10-cy avg)",
+    "stress_index":        "Composite stress index",
+    "dod_proxy":           "Depth of Discharge (proxy)",
 }
 
 def friendly(name: str) -> str:
@@ -1820,6 +1823,9 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             "ce_rolling_30cy":      ("CE Rolling (30cy)",     "30-cycle rolling mean of coulombic_efficiency",      "Derived: pandas rolling().mean()"),
             "dqdv_peak_value":      ("dQ/dV Peak Value",      "simulated via LiCoO₂ OCV polynomial model",         "Simulated: simulate_vq_curve()"),
             "sop_pct":              ("SOP %",                 "State of Power — rate capability proxy",            "Derived from R_normalized"),
+            "c_rate_rolling_10cy":  ("C-rate (10cy avg)",     "charge/discharge rate (A / nominal Ah), 10-cy mean", "Protocol constant (NASA) or synthetic profile"),
+            "stress_index":         ("Stress Index",          "Arrhenius(T) × C-rate^0.7 — composite aging driver", "Derived: features.build_features()"),
+            "dod_proxy":            ("DoD proxy",             "capacity(n) / capacity(1) — depth of discharge",    "Derived from measured capacity_ah"),
         }
         for _col, (_label, _formula, _source) in _col_map.items():
             _avail = _col in df.columns

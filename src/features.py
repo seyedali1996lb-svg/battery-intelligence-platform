@@ -144,6 +144,47 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
         else:
             df[_out] = np.nan
 
+    # ── C-rate features ──
+    # c_rate is written by the synthetic generator for all Cell1-8.
+    # NASA cells get it injected by nasa_loader (protocol-known: 1.0C discharge).
+    # Severson/uploaded cells get NaN — gracefully dropped from FEATURE_COLUMNS
+    # by get_model_matrix() since it filters to notna() columns only.
+    if "c_rate" in df.columns and df["c_rate"].notna().any():
+        # Smoothed C-rate: 10-cycle rolling mean removes per-cycle noise.
+        # The window is shorter than temperature (30cy) because C-rate changes
+        # between charge and discharge steps within a cycle; the per-cycle value
+        # already integrates this, so less smoothing is needed.
+        df["c_rate_rolling_10cy"] = (
+            df["c_rate"].rolling(10, min_periods=1).mean()
+        )
+        # Stress index: combines C-rate and temperature into a single aging driver.
+        # Derivation mirrors _stress_factor() in data_loader.py:
+        #   C-rate term: (C / 1C)^0.7  — sub-linear because current distribution
+        #     in a porous electrode is not uniform (Doyle-Fuller-Newman model).
+        #   Temperature term: Arrhenius with Ea/R ≈ 6920 K (typical LiCoO2 SEI).
+        #   Reference: 25°C = 298.15 K.
+        # The result is dimensionless, normalized to 1.0 at (1C, 25°C).
+        _c     = df["c_rate_rolling_10cy"].clip(lower=0.01)
+        _T_col = "temp_rolling_30cy" if "temp_rolling_30cy" in df.columns else None
+        if _T_col and df[_T_col].notna().any():
+            _T_K = (df[_T_col].fillna(25.0) + 273.15).clip(lower=233.15)
+            _arrhenius = np.exp(6920.0 * (1.0 / 298.15 - 1.0 / _T_K))
+        else:
+            _arrhenius = 1.0  # isothermal fallback
+        df["stress_index"] = (_c / 1.0) ** 0.7 * _arrhenius
+        # DoD proxy: ratio of current capacity to initial capacity.
+        # When DoD < 100% the cell cycles over a fraction of its full range —
+        # visible as a capacity plateau higher than the EOL threshold.
+        _initial_cap = float(df["capacity_ah"].iloc[0])
+        if _initial_cap > 0:
+            df["dod_proxy"] = (df["capacity_ah"] / _initial_cap).clip(0.0, 1.0)
+        else:
+            df["dod_proxy"] = np.nan
+    else:
+        df["c_rate_rolling_10cy"] = np.nan
+        df["stress_index"]        = np.nan
+        df["dod_proxy"]           = np.nan
+
     # ── dQ/dV features ──
     df = add_dqdv_features(df)
 
@@ -180,6 +221,17 @@ FEATURE_COLUMNS = [
     # Coulombic Efficiency — tracks SEI lithium consumption
     "ce_rolling_30cy",
     "ce_drop_rate",
+    # C-rate and composite stress features (T3 — highest-leverage model gap)
+    # c_rate_rolling_10cy: smoothed charge/discharge rate. Fast charging (>1C)
+    #   accelerates SEI growth and lithium plating, compressing RUL non-linearly.
+    # stress_index: Arrhenius(T) × C-rate^0.7 — the composite aging driver used
+    #   by cell manufacturers for warranty throughput accounting. Dimensionless,
+    #   normalized to 1.0 at (1C, 25°C). Absent for cells without C-rate data.
+    # dod_proxy: actual capacity / initial capacity — cells cycled at partial DoD
+    #   degrade slower; this captures that cross-cell variation for the model.
+    "c_rate_rolling_10cy",
+    "stress_index",
+    "dod_proxy",
 ]
 
 TARGET_SOH = "soh_pct"
