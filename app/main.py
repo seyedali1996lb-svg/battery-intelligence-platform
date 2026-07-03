@@ -3454,6 +3454,16 @@ def page_fleet(featured_dfs: dict, bundles: dict):
     # Sort: worst SOH first (most urgent)
     rows.sort(key=lambda r: r["soh"])
 
+    if not rows:
+        _empty_state(
+            "No cells loaded",
+            "The fleet view requires at least one cell to be loaded. "
+            "Switch data source in the sidebar or import a cell on the Import page.",
+            "→ Go to Import",
+            "○",
+        )
+        return
+
     # ── Header metrics ──
     n_eol       = sum(1 for r in rows if r["status"] == "End of Life")
     n_degrading = sum(1 for r in rows if r["status"] == "Degrading")
