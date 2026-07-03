@@ -2164,6 +2164,130 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         except Exception as _rate_e:
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
 
+    # ── ⚛️ Physics-Based RUL Projection (PyBaMM SPM) ────────────────────────
+    _pybamm_badge = make_badge("PyBaMM SPM · SEI growth", "#63b3ed")
+    with st.expander(f"⚛️ Physics-Based RUL Projection (PyBaMM SPM) — {_pybamm_badge}", expanded=False):
+        _md_html(
+            "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
+            "Single Particle Model (SPM) anchors the nominal capacity from the cell's "
+            "electrochemistry. An SEI growth fade equation "
+            "<code>SOH(n) = 1 − β·√n</code> is then fitted to the measured cycle history "
+            "and projected forward. Genuinely different from the GBRT linear extrapolation: "
+            "this projection slows as the cell ages (√n growth), consistent with diffusion-limited "
+            "SEI thickening."
+            "</div>"
+        )
+        _pybamm_cache_key = f"pybamm_{cell_id}_{st.session_state.get('eol_threshold_pct', 80)}"
+        if _pybamm_cache_key not in st.session_state:
+            with st.spinner("Running PyBaMM SPM — first run only, cached after…"):
+                try:
+                    import sys as _sys2
+                    _src2 = os.path.join(os.path.dirname(__file__), "..", "src")
+                    if _src2 not in _sys2.path:
+                        _sys2.path.insert(0, _src2)
+                    from pybamm_rul import project_rul as _project_rul
+                    _eol_thr = float(st.session_state.get("eol_threshold_pct", 80.0))
+                    _pb_res  = _project_rul(
+                        cell_id, df,
+                        data_mode=st.session_state.get("data_mode", "synthetic"),
+                        eol_threshold=_eol_thr,
+                        project_cycles=600,
+                    )
+                    st.session_state[_pybamm_cache_key] = _pb_res
+                except Exception as _pb_install_err:
+                    st.session_state[_pybamm_cache_key] = {"error": str(_pb_install_err)}
+
+        _pb = st.session_state.get(_pybamm_cache_key, {})
+        if _pb.get("error"):
+            st.info(f"Physics projection unavailable: {_pb['error']}")
+        elif _pb.get("proj_cycles"):
+            # ── Parameter summary strip ──
+            _pc1, _pc2, _pc3, _pc4 = st.columns(4)
+            _pc1.metric("Parameter set", _pb["chem_label"].split("(")[0].strip())
+            _pc2.metric("SPM nominal capacity", f"{_pb['spm_capacity_ah']:.3f} Ah")
+            _pc3.metric("Fitted β (SEI)", f"{_pb['beta']:.5f}")
+            _rul_ph = _pb.get("rul_physics")
+            _pc4.metric("Physics RUL", f"{_rul_ph:,} cy" if _rul_ph is not None else "—")
+
+            # ── Projection chart ──
+            _fig_pb = go.Figure()
+
+            # Measured SOH history (resampled)
+            _fig_pb.add_trace(go.Scatter(
+                x=_rdf["cycle_number"].tolist(),
+                y=_rdf["soh_pct"].tolist(),
+                name="Measured SOH",
+                line=dict(color="#63b3ed", width=2),
+                hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>Measured</extra>",
+            ))
+
+            # Physics projection (PyBaMM SEI)
+            _fig_pb.add_trace(go.Scatter(
+                x=_pb["proj_cycles"],
+                y=_pb["proj_soh"],
+                name="Physics projection (SPM · SEI)",
+                line=dict(color="#68d391", width=2, dash="dot"),
+                hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>SPM projection</extra>",
+            ))
+
+            # GBRT ML estimate as comparison (linear fade forward)
+            _fade_50 = float(latest.get("fade_rate_50cy", 0)) if hasattr(latest, "get") else float(latest["fade_rate_50cy"]) if "fade_rate_50cy" in latest.index else 0
+            if _fade_50 > 0 and _rul_ph:
+                _ml_fut_cy  = _pb["proj_cycles"][:min(len(_pb["proj_cycles"]), _rul_ph + 50)]
+                _ml_fut_soh = [current_soh - _fade_50 * 100 * (c - int(latest["cycle_number"])) for c in _ml_fut_cy]
+                _ml_fut_soh = [max(0, s) for s in _ml_fut_soh]
+                _fig_pb.add_trace(go.Scatter(
+                    x=_ml_fut_cy,
+                    y=_ml_fut_soh,
+                    name="ML linear extrapolation (GBRT fade)",
+                    line=dict(color="#f6ad55", width=1, dash="dash"),
+                    hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>GBRT</extra>",
+                ))
+
+            # EOL threshold line
+            _eol_thr_val = float(st.session_state.get("eol_threshold_pct", 80.0))
+            _fig_pb.add_hline(
+                y=_eol_thr_val,
+                line_dash="dash", line_color="#fc8181", line_width=1,
+                annotation_text=f"EOL {_eol_thr_val:.0f}%",
+                annotation_font=dict(color="#fc8181", size=10),
+            )
+
+            _fig_pb.update_layout(
+                height=340,
+                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#e2e8f0"),
+                margin=dict(l=10, r=10, t=36, b=10),
+                hovermode="x unified",
+                xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False,
+                           range=[max(0, min(_pb["proj_soh"] or [60]) - 5), 102]),
+                legend=dict(font=dict(size=10, color="#718096")),
+                title=dict(
+                    text=f"PyBaMM SPM · {_pb['chem_label']} · SEI growth fade",
+                    font=dict(size=12, color="#a0aec0"), x=0,
+                ),
+            )
+            st.plotly_chart(_fig_pb, use_container_width=True)
+
+            # ── Interpretation note ──
+            _diff_pct = ((_rul_ph or 0) - (float(latest.get("rul_pred", _rul_ph or 0)) if hasattr(latest, "get") else float(latest["rul_pred"]) if "rul_pred" in latest.index else (_rul_ph or 0)))
+            _interp = (
+                "Physics and ML estimates agree within 10%." if abs(_diff_pct) < 0.1 * (_rul_ph or 1)
+                else f"Physics estimate is {'longer' if _diff_pct > 0 else 'shorter'} than ML by "
+                     f"{abs(_diff_pct):.0f} cycles — likely because the √n SEI model "
+                     f"{'predicts deceleration in fade rate' if _diff_pct > 0 else 'predicts accelerating degradation'} "
+                     f"beyond the training window."
+            )
+            _md_html(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
+                f"padding:12px 16px;font-size:12px;color:#a0aec0;margin-top:4px'>"
+                f"<strong style='color:#e2e8f0'>Interpretation:</strong> {_interp} "
+                f"The physics model uses {_pb['chem_label']} electrochemical parameters from "
+                f"PyBaMM's built-in library — no fitting to this specific cell's internal "
+                f"geometry. Beta ({_pb['beta']:.5f}) is derived from the measured fade history."
+                f"</div>"
+            )
 
 
 # ---------------------------------------------------------------------------
