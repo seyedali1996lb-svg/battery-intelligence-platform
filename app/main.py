@@ -1167,11 +1167,27 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         rul_display = f"{adj_rul:.0f}"
         rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold)"
 
-    conf_html = (
-        "<span class='tag-calibrating'>CALIBRATING</span>"
-        if rul_calibrating
-        else "<span class='tag-model'>MODEL</span>"
-    )
+    if rul_calibrating:
+        if fold_r2 is not None and fold_r2 > 0:
+            _pct_to_thresh = min(99, int(fold_r2 / RUL_RELIABLE_FLOOR * 100))
+            conf_html = (
+                f"<span class='tag-calibrating'>"
+                f"Calibrating — {_pct_to_thresh}% to reliability</span>"
+            )
+        elif current_cycle < 40:
+            _cycles_needed = max(1, 40 - current_cycle)
+            conf_html = (
+                f"<span class='tag-calibrating'>"
+                f"Calibrating — needs {_cycles_needed} more cycles</span>"
+            )
+        else:
+            conf_html = "<span class='tag-calibrating'>Calibrating</span>"
+    else:
+        conf_html = (
+            f"<span class='tag-model'>MODEL"
+            + (f" · R²={fold_r2:.2f}" if fold_r2 is not None else "")
+            + "</span>"
+        )
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
 
     # Confidence inline reason (two non-engineer templates per CTO spec)
@@ -1483,6 +1499,25 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         name="Model (test)", line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
         hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Model</extra>",
     ))
+    # F2: ±σ confidence band derived from leave-cell-out residuals
+    if len(df_test) >= 5 and "soh_pred" in df_test.columns:
+        import numpy as _np_f2
+        _f2_valid = df_test[["cycle_number", "soh_pct", "soh_pred"]].dropna()
+        if len(_f2_valid) >= 3:
+            _sigma_f2 = float((_f2_valid["soh_pct"] - _f2_valid["soh_pred"]).std())
+            _sigma_f2 = max(min(_sigma_f2, 8.0), 0.3)
+            _cx_f2  = _f2_valid["cycle_number"].tolist()
+            _cu_f2  = (_f2_valid["soh_pred"] + _sigma_f2).clip(upper=102.0).tolist()
+            _cl_f2  = (_f2_valid["soh_pred"] - _sigma_f2).clip(lower=60.0).tolist()
+            fig.add_trace(go.Scatter(
+                x=_cx_f2 + _cx_f2[::-1],
+                y=_cu_f2 + _cl_f2[::-1],
+                fill="toself",
+                fillcolor="rgba(72,187,120,0.10)",
+                line=dict(width=0),
+                name=f"±{_sigma_f2:.1f}% model uncertainty (σ)",
+                hoverinfo="skip",
+            ))
     fig.add_vline(
         x=split_cycle, line_dash="dot", line_color="#4a5568", line_width=1,
         annotation_text=f"Train → Test (cy {split_cycle})",
@@ -5367,9 +5402,11 @@ def page_decision(
                 )
 
     st.caption(
-        f"5-yr NPV at {_npv_rate*100:.0f}% discount rate · $80/kWh·yr energy value · "
-        f"${_repl_cost:.0f}/cell replacement. "
-        + make_badge("Illustrative", "#718096") + " — not financial advice."
+        f"5-yr NPV · {_npv_rate*100:.0f}% discount rate [WACC assumption, adjust in Scenario Planner] · "
+        f"$80/kWh·yr energy value [" + make_badge("Illustrative", "#718096") + " IEA 2024 LCOS range $60–140/kWh·yr] · "
+        f"${_repl_cost:.0f}/cell replacement [" + make_badge("Illustrative", "#718096") + " BNEF 2024 range $100–200/cell] · "
+        f"${_repack:.0f} repack cost [" + make_badge("Illustrative", "#718096") + " engineering estimate]. "
+        "Use the NPV Scenario Planner below to adjust assumptions — not financial advice."
     , unsafe_allow_html=True)
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
@@ -6971,12 +7008,16 @@ def page_sustainability(selected: str, df: pd.DataFrame):
 
     h1, h2, h3, h4 = st.columns(4)
     hero_tiles = [
-        (h1, "Manufacturing CO₂\n(one new cell)",   f"{co2_val:.2f} kg", "#f6ad55", BADGE_ESTIMATE),
-        (h2, "Use phase CO₂\n(to date, this cell)", f"{use_phase_co2:.2f} kg", "#718096", BADGE_ILLUST),
-        (h3, "Reuse saves\n(vs making a new cell)", f"{sus['co2_avoided_by_reuse']:.2f} kg", "#48bb78", BADGE_ESTIMATE),
-        (h4, "Recycle credit\n(15% cathode, Dunn 2015)", f"{sus['co2_recycling_credit']:.2f} kg", "#f6e05e", BADGE_ESTIMATE),
+        (h1, "Manufacturing CO₂\n(one new cell)",   f"{co2_val:.2f} kg", "#f6ad55", BADGE_ESTIMATE,
+         "IVL 2019 · range 0.30–1.00 kg/cell · adjust slider"),
+        (h2, "Use phase CO₂\n(to date, this cell)", f"{use_phase_co2:.2f} kg", "#718096", BADGE_ILLUST,
+         f"Grid: {grid_val:.2f} kg CO₂/kWh (IEA 2023) · {cycles} cycles"),
+        (h3, "Reuse saves\n(vs making a new cell)", f"{sus['co2_avoided_by_reuse']:.2f} kg", "#48bb78", BADGE_ESTIMATE,
+         "Harper et al. 2019 · Dunn 2015 · vs manufacturing a new cell"),
+        (h4, "Recycle credit\n(15% cathode, Dunn 2015)", f"{sus['co2_recycling_credit']:.2f} kg", "#f6e05e", BADGE_ESTIMATE,
+         "Dunn et al. 2015 · 15% cathode material recovery credit"),
     ]
-    for col, label, val, colour, badge in hero_tiles:
+    for col, label, val, colour, badge, src_note in hero_tiles:
         label_lines = label.split("\n")
         label_html = "<br>".join(label_lines)
         with col:
@@ -6986,7 +7027,8 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 f"<div style='font-size:11px;color:#4a5568;line-height:1.5'>{label_html}</div>"
                 f"<div style='font-size:26px;font-weight:700;color:{colour};margin-top:6px'>{val}</div>"
                 f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>CO₂e</div>"
-                f"<div style='margin-top:10px'>{badge}</div>"
+                f"<div style='margin-top:8px'>{badge}</div>"
+                f"<div style='font-size:10px;color:#2d3748;margin-top:4px;line-height:1.4'>{src_note}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
