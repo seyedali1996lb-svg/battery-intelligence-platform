@@ -24,7 +24,7 @@ def page_copilot(
     bundles: dict,
     selected: str,
 ):
-    from copilot import (
+    from battery_copilot import (
         build_cell_context,
         build_fleet_stats,
         context_summary,

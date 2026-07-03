@@ -3496,7 +3496,7 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
 # ---------------------------------------------------------------------------
 
 def page_executive_summary(featured_dfs: dict, bundles: dict):
-    from copilot import build_fleet_stats
+    from battery_copilot import build_fleet_stats
 
     st.markdown("# Executive Summary")
 
@@ -4723,7 +4723,7 @@ def page_copilot(
     selected: str,
 ):
     _action_bar("copilot")
-    from copilot import (
+    from battery_copilot import (
         build_cell_context,
         build_fleet_stats,
         context_summary,
@@ -4742,7 +4742,7 @@ def page_copilot(
         FOLLOW_UP_MAP,
     )
     try:
-        from copilot import llm_answer as _llm_answer_fn
+        from battery_copilot import llm_answer as _llm_answer_fn
     except ImportError:
         def _llm_answer_fn(query, template_answer, api_key):  # type: ignore[misc]
             return template_answer
