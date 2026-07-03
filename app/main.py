@@ -448,7 +448,7 @@ def _get_shap_values(bundle_id: str, bundle: dict):
 @st.cache_resource(show_spinner=False)
 def load_everything():
     """
-    Load synthetic cells (Cell1-Cell8) and NASA cells (B0005-B0018) separately.
+    Load synthetic, NASA, and Severson cells in parallel (independent pipelines).
 
     Two separate models are trained — one per data source — because the
     synthetic and NASA resistance measurements are on incompatible scales
@@ -456,91 +456,68 @@ def load_everything():
     from EIS impedance spectroscopy). A combined model confuses the features
     and produces negative R2. Separate models keep each dataset honest.
 
-    The dashboard selects the correct bundle based on which cell is chosen.
+    Parallelised with ThreadPoolExecutor: the three pipelines share no state
+    so they can run concurrently. st.write/st.progress only called from the
+    main thread (after threads complete) to avoid Streamlit threading issues.
     """
-    with st.status("Initialising platform…", expanded=True) as _status:
-        _prog = st.progress(0, text="Starting…")
+    import concurrent.futures as _cf
 
-        def _load_or_train(key: str, cell_dict: dict, step_label: str) -> tuple[dict, dict, dict]:
-            """3-tier cache: full bundle → features-only → full pipeline."""
-            # Tier 1: full bundle cache (fastest — no computation at all)
-            cached = load_cached(key, cell_dict)
-            if cached is not None:
-                st.write(f"{step_label} — loaded from cache ✓")
-                return cached
-
-            # Tier 2: features cached; retrain model only (skips build_features)
-            feat_cached = load_features_cached(key, cell_dict)
-            if feat_cached is not None:
-                raw_fdfs, model_inputs = feat_cached
-                st.write(f"{step_label} — features cached; retraining model…")
-                result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
-                save_cached(key, cell_dict, result)
-                return result
-
-            # Tier 3: full pipeline
-            st.write(f"{step_label} — computing features…")
-            raw_fdfs, model_inputs = _compute_features_only(cell_dict)
-            save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
-            st.write(f"{step_label} — training model…")
+    def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict, dict]:
+        """3-tier cache: full bundle → features-only → full pipeline. Thread-safe — no st.* calls."""
+        cached = load_cached(key, cell_dict)
+        if cached is not None:
+            return cached
+        feat_cached = load_features_cached(key, cell_dict)
+        if feat_cached is not None:
+            raw_fdfs, model_inputs = feat_cached
             result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
             save_cached(key, cell_dict, result)
-            st.write(f"{step_label} — trained and cached ✓")
             return result
+        raw_fdfs, model_inputs = _compute_features_only(cell_dict)
+        save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
+        result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
+        save_cached(key, cell_dict, result)
+        return result
 
-        # ── Step 1 / 4: Synthetic cells ──
-        _prog.progress(5, text="Step 1 / 4 — Loading synthetic cells…")
-        st.write("Step 1 / 4 — Loading synthetic cells (Cell1–Cell8)…")
+    with st.status("Initialising platform…", expanded=False) as _status:
+        _prog = st.progress(0, text="Loading data sources in parallel…")
+
+        # ── Build cell dicts (main thread — fast) ──────────────────────────
         synth_ids     = list(CELL_STRESS_PROFILES.keys())
         battery_synth = build_battery(battery_id="Oxford_B1", cell_ids=synth_ids)
-        bundle_synth, fdfs_synth, sc_synth = _load_or_train(
-            "synth", battery_synth["cells"],
-            f"Step 2 / 4 — Synthetic model ({len(synth_ids)} cells)")
-        _prog.progress(40, text="Step 2 / 4 — Synthetic model ready")
 
-        # ── Step 3 / 4: NASA real cells ──
         nasa_ids = _nasa_cells_available()
-        bundle_nasa, fdfs_nasa, sc_nasa = None, {}, {}
-        if nasa_ids:
-            _prog.progress(45, text=f"Step 3 / 4 — NASA cells ({', '.join(nasa_ids)})…")
-            st.write(f"Step 3 / 4 — Loading NASA real cells ({', '.join(nasa_ids)})…")
-            battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids)
-            bundle_nasa, fdfs_nasa, sc_nasa = _load_or_train(
-                "nasa", battery_nasa["cells"],
-                f"Step 3 / 4 — NASA model ({len(nasa_ids)} cells)")
-        else:
-            st.write("Step 3 / 4 — NASA cells not found — skipping")
-        _prog.progress(70, text="Step 3 / 4 — NASA model ready")
+        battery_nasa = build_battery(battery_id="NASA_B1", cell_ids=nasa_ids) if nasa_ids else None
 
-        # ── Step 4 / 4: Severson 2019 LFP cells ──
-        # Only load if CSVs are already pre-cached locally. The raw MATLAB file
-        # is ~115 MB — downloading it at startup would block Streamlit Cloud for
-        # several minutes and trigger an OOM/timeout kill. Run
-        # `python src/severson_loader.py` locally to pre-generate the CSVs,
-        # then re-deploy with them committed to data/raw/severson/.
-        bundle_sev, fdfs_sev, sc_sev = None, {}, {}
+        sev_cell_dicts = {}
         try:
             from severson_loader import load_severson_cells, any_cached as _sev_any_cached
             if _sev_any_cached():
-                _prog.progress(72, text="Step 4 / 4 — Loading Severson 2019 LFP cells…")
-                st.write("Step 4 / 4 — Loading Severson 2019 LFP cells from local CSVs…")
-                sev_cells = load_severson_cells(status_fn=lambda msg: st.write(f"  {msg}"))
+                sev_cells = load_severson_cells(status_fn=lambda msg: None)
                 if sev_cells:
                     sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
-                    bundle_sev, fdfs_sev, sc_sev = _load_or_train(
-                        "severson", sev_cell_dicts,
-                        f"Step 4 / 4 — Severson model ({len(sev_cells)} cells)")
-                else:
-                    st.write("Step 4 / 4 — Severson CSVs unreadable — skipping")
-            else:
-                st.write("Step 4 / 4 — Severson data not available — using NASA + synthetic")
-        except Exception as _sev_err:
-            st.write(f"Step 4 / 4 — Severson load skipped ({_sev_err})")
+        except Exception:
+            pass
+
+        # ── Run three pipelines concurrently ───────────────────────────────
+        _prog.progress(10, text="Training models…")
+        futures = {}
+        with _cf.ThreadPoolExecutor(max_workers=3) as _pool:
+            futures["synth"] = _pool.submit(_load_or_train_bg, "synth", battery_synth["cells"])
+            if battery_nasa:
+                futures["nasa"] = _pool.submit(_load_or_train_bg, "nasa", battery_nasa["cells"])
+            if sev_cell_dicts:
+                futures["severson"] = _pool.submit(_load_or_train_bg, "severson", sev_cell_dicts)
+
+        _prog.progress(90, text="Merging results…")
+
+        bundle_synth, fdfs_synth, sc_synth = futures["synth"].result()
+        bundle_nasa,  fdfs_nasa,  sc_nasa  = futures["nasa"].result()  if "nasa"     in futures else (None, {}, {})
+        bundle_sev,   fdfs_sev,   sc_sev   = futures["severson"].result() if "severson" in futures else (None, {}, {})
 
         _prog.progress(100, text="Platform ready ✓")
         _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
-    # Merge all cell outputs; keep bundles separate by source
     featured_dfs = {**fdfs_synth, **fdfs_nasa, **fdfs_sev}
     split_cycles = {**sc_synth, **sc_nasa, **sc_sev}
     bundles = {"synth": bundle_synth, "nasa": bundle_nasa, "severson": bundle_sev}
@@ -1794,7 +1771,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     _cy_s = _soh_valid["cycle_number"].values.astype(float)
                     _soh_s = _soh_valid["soh_pct"].values
                     # Fit linear + quadratic — if quadratic term >> 0, accelerating (LAM)
-                    _cy_norm = (_cy_s - _cy_s.min()) / max(_cy_s.ptp(), 1)
+                    _cy_norm = (_cy_s - _cy_s.min()) / max(_cy_s.max() - _cy_s.min(), 1)
                     _p2 = _np_mech.polyfit(_cy_norm, _soh_s, 2)
                     _nonlinearity = float(_p2[0])  # positive curvature = accelerating fade
                     _fade_total = float(_soh_s[0] - _soh_s[-1]) if len(_soh_s) > 0 else 0
@@ -2493,7 +2470,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             st.info(f"Formation analysis unavailable: {_form_e}")
 
     # ── 📊 Rate Capability Analysis ─────────────────────────────────────────
-    _rate_badge = "◐ SIMULATED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
+    _rate_badge = "○ SYNTHETIC" if (cell_id not in NASA_CELL_IDS and not cell_id.startswith("S-")) else "◐ SIMULATED"
     with st.expander(f"📊 Rate Capability — {_rate_badge}", expanded=False):
         try:
             import numpy as _np_rate
@@ -2754,7 +2731,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 f"Linear extrapolation overestimates remaining life in early aging (fade is still "
                 f"decelerating) and may underestimate it mid-life if the current window happens to "
                 f"fall on a temporary rough patch."
-            ).format(len(active_fdfs) if active_fdfs else "N")
+            ).format("N")
 
             # Build divergence explanation
             if _rul_ml is None:
