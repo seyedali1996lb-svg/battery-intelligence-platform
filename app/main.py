@@ -34,6 +34,7 @@ from design_system import (
     provenance_banner,
     ACTION_META, CONF_META,
 )
+from trajectory_memory import TrajectoryMemory
 
 
 def _cell_provenance(cell_id: str) -> str:
@@ -1011,11 +1012,115 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
 
 
 # ---------------------------------------------------------------------------
+# Trajectory match card
+# ---------------------------------------------------------------------------
+
+def _render_trajectory_match_card(
+    cell_id: str,
+    df: "pd.DataFrame",
+    trajectory_memory: "TrajectoryMemory | None",
+) -> None:
+    """
+    Run the trajectory pattern matcher and render the warning card if a match
+    is found.  Called from page_overview and (in summary form) page_fleet.
+    """
+    if trajectory_memory is None:
+        return
+    try:
+        match = trajectory_memory.match(cell_id, df)
+    except Exception:
+        return
+    if match is None:
+        return
+
+    # Colour scheme by severity
+    _colours = {
+        "critical": ("#7f1d1d", "#fca5a5", "#ef4444"),
+        "high":     ("#451a03", "#fcd34d", "#f59e0b"),
+        "watch":    ("#0c1a3d", "#93c5fd", "#3b82f6"),
+    }
+    _bg, _text, _border = _colours.get(match.warning_level, _colours["watch"])
+    _icon = "⚠" if match.warning_level == "critical" else ("▲" if match.warning_level == "high" else "●")
+    _level_label = match.warning_level.upper()
+
+    _sim_pct = int(match.best_similarity * 100)
+    _cells_str = ", ".join(match.matched_cells[:3])
+    if match.n_matches > 3:
+        _cells_str += f" +{match.n_matches - 3} more"
+
+    # Recommendation sentence
+    _action_cycle = match.predicted_eol_min - 5
+    _rec = (
+        f"Schedule replacement before cycle {_action_cycle:,}."
+        if _action_cycle > match.current_cycle
+        else "Immediate inspection recommended — estimated EOL is imminent."
+    )
+
+    _md_html(
+        f"""<div style="
+            background:{_bg};
+            border:1px solid {_border};
+            border-left:4px solid {_border};
+            border-radius:8px;
+            padding:14px 18px;
+            margin-bottom:16px;
+        ">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;
+                      color:{_text};margin-bottom:6px">
+            {_icon} TRAJECTORY MATCH — {_level_label}
+          </div>
+          <div style="font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:8px">
+            This cell's degradation trajectory closely matches
+            <strong style="color:{_text}">{match.n_matches}
+            {"cell" if match.n_matches == 1 else "cells"}</strong>
+            that reached end-of-life in the training data
+            (best match: <strong style="color:{_text}">{match.best_cell_id}</strong>,
+            {_sim_pct}% similarity · <em>{match.failure_mode}</em>).
+          </div>
+          <div style="display:flex;gap:24px;margin-bottom:10px">
+            <div>
+              <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;
+                          letter-spacing:0.07em">You are at</div>
+              <div style="font-size:20px;font-weight:700;color:#e2e8f0">
+                Cycle {match.current_cycle:,}
+              </div>
+              <div style="font-size:11px;color:#94a3b8">SOH {match.current_soh:.1f}%</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;
+                          letter-spacing:0.07em">Est. cycles remaining</div>
+              <div style="font-size:20px;font-weight:700;color:{_text}">
+                {match.cycles_remaining_min}–{match.cycles_remaining_max}
+              </div>
+              <div style="font-size:11px;color:#94a3b8">
+                before EOL · based on {match.n_matches} matched {"trajectory" if match.n_matches == 1 else "trajectories"}
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;
+                          letter-spacing:0.07em">Predicted EOL window</div>
+              <div style="font-size:20px;font-weight:700;color:{_text}">
+                Cycle {match.predicted_eol_min:,}–{match.predicted_eol_max:,}
+              </div>
+              <div style="font-size:11px;color:#94a3b8">
+                Matched cells: {_cells_str}
+              </div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:{_text};font-weight:600">
+            → {_rec}
+          </div>
+        </div>"""
+    )
+
+
+# ---------------------------------------------------------------------------
 # Page: Overview
 # ---------------------------------------------------------------------------
 
 def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
-                  rul_reliable: bool = True, bundle: dict | None = None):
+                  rul_reliable: bool = True, bundle: dict | None = None,
+                  trajectory_memory: "TrajectoryMemory | None" = None):
     _action_bar("overview")
     st.markdown("# Overview")
 
@@ -1194,6 +1299,9 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 )
     except Exception:
         pass
+
+    # ── Trajectory match warning ──────────────────────────────────────────────
+    _render_trajectory_match_card(cell_id, df, trajectory_memory)
 
     # ── 3 primary secondary metrics: RUL · Fade Rate · Resistance ────────────
     _fade_30 = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else None
@@ -3650,7 +3758,7 @@ def page_executive_summary(featured_dfs: dict, bundles: dict):
 # Page: Fleet
 # ---------------------------------------------------------------------------
 
-def page_fleet(featured_dfs: dict, bundles: dict):
+def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "TrajectoryMemory | None" = None):
     _action_bar("fleet")
     st.markdown("# Fleet")
 
@@ -3898,8 +4006,70 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         </div>
         """)
 
+    # ── Trajectory match alerts (fleet-wide) ─────────────────────────────────
+    _traj_matches: dict = {}
+    if trajectory_memory is not None:
+        try:
+            _traj_matches = trajectory_memory.match_fleet(featured_dfs)
+        except Exception:
+            _traj_matches = {}
+
+    if _traj_matches:
+        _tm_crit  = {c: m for c, m in _traj_matches.items() if m.warning_level == "critical"}
+        _tm_high  = {c: m for c, m in _traj_matches.items() if m.warning_level == "high"}
+        _tm_watch = {c: m for c, m in _traj_matches.items() if m.warning_level == "watch"}
+        _tm_total = len(_traj_matches)
+        _tm_header_col = "#ef4444" if _tm_crit else ("#f59e0b" if _tm_high else "#3b82f6")
+        st.markdown(
+            f"<div style='background:#1a1a2e;border:1px solid {_tm_header_col};"
+            f"border-radius:8px;padding:14px 18px;margin-bottom:16px'>"
+            f"<div style='font-size:11px;font-weight:700;letter-spacing:0.08em;"
+            f"color:{_tm_header_col};margin-bottom:10px'>"
+            f"⚠ FAILURE TRAJECTORY MATCHES — {_tm_total} "
+            f"{'CELL' if _tm_total == 1 else 'CELLS'} FLAGGED</div>",
+            unsafe_allow_html=True,
+        )
+        for _priority_set, _icon, _col in [
+            (_tm_crit,  "🔴", "#fca5a5"),
+            (_tm_high,  "🟠", "#fcd34d"),
+            (_tm_watch, "🔵", "#93c5fd"),
+        ]:
+            for _cid, _m in _priority_set.items():
+                _sim_pct = int(_m.best_similarity * 100)
+                st.markdown(
+                    f"<div style='display:flex;gap:10px;align-items:baseline;padding:6px 0;"
+                    f"border-bottom:1px solid #1e293b'>"
+                    f"<span>{_icon}</span>"
+                    f"<span style='font-weight:700;color:#e2e8f0;min-width:80px'>{_cid}</span>"
+                    f"<span style='color:{_col}'>"
+                    f"Matched {_m.best_cell_id} ({_sim_pct}% sim) · {_m.failure_mode}"
+                    f"</span>"
+                    f"<span style='color:#94a3b8;font-size:11px;margin-left:auto'>"
+                    f"Est. EOL cycle {_m.predicted_eol_min}–{_m.predicted_eol_max} "
+                    f"· {_m.cycles_remaining_min}–{_m.cycles_remaining_max} cycles remain"
+                    f"</span></div>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown("</div>", unsafe_allow_html=True)
+
     # ── T2: Proactive Alert Inbox ─────────────────────────────────────────────
     _alerts = []
+    # Inject trajectory match warnings into the alert inbox
+    for _cid, _m in _traj_matches.items():
+        _sev = "critical" if _m.warning_level == "critical" else "high" if _m.warning_level == "high" else "medium"
+        _alerts.append({
+            "severity": _sev,
+            "cell": _cid,
+            "title": "Failure Trajectory Match",
+            "body": (
+                f"Degradation pattern matches {_m.n_matches} historical failure"
+                f"{'s' if _m.n_matches > 1 else ''} "
+                f"(best: {_m.best_cell_id}, {int(_m.best_similarity*100)}% similarity). "
+                f"{_m.failure_mode}. "
+                f"Est. {_m.cycles_remaining_min}–{_m.cycles_remaining_max} cycles remaining "
+                f"before EOL (cycle {_m.predicted_eol_min}–{_m.predicted_eol_max})."
+            ),
+        })
     for r in rows:
         _cid = r["cell_id"]
         # Critical: at/past EOL
@@ -9121,6 +9291,15 @@ def main():
     featured_dfs_all, bundles, split_cycles_all = load_everything()
     _train_placeholder.empty()
 
+    # ── Failure trajectory memory (built once per session) ────────────────────
+    # Uses ALL cells across all sources so the signature library is as large
+    # as possible, regardless of which data source is currently active.
+    if "trajectory_memory" not in st.session_state:
+        _tm = TrajectoryMemory()
+        _tm.build(featured_dfs_all)
+        st.session_state["trajectory_memory"] = _tm
+    trajectory_memory: TrajectoryMemory = st.session_state["trajectory_memory"]
+
     # ── Separate built-in cells by type ──────────────────────────────────────
     nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if k in NASA_CELL_IDS}
     sev_fdfs   = {k: v for k, v in featured_dfs_all.items() if k.startswith("S-")}
@@ -9220,7 +9399,8 @@ def main():
     rul_reliable = per_cell_ok.get(selected, bundle["metrics"].get("rul_reliable", True))
 
     if page == "overview":
-        page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle)
+        page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle,
+                      trajectory_memory=trajectory_memory)
     elif page == "health":
         page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable)
     elif page == "compare":
@@ -9245,7 +9425,7 @@ def main():
         with _tab_reg:
             _page_regulatory_alerts(selected, df, active_fdfs, bundles)
     elif page in ("fleet", "exec_summary"):
-        page_fleet(active_fdfs, bundles)
+        page_fleet(active_fdfs, bundles, trajectory_memory=trajectory_memory)
     elif page == "decision":
         page_decision(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "grading":
