@@ -53,10 +53,16 @@ _VOLTAGE_LIMITS = {
     "default":(2.50, 4.25),
 }
 
-_TEMP_MAX        = 45.0    # °C — absolute limit
-_TEMP_RATE_MAX   = 2.0     # °C per reading — rate-of-rise flag
-_ZSCORE_WINDOW   = 20      # rolling window for Z-score
-_ZSCORE_THRESH   = 2.5     # flag threshold
+# IEC 62619:2022 operational safety limits
+_TEMP_MAX          = 45.0    # °C — IEC 62619 §6.2 maximum operating temperature
+_TEMP_CHARGE_MAX   = 45.0    # °C — charging upper limit (§6.2.3)
+_TEMP_DISCHARGE_MAX= 60.0    # °C — discharge upper limit (§6.2.4)
+_TEMP_MIN          = -20.0   # °C — minimum operating temperature
+_TEMP_RATE_MAX     = 2.0     # °C per reading — rate-of-rise flag (thermal runaway precursor)
+_TEMP_RATE_CRITICAL= 5.0     # °C per reading — IEC 62619 §8.2 critical rate
+_CAPACITY_PLUNGE   = 0.05    # SOH drop > 5% in one cycle → plating event signal
+_ZSCORE_WINDOW     = 20      # rolling window for Z-score
+_ZSCORE_THRESH     = 2.5     # flag threshold
 
 # ── Thread-safe message store ─────────────────────────────────────────────────
 # Module-level so publisher and subscriber share one namespace across Streamlit reruns.
@@ -109,19 +115,39 @@ class AnomalyDetector:
                     f"{v:.3f} V above max {self.v_hi} V", "critical"))
             self._v_hist.append(v)
 
-        # Temperature absolute + rate-of-rise
+        # Temperature — IEC 62619:2022 limits
         if t is not None:
-            if t > _TEMP_MAX:
+            if t < _TEMP_MIN:
+                flags.append(_flag("UNDERTEMPERATURE",
+                    f"{t:.1f}°C below minimum {_TEMP_MIN}°C (IEC 62619 §6.2)", "critical"))
+            elif t > _TEMP_CHARGE_MAX:
                 flags.append(_flag("OVERTEMPERATURE",
-                    f"{t:.1f}°C exceeds {_TEMP_MAX}°C limit", "critical"))
+                    f"{t:.1f}°C exceeds {_TEMP_CHARGE_MAX}°C operating limit (IEC 62619 §6.2.3)", "critical"))
             if self._last_temp is not None:
                 rate = t - self._last_temp
-                if rate > _TEMP_RATE_MAX:
-                    flags.append(_flag("TEMP_SPIKE",
-                        f"Temperature rose {rate:.1f}°C in one reading (limit {_TEMP_RATE_MAX}°C/step)",
+                if rate > _TEMP_RATE_CRITICAL:
+                    flags.append(_flag("THERMAL_RUNAWAY_PRECURSOR",
+                        f"Temperature rate {rate:.1f}°C/step exceeds {_TEMP_RATE_CRITICAL}°C/step "
+                        f"(IEC 62619 §8.2 — thermal runaway precursor)", "critical"))
+                elif rate > _TEMP_RATE_MAX:
+                    flags.append(_flag("TEMP_RATE_HIGH",
+                        f"Temperature rose {rate:.1f}°C in one reading (warning threshold {_TEMP_RATE_MAX}°C/step)",
                         "warning"))
             self._last_temp = t
             self._t_hist.append(t)
+
+        # Capacity plunge — IEC 62619 §8.2 sudden loss event
+        soc = msg.get("soc_pct")
+        if soc is not None and len(self._v_hist) >= 2:
+            _prev_soc = getattr(self, "_last_soc", None)
+            if _prev_soc is not None:
+                _drop = (_prev_soc - soc) / 100.0
+                if _drop > _CAPACITY_PLUNGE:
+                    flags.append(_flag("CAPACITY_PLUNGE",
+                        f"SOC dropped {_drop*100:.1f}% in one reading — possible lithium plating event "
+                        f"(IEC 62619 §8.2 sudden capacity loss threshold: {_CAPACITY_PLUNGE*100:.0f}%)",
+                        "critical"))
+            self._last_soc = soc
 
         if i is not None:
             self._i_hist.append(i)

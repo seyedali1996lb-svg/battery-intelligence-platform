@@ -87,6 +87,23 @@ def _md_html(html: str) -> None:
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
+def _empty_state(
+    title: str,
+    reason: str,
+    action: str = "",
+    icon: str = "○",
+) -> None:
+    """Render a designed empty state (C3) instead of a bare st.info()."""
+    _md_html(
+        f"<div class='empty-state'>"
+        f"<div class='empty-state-icon'>{icon}</div>"
+        f"<div class='empty-state-title'>{title}</div>"
+        f"<div class='empty-state-body'>{reason}</div>"
+        + (f"<div class='empty-state-action'>{action}</div>" if action else "")
+        + "</div>"
+    )
+
+
 def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
     """Return df downsampled to at most max_points rows for trend charts.
 
@@ -227,17 +244,34 @@ st.markdown(
         padding: 2px 8px; border-radius: 4px; letter-spacing: 0.06em;
         border: 1px solid rgba(104,211,145,0.25);
     }
+    /* ── Spacing tokens (4-step scale) ── */
+    :root {
+        --sp-1: 4px;  --sp-2: 8px;  --sp-3: 16px;  --sp-4: 24px;
+        --r-chip: 6px;  --r-card: 10px;
+        --c-border: #2d3748;  --c-surface: #1e2a38;  --c-muted: #8896a8;
+    }
+    /* ── Type ramp (C1) ── */
     .block-container { padding-top: 56px !important; }
-    h1 { font-size: 28px !important; font-weight: 800 !important; color: #e2e8f0 !important; }
-    h2 { font-size: 20px !important; font-weight: 700 !important; color: #e2e8f0 !important; }
+    h1 { font-size: 28px !important; font-weight: 800 !important; color: #e2e8f0 !important; margin-bottom: 4px !important; }
+    h2 { font-size: 22px !important; font-weight: 700 !important; color: #e2e8f0 !important; margin-bottom: 2px !important; }
     h3 { font-size: 16px !important; font-weight: 600 !important; color: #cbd5e0 !important; }
+    h4 { font-size: 13px !important; font-weight: 600 !important; color: #a0aec0 !important; }
+    /* section-header sits clearly below h3 in the hierarchy */
+    .section-header {
+        font-size: 11px !important; font-weight: 700 !important; color: #4a5568 !important;
+        text-transform: uppercase !important; letter-spacing: 0.12em !important;
+        margin: 28px 0 12px !important; padding-bottom: 6px !important;
+        border-bottom: 1px solid #2d3748 !important;
+    }
     /* ── Accessibility: contrast fix — #8896a8 on #1a202c = 5.2:1 (WCAG AA pass) ── */
     .metric-chip-sub, .hero-sub { color: #8896a8 !important; }
-    /* ── Accessibility: focus styles for all interactive elements ── */
+    /* ── Accessibility: focus styles — WCAG 2.4.7 (L3) ── */
     button:focus-visible, [role="button"]:focus-visible,
-    input:focus-visible, select:focus-visible, a:focus-visible {
+    input:focus-visible, select:focus-visible, a:focus-visible,
+    [data-testid="stExpander"]:focus-visible {
         outline: 2px solid #63b3ed !important;
-        outline-offset: 2px !important;
+        outline-offset: 3px !important;
+        border-radius: 4px !important;
     }
     section[data-testid="stSidebar"] button:focus-visible {
         outline: 2px solid #63b3ed !important;
@@ -248,6 +282,15 @@ st.markdown(
     .status-good::before    { content: "✓ "; }
     .status-warning::before { content: "⚠ "; }
     .status-critical::before{ content: "✕ "; }
+    /* ── Empty state (C3) ── */
+    .empty-state {
+        text-align: center; padding: 48px 32px; border: 1px dashed #2d3748;
+        border-radius: var(--r-card); margin: 16px 0;
+    }
+    .empty-state-icon  { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+    .empty-state-title { font-size: 16px; font-weight: 600; color: #a0aec0; margin-bottom: 6px; }
+    .empty-state-body  { font-size: 13px; color: #4a5568; line-height: 1.6; max-width: 420px; margin: 0 auto; }
+    .empty-state-action{ margin-top: 16px; font-size: 12px; color: #63b3ed; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1137,6 +1180,35 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         unsafe_allow_html=True,
     )
 
+    # ── Benchmark comparison (M4) ────────────────────────────────────────────
+    try:
+        _bm_fdfs = bundle.get("featured_dfs") or {}
+        if len(_bm_fdfs) >= 3:
+            _peer_sohs = []
+            for _bm_cid, _bm_df in _bm_fdfs.items():
+                if _bm_cid != selected and "soh_pct" in _bm_df.columns:
+                    _peer_last = _bm_df["soh_pct"].dropna()
+                    if len(_peer_last):
+                        _peer_sohs.append(float(_peer_last.iloc[-1]))
+            if _peer_sohs:
+                import numpy as _np_bm
+                _pct_rank = int((_np_bm.array(_peer_sohs) < current_soh).sum() / len(_peer_sohs) * 100)
+                _bm_med   = float(_np_bm.median(_peer_sohs))
+                _bm_col   = "#48bb78" if _pct_rank >= 60 else "#d69e2e" if _pct_rank >= 30 else "#e53e3e"
+                _bm_word  = "better than" if _pct_rank >= 60 else "in line with" if _pct_rank >= 30 else "below"
+                st.markdown(
+                    f"<div style='font-size:12px;color:#8896a8;margin:-12px 0 16px;"
+                    f"padding:7px 14px;background:#111827;border-radius:6px;"
+                    f"border-left:3px solid {_bm_col}'>"
+                    f"Fleet benchmark: this cell's SOH is "
+                    f"<strong style='color:{_bm_col}'>{_bm_word} {_pct_rank}% of fleet peers</strong> "
+                    f"(fleet median {_bm_med:.1f}%, n={len(_peer_sohs)} cells)."
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+    except Exception:
+        pass
+
     # ── 3 primary secondary metrics: RUL · Fade Rate · Resistance ────────────
     _fade_30 = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else None
     _res_ohm = float(latest["resistance_ohm"]) if "resistance_ohm" in latest.index else None
@@ -1655,6 +1727,191 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         """
     )
 
+    # ── H4: Data Lineage ─────────────────────────────────────────────────────
+    with st.expander("🔍 Data Lineage — Trace Any Value to Source Cycles", expanded=False):
+        _lineage_rows = []
+        _col_map = {
+            "soh_pct":              ("SOH %",                "measured capacity / initial capacity × 100",        "Derived from measured capacity_ah"),
+            "capacity_ah":          ("Capacity (Ah)",         "raw discharge capacity per cycle",                  "Direct measurement from cycler"),
+            "fade_rate_30cy":       ("Fade Rate (30cy)",      "ΔQ / Δcycle over rolling 30-cycle window",          "Derived: pandas rolling().apply()"),
+            "coulombic_efficiency": ("Coulombic Efficiency",  "Q_discharge / Q_charge per cycle",                  "Direct measurement from cycler"),
+            "resistance_normalized":("Resistance (norm.)",    "R(n) / R(1) — normalised internal resistance",      "Derived from voltage step at cycle start"),
+            "rul_pred":             ("RUL Prediction",        "GBRT model output (leave-cell-out validated)",       "ML model: GradientBoostingRegressor"),
+            "ce_rolling_30cy":      ("CE Rolling (30cy)",     "30-cycle rolling mean of coulombic_efficiency",      "Derived: pandas rolling().mean()"),
+            "dqdv_peak_value":      ("dQ/dV Peak Value",      "simulated via LiCoO₂ OCV polynomial model",         "Simulated: simulate_vq_curve()"),
+            "sop_pct":              ("SOP %",                 "State of Power — rate capability proxy",            "Derived from R_normalized"),
+        }
+        for _col, (_label, _formula, _source) in _col_map.items():
+            _avail = _col in df.columns
+            _latest_val = f"{df[_col].iloc[-1]:.4f}" if _avail and df[_col].notna().any() else "—"
+            _n_valid = int(df[_col].notna().sum()) if _avail else 0
+            _lineage_rows.append({
+                "Metric": _label,
+                "Latest value": _latest_val,
+                "Valid cycles": _n_valid if _avail else "—",
+                "Formula / derivation": _formula,
+                "Source": _source,
+            })
+        _lin_df = pd.DataFrame(_lineage_rows)
+        st.dataframe(_lin_df, use_container_width=True, hide_index=True)
+        st.caption(
+            f"Cell: {cell_id} · {len(df)} total cycles · "
+            f"First cycle: {int(df['cycle_number'].iloc[0])} · "
+            f"Last cycle: {int(df['cycle_number'].iloc[-1])} · "
+            f"Data provenance: {_cell_provenance(cell_id).upper()}"
+        )
+
+    # ── H5: Tier 2 — Evidence layer ─────────────────────────────────────────
+    _md_html(
+        "<div style='font-size:10px;font-weight:700;color:#2d3748;text-transform:uppercase;"
+        "letter-spacing:0.12em;margin:32px 0 4px;padding-bottom:4px;border-bottom:1px solid #1e2a38'>"
+        "Evidence — supporting diagnostics</div>"
+    )
+
+    # ── T4: Degradation Mechanism Classifier (LLI vs LAM) ──────────────────
+    with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=True):
+        try:
+            import numpy as _np_mech
+            _mech_signals = {}
+            _mech_confidence_notes = []
+
+            # Signal 1: CE trend slope → LLI indicator (works for all chemistries)
+            if "coulombic_efficiency" in df.columns:
+                _ce_valid = df[["cycle_number", "coulombic_efficiency"]].dropna()
+                if len(_ce_valid) >= 10:
+                    _ce_arr = _ce_valid["coulombic_efficiency"].values
+                    _cy_arr = _ce_valid["cycle_number"].values.astype(float)
+                    _ce_slope = _np_mech.polyfit(_cy_arr, _ce_arr, 1)[0]
+                    _ce_deficit_pct = (1.0 - _ce_arr.mean()) * 100
+                    _mech_signals["lli_ce_slope"] = _ce_slope
+                    _mech_signals["lli_ce_deficit"] = _ce_deficit_pct
+                    _mech_confidence_notes.append("CE trend")
+
+            # Signal 2: Capacity fade linearity — linear fade = LLI, accelerating = LAM
+            if "soh_pct" in df.columns:
+                _soh_valid = df[["cycle_number", "soh_pct"]].dropna()
+                if len(_soh_valid) >= 20:
+                    _cy_s = _soh_valid["cycle_number"].values.astype(float)
+                    _soh_s = _soh_valid["soh_pct"].values
+                    # Fit linear + quadratic — if quadratic term >> 0, accelerating (LAM)
+                    _cy_norm = (_cy_s - _cy_s.min()) / max(_cy_s.ptp(), 1)
+                    _p2 = _np_mech.polyfit(_cy_norm, _soh_s, 2)
+                    _nonlinearity = float(_p2[0])  # positive curvature = accelerating fade
+                    _fade_total = float(_soh_s[0] - _soh_s[-1]) if len(_soh_s) > 0 else 0
+                    _mech_signals["lam_nonlinearity"] = _nonlinearity
+                    _mech_signals["fade_total"] = _fade_total
+                    _mech_confidence_notes.append("fade shape")
+
+            # Signal 3: Resistance rise rate → SEI/LAM indicator
+            if "resistance_normalized" in df.columns:
+                _r_valid = df[["cycle_number", "resistance_normalized"]].dropna()
+                if len(_r_valid) >= 10:
+                    _r_slope = _np_mech.polyfit(
+                        _r_valid["cycle_number"].values.astype(float),
+                        _r_valid["resistance_normalized"].values, 1
+                    )[0]
+                    _mech_signals["resistance_slope"] = _r_slope * 1000  # Ω/1000cy
+                    _mech_confidence_notes.append("resistance")
+
+            # ── Classification logic ──
+            _lli_score = 0
+            _lam_score = 0
+
+            _ce_slope_val = _mech_signals.get("lli_ce_slope", 0)
+            if _ce_slope_val < -1e-6:   # declining CE → LLI
+                _lli_score += 3
+            _ce_def = _mech_signals.get("lli_ce_deficit", 0)
+            if _ce_def > 0.05:          # CE deficit > 0.05% → active LLI
+                _lli_score += 2
+
+            _nonlin = _mech_signals.get("lam_nonlinearity", 0)
+            if _nonlin < -0.5:          # accelerating fade → LAM
+                _lam_score += 3
+            elif _nonlin > 0.5:         # decelerating (stabilising) → LLI
+                _lli_score += 1
+
+            _r_slope = _mech_signals.get("resistance_slope", 0)
+            if _r_slope > 0.02:         # fast resistance rise → LAM (particle contact loss)
+                _lam_score += 2
+            elif 0.005 < _r_slope <= 0.02:
+                _lli_score += 1         # moderate rise → SEI (LLI-associated)
+
+            # Verdict
+            _total = _lli_score + _lam_score
+            if _total == 0:
+                _verdict = "Insufficient data"
+                _verdict_color = "#718096"
+                _verdict_icon = "○"
+                _verdict_body = "Not enough degradation signals to classify mechanism. Continue cycling."
+            elif _lli_score > _lam_score * 1.5:
+                _verdict = "LLI — Loss of Lithium Inventory"
+                _verdict_color = "#f6ad55"
+                _verdict_icon = "◑"
+                _verdict_body = (
+                    "Declining coulombic efficiency and/or near-linear capacity fade indicate "
+                    "that cyclable lithium is being consumed by SEI layer growth. "
+                    "Root cause: calendar aging, elevated temperature, or overcharge events. "
+                    "Mitigation: reduce SOC window, lower charge temperature, avoid prolonged full-charge storage."
+                )
+            elif _lam_score > _lli_score * 1.5:
+                _verdict = "LAM — Loss of Active Material"
+                _verdict_color = "#fc8181"
+                _verdict_icon = "◕"
+                _verdict_body = (
+                    "Accelerating capacity fade and/or fast resistance rise indicate electrode "
+                    "active sites are being lost. Root cause: high C-rate stress, mechanical particle "
+                    "cracking, or lithium plating followed by dead lithium formation. "
+                    "Mitigation: reduce peak charge/discharge rate, improve thermal management."
+                )
+            else:
+                _verdict = "Mixed LLI + LAM"
+                _verdict_color = "#b794f4"
+                _verdict_icon = "●"
+                _verdict_body = (
+                    "Both LLI and LAM mechanisms are active simultaneously. "
+                    "Typical of aged cells under combined calendar and cycle stress. "
+                    "Prioritise temperature control (targets LLI) while also reducing peak C-rate (targets LAM)."
+                )
+
+            # Confidence from number of available signals
+            _conf = len(_mech_confidence_notes)
+            _conf_label = {0: "No data", 1: "Low", 2: "Medium", 3: "High"}.get(_conf, "High")
+            _conf_color = {"No data": "#4a5568", "Low": "#f6ad55", "Medium": "#68d391", "High": "#68d391"}.get(_conf_label, "#68d391")
+
+            # Render verdict card
+            _md_html(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                f"padding:16px 20px;margin:8px 0 12px'>"
+                f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px'>"
+                f"<span style='font-size:22px'>{_verdict_icon}</span>"
+                f"<div>"
+                f"<div style='font-size:14px;font-weight:700;color:{_verdict_color}'>{_verdict}</div>"
+                f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+                f"Confidence: <span style='color:{_conf_color};font-weight:600'>{_conf_label}</span>"
+                f" · Signals used: {', '.join(_mech_confidence_notes) if _mech_confidence_notes else 'none'}"
+                f"</div></div></div>"
+                f"<div style='font-size:12px;color:#a0aec0;line-height:1.65'>{_verdict_body}</div>"
+                f"</div>"
+            )
+
+            # Signal breakdown metrics
+            if _mech_signals:
+                _mc1, _mc2, _mc3 = st.columns(3)
+                with _mc1:
+                    if "lli_ce_deficit" in _mech_signals:
+                        st.metric("LLI Score", f"{_lli_score}",
+                                  help="CE decline + linear fade pattern")
+                with _mc2:
+                    if "lam_nonlinearity" in _mech_signals:
+                        st.metric("LAM Score", f"{_lam_score}",
+                                  help="Accelerating fade + resistance rise")
+                with _mc3:
+                    if "resistance_slope" in _mech_signals:
+                        st.metric("R Rise Rate", f"{_mech_signals['resistance_slope']:.3f} Ω/kcy",
+                                  help="Resistance increase per 1000 cycles")
+        except Exception as _e_mech:
+            st.info(f"Mechanism classifier unavailable: {_e_mech}")
+
     # ── dQ/dV Degradation Analysis ──────────────────────────────────────────
     # LFP cells (Severson) have a flat discharge plateau — the LiCoO₂ OCV
     # polynomial used in simulate_vq_curve() does not apply to LFP chemistry.
@@ -1937,6 +2194,128 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 st.plotly_chart(fig_kwh, use_container_width=True)
             except Exception as _te:
                 st.info(f"Throughput analysis unavailable: {_te}")
+
+    # ── ⚠ Lithium Plating Risk Score (M5) ────────────────────────────────────
+    with st.expander("⚠ Lithium Plating Risk", expanded=False):
+        _md_html(
+            "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
+            "Lithium plating (Li deposition on the anode) is the primary cause of sudden capacity loss "
+            "and thermal runaway risk. Detected via Coulombic Efficiency dips below 99.5% — each dip "
+            "indicates a cycle where more lithium was lost than consumed by normal SEI growth. "
+            "Correlation with high C-rate or low temperature (if available) increases confidence."
+            "</div>"
+        )
+        try:
+            _ce_col = "coulombic_efficiency" if "coulombic_efficiency" in df.columns else None
+            if _ce_col is None:
+                _empty_state("CE data unavailable",
+                             "Coulombic Efficiency data is required to compute plating risk. "
+                             "This column was not found in the feature set for this cell.",
+                             "→ Ensure the source data includes charge and discharge capacity per cycle.", "⚠")
+            else:
+                _ce_valid = df[_ce_col].dropna()
+                # CE dips: readings below 99.5% threshold
+                _PLATING_CE_THRESH = 0.995
+                _dip_mask  = _ce_valid < _PLATING_CE_THRESH
+                _n_dips    = int(_dip_mask.sum())
+                _dip_cycles = df.loc[_ce_valid[_dip_mask].index, "cycle_number"].tolist() if _n_dips else []
+
+                # Consecutive dip runs → sustained plating events
+                _runs, _in_run, _run_len = 0, False, 0
+                for _d in _dip_mask:
+                    if _d:
+                        _run_len += 1
+                        if _run_len >= 3:
+                            if not _in_run:
+                                _runs += 1
+                                _in_run = True
+                    else:
+                        _in_run, _run_len = False, 0
+
+                # Risk score: 0-100
+                _dip_rate   = _n_dips / max(len(_ce_valid), 1)
+                _risk_score = min(100, int(_dip_rate * 400 + _runs * 15))
+                _risk_label = ("Low" if _risk_score < 25 else
+                               "Moderate" if _risk_score < 55 else
+                               "High" if _risk_score < 80 else "Critical")
+                _risk_colour = (UI_GREEN if _risk_score < 25 else
+                                UI_YELLOW if _risk_score < 55 else
+                                "#e53e3e" if _risk_score < 80 else "#c53030")
+
+                # Score strip
+                _pr1, _pr2, _pr3, _pr4 = st.columns(4)
+                _pr1.metric("Plating Risk Score", f"{_risk_score}/100",
+                            help="0=negligible · 25+=moderate · 55+=high · 80+=critical")
+                _pr2.metric("Risk Level", _risk_label)
+                _pr3.metric("CE Dip Events", f"{_n_dips}")
+                _pr4.metric("Sustained Runs (≥3cy)", f"{_runs}")
+
+                # Colour bar
+                _md_html(
+                    f"<div style='background:#1e2a38;border-radius:6px;height:8px;margin:8px 0 12px;overflow:hidden'>"
+                    f"<div style='background:{_risk_colour};width:{_risk_score}%;height:100%;border-radius:6px;"
+                    f"transition:width 0.3s'></div></div>"
+                )
+
+                # CE dip chart
+                if _n_dips > 0:
+                    _fig_plat = go.Figure()
+                    _fig_plat.add_trace(go.Scatter(
+                        x=df["cycle_number"].tolist(), y=(_ce_valid * 100).reindex(df.index).tolist(),
+                        name="CE (%)", line=dict(color="#63b3ed", width=1.5),
+                        hovertemplate="Cycle %{x}: CE %{y:.2f}%<extra></extra>",
+                    ))
+                    _fig_plat.add_hline(y=99.5, line_dash="dash", line_color="#fc8181", line_width=1,
+                                        annotation_text="Plating threshold (99.5%)",
+                                        annotation_font=dict(color="#fc8181", size=10))
+                    if _dip_cycles:
+                        _dip_ce = [float(_ce_valid.iloc[_ce_valid.index.get_loc(
+                            df[df["cycle_number"] == c].index[0])] * 100)
+                                   if len(df[df["cycle_number"] == c]) > 0 else None
+                                   for c in _dip_cycles[:50]]
+                        _fig_plat.add_trace(go.Scatter(
+                            x=_dip_cycles[:50], y=_dip_ce,
+                            mode="markers", name="CE dip (plating event)",
+                            marker=dict(color="#fc8181", size=7, symbol="x"),
+                        ))
+                    _fig_plat.update_layout(
+                        height=220, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                        font=dict(color="#e2e8f0"), margin=dict(l=10, r=10, t=28, b=10),
+                        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="CE (%)", gridcolor="#1e2a38", linecolor="#2d3748",
+                                   range=[99.0, 100.05]),
+                        legend=dict(font=dict(size=10, color="#718096")),
+                    )
+                    st.plotly_chart(_fig_plat, use_container_width=True)
+
+                # Interpretation
+                _plat_text = {
+                    "Low":      "CE stays consistently above 99.5%. No plating signals detected. "
+                                "Current operating conditions appear safe.",
+                    "Moderate": f"{_n_dips} CE dips detected below 99.5%. This may indicate isolated "
+                                "plating events. Review charging conditions — reduce C-rate at low temperatures.",
+                    "High":     f"{_n_dips} CE dips with {_runs} sustained run(s). Repeated plating is "
+                                "occurring. Reduce maximum C-rate and avoid charging below 10°C. "
+                                "Consider capacity check cycle to quantify lithium inventory loss.",
+                    "Critical": f"CRITICAL: {_n_dips} CE dips, {_runs} sustained events. Active lithium "
+                                "plating is likely. Risk of thermal runaway elevated. Immediate inspection "
+                                "recommended. Do not fast-charge this cell.",
+                }[_risk_label]
+                _md_html(
+                    f"<div style='background:{_risk_colour}11;border-left:3px solid {_risk_colour};"
+                    f"border-radius:6px;padding:10px 14px;font-size:12px;color:#a0aec0'>"
+                    f"<strong style='color:{_risk_colour}'>{_risk_label} risk:</strong> {_plat_text}"
+                    f"</div>"
+                )
+        except Exception as _plat_err:
+            st.info(f"Plating risk analysis unavailable: {_plat_err}")
+
+    # ── H5: Tier 3 — Advanced / expert analysis ──────────────────────────────
+    _md_html(
+        "<div style='font-size:10px;font-weight:700;color:#2d3748;text-transform:uppercase;"
+        "letter-spacing:0.12em;margin:32px 0 4px;padding-bottom:4px;border-bottom:1px solid #1e2a38'>"
+        "Advanced analysis — physics models &amp; expert diagnostics</div>"
+    )
 
     # ── 🔬 Resistance Component Proxy ──────────────────────────────────────
     _eis_badge = "◐ SIMULATED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
@@ -2225,13 +2604,25 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>Measured</extra>",
             ))
 
-            # Physics projection (PyBaMM SEI)
+            # Physics projection — 95% uncertainty band (β ± 2σ)
+            if _pb.get("proj_soh_lo") and _pb.get("proj_soh_hi"):
+                _fig_pb.add_trace(go.Scatter(
+                    x=_pb["proj_cycles"] + list(reversed(_pb["proj_cycles"])),
+                    y=_pb["proj_soh_hi"] + list(reversed(_pb["proj_soh_lo"])),
+                    fill="toself",
+                    fillcolor="rgba(104,211,145,0.10)",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    name="Physics 95% CI (β ± 2σ)",
+                    showlegend=True,
+                    hoverinfo="skip",
+                ))
+            # Physics projection central line
             _fig_pb.add_trace(go.Scatter(
                 x=_pb["proj_cycles"],
                 y=_pb["proj_soh"],
                 name="Physics projection (SPM · SEI)",
                 line=dict(color="#68d391", width=2, dash="dot"),
-                hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>SPM projection</extra>",
+                hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>SPM central</extra>",
             ))
 
             # GBRT ML estimate as comparison (linear fade forward)
@@ -2246,6 +2637,19 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     name="ML linear extrapolation (GBRT fade)",
                     line=dict(color="#f6ad55", width=1, dash="dash"),
                     hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>GBRT</extra>",
+                ))
+
+            # Temperature sensitivity bands (H3) — β(T) = β₀·exp(−Ea/RT)
+            _temp_colours = {"15°C": "#63b3ed", "25°C": "#68d391", "35°C": "#fc8181"}
+            for _t_label, _t_soh in _pb.get("temp_scenarios", {}).items():
+                if _t_label == "25°C":
+                    continue   # 25°C is already the central line
+                _fig_pb.add_trace(go.Scatter(
+                    x=_pb["proj_cycles"], y=_t_soh,
+                    name=f"SPM @ {_t_label}",
+                    line=dict(color=_temp_colours.get(_t_label, "#a0aec0"), width=1, dash="longdash"),
+                    opacity=0.6,
+                    hovertemplate=f"Cycle %{{x}}: %{{y:.1f}}% SOH<extra>SPM {_t_label}</extra>",
                 ))
 
             # EOL threshold line
@@ -3120,6 +3524,120 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         </div>
         """
     )
+
+    # ── T1: Executive Fleet Dashboard ───────────────────────────────────────
+    with st.expander("📊 Executive Dashboard — Fleet Intelligence Summary", expanded=True):
+        import numpy as _np_exec
+        # CAPEX forecast: cells at risk of EOL within 3/6/12 months
+        # Assume 200 cycles/month (typical daily EV cycling)
+        _CYCLES_PER_MONTH = 200
+        _REPLACEMENT_COST_USD = 150   # $/cell — configurable assumption
+        _CO2_KG_PER_KWH = 0.85       # kg CO₂e per kWh capacity (manufacturing)
+        _CELL_KWH = 0.0057            # kWh per cell (e.g. 2Ah × 2.85V nominal)
+
+        _eol_3m = [r for r in rows if r["cycles_to_eol"] is not None and r["cycles_to_eol"] <= 3 * _CYCLES_PER_MONTH]
+        _eol_6m = [r for r in rows if r["cycles_to_eol"] is not None and r["cycles_to_eol"] <= 6 * _CYCLES_PER_MONTH]
+        _eol_12m = [r for r in rows if r["cycles_to_eol"] is not None and r["cycles_to_eol"] <= 12 * _CYCLES_PER_MONTH]
+
+        _capex_3m  = len(_eol_3m)  * _REPLACEMENT_COST_USD
+        _capex_6m  = len(_eol_6m)  * _REPLACEMENT_COST_USD
+        _capex_12m = len(_eol_12m) * _REPLACEMENT_COST_USD
+        _co2_12m   = len(_eol_12m) * _CELL_KWH * _CO2_KG_PER_KWH
+
+        # Fleet health index (0–100) — weighted average SOH
+        _sohs = [r["soh"] for r in rows]
+        _fleet_hi = float(_np_exec.mean(_sohs)) if _sohs else 0.0
+        _hi_color = "#48bb78" if _fleet_hi >= 90 else ("#f6ad55" if _fleet_hi >= 80 else "#fc8181")
+
+        # Knee-alert count
+        _knee_past = sum(1 for r in rows if r["knee"] and r["knee"].get("status") == "past_knee")
+        _knee_near = sum(1 for r in rows if r["knee"] and r["knee"].get("status") == "approaching")
+
+        _md_html(f"""
+        <div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Fleet Health Index</div>
+            <div style='font-size:28px;font-weight:800;color:{_hi_color}'>{_fleet_hi:.1f}%</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>Avg SOH · {len(rows)} cells monitored</div>
+          </div>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Accelerated Degradation</div>
+            <div style='font-size:28px;font-weight:800;color:{"#fc8181" if _knee_past > 0 else "#f6ad55"}'>{_knee_past + _knee_near}</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>{_knee_past} past knee · {_knee_near} approaching</div>
+          </div>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CAPEX Outlook</div>
+            <div style='font-size:28px;font-weight:800;color:#63b3ed'>${_capex_12m:,}</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>{len(_eol_12m)} replacements forecast · 12-month horizon</div>
+          </div>
+        </div>
+        <div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px'>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Urgent — 3 Months</div>
+            <div style='font-size:22px;font-weight:800;color:{"#fc8181" if _eol_3m else "#48bb78"}'>{len(_eol_3m)} cells</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>CAPEX: <strong style='color:#fc8181'>${_capex_3m:,}</strong></div>
+          </div>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Plan — 6 Months</div>
+            <div style='font-size:22px;font-weight:800;color:{"#f6ad55" if _eol_6m else "#48bb78"}'>{len(_eol_6m)} cells</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>CAPEX: <strong style='color:#f6ad55'>${_capex_6m:,}</strong></div>
+          </div>
+          <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
+            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CO₂ Liability — 12M</div>
+            <div style='font-size:22px;font-weight:800;color:#b794f4'>{_co2_12m:.1f} kg</div>
+            <div style='font-size:11px;color:#718096;margin-top:4px'>Manufacturing CO₂e · {len(_eol_12m)} new cells</div>
+          </div>
+        </div>
+        <div style='font-size:10px;color:#4a5568;margin-top:10px'>
+        Assumptions: {_CYCLES_PER_MONTH} cycles/month · ${_REPLACEMENT_COST_USD}/cell replacement · {_CO2_KG_PER_KWH} kg CO₂e/kWh · {_CELL_KWH*1000:.0f} Wh/cell.
+        Adjust in Configure → Application Profile.
+        </div>
+        """)
+
+    # ── T2: Proactive Alert Inbox ─────────────────────────────────────────────
+    _alerts = []
+    for r in rows:
+        _cid = r["cell_id"]
+        # Critical: at/past EOL
+        if r["status"] == "End of Life":
+            _alerts.append({"severity": "critical", "cell": _cid,
+                "title": "End of Life", "body": f"SOH {r['soh']:.1f}% — replace or reassign to second-life application immediately."})
+        # High: approaching EOL within 3 months
+        elif r["cycles_to_eol"] is not None and r["cycles_to_eol"] <= 3 * _CYCLES_PER_MONTH:
+            _alerts.append({"severity": "high", "cell": _cid,
+                "title": "Replacement Due Within 3 Months", "body": f"{r['cycles_to_eol']:.0f} cycles remaining · SOH {r['soh']:.1f}%."})
+        # High: past knee (accelerating fade)
+        if r["knee"] and r["knee"].get("status") == "past_knee":
+            _alerts.append({"severity": "high", "cell": _cid,
+                "title": "Accelerated Degradation Phase", "body": f"Cell has passed its knee point — fade rate now accelerating. SOH {r['soh']:.1f}%."})
+        # Medium: approaching knee
+        elif r["knee"] and r["knee"].get("status") == "approaching":
+            _alerts.append({"severity": "medium", "cell": _cid,
+                "title": "Approaching Knee Point", "body": f"Fade acceleration detected — schedule inspection. SOH {r['soh']:.1f}%."})
+        # Medium: accelerating trend without knee
+        elif r["trend"] == "Accelerating" and r["status"] != "End of Life":
+            _alerts.append({"severity": "medium", "cell": _cid,
+                "title": "Fade Rate Accelerating", "body": f"30-cycle fade rate increased >20% vs prior window. SOH {r['soh']:.1f}%."})
+
+    if _alerts:
+        _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2}
+        _SEV_COLOR = {"critical": "#fc8181", "high": "#f6ad55", "medium": "#f6e05e"}
+        _SEV_ICON  = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
+        _alerts.sort(key=lambda a: _SEV_ORDER[a["severity"]])
+        st.markdown(f"<div class='section-header'>🔔 Alert Inbox — {len(_alerts)} Active</div>", unsafe_allow_html=True)
+        _alert_html = ""
+        for _al in _alerts:
+            _sc = _SEV_COLOR[_al["severity"]]
+            _si = _SEV_ICON[_al["severity"]]
+            _alert_html += (
+                f"<div style='display:flex;align-items:flex-start;gap:12px;padding:10px 14px;"
+                f"background:#1e2a38;border-left:3px solid {_sc};border-radius:0 8px 8px 0;margin-bottom:6px'>"
+                f"<span style='font-size:14px;margin-top:1px'>{_si}</span>"
+                f"<div><div style='font-size:12px;font-weight:700;color:{_sc}'>{_al['title']}"
+                f"<span style='font-weight:400;color:#4a5568;margin-left:8px'>· {_al['cell']}</span></div>"
+                f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{_al['body']}</div></div></div>"
+            )
+        _md_html(_alert_html)
 
     # ── Ranking table ──
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
@@ -4359,6 +4877,94 @@ def page_consequences(
 
     st.plotly_chart(bev_fig, use_container_width=True)
 
+    # ── H1: NPV / Scenario Planner ──────────────────────────────────────────
+    with st.expander("📈 NPV Scenario Planner — Replace Now vs Wait vs Repurpose", expanded=False):
+        import numpy as _np_npv
+        st.markdown(
+            "<div style='font-size:12px;color:#8896a8;margin-bottom:12px'>"
+            "Compare three strategies using net present value (NPV) over a 5-year horizon. "
+            "Adjust discount rate, energy price, and replacement cost to explore your economics.</div>",
+            unsafe_allow_html=True,
+        )
+        _nc1, _nc2, _nc3 = st.columns(3)
+        with _nc1:
+            _npv_rate    = st.slider("Discount rate (%/yr)", 3.0, 20.0, 8.0, 0.5, key="npv_rate") / 100
+        with _nc2:
+            _energy_usd  = st.slider("Energy value ($/kWh·yr)", 20.0, 200.0, 80.0, 5.0, key="npv_energy")
+        with _nc3:
+            _repl_cost   = st.slider("New-cell cost ($)", 50.0, 500.0, 150.0, 10.0, key="npv_repl_cost")
+
+        _years = list(range(1, 6))
+
+        def _pv_factor(r, t):
+            return 1.0 / ((1 + r) ** t)
+
+        # Strategy A: Replace now
+        _cap_now = CELL_NOMINAL_KWH
+        _a_annual = _cap_now * _energy_usd
+        _a_npv = sum(_a_annual * _pv_factor(_npv_rate, t) for t in _years) - _repl_cost
+
+        # Strategy B: Wait until EOL (use remaining RUL, then replace)
+        _rul_years = (rul_pred / 200.0 / 12.0) if rul_pred else 1.5   # rough years remaining
+        _rul_years = min(_rul_years, 5.0)
+        _b_cap_degraded = CELL_NOMINAL_KWH * (soh / 100.0)
+        _b_annual = _b_cap_degraded * _energy_usd
+        _b_npv = (
+            sum(_b_annual * _pv_factor(_npv_rate, t) for t in range(1, max(1, int(_rul_years)) + 1))
+            + sum(_a_annual * _pv_factor(_npv_rate, t) for t in range(max(1, int(_rul_years)) + 1, 6))
+            - _repl_cost * _pv_factor(_npv_rate, _rul_years)
+        )
+
+        # Strategy C: Repurpose to second-life (lower-demand application)
+        _sl_cap = CELL_NOMINAL_KWH * (soh / 100.0) * 0.85   # 85% usable in second-life
+        _sl_energy_discount = 0.6                             # second-life earns 60% of primary energy rate
+        _sl_annual = _sl_cap * _energy_usd * _sl_energy_discount
+        _repack_approx = float(st.session_state.get("sl_repack_cost", 30.0))
+        _c_npv = sum(_sl_annual * _pv_factor(_npv_rate, t) for t in _years) - _repack_approx
+
+        _strategies = {
+            "A: Replace Now":     (_a_npv, "#fc8181"),
+            "B: Wait to EOL":     (_b_npv, "#f6ad55"),
+            "C: Repurpose (2L)":  (_c_npv, "#68d391"),
+        }
+        _best = max(_strategies.items(), key=lambda x: x[1][0])
+
+        _md_html(
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'>"
+            + "".join(
+                f"<div style='background:#1e2a38;border:1px solid {'#2d3748' if k != _best[0] else c};border-radius:10px;padding:14px 16px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px'>{k}</div>"
+                f"<div style='font-size:24px;font-weight:800;color:{c}'>${v:,.0f}</div>"
+                f"<div style='font-size:10px;color:#718096;margin-top:4px'>5-yr NPV</div>"
+                + (f"<div style='font-size:10px;font-weight:700;color:{c};margin-top:6px'>★ OPTIMAL</div>" if k == _best[0] else "")
+                + "</div>"
+                for k, (v, c) in _strategies.items()
+            )
+            + "</div>"
+        )
+
+        # Cumulative NPV chart
+        _fig_npv = go.Figure()
+        for _label, (_total_npv, _col) in _strategies.items():
+            _cum = [_total_npv * (t / 5.0) for t in _years]  # simplified linear accumulation
+            _fig_npv.add_trace(go.Scatter(
+                x=_years, y=_cum, mode="lines+markers", name=_label,
+                line=dict(color=_col, width=2),
+                hovertemplate="Year %{x}: $%{y:,.0f}<extra>" + _label + "</extra>",
+            ))
+        _fig_npv.update_layout(**base_layout(
+            height=240,
+            xaxis=dict(title="Year", dtick=1, gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="Cumulative NPV ($)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=True),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                        font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
+        ))
+        st.plotly_chart(_fig_npv, use_container_width=True)
+        st.caption(
+            f"Assumptions: {_rul_years:.1f} yr remaining life · CELL_NOMINAL_KWH={CELL_NOMINAL_KWH:.4f} kWh · "
+            f"second-life repack cost = slider default ${_repack_approx:.0f}. Illustrative model — not financial advice."
+        )
+
     # ────────────────────────────────────────────────────────────────────────
     # Section 3: Sustainability
     # ────────────────────────────────────────────────────────────────────────
@@ -4662,6 +5268,42 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
         type="primary",
     )
 
+    # ── M2: Scheduled Report Configuration ──────────────────────────────────
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>📅 Scheduled Reports</div>", unsafe_allow_html=True)
+    _md_html(
+        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:16px 20px;margin-bottom:16px'>"
+        "<div style='font-size:12px;color:#8896a8;line-height:1.65'>"
+        "<strong style='color:#a0aec0'>Production feature.</strong> "
+        "In a deployed instance, reports can be scheduled to run automatically and delivered via "
+        "email or webhook. Configure below to preview the settings interface — "
+        "scheduling requires a running task queue (Celery / APScheduler) in your deployment."
+        "</div></div>"
+    )
+    _sr1, _sr2, _sr3 = st.columns(3)
+    with _sr1:
+        _schedule_freq = st.selectbox(
+            "Frequency", ["Weekly", "Monthly", "Quarterly", "On EOL alert"], key="sched_freq"
+        )
+    with _sr2:
+        _schedule_email = st.text_input("Recipient email", value="", placeholder="engineer@company.com", key="sched_email")
+    with _sr3:
+        _schedule_include = st.multiselect(
+            "Include",
+            ["SOH chart", "RUL projection", "Second-life recommendation", "Assumption register"],
+            default=["SOH chart", "RUL projection"],
+            key="sched_include",
+        )
+    if st.button("Save schedule (demo — no-op)", key="sched_save"):
+        if _schedule_email:
+            st.success(
+                f"Schedule saved: {_schedule_freq} report to {_schedule_email} "
+                f"including {', '.join(_schedule_include)}. "
+                f"(Demo mode — no emails will be sent. Connect a task queue to activate.)"
+            )
+        else:
+            st.warning("Enter a recipient email to save the schedule.")
+
 
 def page_recommendations(
     selected: str,
@@ -4754,7 +5396,13 @@ def page_recommendations(
             unsafe_allow_html=True,
         )
     else:
-        st.info("Insufficient fade data to compute replacement timeline for this cell.")
+        _empty_state(
+            "Replacement timeline unavailable",
+            "This cell has insufficient cycle history to compute a fade-based replacement schedule. "
+            "At least 50 cycles with a measurable fade trend are required.",
+            "→ Import more cycle data via the Import page, or select a cell with a longer history.",
+            "📅",
+        )
 
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -6844,12 +7492,12 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
             return (1.0 - v) if invert else v
 
         _radar_axes = [
-            ("SOH %",          "soh_pct",              False, 100.0, 60.0),
-            ("CE",             "ce_rolling_30cy",       False, 1.0,   0.97),
-            ("dQ/dV Peak",     "dqdv_peak_value",       False, None,  0.0),
-            ("Fade Rate",      "fade_rate_30cy",        True,  0.005, 0.0),
-            ("Resistance",     "resistance_normalized", True,  1.8,   1.0),
-            ("Throughput kWh", "cumulative_kwh",        False, None,  0.0),
+            ("SOH_Q",        "soh_pct",              False, 100.0, 60.0),
+            ("CE (η_CE)",    "ce_rolling_30cy",       False, 1.0,   0.97),
+            ("ICA Peak",     "dqdv_peak_value",       False, None,  0.0),
+            ("Q̇_fade",      "fade_rate_30cy",        True,  0.005, 0.0),
+            ("R_internal",   "resistance_normalized", True,  1.8,   1.0),
+            ("E_throughput", "cumulative_kwh",        False, None,  0.0),
         ]
 
         # For axes without a fixed scale, normalise across both cells
@@ -6956,7 +7604,13 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         _clust_df_clean = _clust_df.dropna()
 
         if len(_clust_df_clean) < 3:
-            st.info("Cross-fleet clustering requires at least 3 cells with complete feature data.")
+            _empty_state(
+                "Fleet too small for clustering",
+                "Cross-fleet clustering requires at least 3 cells with complete feature data "
+                "(SOH, fade rate, resistance, CE). Some cells may have been excluded due to missing columns.",
+                "→ Import additional cell data or switch to a data source with more cells.",
+                "◎",
+            )
         else:
             _X_raw = _clust_df_clean.values
             _X_sc  = _SS().fit_transform(_X_raw)
@@ -7218,7 +7872,13 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _anom  = st.session_state["lm_anomalies"]
 
     if not _telem:
-        st.info("No telemetry received yet. Press ▶ Start to begin streaming.")
+        _empty_state(
+            "No telemetry received yet",
+            "The subscriber is connected and listening. Readings will appear here as they arrive. "
+            "If nothing appears within a few seconds, check the broker address and port.",
+            "→ Press ▶ Start above to begin the replay stream.",
+            "📡",
+        )
         if _sub_connected:
             time.sleep(0.5)
             st.rerun()
@@ -7446,7 +8106,7 @@ def main():
     df          = active_fdfs[selected]
     split_cycle = active_sc[selected]
     bundle      = active_bundle
-    page        = st.session_state.get("page", "overview")
+    page        = st.session_state.get("page", "fleet")
 
     # ── Audit logging ─────────────────────────────────────────────────────────
     import sys as _sys
@@ -7461,16 +8121,11 @@ def main():
 
     # ── Demo mode notice ──────────────────────────────────────────────────────
     st.markdown(
-        "<div style='background:#2d3748;border:1px solid #4a5568;border-radius:8px;"
-        "padding:8px 16px;margin-bottom:12px;font-size:12px;color:#a0aec0;"
-        "display:flex;align-items:center;gap:10px'>"
-        "<span style='background:#4a556833;color:#a0aec0;font-size:10px;font-weight:700;"
-        "padding:2px 8px;border-radius:6px;letter-spacing:0.07em;white-space:nowrap'>"
-        "DEMO MODE</span>"
-        "Portfolio demonstration — no authentication, session-scoped uploads only, "
-        "data not persisted between sessions. "
-        "<a href='#production-readiness' style='color:#63b3ed'>See README → Production Roadmap</a> "
-        "for the deployment path.</div>",
+        "<div style='display:flex;justify-content:flex-end;margin-bottom:6px'>"
+        "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
+        "style='background:#2d374888;border:1px solid #4a556866;border-radius:20px;"
+        "padding:2px 10px;font-size:10px;font-weight:700;color:#718096;"
+        "letter-spacing:0.07em;cursor:default'>DEMO MODE</span></div>",
         unsafe_allow_html=True,
     )
 

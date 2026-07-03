@@ -57,12 +57,12 @@ def _run_spm_single_cycle(param_set_name: str) -> float:
 def _fit_sei_fade(
     cycles: np.ndarray,
     soh: np.ndarray,
-) -> float:
+) -> tuple[float, float]:
     """
     Fit beta in Q(n) / Q0 = 1 - beta * sqrt(n)  →  SOH(n) = 1 - beta*sqrt(n).
 
-    Returns beta (fade coefficient). Uses least-squares on linearised form:
-        (1 - SOH) = beta * sqrt(n)
+    Returns (beta, sigma_beta) where sigma_beta is the 1-σ standard error
+    from the curve_fit covariance matrix. Propagate as ±2σ for 95% band.
     """
     from scipy.optimize import curve_fit
 
@@ -74,14 +74,15 @@ def _fit_sei_fade(
     n_shifted = cycles - n0 + 1.0
 
     try:
-        popt, _ = curve_fit(_model, n_shifted, soh_norm, p0=[0.001],
-                            bounds=(0, 0.1), maxfev=2000)
-        return float(popt[0])
+        popt, pcov = curve_fit(_model, n_shifted, soh_norm, p0=[0.001],
+                               bounds=(0, 0.1), maxfev=2000)
+        sigma = float(np.sqrt(np.diag(pcov))[0])
+        return float(popt[0]), sigma
     except Exception:
-        # Fallback: linear estimate from first and last point
-        delta_soh = (soh_norm[0] - soh_norm[-1])
+        delta_soh  = (soh_norm[0] - soh_norm[-1])
         delta_sqrt = np.sqrt(n_shifted[-1]) - np.sqrt(n_shifted[0])
-        return max(1e-6, delta_soh / (delta_sqrt + 1e-9))
+        beta = max(1e-6, delta_soh / (delta_sqrt + 1e-9))
+        return beta, beta * 0.1   # fallback: 10% relative uncertainty
 
 
 def project_rul(
@@ -112,8 +113,11 @@ def project_rul(
         "chem_label":      _CHEM_LABEL[param_set],
         "spm_capacity_ah": None,
         "beta":            None,
+        "beta_sigma":      None,   # 1-σ uncertainty from curve_fit covariance
         "proj_cycles":     [],
         "proj_soh":        [],
+        "proj_soh_lo":     [],     # β + 2σ pessimistic band
+        "proj_soh_hi":     [],     # β − 2σ optimistic band
         "rul_physics":     None,
         "eol_threshold":   eol_threshold,
         "error":           None,
@@ -134,28 +138,45 @@ def project_rul(
         cycles_meas = _valid["cycle_number"].values.astype(float)
         soh_meas    = _valid["soh_pct"].values.astype(float)
 
-        result["beta"] = _fit_sei_fade(cycles_meas, soh_meas)
+        result["beta"], result["beta_sigma"] = _fit_sei_fade(cycles_meas, soh_meas)
+        _beta      = result["beta"]
+        _beta_lo   = max(1e-9, _beta + 2 * result["beta_sigma"])   # pessimistic
+        _beta_hi   = max(1e-9, _beta - 2 * result["beta_sigma"])   # optimistic
 
         # ── 3. Project forward ──
         current_cycle = int(cycles_meas[-1])
-        current_soh   = float(soh_meas[-1])
         n0            = cycles_meas[0] if cycles_meas[0] > 0 else 1.0
 
         future_cycles = np.arange(current_cycle + 1, current_cycle + project_cycles + 1)
         n_shifted     = future_cycles - n0 + 1.0
-        proj_soh_norm = np.clip(1.0 - result["beta"] * np.sqrt(n_shifted), 0.0, 1.0)
-        proj_soh_pct  = proj_soh_norm * 100.0
+        proj_soh_norm = np.clip(1.0 - _beta    * np.sqrt(n_shifted), 0.0, 1.0)
+        proj_soh_lo   = np.clip(1.0 - _beta_lo * np.sqrt(n_shifted), 0.0, 1.0)
+        proj_soh_hi   = np.clip(1.0 - _beta_hi * np.sqrt(n_shifted), 0.0, 1.0)
 
-        # ── 4. Find RUL: first cycle where projected SOH < EOL threshold ──
+        # ── 4. Find RUL from central projection ──
+        proj_soh_pct = proj_soh_norm * 100.0
         below = np.where(proj_soh_pct < eol_threshold)[0]
-        if len(below) > 0:
-            rul_cy = int(future_cycles[below[0]]) - current_cycle
-        else:
-            rul_cy = project_cycles  # EOL not reached within projection window
+        rul_cy = int(future_cycles[below[0]]) - current_cycle if len(below) > 0 else project_cycles
 
         result["proj_cycles"] = future_cycles.tolist()
         result["proj_soh"]    = proj_soh_pct.tolist()
+        result["proj_soh_lo"] = (proj_soh_lo * 100).tolist()
+        result["proj_soh_hi"] = (proj_soh_hi * 100).tolist()
         result["rul_physics"] = rul_cy
+
+        # ── H3: Temperature sensitivity bands β(T) = β₀·exp(−Ea/RT) ──────
+        # Ea ≈ 50 kJ/mol for graphite SEI (literature consensus)
+        # β₀ calibrated at 25°C (298 K) from the fitted β
+        _Ea   = 50_000.0          # J/mol
+        _R    = 8.314             # J/(mol·K)
+        _T0   = 298.15            # reference temperature (25°C) in K
+        _beta0 = _beta / np.exp(-_Ea / (_R * _T0))   # pre-exponential factor
+        _temp_scenarios = {"15°C": 288.15, "25°C": 298.15, "35°C": 308.15}
+        result["temp_scenarios"] = {}
+        for _label, _T_K in _temp_scenarios.items():
+            _beta_T   = _beta0 * np.exp(-_Ea / (_R * _T_K))
+            _soh_T    = np.clip(1.0 - _beta_T * np.sqrt(n_shifted), 0.0, 1.0) * 100
+            result["temp_scenarios"][_label] = _soh_T.tolist()
 
     except Exception as e:
         result["error"] = str(e)
