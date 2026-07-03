@@ -69,6 +69,7 @@ Severson CSVs (~700 KB, 12 files) are committed to `data/raw/severson/` so Strea
 | 15 — Design review (medium items) | **#7 UI**: all greens consolidated to `#48bb78` (10 instances replaced); `st.progress()` bar added to startup with per-step labels. **#12 CRM**: Passport CRM section now reads from `ChemistryProfile.for_cell()` — LFP shows cobalt-free/nickel-free correctly, NCA shows configurable wt% values; Settings page gains a CRM Configuration section with `number_input` widgets for all chemistry types. **#14 Performance**: feature engineering split from model training (`_compute_features_only` + `_train_and_predict`); `load_everything()` uses 3-tier cache (full bundle → features-only → cold start) so model retrains skip feature computation; import preview dataframe row-limited to 200. **#18 Expandability**: `ChemistryProfile` class hierarchy in `src/chemistry_profiles.py` — adding a new chemistry = one subclass, no page edits required. |
 | 16 — Accessibility + Visual Hierarchy | **#15 Accessibility**: WCAG AA contrast fix — all `#718096` instances replaced with `#8896a8` (4.1:1 → 5.2:1 on `#1a202c`); light mode secondary text corrected to `#4a5568`; ARIA roles added to hero card (`role=region`, `role=status`), metric rows (`role=list`/`role=listitem`), sparkline (`role=img`), and each metric chip value (`aria-label`); `make_badge()` emits `role=img aria-label` so screen readers announce provenance badges. **#16 Visual Hierarchy**: Overview metric row cut from 8 chips to 3 primary metrics (RUL, Fade Rate, Resistance); plain-English sentence added below hero ("estimated replacement in ~X months…"); remaining 7 metrics (SOH, Cycles, Capacity Lost, SoP, Energy, Equiv. Cycles, CE) moved to a "Cell Details" expander. |
 | 17 — Nav restructure + UX | **#1 Product Strategy**: flat 14-item nav replaced with 4 labelled groups — Analyse (Overview/Health/Compare/Insights/Copilot) · Operate (Fleet/Recommendations/EOL Economics/Grading) · Comply (Compliance/Sustainability) · Configure (Import/Settings). **#5 Info Architecture**: "Consequences" renamed "EOL Economics"; Passport + Reports merged into a single "Compliance" nav entry with tabs (EU Battery Passport / Reports & Export). **#6 UX**: every page shows a contextual "From here →" action bar with 3 quick-jump buttons defined in `PAGE_ACTIONS`; Fleet page adds a row of cell-ID buttons below the ranking table — clicking any cell jumps directly to that cell's Health view. |
+| 18 — Decision support + Scalability + Enterprise | **#9 Decision Support**: Application Profile selectbox in Settings (EV → 80% EOL, Stationary → 70%, Industrial UPS → 75%, Second-Life → 60%) auto-sets EOL threshold; configurable Cost-of-Delay multiplier slider (0.5–5×, default 2.0) wired into Recommendations residual value table; "Log Decision" button saves timestamped recommendation records to session state with CSV export. **#13 Scalability**: `_resample_df(df, max_points=500)` downsamples chart traces for Overview and Health pages — full DataFrames kept for computations, only Plotly traces resampled. **#11 Enterprise Readiness**: persistent Demo Mode banner on every page (no auth / session-scoped uploads / data not persisted); Production Readiness Roadmap added to README documenting auth (streamlit-authenticator), persistence (SQLite → PostgreSQL), REST API (FastAPI), RBAC, audit logging, CI/CD path. |
 
 ---
 
@@ -172,6 +173,27 @@ flowchart TD
 - **Design system**: `src/design_system.py` — single source of truth for badge HTML, color tokens, Recommendations metadata
 - **Compliance**: EU Battery Regulation 2023/1542 field structure (`src/passport.py`) — single source consumed by both Passport page and PDF
 - **Reports**: PDF via reportlab — disclaimer box, color-coded tables, assumption register
+
+---
+
+## Production Readiness Roadmap {#production-readiness}
+
+This platform runs as a portfolio demo with intentional constraints. The table below documents the credible path to production deployment, which is what a battery-engineering role would actually build.
+
+| Gap | Demo behaviour | Production path |
+|-----|---------------|-----------------|
+| **Authentication** | No auth — all sessions share the same data | [`streamlit-authenticator`](https://github.com/mkhorasani/Streamlit-Authenticator) (JWT, OAuth2 via Okta/LDAP) |
+| **Multi-tenancy** | `st.cache_resource` shared across all users | Tenant-scoped caches; per-org cell namespace in SQLite/PostgreSQL |
+| **Upload persistence** | Uploads are session-scoped and lost on refresh | Store processed bundles in SQLite locally, PostgreSQL in cloud |
+| **REST API** | No API — UI-only | FastAPI layer exposing `/cells/{id}/soh`, `/cells/{id}/rul`, `/fleet/summary` for BMS integration |
+| **RBAC** | No role separation | Engineer / Fleet-ops / Read-only roles; action gating on `Recommendations` write |
+| **Audit logging** | `audit.py` logs page views to local CSV | Forward to structured log store (Datadog / CloudWatch); immutable audit trail per EU 2023/1542 |
+| **Model retraining** | Blocking call on server start | Background worker (Celery / APScheduler); re-train nightly on new uploads, push updated bundle |
+| **Scalability** | All cells loaded into RAM as full DataFrames | Per-cell lazy load from Parquet/SQLite; summary metrics pre-computed and cached |
+| **Secrets management** | Anthropic API key in `.streamlit/secrets.toml` | AWS Secrets Manager / GCP Secret Manager; never in source |
+| **CI/CD** | Manual `streamlit run` | GitHub Actions: lint → pytest → Docker build → deploy to Cloud Run or ECS |
+
+Estimated effort to reach internal-fleet MVP: 3–4 sprints (auth + persistence + REST API + Docker).
 
 ---
 

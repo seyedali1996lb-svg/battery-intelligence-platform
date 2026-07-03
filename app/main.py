@@ -87,6 +87,23 @@ def _md_html(html: str) -> None:
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
+def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
+    """Return df downsampled to at most max_points rows for trend charts.
+
+    Uses uniform stride so the time axis stays evenly spaced. Always keeps
+    the first and last row so chart endpoints are accurate. Applied to all
+    trend-chart DataFrames before plotting — has no effect when len(df) <=
+    max_points, so small datasets are returned unchanged.
+    """
+    if len(df) <= max_points:
+        return df
+    step = max(1, len(df) // max_points)
+    idx  = list(range(0, len(df), step))
+    if idx[-1] != len(df) - 1:
+        idx.append(len(df) - 1)
+    return df.iloc[idx].copy()
+
+
 def _action_bar(page: str) -> None:
     """Render a contextual 'From this view you can →' bar at the top of each page.
 
@@ -969,6 +986,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _action_bar("overview")
     st.markdown("# Overview")
 
+    _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/computations
     latest         = df.iloc[-1]
     current_soh    = latest["soh_pct"]
     current_rul    = latest["rul_pred"]
@@ -1222,7 +1240,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
                 fig_cal = go.Figure()
                 fig_cal.add_trace(go.Scatter(
-                    x=df["cycle_number"], y=df["cumulative_days"],
+                    x=_rdf["cycle_number"], y=_rdf["cumulative_days"],
                     name="Actual calendar time", line=dict(color="#63b3ed", width=2),
                     hovertemplate="Cycle %{x}: %{y:.1f} days<extra>Calendar</extra>",
                 ))
@@ -1246,17 +1264,17 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     st.markdown("<div class='section-header'>State of Health — Full History</div>", unsafe_allow_html=True)
 
-    df_train = df[df["cycle_number"] <= split_cycle]
-    df_test  = df[df["cycle_number"] >  split_cycle]
+    df_train = _rdf[_rdf["cycle_number"] <= split_cycle]
+    df_test  = _rdf[_rdf["cycle_number"] >  split_cycle]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df["cycle_number"], y=df["soh_pct"],
+        x=_rdf["cycle_number"], y=_rdf["soh_pct"],
         name="Actual SOH", line=dict(color="#3a4a5e", width=1), mode="lines",
         hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Actual</extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=df["cycle_number"], y=df["soh_rolling_avg"],
+        x=_rdf["cycle_number"], y=_rdf["soh_rolling_avg"],
         name="10-cycle avg", line=dict(color="#63b3ed", width=2), mode="lines",
         hovertemplate="Cycle %{x}: %{y:.1f}%<extra>10-cy avg</extra>",
     ))
@@ -1339,6 +1357,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     _action_bar("health")
     st.markdown("# Health")
+    _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/masks
 
     # ── Data provenance declaration ──────────────────────────────────────────
     _cp = _cell_provenance(cell_id)
@@ -1409,7 +1428,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         st.markdown("<div class='section-header'>Capacity Fade</div>", unsafe_allow_html=True)
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=df["cycle_number"], y=df["capacity_fade_ah"] * 1000,
+            x=_rdf["cycle_number"], y=_rdf["capacity_fade_ah"] * 1000,
             fill="tozeroy", fillcolor="rgba(252,129,129,0.08)",
             line=dict(color="#fc8181", width=2),
             hovertemplate="Cycle %{x}: %{y:.1f} mAh lost<extra></extra>",
@@ -1442,13 +1461,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         st.markdown("<div class='section-header'>Internal Resistance</div>", unsafe_allow_html=True)
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
-            x=df["cycle_number"], y=df["resistance_ohm"] * 1000,
+            x=_rdf["cycle_number"], y=_rdf["resistance_ohm"] * 1000,
             line=dict(color="#4a5568", width=1), name="Raw",
             hovertemplate="Cycle %{x}: %{y:.1f} mΩ<extra></extra>",
         ))
         fig2.add_trace(go.Scatter(
-            x=df["cycle_number"],
-            y=df["resistance_ohm"].rolling(30, min_periods=1).mean() * 1000,
+            x=_rdf["cycle_number"],
+            y=_rdf["resistance_ohm"].rolling(30, min_periods=1).mean() * 1000,
             name="30-cycle avg", line=dict(color="#f6ad55", width=2),
             hovertemplate="Cycle %{x}: %{y:.1f} mΩ<extra>30-cy avg</extra>",
         ))
@@ -1495,15 +1514,15 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
     )
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(
-        x=df["cycle_number"], y=df["fade_rate_10cy"] * 1000,
+        x=_rdf["cycle_number"], y=_rdf["fade_rate_10cy"] * 1000,
         line=dict(color="#4a5568", width=1), name="10-cycle window",
     ))
     fig3.add_trace(go.Scatter(
-        x=df["cycle_number"], y=df["fade_rate_30cy"] * 1000,
+        x=_rdf["cycle_number"], y=_rdf["fade_rate_30cy"] * 1000,
         line=dict(color="#63b3ed", width=2), name="30-cycle window",
     ))
     fig3.add_trace(go.Scatter(
-        x=df["cycle_number"], y=df["fade_rate_50cy"] * 1000,
+        x=_rdf["cycle_number"], y=_rdf["fade_rate_50cy"] * 1000,
         line=dict(color="#48bb78", width=2), name="50-cycle window",
     ))
     if first_accel is not None:
@@ -1685,12 +1704,12 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             if all(c in df.columns for c in dqdv_cols):
                 fig_peak = go.Figure()
                 fig_peak.add_trace(go.Scatter(
-                    x=df["cycle_number"], y=df["dqdv_peak_soc"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_peak_soc"],
                     name="Peak SOC Position", line=dict(color="#63b3ed", width=2),
                     hovertemplate="Cycle %{x}: %{y:.3f}<extra>Peak SOC</extra>",
                 ))
                 fig_peak.add_trace(go.Scatter(
-                    x=df["cycle_number"], y=df["dqdv_peak_value"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_peak_value"],
                     name="Peak Amplitude (Ah/V)", line=dict(color="#f6ad55", width=2),
                     yaxis="y2",
                     hovertemplate="Cycle %{x}: %{y:.2f} Ah/V<extra>Peak Amplitude</extra>",
@@ -1712,7 +1731,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             if "dqdv_fwhm" in df.columns:
                 fig_fwhm = go.Figure()
                 fig_fwhm.add_trace(go.Scatter(
-                    x=df["cycle_number"], y=df["dqdv_fwhm"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_fwhm"],
                     line=dict(color="#48bb78", width=2),
                     hovertemplate="Cycle %{x}: %{y:.4f} Ah<extra>FWHM</extra>",
                     showlegend=False,
@@ -1796,18 +1815,19 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 _md_html("""<div style="font-size:12px;color:#8896a8;margin:8px 0 12px;line-height:1.6"><strong style="color:#a0aec0">Why CE matters:</strong> Every cycle where CE &lt; 100% permanently loses cyclable lithium to the SEI layer. A CE drop from 99.95% → 99.30% may seem small but represents ~0.65% lithium lost per cycle — the dominant degradation mechanism in calendar-aged cells. CATL and BYD track cumulative CE deficit as the primary warranty signal for LLI-dominated failures.</div>""")
 
                 # CE trend chart
+                _rdf_ce = _resample_df(df[df["coulombic_efficiency"].notna()])
                 fig_ce = go.Figure()
                 fig_ce.add_trace(go.Scatter(
-                    x=df["cycle_number"].tolist(),
-                    y=(df["coulombic_efficiency"] * 100).tolist(),
+                    x=_rdf_ce["cycle_number"].tolist(),
+                    y=(_rdf_ce["coulombic_efficiency"] * 100).tolist(),
                     name="CE per cycle", mode="lines",
                     line=dict(color="#4a5568", width=1),
                     hovertemplate="Cycle %{x}: %{y:.4f}%<extra>CE</extra>",
                 ))
                 if "ce_rolling_30cy" in df.columns:
                     fig_ce.add_trace(go.Scatter(
-                        x=df["cycle_number"].tolist(),
-                        y=(df["ce_rolling_30cy"] * 100).tolist(),
+                        x=_rdf_ce["cycle_number"].tolist(),
+                        y=(_rdf_ce["ce_rolling_30cy"] * 100).tolist(),
                         name="30-cycle rolling avg", mode="lines",
                         line=dict(color="#63b3ed", width=2),
                         hovertemplate="Cycle %{x}: %{y:.4f}%<extra>30cy avg</extra>",
@@ -1829,10 +1849,10 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 st.plotly_chart(fig_ce, use_container_width=True)
 
                 # Cumulative lithium loss
-                ce_deficit = (1.0 - df["coulombic_efficiency"]).cumsum()
+                ce_deficit = (1.0 - _rdf_ce["coulombic_efficiency"]).cumsum()
                 fig_lii = go.Figure()
                 fig_lii.add_trace(go.Scatter(
-                    x=df["cycle_number"].tolist(),
+                    x=_rdf_ce["cycle_number"].tolist(),
                     y=(ce_deficit * float(df["capacity_ah"].iloc[0]) * 1000).tolist(),
                     fill="tozeroy", fillcolor="rgba(252,129,129,0.08)",
                     line=dict(color="#fc8181", width=2),
@@ -1878,8 +1898,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
                 fig_kwh = go.Figure()
                 fig_kwh.add_trace(go.Scatter(
-                    x=df["cycle_number"].tolist(),
-                    y=df["cumulative_kwh"].tolist(),
+                    x=_rdf["cycle_number"].tolist(),
+                    y=_rdf["cumulative_kwh"].tolist(),
                     fill="tozeroy", fillcolor="rgba(99,179,237,0.07)",
                     line=dict(color="#63b3ed", width=2),
                     hovertemplate="Cycle %{x}: %{y:.3f} kWh delivered<extra></extra>",
@@ -1970,7 +1990,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                     ("r_ohm_eis", "R_ohm (electrolyte)", "#48bb78"),
                 ]:
                     _fig_eis_trend.add_trace(go.Scatter(
-                        x=df["cycle_number"].tolist(), y=df[_col_name].tolist(),
+                        x=_rdf["cycle_number"].tolist(), y=_rdf[_col_name].tolist(),
                         mode="lines", name=_label,
                         line=dict(width=2),
                         hovertemplate=f"Cycle %{{x}}: %{{y:.4f}} Ω ({_label})<extra></extra>",
@@ -4425,7 +4445,8 @@ def page_recommendations(
         for _months_delay in [0, 1, 3, 6, 12]:
             _extra_fade = _monthly_extra_fade_pct * _months_delay
             _soh_at_delay = max(60, _current_soh - _fade_per_cycle_pct * (_rul_cycles + _cycles_per_day * 30.44 * _months_delay))
-            _value_penalty_pct = max(0, (_eol_threshold - _soh_at_delay) * 2)
+            _cod_mult = float(st.session_state.get("cost_of_delay_mult", 2.0))
+            _value_penalty_pct = max(0, (_eol_threshold - _soh_at_delay) * _cod_mult)
             _delay_data.append({
                 "Delay": f"+{_months_delay}mo" if _months_delay > 0 else "On time",
                 "SOH at replacement": f"{_soh_at_delay:.1f}%",
@@ -4434,7 +4455,13 @@ def page_recommendations(
                 "Risk": "Low" if _months_delay == 0 else ("Medium" if _months_delay <= 3 else "High"),
             })
         st.dataframe(pd.DataFrame(_delay_data), use_container_width=True, hide_index=True)
-        st.caption("Residual value estimate: each % SOH below EOL threshold at replacement ≈ 2% additional value penalty (illustrative — no market data).")
+        _cod_badge = make_badge("Illustrative — no market data", "#718096")
+        st.markdown(
+            f"{_cod_badge} &nbsp; Residual value estimate: each % SOH below EOL threshold "
+            f"≈ {float(st.session_state.get('cost_of_delay_mult', 2.0)):.1f}% additional value penalty. "
+            f"Adjust multiplier in Settings → Cost-of-Delay Multiplier.",
+            unsafe_allow_html=True,
+        )
     else:
         st.info("Insufficient fade data to compute replacement timeline for this cell.")
 
@@ -4478,6 +4505,35 @@ def page_recommendations(
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+    # ── Log Decision ────────────────────────────────────────────────────────
+    _log_col, _ = st.columns([1, 3])
+    if _log_col.button("Log Decision", key="rec_log_decision", use_container_width=True,
+                       help="Record this recommendation to the session decision log"):
+        _log_entry = {
+            "cell_id":    selected,
+            "action":     action_label,
+            "confidence": conf_label,
+            "soh_pct":    round(soh, 1),
+            "timestamp":  __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+        if "decision_log" not in st.session_state:
+            st.session_state["decision_log"] = []
+        st.session_state["decision_log"].append(_log_entry)
+        st.success(f"Decision logged: {action_label} for {selected} at {_log_entry['timestamp']}")
+
+    _dlog = st.session_state.get("decision_log", [])
+    if _dlog:
+        with st.expander(f"Session Decision Log ({len(_dlog)} entries)"):
+            import pandas as _pd_log
+            st.dataframe(
+                _pd_log.DataFrame(_dlog)[["timestamp","cell_id","action","confidence","soh_pct"]],
+                use_container_width=True, hide_index=True,
+            )
+            _csv_log = _pd_log.DataFrame(_dlog).to_csv(index=False).encode()
+            st.download_button("Export log as CSV", data=_csv_log,
+                               file_name="battery_decision_log.csv", mime="text/csv",
+                               key="rec_export_log")
 
     # ── 🔋 SoC Window Recommendation ─────────────────────────────────────────
     st.markdown("<div class='section-header'>🔋 Optimal Charging Window (SoC)</div>", unsafe_allow_html=True)
@@ -5424,8 +5480,36 @@ def page_settings(featured_dfs: dict, bundles: dict):
         )
 
     # ────────────────────────────────────────────────────────────────────────
-    # Section 2b: Application EOL threshold
+    # Section 2b: Application Profile + EOL threshold
     # ────────────────────────────────────────────────────────────────────────
+    _section("Application Profile")
+    _PROFILES = {
+        "Custom (manual)":       None,
+        "EV / Passenger Vehicle": 80.0,
+        "Stationary Storage":    70.0,
+        "Industrial UPS":        75.0,
+        "Second-Life Reuse":     60.0,
+    }
+    _cur_profile = st.session_state.get("app_profile", "Custom (manual)")
+    _new_profile = st.selectbox(
+        "Application profile",
+        options=list(_PROFILES.keys()),
+        index=list(_PROFILES.keys()).index(_cur_profile) if _cur_profile in _PROFILES else 0,
+        key="app_profile_select",
+        help="Selecting a profile auto-sets the EOL threshold below. "
+             "You can still override it manually after selecting a profile.",
+    )
+    if _new_profile != _cur_profile:
+        st.session_state["app_profile"] = _new_profile
+        if _PROFILES[_new_profile] is not None:
+            st.session_state["eol_threshold_pct"] = _PROFILES[_new_profile]
+        st.rerun()
+    if _PROFILES.get(_new_profile) is not None:
+        st.caption(
+            f"Profile '{_new_profile}' sets EOL threshold to {_PROFILES[_new_profile]:.0f}% SOH. "
+            f"Adjust the slider below to override."
+        )
+
     _section("Application End-of-Life Threshold")
 
     st.markdown(
@@ -5695,7 +5779,29 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 key="crm_user_recycled_ni_pct")
 
     # ────────────────────────────────────────────────────────────────────────
-    # Section 5: About
+    # Section 5: Cost-of-Delay multiplier
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Cost-of-Delay Multiplier")
+    st.markdown(
+        f"{make_badge('Illustrative — not sourced', '#718096')} &nbsp;"
+        "The residual value penalty per % SOH below EOL threshold at replacement is "
+        "a modelling assumption with no universal market data behind it. "
+        "Adjust to match your fleet's observed resale or second-life market.",
+        unsafe_allow_html=True,
+    )
+    _cod_mult = st.slider(
+        "Value penalty per % SOH below EOL at replacement (%)",
+        min_value=0.5, max_value=5.0, step=0.5,
+        value=float(st.session_state.get("cost_of_delay_mult", 2.0)),
+        key="settings_cod_mult",
+        help="Default 2.0: each % SOH below EOL threshold at actual replacement = 2% additional value loss. Illustrative only.",
+    )
+    if _cod_mult != st.session_state.get("cost_of_delay_mult", 2.0):
+        st.session_state["cost_of_delay_mult"] = _cod_mult
+        st.rerun()
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 6: About
     # ────────────────────────────────────────────────────────────────────────
     _section("About")
 
@@ -6652,6 +6758,21 @@ def main():
     if f"{page}:{selected}" != _last_audited:
         log_page_view(page, selected)
         st.session_state["_audit_last"] = f"{page}:{selected}"
+
+    # ── Demo mode notice ──────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='background:#2d3748;border:1px solid #4a5568;border-radius:8px;"
+        "padding:8px 16px;margin-bottom:12px;font-size:12px;color:#a0aec0;"
+        "display:flex;align-items:center;gap:10px'>"
+        "<span style='background:#4a556833;color:#a0aec0;font-size:10px;font-weight:700;"
+        "padding:2px 8px;border-radius:6px;letter-spacing:0.07em;white-space:nowrap'>"
+        "DEMO MODE</span>"
+        "Portfolio demonstration — no authentication, session-scoped uploads only, "
+        "data not persisted between sessions. "
+        "<a href='#production-readiness' style='color:#63b3ed'>See README → Production Roadmap</a> "
+        "for the deployment path.</div>",
+        unsafe_allow_html=True,
+    )
 
     # Per-cell reliability: use the specific fold R² for this cell, not the group average.
     per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
