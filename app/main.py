@@ -15,6 +15,7 @@ be run once to populate data/raw/ before the app starts.
 import sys
 import os
 import time
+import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -5441,7 +5442,7 @@ def page_recommendations(
             "action":     action_label,
             "confidence": conf_label,
             "soh_pct":    round(soh, 1),
-            "timestamp":  __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "timestamp":  datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
