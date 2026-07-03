@@ -87,6 +87,29 @@ def _md_html(html: str) -> None:
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
+def _action_bar(page: str) -> None:
+    """Render a contextual 'From this view you can →' bar at the top of each page.
+
+    Shows up to 3 quick-jump buttons drawn from PAGE_ACTIONS. Clicking any
+    button sets st.session_state.page and reruns — identical to nav buttons.
+    Placed at the very top of each page function, before the page title.
+    """
+    actions = PAGE_ACTIONS.get(page, [])
+    if not actions:
+        return
+    _md_html(
+        "<div style='font-size:11px;color:#4a5568;margin-bottom:6px;"
+        "text-transform:uppercase;letter-spacing:0.07em'>From here →</div>"
+    )
+    _cols = st.columns(len(actions))
+    for col, (btn_label, target_key, tip) in zip(_cols, actions):
+        if col.button(btn_label, key=f"action_{page}_{target_key}",
+                      help=tip, use_container_width=True):
+            st.session_state.page = target_key
+            st.rerun()
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -469,22 +492,79 @@ def load_everything():
 # Navigation
 # ---------------------------------------------------------------------------
 
-NAV_ITEMS = [
-    ("Import",          "import",          True),
-    ("Overview",        "overview",        True),
-    ("Health",          "health",          True),
-    ("Compare",         "compare",         True),
-    ("Insights",        "insights",        True),
-    ("Copilot",         "copilot",         True),
-    ("Consequences",    "consequences",    True),
-    ("Recommendations", "recommendations", True),
-    ("Sustainability",  "sustainability",  True),
-    ("Passport",        "passport",        True),
-    ("Reports",         "reports",         True),
-    ("Fleet",           "fleet",           True),
-    ("Grading",         "grading",         True),
-    ("Settings",        "settings",        True),
+# Grouped nav — each entry is (group_label, [(page_label, page_key), ...])
+# Passport and Reports are merged into "Compliance" (tabbed view).
+# "Consequences" is renamed "EOL Economics" — routing key unchanged.
+NAV_GROUPS = [
+    ("Analyse", [
+        ("Overview",        "overview"),
+        ("Health",          "health"),
+        ("Compare",         "compare"),
+        ("Insights",        "insights"),
+        ("Copilot",         "copilot"),
+    ]),
+    ("Operate", [
+        ("Fleet",           "fleet"),
+        ("Recommendations", "recommendations"),
+        ("EOL Economics",   "consequences"),
+        ("Grading",         "grading"),
+    ]),
+    ("Comply", [
+        ("Compliance",      "compliance"),
+        ("Sustainability",  "sustainability"),
+    ]),
+    ("Configure", [
+        ("Import",          "import"),
+        ("Settings",        "settings"),
+    ]),
 ]
+
+# Flat alias kept for any code that still iterates NAV_ITEMS
+NAV_ITEMS = [(label, key, True) for _, items in NAV_GROUPS for label, key in items]
+
+# Contextual action bar — 3 quick-jump suggestions per page
+# Each entry: (button_label, target_page_key, tooltip)
+PAGE_ACTIONS: dict[str, list[tuple[str, str, str]]] = {
+    "overview":        [("Health →",          "health",          "Deep-dive degradation curves"),
+                        ("Copilot →",         "copilot",         "Plain-English explanation"),
+                        ("Recommendations →", "recommendations", "Recommended action for this cell")],
+    "health":          [("Compare →",         "compare",         "Side-by-side with another cell"),
+                        ("Insights →",        "insights",        "What is driving degradation"),
+                        ("EOL Economics →",   "consequences",    "Model end-of-life economics")],
+    "compare":         [("Health →",          "health",          "Single-cell deep dive"),
+                        ("Fleet →",           "fleet",           "Full fleet ranking"),
+                        ("Insights →",        "insights",        "SHAP feature attribution")],
+    "insights":        [("Health →",          "health",          "Visualise the degradation curves"),
+                        ("Copilot →",         "copilot",         "Get a narrative explanation"),
+                        ("Recommendations →", "recommendations", "Recommended action")],
+    "copilot":         [("Overview →",        "overview",        "Back to key metrics"),
+                        ("Health →",          "health",          "Visualise curves"),
+                        ("Recommendations →", "recommendations", "See recommended action")],
+    "fleet":           [("Health →",          "health",          "Inspect selected cell"),
+                        ("Recommendations →", "recommendations", "Action for selected cell"),
+                        ("EOL Economics →",   "consequences",    "Economics for selected cell")],
+    "recommendations": [("EOL Economics →",   "consequences",    "Model the economics in detail"),
+                        ("Health →",          "health",          "Review degradation curves"),
+                        ("Compliance →",      "compliance",      "Generate EU battery passport")],
+    "consequences":    [("Recommendations →", "recommendations", "See the recommended action"),
+                        ("Compliance →",      "compliance",      "EU passport and reports"),
+                        ("Sustainability →",  "sustainability",  "Lifecycle CO₂ and materials")],
+    "sustainability":  [("Compliance →",      "compliance",      "EU battery passport"),
+                        ("EOL Economics →",   "consequences",    "End-of-life economics"),
+                        ("Fleet →",           "fleet",           "Fleet-level overview")],
+    "compliance":      [("Sustainability →",  "sustainability",  "Lifecycle CO₂ analysis"),
+                        ("EOL Economics →",   "consequences",    "End-of-life economics"),
+                        ("Overview →",        "overview",        "Back to key metrics")],
+    "grading":         [("Fleet →",           "fleet",           "Fleet ranking"),
+                        ("Health →",          "health",          "Deep-dive this cell"),
+                        ("Insights →",        "insights",        "Feature attribution")],
+    "import":          [("Overview →",        "overview",        "Analyse imported data"),
+                        ("Fleet →",           "fleet",           "Fleet ranking"),
+                        ("Settings →",        "settings",        "Configure thresholds")],
+    "settings":        [("Overview →",        "overview",        "Back to analysis"),
+                        ("Fleet →",           "fleet",           "Fleet view"),
+                        ("Import →",          "import",          "Import new data")],
+}
 
 LEGEND_H = dict(
     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
@@ -628,31 +708,25 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         # ── Mode switcher ──
         render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
 
-        # ── Nav ──
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        # ── Nav (grouped) ──
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         if "page" not in st.session_state:
             st.session_state.page = "overview"
         current_page = st.session_state.page
-        _nav_key_counts: dict[str, int] = {}
-        for label, key, enabled in NAV_ITEMS:
-            _nav_key_counts[key] = _nav_key_counts.get(key, 0) + 1
-            btn_key = f"nav_{key}" if _nav_key_counts[key] == 1 else f"nav_{key}_b"
-            if enabled:
+        for group_label, group_items in NAV_GROUPS:
+            st.markdown(
+                f"<div style='font-size:10px;font-weight:700;color:#4a5568;"
+                f"text-transform:uppercase;letter-spacing:0.1em;"
+                f"padding:10px 4px 4px;margin-top:2px'>{group_label}</div>",
+                unsafe_allow_html=True,
+            )
+            for label, key in group_items:
                 if st.button(
-                    label, key=btn_key, use_container_width=True,
+                    label, key=f"nav_{key}", use_container_width=True,
                     type="primary" if current_page == key else "secondary",
                 ):
                     st.session_state.page = key
                     st.rerun()
-            else:
-                st.markdown(
-                    f"<div style='padding:7px 12px;color:#4a5568;font-size:14px;"
-                    f"font-weight:500;display:flex;justify-content:space-between;align-items:center'>"
-                    f"<span>{label}</span>"
-                    f"<span style='font-size:10px;background:#1a202c;color:#4a5568;"
-                    f"padding:1px 7px;border-radius:10px'>Soon</span></div>",
-                    unsafe_allow_html=True,
-                )
 
         # ── Chemistry display (read-only — model is chemistry-specific per data source) ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
@@ -892,6 +966,7 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
 
 def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                   rul_reliable: bool = True, bundle: dict | None = None):
+    _action_bar("overview")
     st.markdown("# Overview")
 
     latest         = df.iloc[-1]
@@ -1262,6 +1337,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 # ---------------------------------------------------------------------------
 
 def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
+    _action_bar("health")
     st.markdown("# Health")
 
     # ── Data provenance declaration ──────────────────────────────────────────
@@ -2059,6 +2135,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
 
 def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                   cell_ids: list | None = None, active_fdfs: dict | None = None):
+    _action_bar("insights")
     st.markdown("# Insights")
 
     # Warn if this bundle was trained on fewer than 3 cells (uploaded data path)
@@ -2470,6 +2547,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
 # ---------------------------------------------------------------------------
 
 def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
+    _action_bar("grading")
     import numpy as _np_grade
 
     _md_html("""<div style="padding-top:32px;margin-bottom:8px"><div style="font-size:22px;font-weight:700;color:#e2e8f0">⏳ Cell Grading</div><div style="font-size:13px;color:#8896a8;margin-top:2px">Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)</div></div>""")
@@ -2618,6 +2696,7 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
 # ---------------------------------------------------------------------------
 
 def page_fleet(featured_dfs: dict, bundles: dict):
+    _action_bar("fleet")
     st.markdown("# Fleet")
 
     # ── Build fleet summary row per cell ──
@@ -2828,6 +2907,24 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         </table>
         """
     )
+
+    # ── Click-to-navigate: jump to any cell's Health view ───────────────────
+    st.markdown(
+        "<div style='font-size:11px;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin:12px 0 6px'>Open in Health view →</div>",
+        unsafe_allow_html=True,
+    )
+    _jump_cols = st.columns(min(len(rows), 8))
+    for _ji, _jr in enumerate(rows):
+        _sc = STATUS_COLOUR[_jr["status"]]
+        if _jump_cols[_ji % len(_jump_cols)].button(
+            _jr["cell_id"],
+            key=f"fleet_jump_{_jr['cell_id']}",
+            help=f"{_jr['status']} · SOH {_jr['soh']:.1f}% · Click to open Health page",
+        ):
+            st.session_state["selected_cell"] = _jr["cell_id"]
+            st.session_state["page"] = "health"
+            st.rerun()
 
     # ── CSV Export ──────────────────────────────────────────────────────────
     _csv_rows = []
@@ -3048,7 +3145,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         "<div style='font-size:13px;color:#8896a8;margin-bottom:20px;line-height:1.6'>"
         "Conventional second-life assessment window: <strong style='color:#e2e8f0'>SOH 70–85%</strong>. "
         "Cells above 85% are still in primary life. Below 70% is below most application floors. "
-        "Click a cell in the sidebar to open the Consequences page for detailed economics.</div>",
+        "Click a cell in the sidebar to open the EOL Economics page for detailed economics.</div>",
         unsafe_allow_html=True,
     )
 
@@ -3383,6 +3480,7 @@ def page_copilot(
     bundles: dict,
     selected: str,
 ):
+    _action_bar("copilot")
     from copilot import (
         build_cell_context,
         build_fleet_stats,
@@ -3560,6 +3658,7 @@ def page_consequences(
     bundles: dict,
     rul_reliable: bool,
 ):
+    _action_bar("consequences")
     from consequences import (
         ASSUMPTIONS, SECOND_LIFE_APPS, CELL_NOMINAL_KWH,
         application_fit, financial_comparison, sustainability_snapshot, breakeven_curve,
@@ -3582,7 +3681,7 @@ def page_consequences(
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
 
     # ── Page header ──
-    st.markdown("# Consequences")
+    st.markdown("# EOL Economics")
     st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
 
     _md_html(
@@ -4260,6 +4359,7 @@ def page_recommendations(
     bundles: dict,
     rul_reliable: bool,
 ):
+    _action_bar("recommendations")
     from recommendations import classify, SOH_PRIMARY_FLOOR, SOH_INSPECT_FLOOR, SOH_SECONDLIFE_FLOOR
     from consequences import ASSUMPTIONS, application_fit, financial_comparison, CELL_NOMINAL_KWH
 
@@ -4723,6 +4823,7 @@ def page_recommendations(
 
 
 def page_sustainability(selected: str, df: pd.DataFrame):
+    _action_bar("sustainability")
     from consequences import ASSUMPTIONS, sustainability_snapshot, CELL_NOMINAL_KWH
     from sustainability import (
         CRITICAL_MATERIALS, EU_RECYCLED_TARGETS, EU_GREEN_DEAL_FIELDS,
@@ -5154,6 +5255,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
 
 
 def page_settings(featured_dfs: dict, bundles: dict):
+    _action_bar("settings")
     from lco_eval import RUL_RELIABLE_FLOOR
     from design_system import C_GREEN, C_AMBER, C_MUTED, C_ORANGE
 
@@ -5818,6 +5920,7 @@ def _clear_uploaded_data():
 
 
 def page_import():
+    _action_bar("import")
     import io
     import os
     import plotly.graph_objects as go
@@ -6227,6 +6330,7 @@ def page_import():
 # ---------------------------------------------------------------------------
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
+    _action_bar("compare")
     st.markdown("# ⚖️ Cell Comparison")
 
     if len(cell_ids) < 2:
@@ -6569,18 +6673,16 @@ def main():
         page_recommendations(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "sustainability":
         page_sustainability(selected, df)
-    elif page == "compliance":
+    elif page in ("compliance", "passport", "reports"):
+        _action_bar("compliance")
         st.markdown("# Compliance")
         st.markdown("##### EU Battery Regulation 2023/1542 · Passport fields · PDF report export")
+        _default_tab = 1 if page == "reports" else 0
         _tab_passport, _tab_reports = st.tabs(["EU Battery Passport", "Reports & Export"])
         with _tab_passport:
             page_passport(selected, df, bundle, rul_reliable)
         with _tab_reports:
             page_reports(selected, df, bundle, rul_reliable)
-    elif page == "passport":
-        page_passport(selected, df, bundle, rul_reliable)
-    elif page == "reports":
-        page_reports(selected, df, bundle, rul_reliable)
     elif page == "fleet":
         page_fleet(active_fdfs, bundles)
     elif page == "grading":
