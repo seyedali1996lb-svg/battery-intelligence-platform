@@ -1090,3 +1090,62 @@ def answer_business_case(ctx: dict, fleet_stats: dict) -> str:
         f"\n*All figures use ${_REPLACEMENT_COST_USD}/cell default. Update in Settings.*"
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# LLM-powered Copilot — Claude Haiku, constrained to bundle values
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """You are the Battery Intelligence Copilot, an expert assistant embedded in a
+battery health monitoring platform. You answer questions about battery cells based ONLY on the
+data values provided in the user message. You must NEVER invent, estimate, or hallucinate numbers.
+If a value is not present in the data, say it is not available.
+Use plain English. Be concise — 3-5 sentences maximum unless asked to elaborate.
+Do not use jargon the user didn't use. Never recommend specific financial products or services.
+Format numbers exactly as given. If uncertain, say so explicitly."""
+
+_QUERY_SYSTEM_HINTS = {
+    "health":             "Focus on SOH value, trend, and what the fade rate means in plain English.",
+    "prediction_drivers": "Explain the top model features in plain English without statistical jargon.",
+    "rul":                "Explain remaining life and uncertainty in plain English. Mention reliability flag.",
+    "compare":            "Compare the two cells factually. Avoid superlatives.",
+    "recent_trajectory":  "Describe the trajectory trend from the recent cycles data.",
+    "anomaly":            "Explain the anomaly flags and their IEC 62619 significance.",
+    "fleet_compare":      "Place this cell in the context of the fleet statistics.",
+    "alerts":             "List the most important fleet alerts in priority order.",
+    "replacement_budget": "Give the 12-month budget estimate with best and worst case.",
+    "fleet_risk":         "Assess overall fleet risk level with cost exposure.",
+    "business_case":      "Give a clear Replace/Wait/Repurpose recommendation with NPV reasoning.",
+}
+
+
+def llm_answer(query: str, template_answer: str, api_key: str) -> str:
+    """Call Claude Haiku with the template answer as grounding context.
+
+    The template answer is injected verbatim as the data source — the LLM
+    is only allowed to rephrase and clarify what the template already contains.
+    If the API call fails for any reason, the template answer is returned as-is.
+    """
+    if not api_key:
+        return template_answer
+    try:
+        import anthropic as _ant
+        _client = _ant.Anthropic(api_key=api_key)
+        _hint = _QUERY_SYSTEM_HINTS.get(query, "")
+        _system = _SYSTEM_PROMPT + (f"\n\nAdditional guidance: {_hint}" if _hint else "")
+        _user_msg = (
+            f"Here is the data summary for this question:\n\n"
+            f"---\n{template_answer}\n---\n\n"
+            f"Rewrite this as a clear, conversational response. "
+            f"Use exactly the numbers shown above — do not change any values. "
+            f"Do not add any information not present in the data summary."
+        )
+        _resp = _client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=_system,
+            messages=[{"role": "user", "content": _user_msg}],
+        )
+        return _resp.content[0].text.strip()
+    except Exception:
+        return template_answer

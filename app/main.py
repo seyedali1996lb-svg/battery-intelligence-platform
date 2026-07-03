@@ -3938,6 +3938,52 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         _md_html(_alert_html)
 
     # ── Ranking table ──
+    # ── Cell filter query interface ──────────────────────────────────────────
+    st.markdown("<div class='section-header'>Filter Fleet</div>", unsafe_allow_html=True)
+    _fq1, _fq2, _fq3, _fq4 = st.columns([2, 2, 2, 2])
+    _fq_soh_max = _fq1.number_input(
+        "SOH below (%)", min_value=50.0, max_value=100.0,
+        value=float(st.session_state.get("fq_soh_max", 100.0)),
+        step=1.0, key="fq_soh_max",
+        help="Show only cells with SOH below this value"
+    )
+    _all_fades = [r["fade_30"] for r in rows if r["fade_30"] is not None]
+    _fq_fade_min = _fq2.number_input(
+        "Fade rate above (mSOH/cy)", min_value=0.0,
+        max_value=float(max(_all_fades) * 2 if _all_fades else 1.0),
+        value=float(st.session_state.get("fq_fade_min", 0.0)),
+        step=0.01, format="%.3f", key="fq_fade_min",
+        help="Show only cells with fade rate above this value"
+    )
+    _fq_status = _fq3.multiselect(
+        "Status", options=["Healthy", "Degrading", "End of Life"],
+        default=st.session_state.get("fq_status", ["Healthy", "Degrading", "End of Life"]),
+        key="fq_status",
+    )
+    _fq_source = _fq4.multiselect(
+        "Source", options=["NASA", "Synthetic", "Uploaded"],
+        default=st.session_state.get("fq_source", ["NASA", "Synthetic", "Uploaded"]),
+        key="fq_source",
+    )
+    _fq_active = (
+        _fq_soh_max < 100.0 or _fq_fade_min > 0.0
+        or len(_fq_status) < 3 or len(_fq_source) < 3
+    )
+    _rows_before = len(rows)
+    rows = [
+        r for r in rows
+        if r["soh"] <= _fq_soh_max
+        and r["fade_30"] >= _fq_fade_min
+        and r["status"] in (_fq_status or ["Healthy", "Degrading", "End of Life"])
+        and r["source"] in (_fq_source or ["NASA", "Synthetic", "Uploaded"])
+    ]
+    if _fq_active:
+        _n_filtered = _rows_before - len(rows)
+        st.caption(f"Filter active — showing {len(rows)} of {_rows_before} cells ({_n_filtered} hidden).")
+    if not rows:
+        _empty_state("No cells match your filter", "Adjust the filter criteria above to see results.", "", "🔍")
+        return
+
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
 
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
@@ -4265,6 +4311,69 @@ def page_fleet(featured_dfs: dict, bundles: dict):
             st.info("Fleet spread analysis requires ≥ 2 cells with overlapping cycle ranges.")
     except Exception as _sp_e:
         st.info(f"Spread trend unavailable: {_sp_e}")
+
+    # ── SOH Distribution Shift Over Time (histogram animation) ─────────────
+    st.markdown("<div class='section-header'>SOH Distribution Shift Over Time</div>", unsafe_allow_html=True)
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "The <strong style='color:#e2e8f0'>histogram shifting left</strong> is the primary signal a "
+        "fleet manager watches — individual cell lines are noise; the distribution drift is the trend."
+        "</div>"
+    )
+    try:
+        import numpy as _np_hist
+        _nonempty_h = [fdf for fdf in featured_dfs.values() if len(fdf) > 10 and "soh_pct" in fdf.columns and "cycle_number" in fdf.columns]
+        if len(_nonempty_h) >= 2:
+            _cy_min_h = int(max(df["cycle_number"].min() for df in _nonempty_h))
+            _cy_max_h = int(min(df["cycle_number"].max() for df in _nonempty_h))
+            _n_snapshots = 5
+            _snap_cycles = [
+                int(_cy_min_h + (_cy_max_h - _cy_min_h) * i / (_n_snapshots - 1))
+                for i in range(_n_snapshots)
+            ]
+            _snap_colours = ["#4a5568", "#718096", "#63b3ed", "#f6ad55", "#fc8181"]
+            _fig_hist = go.Figure()
+            for _si, _snap_cy in enumerate(_snap_cycles):
+                _snap_sohs = []
+                for _fdf in _nonempty_h:
+                    _cy_arr = _fdf["cycle_number"].values
+                    _soh_arr = _fdf["soh_pct"].values
+                    if _snap_cy >= _cy_arr.min() and _snap_cy <= _cy_arr.max():
+                        _snap_sohs.append(float(_np_hist.interp(_snap_cy, _cy_arr, _soh_arr)))
+                if len(_snap_sohs) >= 2:
+                    _fig_hist.add_trace(go.Violin(
+                        x=_snap_sohs,
+                        name=f"Cycle {_snap_cy:,}",
+                        orientation="h",
+                        side="positive",
+                        meanline_visible=True,
+                        line_color=_snap_colours[_si],
+                        fillcolor=_snap_colours[_si] + "44",
+                        opacity=0.7,
+                        width=0.8,
+                        points=False,
+                        showlegend=True,
+                    ))
+            _fig_hist.update_layout(
+                height=300,
+                violingap=0.2,
+                violinmode="overlay",
+                **base_layout(
+                    xaxis=dict(title="SOH %", range=[50, 105], gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    yaxis=dict(visible=False),
+                    legend=LEGEND_H,
+                ),
+            )
+            _fig_hist.add_vline(x=80, line_dash="dash", line_color="#fc8181", line_width=1,
+                                annotation_text="EOL 80%", annotation_font_color="#fc8181", annotation_font_size=10)
+            _fig_hist.add_vline(x=90, line_dash="dot", line_color="#f6e05e", line_width=1,
+                                annotation_text="Degrading 90%", annotation_font_color="#f6e05e", annotation_font_size=10)
+            st.plotly_chart(_fig_hist, use_container_width=True)
+            st.caption(f"Violin distribution of SOH across {len(_nonempty_h)} cells at {_n_snapshots} cycle snapshots. Left shift = fleet aging.")
+        else:
+            st.info("SOH distribution trend requires ≥ 2 cells with cycle history.")
+    except Exception as _hist_e:
+        st.info(f"SOH trend histogram unavailable: {_hist_e}")
 
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
@@ -4625,6 +4734,7 @@ def page_copilot(
         answer_business_case,
         QUERY_LABELS,
         FOLLOW_UP_MAP,
+        llm_answer,
     )
 
     st.markdown("# Copilot")
@@ -4762,12 +4872,21 @@ def page_copilot(
         response = f"Unknown query: {query}"
         contexts = []
 
+    # ── LLM pass (if API key set) ────────────────────────────────────────────
+    _llm_key_cp = st.session_state.get("anthropic_api_key", "")
+    if _llm_key_cp:
+        with st.spinner("Claude Haiku thinking…"):
+            response = llm_answer(query, response, _llm_key_cp)
+
     # ── Response header ──
     cell_label = f" &nbsp;·&nbsp; {selected}" if not fleet_only else " &nbsp;·&nbsp; all cells"
+    _llm_badge = (
+        make_badge("Claude Haiku", "#9f7aea") + "&nbsp;" if _llm_key_cp else ""
+    )
     st.markdown(
         f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
         f"letter-spacing:0.1em;margin:28px 0 16px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
-        f"{QUERY_LABELS.get(query, '')}{cell_label}</div>",
+        f"{QUERY_LABELS.get(query, '')}{cell_label}&nbsp;&nbsp;{_llm_badge}</div>",
         unsafe_allow_html=True,
     )
     st.markdown(response)
@@ -5031,6 +5150,78 @@ def page_decision(
             with _af_cols[_i % len(_af_cols)]:
                 _acol = "#48bb78" if _score >= 70 else ("#f6ad55" if _score >= 40 else "#fc8181")
                 st.metric(_app_name.replace("_", " ").title(), f"{_score:.0f}%")
+
+    # ── 4b. Second-life marketplace ──────────────────────────────────────────
+    if action in ("second_life", "recycle") or soh <= 85:
+        st.markdown("<div class='section-header'>Second-Life Marketplace</div>", unsafe_allow_html=True)
+        _sl_eligible = soh >= 70.0
+        _sl_col = "#68d391" if _sl_eligible else "#718096"
+        _md_html(
+            f"<div style='background:#1e2a38;border:1px solid {_sl_col}44;border-radius:10px;"
+            f"padding:18px 22px;margin-bottom:12px'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
+            f"<div>"
+            f"<div style='font-size:14px;font-weight:700;color:{_sl_col}'>"
+            f"{'Eligible for second-life listing' if _sl_eligible else 'Below second-life floor (SOH < 70%)'}</div>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:6px;line-height:1.6'>"
+            f"Cell {selected} · SOH {soh:.1f}% · Est. residual capacity {soh * _cap_now / 100 * 1000:.0f} mAh<br>"
+            f"Suitable for: stationary storage, UPS backup, low-power IoT applications"
+            f"</div>"
+            f"</div>"
+            f"<div style='font-size:22px;color:{_sl_col};margin-left:16px'>♻</div>"
+            f"</div>"
+            f"</div>"
+        )
+        if _sl_eligible:
+            _mk_col1, _mk_col2 = st.columns(2)
+            if _mk_col1.button(
+                "List on Circunomics →", key="sl_list_circ",
+                help="Opens second-life battery exchange (demo — not a live API call)",
+                use_container_width=True,
+            ):
+                _listing = {
+                    "cell_id":        selected,
+                    "soh_pct":        round(soh, 1),
+                    "chemistry":      "LFP" if selected.startswith("S-") else "LiCoO2",
+                    "capacity_ah":    round(_cap_now * (soh / 100) * 1000 / 3.7, 2),
+                    "asking_usd":     round(_c_npv * 0.4, 2),
+                    "listed_at":      datetime.datetime.now().isoformat(),
+                    "platform":       "battery-intelligence-platform",
+                    "note":           "Demo listing — not submitted to a live exchange",
+                }
+                if "sl_listings" not in st.session_state:
+                    st.session_state["sl_listings"] = []
+                st.session_state["sl_listings"].append(_listing)
+                st.success(
+                    f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "
+                    f"(demo — no real API call made). In production this would POST to "
+                    f"the Circunomics or Battery Lifecycle Company marketplace API."
+                )
+            if _mk_col2.button(
+                "List on Battery-Lifecycle.com →", key="sl_list_blc",
+                help="Second-life exchange for industrial battery packs (demo)",
+                use_container_width=True,
+            ):
+                st.info(
+                    "Battery Lifecycle Company integration requires an API key. "
+                    "In production: POST /api/v1/listings with cell ID, SOH, chemistry, "
+                    "capacity, and asking price. See Settings to configure the endpoint."
+                )
+        _sl_listings = st.session_state.get("sl_listings", [])
+        if _sl_listings:
+            with st.expander(f"Active listings ({len(_sl_listings)})"):
+                import pandas as _pd_sl
+                st.dataframe(
+                    _pd_sl.DataFrame(_sl_listings),
+                    use_container_width=True, hide_index=True,
+                )
+                st.download_button(
+                    "Export listings",
+                    data=_pd_sl.DataFrame(_sl_listings).to_csv(index=False).encode(),
+                    file_name="secondlife_listings.csv",
+                    mime="text/csv",
+                    key="sl_listings_export",
+                )
 
     # ── 5. Log Decision ─────────────────────────────────────────────────────
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -7354,6 +7545,90 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # ────────────────────────────────────────────────────────────────────────
     # Section 6: About
     # ────────────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
+    # Webhook Notifications
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Anomaly Webhook Notifications")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "POST a JSON payload to your endpoint whenever IEC 62619:2022 anomaly flags fire in the "
+        "Live Monitor. Use this to trigger Slack alerts, PagerDuty incidents, or CMMS tickets."
+        "</div>"
+    )
+    _wh_col1, _wh_col2 = st.columns([3, 1])
+    _wh_url = _wh_col1.text_input(
+        "Webhook URL", value=st.session_state.get("webhook_url", ""),
+        placeholder="https://hooks.slack.com/services/...",
+        key="webhook_url",
+    )
+    _wh_secret = _wh_col2.text_input(
+        "HMAC secret (optional)", value=st.session_state.get("webhook_secret", ""),
+        type="password", key="webhook_secret",
+        help="If set, each request includes X-Signature-256: hmac-sha256 of the body.",
+    )
+    _wh_events = st.multiselect(
+        "Fire on", key="webhook_events",
+        options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
+                 "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY"],
+        default=st.session_state.get("webhook_events",
+            ["THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH"]),
+        help="Only anomaly types checked here will trigger a webhook POST.",
+    )
+    if _wh_url:
+        _wh_test_col, _ = st.columns([1, 4])
+        if _wh_test_col.button("Send test ping", key="webhook_test_btn"):
+            try:
+                import requests as _req_wh, json as _json_wh, hashlib as _hash_wh, hmac as _hmac_wh
+                _payload = _json_wh.dumps({
+                    "event": "TEST_PING",
+                    "source": "battery-intelligence-platform",
+                    "message": "Webhook connectivity test from Settings page.",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                }).encode()
+                _headers = {"Content-Type": "application/json"}
+                if st.session_state.get("webhook_secret"):
+                    _sig = _hmac_wh.new(
+                        st.session_state["webhook_secret"].encode(),
+                        _payload, _hash_wh.sha256,
+                    ).hexdigest()
+                    _headers["X-Signature-256"] = f"sha256={_sig}"
+                _resp = _req_wh.post(_wh_url, data=_payload, headers=_headers, timeout=5)
+                if _resp.status_code < 300:
+                    st.success(f"Test ping sent — HTTP {_resp.status_code}")
+                else:
+                    st.warning(f"Webhook responded with HTTP {_resp.status_code}: {_resp.text[:120]}")
+            except Exception as _wh_e:
+                st.error(f"Webhook test failed: {_wh_e}")
+    else:
+        st.caption("Enter a webhook URL above to enable push notifications.")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # LLM Copilot API Key
+    # ────────────────────────────────────────────────────────────────────────
+    _section("AI Copilot — Language Model")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "When an Anthropic API key is set, the Copilot answers in natural language using "
+        "<strong style='color:#e2e8f0'>Claude Haiku</strong> — strictly constrained to the "
+        "values in this platform's model bundle (no hallucination of numbers). "
+        "Without a key, template answers are used as fallback."
+        "</div>"
+    )
+    _llm_key = st.text_input(
+        "Anthropic API key", type="password",
+        value=st.session_state.get("anthropic_api_key", ""),
+        placeholder="sk-ant-...",
+        key="anthropic_api_key",
+        help="Key is stored in session state only — never written to disk or transmitted except to Anthropic.",
+    )
+    if _llm_key:
+        if _llm_key.startswith("sk-ant-"):
+            st.success("Claude Haiku active — Copilot will use natural language responses.")
+        else:
+            st.warning("Key doesn't look like an Anthropic key (expected sk-ant-...). Check and re-enter.")
+    else:
+        st.caption("Without an API key the Copilot uses template answers grounded on bundle values.")
+
     _section("About")
 
     phase_rows = [
@@ -8394,8 +8669,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     st.session_state["mqtt_port"] = _broker_port
 
     # ── Cell selector for replay ──────────────────────────────────────────────
-    _lm_col1, _lm_col2 = st.columns([2, 2])
-    _replay_cell = _lm_col1.selectbox(
+    _replay_cell = st.selectbox(
         "Cell to replay", options=cell_ids, key="lm_replay_cell",
         help="Historical data for this cell is replayed through MQTT as BMS telemetry.",
     )
@@ -8479,6 +8753,35 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         if _new_anomaly:
             st.session_state["lm_anomalies"].extend(_new_anomaly)
             st.session_state["lm_anomalies"] = st.session_state["lm_anomalies"][-200:]
+            # ── Webhook push ────────────────────────────────────────────────
+            _wh_url_lm  = st.session_state.get("webhook_url", "")
+            _wh_evts_lm = st.session_state.get("webhook_events", [])
+            _wh_sec_lm  = st.session_state.get("webhook_secret", "")
+            if _wh_url_lm and _wh_evts_lm:
+                try:
+                    import requests as _req_lm, json as _json_lm, hashlib as _hl, hmac as _hm
+                    for _an in _new_anomaly:
+                        _evt_type = _an.get("anomaly_type", "")
+                        if _evt_type not in _wh_evts_lm:
+                            continue
+                        _body = _json_lm.dumps({
+                            "event":      _evt_type,
+                            "cell_id":    _an.get("cell_id", _replay_cell),
+                            "severity":   _an.get("severity", "HIGH"),
+                            "value":      _an.get("value"),
+                            "threshold":  _an.get("threshold"),
+                            "message":    _an.get("message", ""),
+                            "standard":   "IEC 62619:2022",
+                            "timestamp":  _an.get("timestamp", datetime.datetime.now().isoformat()),
+                            "source":     "battery-intelligence-platform",
+                        }).encode()
+                        _hdrs = {"Content-Type": "application/json"}
+                        if _wh_sec_lm:
+                            _sig = _hm.new(_wh_sec_lm.encode(), _body, _hl.sha256).hexdigest()
+                            _hdrs["X-Signature-256"] = f"sha256={_sig}"
+                        _req_lm.post(_wh_url_lm, data=_body, headers=_hdrs, timeout=3)
+                except Exception:
+                    pass  # never crash the live view over a webhook failure
 
     _telem = st.session_state["lm_telemetry"]
     _anom  = st.session_state["lm_anomalies"]
@@ -8629,6 +8932,166 @@ def page_coming_soon(key: str):
 
 
 # ---------------------------------------------------------------------------
+# Regulatory Alert Service
+# ---------------------------------------------------------------------------
+
+def _page_regulatory_alerts(
+    selected: str,
+    df: pd.DataFrame,
+    featured_dfs: dict,
+    bundles: dict,
+):
+    """EU Battery Regulation Article 14(4) compliance deadline tracker.
+
+    Shows which cells will be non-compliant by key regulation dates,
+    and generates a draft submission text.
+    """
+    import datetime as _dt_reg
+
+    st.markdown("### Regulatory Alert Service")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:18px;line-height:1.6'>"
+        "EU Battery Regulation 2023/1542 requires a battery state report under "
+        "<strong style='color:#e2e8f0'>Article 14(4)</strong> when SOH drops below defined "
+        "thresholds. This tracker identifies cells at risk of non-compliance before key deadlines."
+        "</div>"
+    )
+
+    # Key regulatory deadlines
+    _deadlines = [
+        {
+            "label":       "Art. 14(4) — SOH report obligation",
+            "date":        _dt_reg.date(2026, 2, 18),
+            "soh_floor":   80.0,
+            "description": "Batteries placed on EU market must have SOH ≥ 80% or carry a non-compliance notice.",
+        },
+        {
+            "label":       "Art. 70 — End-of-life transparency",
+            "date":        _dt_reg.date(2027, 8, 18),
+            "soh_floor":   None,
+            "description": "Battery Passport must include full end-of-life R-code and recycled content declaration.",
+        },
+        {
+            "label":       "Annex XII — Recycled content targets (Phase 1)",
+            "date":        _dt_reg.date(2031, 1, 1),
+            "soh_floor":   None,
+            "description": "12% Co, 4% Li, 4% Ni recycled content required in active materials.",
+        },
+    ]
+
+    _today = _dt_reg.date.today()
+    _rows_reg = []
+    for _cid, _fdf in featured_dfs.items():
+        if _fdf.empty or "soh_pct" not in _fdf.columns:
+            continue
+        _soh_now = float(_fdf.iloc[-1]["soh_pct"])
+        _fade    = float(_fdf.iloc[-1].get("fade_rate_50cy", 0))
+        _eol_cy  = None
+        if _fade > 1e-6:
+            _eol_cy = int(max(0, (_soh_now - 80.0) / _fade * 50))
+        _rows_reg.append({
+            "cell_id": _cid,
+            "soh_now": _soh_now,
+            "fade":    _fade,
+            "cycles_to_eol": _eol_cy,
+        })
+
+    # Alert summary
+    _art14_floor = 80.0
+    _art14_date  = _deadlines[0]["date"]
+    _days_to_deadline = (_art14_date - _today).days
+
+    _at_risk = [r for r in _rows_reg if r["soh_now"] < _art14_floor]
+    _approaching = [
+        r for r in _rows_reg
+        if r["soh_now"] >= _art14_floor and r["cycles_to_eol"] is not None
+        and r["cycles_to_eol"] < max(0, _days_to_deadline) * 1.5
+    ]
+
+    _al1, _al2, _al3 = st.columns(3)
+    _al_col = "#fc8181" if _at_risk else ("#f6ad55" if _approaching else "#48bb78")
+    _al1.metric("Cells non-compliant now", len(_at_risk), help="SOH already below 80%")
+    _al2.metric("Cells approaching threshold", len(_approaching),
+                help=f"Will breach 80% before {_art14_date.strftime('%B %Y')}")
+    _al3.metric("Days to Art. 14(4) deadline", _days_to_deadline)
+
+    # Per-deadline table
+    for _dl in _deadlines:
+        _dl_days = (_dl["date"] - _today).days
+        _dl_col  = "#fc8181" if _dl_days < 180 else ("#f6ad55" if _dl_days < 365 else "#48bb78")
+        _md_html(
+            f"<div style='background:#1e2a38;border:1px solid {_dl_col}44;"
+            f"border-radius:10px;padding:14px 20px;margin-bottom:10px'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>{_dl['label']}</div>"
+            f"<div style='font-size:12px;font-weight:700;color:{_dl_col}'>"
+            f"{_dl['date'].strftime('%d %b %Y')} · {_dl_days} days</div>"
+            f"</div>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:6px'>{_dl['description']}</div>"
+            f"</div>"
+        )
+
+    # Affected cells
+    if _at_risk or _approaching:
+        st.markdown("<div class='section-header'>Cells Requiring Action</div>", unsafe_allow_html=True)
+        for _r in sorted(_at_risk + _approaching, key=lambda x: x["soh_now"]):
+            _is_breach = _r["soh_now"] < _art14_floor
+            _status_c  = "#fc8181" if _is_breach else "#f6ad55"
+            _status_l  = "Non-compliant" if _is_breach else "Approaching threshold"
+            _md_html(
+                f"<div style='display:flex;justify-content:space-between;padding:10px 16px;"
+                f"border-bottom:1px solid #1a202c;align-items:center'>"
+                f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>{_r['cell_id']}</div>"
+                f"<div style='font-size:12px;color:#a0aec0'>SOH {_r['soh_now']:.1f}%</div>"
+                f"<div style='font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;"
+                f"background:{_status_c}22;color:{_status_c};border:1px solid {_status_c}44'>"
+                f"{_status_l}</div>"
+                f"</div>"
+            )
+
+        # Draft submission
+        st.markdown("<div class='section-header'>Draft Compliance Notice</div>", unsafe_allow_html=True)
+        _draft_cells = "\n".join(
+            f"  - Cell {r['cell_id']}: SOH {r['soh_now']:.1f}% "
+            f"({'below' if r['soh_now'] < _art14_floor else 'approaching'} 80% threshold)"
+            for r in sorted(_at_risk + _approaching, key=lambda x: x["soh_now"])
+        )
+        _draft_text = (
+            f"BATTERY STATE COMPLIANCE NOTICE\n"
+            f"EU Battery Regulation (EU) 2023/1542 — Article 14(4)\n"
+            f"Generated: {_today.strftime('%d %B %Y')}\n"
+            f"Compliance deadline: {_art14_date.strftime('%d %B %Y')}\n\n"
+            f"The following battery cells have been identified as non-compliant or approaching\n"
+            f"the mandatory State of Health threshold under Art. 14(4):\n\n"
+            f"{_draft_cells}\n\n"
+            f"Recommended actions:\n"
+            f"  1. Commission independent SOH verification for cells marked non-compliant.\n"
+            f"  2. Update Battery Passport records with current SOH and R-code classification.\n"
+            f"  3. Schedule replacement or repurposing before the compliance deadline.\n\n"
+            f"This notice was generated automatically by the Battery Intelligence Platform\n"
+            f"using GBRT-derived SOH estimates. Values should be confirmed by certified testing\n"
+            f"before submission to a regulatory authority.\n\n"
+            f"Platform: Battery Intelligence System\n"
+            f"Data pipeline: GBRT with leave-cell-out cross-validation\n"
+            f"Regulation reference: (EU) 2023/1542, OJ L 2023/1542\n"
+        )
+        st.text_area("Draft notice (edit before submitting)", value=_draft_text, height=280,
+                     key="reg_draft_text")
+        st.download_button(
+            "Download notice as .txt",
+            data=_draft_text,
+            file_name=f"compliance_notice_{_today.isoformat()}.txt",
+            mime="text/plain",
+            key="reg_draft_download",
+        )
+    else:
+        st.success(
+            f"All {len(_rows_reg)} cells are compliant with the 80% SOH threshold. "
+            f"Next scheduled review: {_art14_date.strftime('%B %Y')}."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -8759,8 +9222,8 @@ def main():
         _action_bar("compliance")
         st.markdown("# Compliance")
         st.markdown("##### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
-        _tab_passport, _tab_reports, _tab_sus = st.tabs(
-            ["EU Battery Passport", "Reports & Export", "Sustainability"]
+        _tab_passport, _tab_reports, _tab_sus, _tab_reg = st.tabs(
+            ["EU Battery Passport", "Reports & Export", "Sustainability", "Regulatory Alerts"]
         )
         with _tab_passport:
             page_passport(selected, df, bundle, rul_reliable)
@@ -8768,6 +9231,8 @@ def main():
             page_reports(selected, df, bundle, rul_reliable)
         with _tab_sus:
             page_sustainability(selected, df)
+        with _tab_reg:
+            _page_regulatory_alerts(selected, df, active_fdfs, bundles)
     elif page in ("fleet", "exec_summary"):
         page_fleet(active_fdfs, bundles)
     elif page == "decision":
