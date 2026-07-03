@@ -530,14 +530,13 @@ NAV_GROUPS = [
         ("Compare",    "compare"),
         ("Copilot",    "copilot"),
     ]),
-    ("Operate", [
-        ("Fleet",        "fleet"),
-        ("Decision",     "decision"),
-        ("Grading",      "grading"),
-        ("Live Monitor", "live_monitor"),
-    ]),
-    ("Comply", [
+    ("EU Passport", [          # A6: promoted from 3rd to 2nd — 2027 deadline
         ("Compliance", "compliance"),
+    ]),
+    ("Operate", [
+        ("Fleet",        "fleet"),      # A5: Grading moved here as a Fleet tab
+        ("Decision",     "decision"),
+        ("Live Monitor", "live_monitor"),
     ]),
     ("Configure", [
         ("Import",    "import"),
@@ -710,7 +709,8 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
 
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                    up_meta: dict | None, sev_n: int = 0,
-                   active_fdfs: dict | None = None) -> str:
+                   active_fdfs: dict | None = None,
+                   traj_flag: int = 0) -> str:  # A4: number of flagged cells
     with st.sidebar:
         # Dynamic subtitle based on active mode
         n_cells = len(cell_ids)
@@ -734,38 +734,87 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             unsafe_allow_html=True,
         )
 
-        # ── Mode switcher ──
-        render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
-
-        # ── Role selector ──
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        # A1: Task picker — replaces top mode switcher as primary nav entry
         st.markdown(
             "<div style='font-size:11px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-            "letter-spacing:0.1em;padding:0 4px 6px'>I am a…</div>",
+            "letter-spacing:0.1em;padding:0 4px 6px'>What do you need today?</div>",
             unsafe_allow_html=True,
         )
-        _role = st.radio(
-            "Role",
-            options=["Engineer", "Fleet Manager", "Executive"],
-            index=["Engineer", "Fleet Manager", "Executive"].index(
-                st.session_state.get("user_role", "Engineer")
-            ),
-            key="role_radio",
-            label_visibility="collapsed",
-            horizontal=False,
-        )
-        if _role != st.session_state.get("user_role"):
-            st.session_state["user_role"] = _role
-            # Default page for each role
-            if _role == "Executive" and st.session_state.get("page") not in ("exec_summary", "fleet", "consequences"):
-                st.session_state.page = "exec_summary"
-            st.rerun()
+        _t1, _t2, _t3 = st.columns(3)
+        with _t1:
+            if st.button("🔍\nMonitor\nfleet", key="task_fleet", use_container_width=True,
+                         help="Open Fleet view — all cells ranked by health"):
+                st.session_state.page = "fleet"
+                st.rerun()
+        with _t2:
+            if st.button("🔬\nCheck\ncell", key="task_cell", use_container_width=True,
+                         help="Open Overview for a specific cell"):
+                st.session_state.page = "overview"
+                st.rerun()
+        with _t3:
+            if st.button("📋\nEU\nPassport", key="task_passport", use_container_width=True,
+                         help="Open EU Battery Passport compliance view"):
+                st.session_state.page = "compliance"
+                st.rerun()
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+        # ── Data source (collapsed by default) ──
+        with st.expander("Data source", expanded=False):
+            render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
+
+        # ── Role selector (A2: compact after onboarding) ──
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        _cur_role = st.session_state.get("user_role", "Engineer")
+        _rc1, _rc2 = st.columns([3, 1])
+        with _rc1:
+            st.markdown(
+                f"<div style='font-size:11px;color:#8896a8;padding:4px 0'>"
+                f"Viewing as: <span style='color:#e2e8f0;font-weight:600'>{_cur_role}</span></div>",
+                unsafe_allow_html=True,
+            )
+        with _rc2:
+            if st.button("Change", key="change_role_btn", use_container_width=True):
+                st.session_state["role_chosen"] = False
+                st.rerun()
+        with st.expander("Switch role", expanded=False):
+            _role = st.radio(
+                "Role",
+                options=["Engineer", "Fleet Manager", "Executive"],
+                index=["Engineer", "Fleet Manager", "Executive"].index(_cur_role),
+                key="role_radio",
+                label_visibility="collapsed",
+                horizontal=False,
+            )
+            if _role != _cur_role:
+                st.session_state["user_role"] = _role
+                st.session_state["role_chosen"] = True
+                if _role == "Executive" and st.session_state.get("page") not in ("exec_summary", "fleet", "consequences"):
+                    st.session_state.page = "exec_summary"
+                st.rerun()
 
         # ── Nav (grouped) ──
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         if "page" not in st.session_state:
             st.session_state.page = "overview"
         current_page = st.session_state.page
+
+        # A4: Persistent trajectory match chip — visible from any page
+        if traj_flag > 0:
+            _chip_col = "#ef4444" if traj_flag >= 2 else "#f59e0b"
+            if st.button(
+                f"⚠ {traj_flag} cell{'s' if traj_flag != 1 else ''} flagged",
+                key="traj_chip_sidebar",
+                use_container_width=True,
+                help="Failure trajectory matches detected — click to view in Fleet",
+            ):
+                st.session_state.page = "fleet"
+                st.rerun()
+            st.markdown(
+                f"<div style='font-size:10px;color:{_chip_col};margin:-6px 0 6px 4px;"
+                f"padding:0 2px'>Failure trajectory match</div>",
+                unsafe_allow_html=True,
+            )
+
         for group_label, group_items in NAV_GROUPS:
             st.markdown(
                 f"<div style='font-size:10px;font-weight:700;color:#4a5568;"
@@ -1127,7 +1176,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                   rul_reliable: bool = True, bundle: dict | None = None,
                   trajectory_memory: "TrajectoryMemory | None" = None):
     _action_bar("overview")
-    st.markdown("# Overview")
+    st.markdown(f"# Is {cell_id} healthy right now?")
 
     _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/computations
     latest         = df.iloc[-1]
@@ -1592,7 +1641,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 bundle: dict = None, rul_reliable: bool = True):
     _action_bar("health")
-    st.markdown("# Health")
+    st.markdown(f"# What is degrading {cell_id}?")
     _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/masks
 
     # ── Data provenance declaration ──────────────────────────────────────────
@@ -3864,7 +3913,7 @@ def page_executive_summary(featured_dfs: dict, bundles: dict):
 
 def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "TrajectoryMemory | None" = None):
     _action_bar("fleet")
-    st.markdown("# Fleet")
+    st.markdown("# Which cells need attention this week?")
 
     # ── Executive summary bar (always visible) ──────────────────────────────
     _fe_rows = []
@@ -3923,6 +3972,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     # ── Build fleet summary row per cell ──
     # Bundle and per-cell reliability lookup is source-aware; uploaded cells use
     # the "upload" bundle, NASA cells the "nasa" bundle, synthetic the "synth" bundle.
+    import numpy as _np_fleet
     rows = []
     _synth_ids = set(CELL_STRESS_PROFILES.keys())
 
@@ -3966,6 +4016,22 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             elif delta_pct < -20:
                 trend = "Decelerating"
 
+        # A5: early-cycle grade (Severson method, first 100 cycles)
+        _early = df[df["cycle_number"] <= 100]
+        if len(_early) >= 20 and "capacity_ah" in _early.columns:
+            _cap0  = float(_early["capacity_ah"].iloc[0])
+            _res0  = max(float(_early["resistance_ohm"].iloc[0]), 1e-6) if "resistance_ohm" in _early.columns else 1e-6
+            _gfade = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
+            _gvar  = float(_early["capacity_ah"].var())
+            _gslope = float(_np_fleet.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0]) if "resistance_ohm" in _early.columns else 0.0
+            _gfp   = _gfade / _cap0 * 100
+            _gcv2  = _gvar / (_cap0 ** 2) * 1e4
+            _grsp  = abs(_gslope) / _res0 * 100
+            _gscore = float(_np_fleet.clip(100 - _gfp * 400 - _gcv2 * 8 - _grsp * 150, 0, 100))
+            _grade  = "A" if _gscore >= 75 else ("B" if _gscore >= 50 else "C")
+        else:
+            _grade  = "—"
+
         rows.append({
             "cell_id":      cell_id,
             "source":       "NASA" if is_nasa else ("Uploaded" if is_upload else "Synthetic"),
@@ -3979,6 +4045,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             "cycles_to_eol": cycles_to_eol,
             "trend":        trend,
             "knee":         knee_result,
+            "grade":        _grade,
         })
 
     # Sort: worst SOH first (most urgent)
@@ -4264,6 +4331,17 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         _empty_state("No cells match your filter", "Adjust the filter criteria above to see results.", "", "🔍")
         return
 
+    _fleet_tab_sel = st.radio(
+        "View",
+        ["Fleet Overview", "Cell Grading"],
+        horizontal=True,
+        key="fleet_tab_radio",
+        label_visibility="collapsed",
+    )
+    if _fleet_tab_sel == "Cell Grading":
+        page_grading(list(featured_dfs.keys()), featured_dfs, bundles, list(featured_dfs.keys())[0])
+        return
+
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
 
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
@@ -4296,6 +4374,11 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             "Decelerating": ("↘",  "#48bb78"),
         }
         trend_icon, trend_colour = TREND_STYLE.get(r["trend"], ("→", "#a0aec0"))
+        GRADE_COLOUR = {"A": "#48bb78", "B": "#ed8936", "C": "#fc8181", "—": "#4a5568"}
+        gc = GRADE_COLOUR.get(r.get("grade", "—"), "#4a5568")
+        grade_html = (
+            f"<span style='font-size:13px;font-weight:700;color:{gc}'>{r.get('grade','—')}</span>"
+        )
 
         table_rows_html += f"""
         <tr style="border-bottom:1px solid #1a202c">
@@ -4324,6 +4407,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             <td style="padding:14px 12px;font-size:12px;color:{'#9f7aea' if r['knee']['detected'] else '#2d3748'}">
                 {'⬡ cy ' + str(r['knee']['cycle']) if r['knee']['detected'] else '—'}
             </td>
+            <td style="padding:14px 12px;text-align:center">{grade_html}</td>
         </tr>
         """
 
@@ -4352,6 +4436,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Trend</th>
                     <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Knee</th>
+                    <th style="padding:10px 12px;text-align:center;font-size:11px;color:#4a5568;
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Grade</th>
                 </tr>
             </thead>
             <tbody>
@@ -5319,8 +5405,7 @@ def page_decision(
     action_label, action_colour, action_bg = ACTION_META[action]
     conf_colour, conf_label = CONF_META[result["confidence"]]
 
-    st.markdown("# Decision")
-    st.markdown(f"##### {selected}")
+    st.markdown(f"# What should I do with {selected}?")
 
     # ── 1. Hero recommendation ──────────────────────────────────────────────
     reason_html = "".join(
@@ -9482,6 +9567,71 @@ def main():
         active_bundle = up_bundle
 
     cell_ids = list(active_fdfs.keys())
+
+    # A2: Role onboarding interstitial — shown once per session
+    if not st.session_state.get("role_chosen", False):
+        st.markdown(
+            "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
+            "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
+            "Welcome to Battery Intelligence</div>"
+            "<div style='font-size:14px;color:#718096;margin-bottom:32px'>"
+            "I'll personalise the dashboard for your role. You can change this any time in Settings.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        _r1, _r2, _r3 = st.columns(3)
+        _role_picked = None
+        with _r1:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>🔧</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Engineer</div>"
+                "<div style='font-size:12px;color:#718096'>Diagnose cells · Deep analytics · Root-cause tools</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select Engineer", key="onboard_eng", use_container_width=True):
+                _role_picked = "Engineer"
+        with _r2:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>🚗</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Fleet Manager</div>"
+                "<div style='font-size:12px;color:#718096'>Monitor fleet · Prioritise replacements · Alerts</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select Fleet Manager", key="onboard_fleet", use_container_width=True):
+                _role_picked = "Fleet Manager"
+        with _r3:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>📊</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Executive</div>"
+                "<div style='font-size:12px;color:#718096'>Fleet KPIs · CAPEX forecast · ESG compliance</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select Executive", key="onboard_exec", use_container_width=True):
+                _role_picked = "Executive"
+        if _role_picked:
+            st.session_state["user_role"] = _role_picked
+            st.session_state["role_chosen"] = True
+            if _role_picked == "Executive":
+                st.session_state.page = "exec_summary"
+            elif _role_picked == "Fleet Manager":
+                st.session_state.page = "fleet"
+            else:
+                st.session_state.page = "overview"
+            st.rerun()
+        st.stop()
+
+    # A4: count flagged cells for trajectory chip in sidebar
+    try:
+        _traj_flag = len(trajectory_memory.match_fleet(active_fdfs))
+    except Exception:
+        _traj_flag = 0
+
     selected = render_sidebar(
         cell_ids    = cell_ids,
         mode        = mode,
@@ -9490,6 +9640,7 @@ def main():
         up_meta     = up_meta,
         sev_n       = len(sev_fdfs),
         active_fdfs = active_fdfs,
+        traj_flag   = _traj_flag,
     )
 
     df          = active_fdfs[selected]
@@ -9533,7 +9684,7 @@ def main():
         page_decision(selected, df, active_fdfs, bundles, rul_reliable)
     elif page in ("compliance", "sustainability", "passport", "reports"):
         _action_bar("compliance")
-        st.markdown("# Compliance")
+        st.markdown(f"# Is {selected} EU passport-ready?")
         st.markdown("##### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
         _tab_passport, _tab_reports, _tab_sus, _tab_reg = st.tabs(
             ["EU Battery Passport", "Reports & Export", "Sustainability", "Regulatory Alerts"]
