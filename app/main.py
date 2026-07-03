@@ -124,25 +124,8 @@ def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
 
 
 def _action_bar(page: str) -> None:
-    """Render a contextual 'From this view you can →' bar at the top of each page.
-
-    Shows up to 3 quick-jump buttons drawn from PAGE_ACTIONS. Clicking any
-    button sets st.session_state.page and reruns — identical to nav buttons.
-    Placed at the very top of each page function, before the page title.
-    """
-    actions = PAGE_ACTIONS.get(page, [])
-    if not actions:
-        return
-    _md_html(
-        "<div style='font-size:11px;color:#4a5568;margin-bottom:6px;"
-        "text-transform:uppercase;letter-spacing:0.07em'>From here →</div>"
-    )
-    _cols = st.columns(len(actions))
-    for col, (btn_label, target_key, tip) in zip(_cols, actions):
-        if col.button(btn_label, key=f"action_{page}_{target_key}",
-                      help=tip, use_container_width=True):
-            st.session_state.page = target_key
-            st.rerun()
+    """Removed — sidebar covers all navigation needs."""
+    pass
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
