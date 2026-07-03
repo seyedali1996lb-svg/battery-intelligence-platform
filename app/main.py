@@ -526,6 +526,7 @@ NAV_GROUPS = [
         ("Copilot",         "copilot"),
     ]),
     ("Operate", [
+        ("Executive Summary", "exec_summary"),
         ("Fleet",           "fleet"),
         ("Recommendations", "recommendations"),
         ("EOL Economics",   "consequences"),
@@ -733,6 +734,30 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
 
         # ── Mode switcher ──
         render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
+
+        # ── Role selector ──
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+            "letter-spacing:0.1em;padding:0 4px 6px'>I am a…</div>",
+            unsafe_allow_html=True,
+        )
+        _role = st.radio(
+            "Role",
+            options=["Engineer", "Fleet Manager", "Executive"],
+            index=["Engineer", "Fleet Manager", "Executive"].index(
+                st.session_state.get("user_role", "Engineer")
+            ),
+            key="role_radio",
+            label_visibility="collapsed",
+            horizontal=False,
+        )
+        if _role != st.session_state.get("user_role"):
+            st.session_state["user_role"] = _role
+            # Default page for each role
+            if _role == "Executive" and st.session_state.get("page") not in ("exec_summary", "fleet", "consequences"):
+                st.session_state.page = "exec_summary"
+            st.rerun()
 
         # ── Nav (grouped) ──
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -3368,6 +3393,161 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# Page: Executive Summary
+# ---------------------------------------------------------------------------
+
+def page_executive_summary(featured_dfs: dict, bundles: dict):
+    from copilot import build_fleet_stats
+
+    st.markdown("# Executive Summary")
+
+    rows = []
+    for cell_id, df in featured_dfs.items():
+        if df is None or df.empty:
+            continue
+        bundle   = bundles.get(cell_id, {})
+        last_row = df.iloc[-1]
+        soh      = float(last_row.get("soh_pct", last_row.get("soh", 100)))
+        fade_30  = float(last_row.get("fade_rate_30cy", 0) or 0)
+        rul      = bundle.get("rul_pred")
+        rows.append({"cell_id": cell_id, "soh": soh, "fade_30": fade_30, "rul": rul})
+
+    if not rows:
+        _empty_state("No cells loaded", "Import data to see the Executive Summary.", "fleet")
+        return
+
+    n          = len(rows)
+    eol_cells  = [r for r in rows if r["soh"] < 80]
+    deg_cells  = [r for r in rows if 80 <= r["soh"] < 90]
+    healthy_n  = n - len(eol_cells) - len(deg_cells)
+
+    # Fleet Health Index — weighted average
+    fleet_score = sum(r["soh"] for r in rows) / n
+
+    _REPLACEMENT_COST_USD = 150
+    _CYCLES_PER_MONTH     = 200
+    _CELL_KWH             = 0.0057
+    _CO2_KG_PER_KWH       = 0.85
+
+    at_risk_cost = (len(eol_cells) + len(deg_cells)) * _REPLACEMENT_COST_USD
+    capex_3m  = len(eol_cells) * _REPLACEMENT_COST_USD
+    capex_12m = (len(eol_cells) + len(deg_cells)) * _REPLACEMENT_COST_USD
+    co2_liability = n * _CELL_KWH * _CO2_KG_PER_KWH * 1000
+
+    # ── Fleet Health Score ──
+    score_color = "#48bb78" if fleet_score >= 90 else ("#ed8936" if fleet_score >= 80 else "#fc8181")
+    st.markdown(
+        f"<div style='text-align:center;padding:24px 0 8px'>"
+        f"<div style='font-size:11px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+        f"letter-spacing:0.1em;margin-bottom:8px'>Fleet Health Score</div>"
+        f"<div style='font-size:72px;font-weight:900;color:{score_color};line-height:1'>"
+        f"{fleet_score:.1f}%</div>"
+        f"<div style='font-size:13px;color:#8896a8;margin-top:6px'>"
+        f"{healthy_n} healthy · {len(deg_cells)} degrading · {len(eol_cells)} end of life"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+
+    # ── KPI row ──
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    with kc1:
+        st.metric("Cells at Risk", f"{len(eol_cells) + len(deg_cells)}", f"of {n} total")
+    with kc2:
+        st.metric("CAPEX (next 3 mo)", f"${capex_3m:,.0f}", f"{len(eol_cells)} replacements")
+    with kc3:
+        st.metric("CAPEX (next 12 mo)", f"${capex_12m:,.0f}", f"{len(eol_cells)+len(deg_cells)} replacements")
+    with kc4:
+        st.metric("CO₂ Liability", f"{co2_liability:.0f} kg", "fleet embodied carbon")
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+
+    # ── Top alerts ──
+    alerts = []
+    for r in sorted(eol_cells, key=lambda x: x["soh"])[:3]:
+        alerts.append(f"🔴 **{r['cell_id']}** — {r['soh']:.1f}% SOH. Replace immediately.")
+    for r in sorted(deg_cells, key=lambda x: x["soh"])[:3]:
+        if len(alerts) < 5:
+            alerts.append(f"🟡 **{r['cell_id']}** — {r['soh']:.1f}% SOH. Plan replacement within 12 months.")
+
+    if alerts:
+        st.markdown("### Top Alerts")
+        for a in alerts:
+            st.markdown(a)
+    else:
+        st.success("All cells are healthy. No immediate action required.")
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+
+    # ── Recommended actions ──
+    st.markdown("### Recommended Actions")
+    _ac1, _ac2 = st.columns(2)
+    with _ac1:
+        if eol_cells:
+            st.error(f"Replace {len(eol_cells)} cell{'s' if len(eol_cells)!=1 else ''} now — below 80% SOH.")
+        if deg_cells:
+            st.warning(f"Schedule replacement for {len(deg_cells)} degrading cell{'s' if len(deg_cells)!=1 else ''} within 12 months.")
+        if not eol_cells and not deg_cells:
+            st.success("No replacements needed in the next 12 months.")
+    with _ac2:
+        if st.button("Open Copilot — business questions", key="exec_copilot_btn"):
+            st.session_state.page = "copilot"
+            st.session_state.copilot_query = "fleet_risk"
+            st.rerun()
+        if st.button("View Full Fleet", key="exec_fleet_btn"):
+            st.session_state.page = "fleet"
+            st.rerun()
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+
+    # ── Export one-page PDF ──
+    with st.expander("Export as PDF", expanded=False):
+        try:
+            from reportlab.lib.pagesizes import A4
+            from reportlab.pdfgen import canvas as rl_canvas
+            import io as _io
+
+            buf = _io.BytesIO()
+            c   = rl_canvas.Canvas(buf, pagesize=A4)
+            w, h = A4
+
+            c.setFont("Helvetica-Bold", 18)
+            c.drawString(40, h - 50, "Executive Summary — Battery Intel")
+
+            c.setFont("Helvetica", 11)
+            c.drawString(40, h - 80, f"Fleet Health Score: {fleet_score:.1f}%")
+            c.drawString(40, h - 96, f"Cells: {healthy_n} healthy · {len(deg_cells)} degrading · {len(eol_cells)} end of life")
+            c.drawString(40, h - 120, f"CAPEX next 12 months: ${capex_12m:,.0f}")
+            c.drawString(40, h - 136, f"CO2 liability: {co2_liability:.0f} kg embodied carbon")
+
+            y = h - 168
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(40, y, "Top Alerts")
+            c.setFont("Helvetica", 10)
+            y -= 18
+            for a in alerts[:5]:
+                # Strip markdown formatting for PDF
+                clean = a.replace("**", "").replace("🔴 ", "CRITICAL: ").replace("🟡 ", "WARNING: ")
+                c.drawString(40, y, clean[:95])
+                y -= 16
+
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawString(40, 30, f"Generated by Battery Intel · {datetime.date.today().isoformat()}")
+            c.save()
+            buf.seek(0)
+
+            st.download_button(
+                "Download Executive Summary PDF",
+                data=buf,
+                file_name=f"battery_exec_summary_{datetime.date.today().isoformat()}.pdf",
+                mime="application/pdf",
+            )
+        except Exception as _e:
+            st.info(f"PDF export unavailable: {_e}")
+
+
+# ---------------------------------------------------------------------------
 # Page: Fleet
 # ---------------------------------------------------------------------------
 
@@ -4293,6 +4473,9 @@ def page_copilot(
         answer_recent_trajectory,
         answer_fleet_compare,
         answer_alerts,
+        answer_replacement_budget,
+        answer_fleet_risk,
+        answer_business_case,
         QUERY_LABELS,
         FOLLOW_UP_MAP,
     )
@@ -4330,6 +4513,17 @@ def page_copilot(
     _qbtn("fleet_compare", r2c3)
     _qbtn("alerts",        r2c4)
 
+    # ── Row 3: business questions ──
+    st.markdown(
+        "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.1em;padding:14px 0 6px'>Business Questions</div>",
+        unsafe_allow_html=True,
+    )
+    r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+    _qbtn("replacement_budget", r3c1)
+    _qbtn("fleet_risk",         r3c2)
+    _qbtn("business_case",      r3c3)
+
     if not query:
         st.markdown(
             "<div style='text-align:center;padding:56px 24px;color:#4a5568;font-size:14px'>"
@@ -4344,7 +4538,7 @@ def page_copilot(
     fleet_stats = build_fleet_stats(featured_dfs, bundles)
 
     # ── Build context for the selected cell (not needed for fleet-only queries) ──
-    fleet_only = (query == "alerts")
+    fleet_only = query in ("alerts", "replacement_budget", "fleet_risk")
     ctx        = None if fleet_only else build_cell_context(selected, featured_dfs, bundles)
     contexts   = []
 
@@ -4385,6 +4579,15 @@ def page_copilot(
     elif query == "alerts":
         response = answer_alerts(fleet_stats)
         contexts = []
+    elif query == "replacement_budget":
+        response = answer_replacement_budget(fleet_stats)
+        contexts = []
+    elif query == "fleet_risk":
+        response = answer_fleet_risk(fleet_stats)
+        contexts = []
+    elif query == "business_case":
+        response = answer_business_case(ctx, fleet_stats)
+        contexts = [ctx]
     else:
         response = f"Unknown query: {query}"
         contexts = []
@@ -8130,6 +8333,8 @@ def main():
             page_passport(selected, df, bundle, rul_reliable)
         with _tab_reports:
             page_reports(selected, df, bundle, rul_reliable)
+    elif page == "exec_summary":
+        page_executive_summary(active_fdfs, bundles)
     elif page == "fleet":
         page_fleet(active_fdfs, bundles)
     elif page == "grading":

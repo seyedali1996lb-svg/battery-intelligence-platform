@@ -43,27 +43,34 @@ from copilot_templates import TEMPLATES as _T
 # ---------------------------------------------------------------------------
 
 QUERY_LABELS: dict[str, str] = {
-    "health":        "What is this cell's health?",
-    "drivers":       "Why does the model predict this SOH?",
-    "rul":           "How much life is left?",
-    "compare":       "Compare to another cell",
-    "recent":        "What happened in the last 20 cycles?",
-    "anomaly":       "Is this cell behaving unusually?",
-    "fleet_compare": "How does this cell rank in the fleet?",
-    "alerts":        "Fleet alert summary",
+    "health":              "What is this cell's health?",
+    "drivers":             "Why does the model predict this SOH?",
+    "rul":                 "How much life is left?",
+    "compare":             "Compare to another cell",
+    "recent":              "What happened in the last 20 cycles?",
+    "anomaly":             "Is this cell behaving unusually?",
+    "fleet_compare":       "How does this cell rank in the fleet?",
+    "alerts":              "Fleet alert summary",
+    # Business queries
+    "replacement_budget":  "What will replacement cost over the next 12 months?",
+    "fleet_risk":          "What is the business risk in my fleet?",
+    "business_case":       "Should I replace or repurpose these cells?",
 }
 
 # Suggested follow-up queries after each answer — cell-agnostic queries like
 # "alerts" only appear as follow-ups, not as mandatory first choices.
 FOLLOW_UP_MAP: dict[str, list[str]] = {
-    "health":        ["drivers", "recent",        "fleet_compare"],
-    "drivers":       ["health",  "anomaly",        "recent"],
-    "rul":           ["health",  "fleet_compare",  "compare"],
-    "compare":       ["health",  "fleet_compare",  "rul"],
-    "recent":        ["anomaly", "drivers",         "rul"],
-    "anomaly":       ["recent",  "drivers",         "fleet_compare"],
-    "fleet_compare": ["health",  "rul",             "anomaly"],
-    "alerts":        ["fleet_compare", "health",   "rul"],
+    "health":             ["drivers", "recent",        "fleet_compare"],
+    "drivers":            ["health",  "anomaly",        "recent"],
+    "rul":                ["health",  "fleet_compare",  "compare"],
+    "compare":            ["health",  "fleet_compare",  "rul"],
+    "recent":             ["anomaly", "drivers",         "rul"],
+    "anomaly":            ["recent",  "drivers",         "fleet_compare"],
+    "fleet_compare":      ["health",  "rul",             "anomaly"],
+    "alerts":             ["fleet_compare", "health",   "rul"],
+    "replacement_budget": ["fleet_risk", "business_case", "alerts"],
+    "fleet_risk":         ["replacement_budget", "business_case", "alerts"],
+    "business_case":      ["replacement_budget", "fleet_risk", "rul"],
 }
 
 # ---------------------------------------------------------------------------
@@ -920,4 +927,166 @@ def answer_alerts(fleet_stats: dict) -> str:
         "n_eol": len(eol), "n_deg": len(degrading), "n_healthy": healthy,
     }))
 
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Business-surface answers (plain English, no technical jargon)
+# ---------------------------------------------------------------------------
+
+_REPLACEMENT_COST_USD = 150   # per cell — matches Executive Dashboard constant
+_CYCLES_PER_MONTH     = 200
+_CELL_KWH             = 0.0057
+_CO2_KG_PER_KWH       = 0.85
+
+
+def answer_replacement_budget(fleet_stats: dict) -> str:
+    """Plain-English 12-month replacement cost forecast."""
+    eol       = fleet_stats["eol_cells"]
+    degrading = fleet_stats["degrading_cells"]
+    n         = fleet_stats["n_cells"]
+
+    # Cells needing replacement now (EOL) + likely to need it within 12 months
+    # (degrading cells — conservative assumption: half reach EOL within a year)
+    certain_now   = len(eol)
+    likely_12m    = len(degrading)
+    total_replace = certain_now + likely_12m
+
+    cost_now  = certain_now   * _REPLACEMENT_COST_USD
+    cost_12m  = total_replace * _REPLACEMENT_COST_USD
+
+    lines = [
+        f"## 12-Month Replacement Budget\n",
+        f"Based on the current health of your **{n} cells**, here is the spending outlook:\n",
+        f"- **Immediate replacements needed:** {certain_now} cell{'s' if certain_now != 1 else ''} "
+        f"are below 80% SOH (end of life). Cost: **${cost_now:,.0f}**",
+        f"- **Within 12 months:** a further {likely_12m} cell{'s' if likely_12m != 1 else ''} "
+        f"{'are' if likely_12m != 1 else 'is'} degrading and likely to reach end of life. "
+        f"Combined budget: **${cost_12m:,.0f}**",
+        f"- **Best case:** if degrading cells stabilise, minimum spend is **${cost_now:,.0f}**",
+        f"\n*Estimate uses ${_REPLACEMENT_COST_USD}/cell. Adjust in Settings for your actual unit cost.*",
+    ]
+
+    if total_replace == 0:
+        lines = [
+            f"## 12-Month Replacement Budget\n",
+            f"Good news — all **{n} cells** are currently healthy (above 90% SOH). "
+            f"No replacements are expected within the next 12 months based on current trends.\n",
+            f"*If conditions change, re-check this estimate quarterly.*",
+        ]
+
+    return "\n".join(lines)
+
+
+def answer_fleet_risk(fleet_stats: dict) -> str:
+    """Plain-English fleet risk assessment for business stakeholders."""
+    eol        = fleet_stats["eol_cells"]
+    degrading  = fleet_stats["degrading_cells"]
+    unreliable = fleet_stats["unreliable_rul"]
+    n          = fleet_stats["n_cells"]
+    fastest    = fleet_stats["sorted_by_fade"][:3]
+
+    at_risk = len(eol) + len(degrading)
+    pct     = 100 * at_risk / max(n, 1)
+
+    if pct >= 30:
+        risk_level, risk_color = "HIGH", "critical"
+    elif pct >= 10:
+        risk_level, risk_color = "MEDIUM", "moderate"
+    else:
+        risk_level, risk_color = "LOW", "low"
+
+    lines = [
+        f"## Fleet Business Risk Assessment\n",
+        f"**Overall risk: {risk_level}** — {at_risk} of {n} cells ({pct:.0f}%) "
+        f"are at or approaching end of life.\n",
+    ]
+
+    if eol:
+        lines.append(
+            f"**Operational risk:** {len(eol)} cell{'s' if len(eol)!=1 else ''} "
+            f"({', '.join(eol[:5])}{', …' if len(eol)>5 else ''}) have already passed "
+            f"the 80% SOH threshold. Continuing to operate these increases the risk of "
+            f"in-service failure and may void warranty or compliance coverage."
+        )
+
+    if degrading:
+        lines.append(
+            f"\n**Near-term risk:** {len(degrading)} cell{'s' if len(degrading)!=1 else ''} "
+            f"are in the 80–90% SOH range and degrading. These may not survive another "
+            f"full operational cycle without dropping below the safety threshold."
+        )
+
+    lines.append(f"\n**Top 3 fastest-degrading cells:**")
+    for r in fastest:
+        lines.append(
+            f"- **{r['cell_id']}**: losing {r['fade_30']:.2f} mAh per cycle "
+            f"(currently {r['soh']:.1f}% SOH)"
+        )
+
+    if unreliable:
+        lines.append(
+            f"\n**Forecast uncertainty:** RUL predictions for "
+            f"{', '.join(f'**{c}**' for c in unreliable[:3])}"
+            f"{'…' if len(unreliable)>3 else ''} are based on limited data. "
+            f"Treat these as directional rather than precise."
+        )
+
+    lines.append(
+        f"\n*Replacement cost exposure: **${at_risk * _REPLACEMENT_COST_USD:,.0f}** "
+        f"(${_REPLACEMENT_COST_USD}/cell × {at_risk} at-risk cells).*"
+    )
+
+    return "\n".join(lines)
+
+
+def answer_business_case(ctx: dict, fleet_stats: dict) -> str:
+    """Replace vs. wait vs. repurpose decision in plain English."""
+    cell_id  = ctx["cell_id"]
+    soh      = ctx["soh"]
+    rul      = ctx.get("rul_cycles")
+    reliable = ctx.get("rul_reliable", False)
+
+    months_left = (rul / _CYCLES_PER_MONTH) if (rul and reliable) else None
+
+    replace_cost    = _REPLACEMENT_COST_USD
+    repurpose_value = round(replace_cost * 0.35)   # ~35% of new cost for second-life
+    wait_penalty    = round(replace_cost * 0.15)   # risk premium for unplanned failure
+
+    lines = [f"## Replace or Repurpose? — {cell_id}\n"]
+
+    if soh >= 90:
+        lines += [
+            f"**Recommendation: Wait** — {cell_id} is healthy at {soh:.1f}% SOH.\n",
+            f"No action needed now. Continue normal monitoring and revisit when SOH drops below 85%.",
+        ]
+    elif soh >= 80:
+        lines += [
+            f"**Recommendation: Plan replacement** — {cell_id} is degrading at {soh:.1f}% SOH.\n",
+        ]
+        if months_left:
+            lines.append(
+                f"At the current fade rate, estimated **{months_left:.0f} months** of useful life remain. "
+                f"Schedule replacement before the next major operational cycle to avoid unplanned downtime."
+            )
+        lines += [
+            f"\n**Option A — Replace now:** ${replace_cost} upfront. Eliminates unplanned failure risk.",
+            f"**Option B — Wait:** saves cash short-term but carries ~${wait_penalty} risk premium "
+            f"if the cell fails in service.",
+            f"**Option C — Repurpose:** second-life use (e.g. stationary storage) could recover "
+            f"~${repurpose_value} in residual value if the application tolerates lower capacity.",
+        ]
+    else:
+        lines += [
+            f"**Recommendation: Replace immediately** — {cell_id} is at {soh:.1f}% SOH, "
+            f"below the 80% end-of-life threshold.\n",
+            f"Continuing operation risks in-service failure and may breach IEC 62619 safety limits.",
+            f"\n**Replace:** ${replace_cost}. At this SOH, repurposing is marginal — "
+            f"second-life value is approximately ${repurpose_value}, but remaining capacity "
+            f"limits viable applications.",
+        ]
+
+    lines.append(
+        f"\n*All figures use ${_REPLACEMENT_COST_USD}/cell default. Update in Settings.*"
+    )
     return "\n".join(lines)
