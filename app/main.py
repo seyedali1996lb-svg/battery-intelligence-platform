@@ -14,6 +14,7 @@ be run once to populate data/raw/ before the app starts.
 
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
