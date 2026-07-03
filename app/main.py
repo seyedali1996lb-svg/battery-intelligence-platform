@@ -2270,22 +2270,168 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             )
             st.plotly_chart(_fig_pb, use_container_width=True)
 
-            # ── Interpretation note ──
-            _diff_pct = ((_rul_ph or 0) - (float(latest.get("rul_pred", _rul_ph or 0)) if hasattr(latest, "get") else float(latest["rul_pred"]) if "rul_pred" in latest.index else (_rul_ph or 0)))
-            _interp = (
-                "Physics and ML estimates agree within 10%." if abs(_diff_pct) < 0.1 * (_rul_ph or 1)
-                else f"Physics estimate is {'longer' if _diff_pct > 0 else 'shorter'} than ML by "
-                     f"{abs(_diff_pct):.0f} cycles — likely because the √n SEI model "
-                     f"{'predicts deceleration in fade rate' if _diff_pct > 0 else 'predicts accelerating degradation'} "
-                     f"beyond the training window."
-            )
+            # ── Model comparison diagnostic ───────────────────────────────
+            # Pull GBRT RUL prediction for this cell if available
+            _rul_ml = None
+            if "rul_pred" in latest.index:
+                _v = latest["rul_pred"]
+                if _v == _v and _v is not None:   # not NaN
+                    _rul_ml = int(float(_v))
+
+            _rul_ph_val = _rul_ph or 0
+            _rul_diff   = _rul_ph_val - (_rul_ml or _rul_ph_val)
+            _rul_diff_pct = abs(_rul_diff) / max(_rul_ph_val, 1) * 100
+
+            # Determine cell life regime from fade trajectory
+            _fade_30_val  = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else 0
+            _fade_50_val  = float(latest["fade_rate_50cy"]) if "fade_rate_50cy" in latest.index else 0
+            _fade_accel   = (_fade_30_val - _fade_50_val) / max(_fade_50_val, 1e-9)
+            _knee_detected = knee.get("detected", False) if isinstance(knee, dict) else False
+
+            if current_soh >= 90:
+                _regime = "early"
+                _regime_label = "Early life (SOH ≥ 90%)"
+            elif _knee_detected or _fade_accel > 0.25:
+                _regime = "post_knee"
+                _regime_label = "Post-knee / accelerating fade"
+            elif current_soh >= 80:
+                _regime = "mid"
+                _regime_label = "Mid life (80–90% SOH)"
+            else:
+                _regime = "late"
+                _regime_label = "Late life (SOH < 80%)"
+
+            # Build physics model explanation
+            _phys_explain = {
+                "early": (
+                    f"At {current_soh:.1f}% SOH the cell is still in early life. "
+                    f"SEI growth is diffusion-limited — the rate of Li inventory loss slows as "
+                    f"1/(2√n) because the SEI layer itself impedes further electrolyte reduction. "
+                    f"With β = {_pb['beta']:.5f}, the model predicts the fade rate will "
+                    f"<strong style='color:#68d391'>continue to decelerate</strong>. "
+                    f"This is the regime where the √n model is most physically accurate."
+                ),
+                "mid": (
+                    f"At {current_soh:.1f}% SOH the cell is in mid life — the √n model is a "
+                    f"reasonable approximation but the SEI layer is now thick enough that "
+                    f"secondary mechanisms (electrolyte depletion, active material loss) "
+                    f"may be starting to contribute. β = {_pb['beta']:.5f} was fitted to the "
+                    f"full measured history; if fade has been <em>accelerating recently</em>, "
+                    f"this β underestimates future loss."
+                ),
+                "post_knee": (
+                    f"The cell has passed its knee point (or 30-cycle fade rate exceeds "
+                    f"50-cycle rate by >{_fade_accel*100:.0f}%). The √n SEI model "
+                    f"<strong style='color:#fc8181'>does not capture this acceleration</strong> — "
+                    f"SEI-only models have no mechanism for lithium plating, particle cracking, "
+                    f"or electrolyte depletion, all of which cause superlinear fade. "
+                    f"β = {_pb['beta']:.5f} was fitted to the full history including early slow fade, "
+                    f"so the physics projection will be <strong style='color:#fc8181'>over-optimistic</strong>."
+                ),
+                "late": (
+                    f"At {current_soh:.1f}% SOH the cell is in late life. The SEI model "
+                    f"(β = {_pb['beta']:.5f}) was calibrated on the full cycle history, but "
+                    f"late-life degradation is typically dominated by particle cracking and "
+                    f"electrolyte depletion — neither appears in the SPM. "
+                    f"The physics projection should be treated as an <em>optimistic bound</em> only."
+                ),
+            }[_regime]
+
+            # Build ML model explanation
+            _ml_explain = (
+                f"The GBRT model extrapolates the <strong>current 50-cycle rolling fade rate "
+                f"({_fade_50_val*1000:.3f} mSOH/cy)</strong> forward linearly. "
+                f"It learned from {'{}'} cells under leave-cell-out validation, so it captures "
+                f"population-level degradation patterns — but it has no electrochemical mechanism. "
+                f"Linear extrapolation overestimates remaining life in early aging (fade is still "
+                f"decelerating) and may underestimate it mid-life if the current window happens to "
+                f"fall on a temporary rough patch."
+            ).format(len(active_fdfs) if active_fdfs else "N")
+
+            # Build divergence explanation
+            if _rul_ml is None:
+                _div_explain = (
+                    "ML RUL was not available for this cell (reliability gate not met or "
+                    "model not calibrated). Physics-only estimate shown."
+                )
+                _div_colour = "#718096"
+            elif _rul_diff_pct < 10:
+                _div_explain = (
+                    f"The two estimates agree within {_rul_diff_pct:.0f}% "
+                    f"({_rul_ph_val} vs {_rul_ml} cycles). "
+                    f"This is expected in mid life when the √n curve is approximately linear "
+                    f"over short windows. <strong style='color:#68d391'>High confidence "
+                    f"in the {_rul_ph_val}-cycle estimate.</strong>"
+                )
+                _div_colour = "#68d391"
+            elif _rul_diff > 0:
+                _div_explain = (
+                    f"Physics estimates <strong style='color:#68d391'>{_rul_ph_val} cycles</strong> "
+                    f"vs ML <strong style='color:#f6ad55'>{_rul_ml} cycles</strong> "
+                    f"— physics is more optimistic by {_rul_diff} cycles ({_rul_diff_pct:.0f}%). "
+                    + (
+                        "In early life this is expected: the √n model predicts ongoing deceleration "
+                        "that the linear GBRT cannot see. <strong>Use the physics estimate with caution "
+                        "until fade stabilises.</strong>"
+                        if _regime == "early" else
+                        "This divergence in mid-to-late life may indicate the GBRT is "
+                        "over-weighting a recent high-fade window. "
+                        "<strong>Conservative engineering decision: use the ML (lower) estimate.</strong>"
+                    )
+                )
+                _div_colour = "#f6ad55"
+            else:
+                _div_explain = (
+                    f"ML estimates <strong style='color:#68d391'>{_rul_ml} cycles</strong> "
+                    f"vs physics <strong style='color:#fc8181'>{_rul_ph_val} cycles</strong> "
+                    f"— ML is more optimistic by {-_rul_diff} cycles ({_rul_diff_pct:.0f}%). "
+                    + (
+                        "Post-knee, the √n model's fitted β was anchored to early slow fade "
+                        "and is now over-projecting. The GBRT is responding to the recent "
+                        "acceleration. <strong style='color:#fc8181'>Use the ML (lower) estimate "
+                        "— the physics model is not capturing the acceleration mechanism.</strong>"
+                        if _regime == "post_knee" else
+                        "The SEI model predicts faster fade than the current GBRT window. "
+                        "Worth investigating whether recent cycles show a change in operating "
+                        "conditions (temperature, C-rate, depth of discharge)."
+                    )
+                )
+                _div_colour = "#fc8181"
+
+            # Render 3-section card
             _md_html(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
-                f"padding:12px 16px;font-size:12px;color:#a0aec0;margin-top:4px'>"
-                f"<strong style='color:#e2e8f0'>Interpretation:</strong> {_interp} "
-                f"The physics model uses {_pb['chem_label']} electrochemical parameters from "
-                f"PyBaMM's built-in library — no fitting to this specific cell's internal "
-                f"geometry. Beta ({_pb['beta']:.5f}) is derived from the measured fade history."
+                f"<div style='background:#111827;border:1px solid #2d3748;border-radius:10px;"
+                f"padding:18px 20px;margin-top:8px;font-size:12px;line-height:1.7'>"
+
+                # Section A — Physics model
+                f"<div style='margin-bottom:14px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#68d391;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:5px'>⚛ PyBaMM SPM · SEI Growth Model</div>"
+                f"<div style='color:#a0aec0'>{_phys_explain}</div>"
+                f"<div style='color:#4a5568;font-size:11px;margin-top:4px'>"
+                f"Parameter set: {_pb['chem_label']} &nbsp;·&nbsp; "
+                f"β = {_pb['beta']:.5f} &nbsp;·&nbsp; "
+                f"Nominal capacity (SPM): {_pb['spm_capacity_ah']:.3f} Ah"
+                f"</div></div>"
+
+                # Section B — ML model
+                f"<div style='border-top:1px solid #1e2a38;padding-top:12px;margin-bottom:14px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#f6ad55;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:5px'>📊 GBRT · Linear Extrapolation</div>"
+                f"<div style='color:#a0aec0'>{_ml_explain}</div>"
+                f"<div style='color:#4a5568;font-size:11px;margin-top:4px'>"
+                f"Current fade rate: {_fade_50_val*1000:.3f} mSOH/cy (50-cy rolling) &nbsp;·&nbsp; "
+                f"Regime: {_regime_label}"
+                f"</div></div>"
+
+                # Section C — Divergence verdict
+                f"<div style='border-top:1px solid #1e2a38;padding-top:12px;"
+                f"background:{_div_colour}0d;border-radius:6px;padding:12px 14px;margin-top:2px'>"
+                f"<div style='font-size:10px;font-weight:700;color:{_div_colour};text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:5px'>⚖ Why They Disagree</div>"
+                f"<div style='color:#a0aec0'>{_div_explain}</div>"
+                f"</div>"
+
                 f"</div>"
             )
 
