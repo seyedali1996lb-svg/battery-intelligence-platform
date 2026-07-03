@@ -9,3 +9,5 @@ shap>=0.44.0
 anthropic
 pybamm
 paho-mqtt
+fastapi[standard]
+uvicorn

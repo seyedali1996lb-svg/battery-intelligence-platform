@@ -2025,7 +2025,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
                 st.plotly_chart(fig_fwhm, use_container_width=True)
 
             # ── ⚗️ Degradation Mechanism Interpretation ──
-            st.markdown("<div class='section-header'>⚗️ Degradation Mechanism Interpretation</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-header'>Degradation Mechanism Interpretation</div>", unsafe_allow_html=True)
             if all(c in df.columns for c in ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_fwhm"]):
                 import numpy as _np2
                 early_mech = df[df.cycle_number <= df.cycle_number.quantile(0.10)]
@@ -3166,7 +3166,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
     st.plotly_chart(fig2, use_container_width=True)
 
     # ── 🌡️ Temperature–Degradation Analysis (Arrhenius) ──
-    st.markdown("<div class='section-header'>🌡️ Temperature–Degradation Analysis (Arrhenius)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Temperature–Degradation Analysis (Arrhenius)</div>", unsafe_allow_html=True)
     _afdfs = active_fdfs if active_fdfs is not None else {}
     if len(_afdfs) <= 1:
         st.info("Select multiple cells to enable cross-cell temperature analysis.")
@@ -3624,7 +3624,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         _SEV_COLOR = {"critical": "#fc8181", "high": "#f6ad55", "medium": "#f6e05e"}
         _SEV_ICON  = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
         _alerts.sort(key=lambda a: _SEV_ORDER[a["severity"]])
-        st.markdown(f"<div class='section-header'>🔔 Alert Inbox — {len(_alerts)} Active</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='section-header'>Alert Inbox — {len(_alerts)} Active</div>", unsafe_allow_html=True)
         _alert_html = ""
         for _al in _alerts:
             _sc = _SEV_COLOR[_al["severity"]]
@@ -3909,7 +3909,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
 
     # ── Cell-to-Cell Spread Trending ────────────────────────────────────────
-    st.markdown("<div class='section-header'>📉 Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)
     _md_html("""<div style="font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
     try:
         import numpy as _np_sp
@@ -4248,7 +4248,7 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         )
 
     # ── 🚨 Anomaly Alert History Log ─────────────────────────────────────────
-    st.markdown("<div class='section-header'>🚨 Anomaly Alert History</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Anomaly Alert History</div>", unsafe_allow_html=True)
     _anom_log = []
     for _cid, _fdf in featured_dfs.items():
         if "capacity_anomaly" in _fdf.columns:
@@ -5270,7 +5270,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
 
     # ── M2: Scheduled Report Configuration ──────────────────────────────────
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-header'>📅 Scheduled Reports</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Scheduled Reports</div>", unsafe_allow_html=True)
     _md_html(
         "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:16px 20px;margin-bottom:16px'>"
         "<div style='font-size:12px;color:#8896a8;line-height:1.65'>"
@@ -5347,7 +5347,7 @@ def page_recommendations(
     st.markdown(f"##### Decision summary · {selected}")
 
     # ── Maintenance Calendar ──
-    st.markdown("<div class='section-header'>📅 Maintenance Calendar</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Maintenance Calendar</div>", unsafe_allow_html=True)
     _eol_threshold = float(st.session_state.get("eol_threshold_pct", 80.0))
     _current_soh = float(df["soh_pct"].iloc[-1])
     _fade_per_cycle_pct = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
@@ -5475,7 +5475,7 @@ def page_recommendations(
                                key="rec_export_log")
 
     # ── 🔋 SoC Window Recommendation ─────────────────────────────────────────
-    st.markdown("<div class='section-header'>🔋 Optimal Charging Window (SoC)</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Optimal Charging Window (SoC)</div>", unsafe_allow_html=True)
     _fade_pct_cy = fade_30 * 100  # approximate % fade per cycle
     # Determine recommended window (Tesla adaptive charging logic)
     if soh >= 95 and _fade_pct_cy < 0.02:
@@ -5524,7 +5524,7 @@ def page_recommendations(
     _md_html(f"<div style='font-size:12px;color:#8896a8;margin:8px 0 4px;padding:10px 14px;background:#1e2a38;border-radius:8px;border-left:3px solid {_soc_colour}'><strong style='color:{_soc_colour}'>{_soc_label}</strong> — {_soc_reason}</div>")
 
     # ── ⚠️ Thermal Runaway Risk Proxy ─────────────────────────────────────────
-    st.markdown("<div class='section-header'>⚠️ Thermal Runaway Risk Proxy</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>Thermal Runaway Risk Proxy</div>", unsafe_allow_html=True)
     _md_html(provenance_banner(
         "simulated" if selected in NASA_CELL_IDS else "synthetic",
         "<strong>NOT a certified safety assessment.</strong> "
@@ -7376,7 +7376,7 @@ def page_import():
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     _action_bar("compare")
-    st.markdown("# ⚖️ Cell Comparison")
+    st.markdown("# Cell Comparison")
 
     if len(cell_ids) < 2:
         st.warning("Comparison requires at least 2 cells in the active fleet.")
@@ -7740,7 +7740,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
 def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _action_bar("live_monitor")
-    st.markdown("# 📡 Live Monitor")
+    st.markdown("# Live Monitor")
 
     import sys as _sys_lm
     _src_lm = os.path.join(os.path.dirname(__file__), "..", "src")
