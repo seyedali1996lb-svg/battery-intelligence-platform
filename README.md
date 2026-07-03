@@ -1,6 +1,6 @@
 # Battery Intelligence Platform
 
-A battery health monitoring and prediction platform built with scikit-learn and Streamlit. Tracks State of Health (SOH) and predicts Remaining Useful Life (RUL) for lithium-ion cells — validated on real NASA PCoE and Severson 2019 LFP battery aging datasets — with physics-based RUL projection via PyBaMM, live BMS streaming over MQTT, a FastAPI REST layer for system integration, and an AI Copilot that explains every number without inventing anything outside the validated model outputs.
+A battery health monitoring and prediction platform built with scikit-learn and Streamlit. Tracks State of Health (SOH) and predicts Remaining Useful Life (RUL) for lithium-ion cells — validated on real NASA PCoE and Severson 2019 LFP battery aging datasets — with physics-based RUL projection via PyBaMM, live BMS streaming over MQTT, a FastAPI REST layer for system integration, and an AI Copilot that explains every number without inventing anything outside the validated model outputs. Role-aware interface (Engineer / Fleet Manager / Executive) surfaces the right depth for each audience, including a one-screen Executive Summary with CAPEX outlook and PDF export.
 
 **[Live demo →](https://battery-intelligence-platform-sszs92zbkfvfcda3ajtlk7.streamlit.app)**
 
@@ -8,12 +8,12 @@ A battery health monitoring and prediction platform built with scikit-learn and 
 
 ## What it does
 
-Fifteen pages across four workflow groups:
+Sixteen pages across four workflow groups:
 
 | Group | Pages | What it covers |
 |---|---|---|
-| **Analyse** | Import, Overview, Health, Compare, Insights, Copilot | Upload data; SOH hero card, RUL with Q10/Q90 band, knee detection; degradation curves, LLI/LAM classifier, dQ/dV, resistance proxy, PyBaMM projection; side-by-side comparison, clustering; SHAP attribution; AI narrative |
-| **Operate** | Fleet, Recommendations, EOL Economics, Grading, Live Monitor | Executive dashboard + alert inbox; maintenance calendar, NPV scenario planner; second-life economics; A/B/C/D grading; real-time MQTT telemetry with anomaly detection |
+| **Analyse** | Import, Overview, Health, Compare, Insights, Copilot | Upload data; SOH hero card, RUL with Q10/Q90 band, knee detection; degradation curves, LLI/LAM classifier, dQ/dV, resistance proxy, PyBaMM projection; side-by-side comparison, clustering; SHAP attribution; plain-English + business-language Copilot (11 query types) |
+| **Operate** | Executive Summary, Fleet, Recommendations, EOL Economics, Grading, Live Monitor | Single-screen business view (fleet health score, CAPEX outlook, top alerts, PDF export); executive dashboard + alert inbox; maintenance calendar, NPV scenario planner; second-life economics; A/B/C/D grading; real-time MQTT telemetry with anomaly detection |
 | **Comply** | Compliance, Sustainability | EU Battery Regulation 2023/1542 passport, PDF export, scheduled reports; lifecycle CO₂, critical material tracker |
 | **Configure** | Settings | Application profile (EV/Stationary/UPS/Second-Life), EOL threshold, cost-of-delay multiplier, CRM wt% values, LCO fold R² table |
 
