@@ -5486,13 +5486,15 @@ def page_decision(
                     f"</div>"
                 )
 
-    st.caption(
+    st.markdown(
+        f"<p style='font-size:11px;color:#718096;line-height:1.6;margin:4px 0 0'>"
         f"5-yr NPV · {_npv_rate*100:.0f}% discount rate [WACC assumption, adjust in Scenario Planner] · "
-        f"$80/kWh·yr energy value [" + make_badge("Illustrative", "#718096") + " IEA 2024 LCOS range $60–140/kWh·yr] · "
-        f"${_repl_cost:.0f}/cell replacement [" + make_badge("Illustrative", "#718096") + " BNEF 2024 range $100–200/cell] · "
-        f"${_repack:.0f} repack cost [" + make_badge("Illustrative", "#718096") + " engineering estimate]. "
-        "Use the NPV Scenario Planner below to adjust assumptions — not financial advice."
-    , unsafe_allow_html=True)
+        f"$80/kWh·yr energy value [{make_badge('Illustrative', '#718096')} IEA 2024 LCOS range $60–140/kWh·yr] · "
+        f"${_repl_cost:.0f}/cell replacement [{make_badge('Illustrative', '#718096')} BNEF 2024 range $100–200/cell] · "
+        f"${_repack:.0f} repack cost [{make_badge('Illustrative', '#718096')} engineering estimate]. "
+        f"Use the NPV Scenario Planner below to adjust assumptions — not financial advice.</p>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
