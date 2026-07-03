@@ -6644,6 +6644,167 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
+    # ── Cross-Fleet Degradation Clustering ───────────────────────────────────
+    st.markdown(
+        "<div class='section-header'>Cross-Fleet Degradation Clustering</div>",
+        unsafe_allow_html=True,
+    )
+    _md_html(
+        "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
+        "K-means on last-cycle feature vectors (SOH, fade rate, resistance, CE). "
+        "Cells in the same cluster share a degradation signature — their historical "
+        "trajectories can inform RUL estimates for each other."
+        "</div>"
+    )
+    try:
+        from sklearn.preprocessing import StandardScaler as _SS
+        from sklearn.cluster import KMeans as _KM
+        from sklearn.metrics import silhouette_score as _sil
+
+        # ── Build last-cycle feature matrix across all fleet cells ──
+        _FEAT_COLS = ["soh_pct", "fade_rate_30cy", "resistance_ohm", "ce_rolling_30cy"]
+        _clust_rows = []
+        for _cid, _cdf in active_fdfs.items():
+            _row = {"cell_id": _cid}
+            for _fc in _FEAT_COLS:
+                if _fc in _cdf.columns:
+                    _v = _cdf[_fc].dropna()
+                    _row[_fc] = float(_v.iloc[-1]) if len(_v) else float("nan")
+                else:
+                    _row[_fc] = float("nan")
+            _clust_rows.append(_row)
+
+        import pandas as _pd_cl
+        _clust_df = _pd_cl.DataFrame(_clust_rows).set_index("cell_id")
+
+        # Drop columns that are all-NaN, then drop any remaining NaN rows
+        _clust_df = _clust_df.dropna(axis=1, how="all")
+        _clust_df_clean = _clust_df.dropna()
+
+        if len(_clust_df_clean) < 3:
+            st.info("Cross-fleet clustering requires at least 3 cells with complete feature data.")
+        else:
+            _X_raw = _clust_df_clean.values
+            _X_sc  = _SS().fit_transform(_X_raw)
+
+            # Auto-select k via silhouette (2–4), capped at n_cells-1
+            _k_max = min(4, len(_clust_df_clean) - 1)
+            if _k_max < 2:
+                _best_k = 2
+            else:
+                _best_k, _best_sil = 2, -1.0
+                for _k in range(2, _k_max + 1):
+                    _km_try = _KM(n_clusters=_k, random_state=42, n_init=10)
+                    _lab_try = _km_try.fit_predict(_X_sc)
+                    if len(set(_lab_try)) < 2:
+                        continue
+                    _s = _sil(_X_sc, _lab_try)
+                    if _s > _best_sil:
+                        _best_sil, _best_k = _s, _k
+
+            _km   = _KM(n_clusters=_best_k, random_state=42, n_init=10)
+            _labs = _km.fit_predict(_X_sc)
+            _clust_df_clean = _clust_df_clean.copy()
+            _clust_df_clean["cluster"] = _labs
+
+            # Cluster colour palette
+            _CL_COLOURS = ["#63b3ed", "#68d391", "#f6ad55", "#fc8181"]
+            _cl_col_map  = {i: _CL_COLOURS[i % len(_CL_COLOURS)] for i in range(_best_k)}
+
+            # ── Scatter: SOH vs fade rate, coloured by cluster ──
+            _fig_cl = go.Figure()
+            for _ki in range(_best_k):
+                _mask = _clust_df_clean["cluster"] == _ki
+                _sub  = _clust_df_clean[_mask]
+                _pts_x = _sub["soh_pct"].tolist()
+                _pts_y = (_sub["fade_rate_30cy"] * 1000).tolist() if "fade_rate_30cy" in _sub.columns else [0] * len(_sub)
+                _c     = _cl_col_map[_ki]
+                _fig_cl.add_trace(go.Scatter(
+                    x=_pts_x, y=_pts_y,
+                    mode="markers+text",
+                    name=f"Cluster {_ki + 1}",
+                    text=_sub.index.tolist(),
+                    textposition="top center",
+                    textfont=dict(size=9, color=_c),
+                    marker=dict(size=10, color=_c, line=dict(width=1, color="#0e1117")),
+                    hovertemplate="<b>%{text}</b><br>SOH: %{x:.1f}%<br>Fade: %{y:.3f} mSOH/cy<extra></extra>",
+                ))
+
+            # Highlight selected cells A and B with rings
+            for _hcid, _hcol in [(cell_a, "#ffffff"), (cell_b, "#fbd38d")]:
+                if _hcid in _clust_df_clean.index:
+                    _hr = _clust_df_clean.loc[_hcid]
+                    _fig_cl.add_trace(go.Scatter(
+                        x=[_hr["soh_pct"]],
+                        y=[_hr["fade_rate_30cy"] * 1000] if "fade_rate_30cy" in _hr.index else [0],
+                        mode="markers",
+                        name=f"{_hcid} (selected)",
+                        marker=dict(size=18, color="rgba(0,0,0,0)",
+                                    line=dict(width=2, color=_hcol)),
+                        hovertemplate=f"<b>{_hcid}</b> (selected)<extra></extra>",
+                        showlegend=True,
+                    ))
+
+            _fig_cl.update_layout(
+                height=360,
+                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+                font=dict(color="#e2e8f0"),
+                margin=dict(l=10, r=10, t=36, b=40),
+                hovermode="closest",
+                xaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                yaxis=dict(title="30-cy Fade Rate (mSOH/cy)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                legend=dict(font=dict(size=10, color="#718096")),
+                title=dict(text=f"Fleet degradation clusters (k={_best_k}, silhouette-optimised)",
+                           font=dict(size=12, color="#a0aec0"), x=0),
+            )
+            st.plotly_chart(_fig_cl, use_container_width=True)
+
+            # ── Similar-cell lookup ──
+            st.markdown(
+                "<div style='font-size:12px;font-weight:600;color:#e2e8f0;margin:12px 0 6px'>"
+                "Cells with similar degradation signature</div>",
+                unsafe_allow_html=True,
+            )
+            _sim_c1, _sim_c2 = st.columns(2)
+            for _scol, _scid in [(_sim_c1, cell_a), (_sim_c2, cell_b)]:
+                if _scid in _clust_df_clean.index:
+                    _sk = int(_clust_df_clean.loc[_scid, "cluster"])
+                    _peers = [c for c in _clust_df_clean[_clust_df_clean["cluster"] == _sk].index if c != _scid]
+                    _ck    = _cl_col_map[_sk]
+                    _peer_html = " &nbsp;".join(
+                        f"<span style='background:{_ck}22;border:1px solid {_ck}55;color:{_ck};"
+                        f"font-size:11px;font-weight:600;padding:2px 9px;border-radius:8px'>{p}</span>"
+                        for p in _peers
+                    ) if _peers else "<span style='color:#4a5568;font-size:12px'>No peers — unique cluster</span>"
+                    _scol.markdown(
+                        f"<div style='background:#1e2a38;border:1px solid {_ck}44;border-radius:8px;"
+                        f"padding:12px 14px'>"
+                        f"<div style='font-size:11px;font-weight:700;color:{_ck};margin-bottom:6px'>"
+                        f"{_scid} — Cluster {_sk + 1}</div>"
+                        f"<div style='font-size:11px;color:#a0aec0;margin-bottom:8px'>Similar cells:</div>"
+                        f"{_peer_html}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # ── Cluster summary table ──
+            with st.expander("Cluster statistics"):
+                _cl_summary = []
+                for _ki in range(_best_k):
+                    _sub = _clust_df_clean[_clust_df_clean["cluster"] == _ki]
+                    _row_s = {"Cluster": f"Cluster {_ki + 1}", "Cells": len(_sub)}
+                    for _fc in _clust_df_clean.columns:
+                        if _fc == "cluster":
+                            continue
+                        _row_s[_fc] = f"{_sub[_fc].mean():.3f}" if _fc in _sub else "—"
+                    _cl_summary.append(_row_s)
+                st.dataframe(_pd_cl.DataFrame(_cl_summary), use_container_width=True, hide_index=True)
+
+    except ImportError:
+        st.info("scikit-learn required for clustering (already in requirements.txt).")
+    except Exception as _ce:
+        st.info(f"Clustering unavailable: {_ce}")
+
 
 COMING_SOON_META = {
     "recommendations": ("Recommendations", "Actionable maintenance recommendations driven by health trends and failure-mode modelling.", "Phase 2"),
