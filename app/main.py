@@ -2525,8 +2525,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
 
     # ── ⚛️ Physics-Based RUL Projection (PyBaMM SPM) ────────────────────────
-    _pybamm_badge = make_badge("PyBaMM SPM · SEI growth", "#63b3ed")
-    with st.expander(f"⚛️ Physics-Based RUL Projection (PyBaMM SPM) — {_pybamm_badge}", expanded=False):
+    with st.expander("⚛️ Physics-Based RUL Projection (PyBaMM SPM) — SEI growth model", expanded=False):
         _md_html(
             "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
             "Single Particle Model (SPM) anchors the nominal capacity from the cell's "
