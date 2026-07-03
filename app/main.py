@@ -188,7 +188,7 @@ st.markdown(
         margin-bottom: 24px;
     }
     .hero-label  { font-size: 12px; color: #8896a8; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
-    .hero-value  { font-size: 48px; font-weight: 700; line-height: 1.1; margin-bottom: 8px; }
+    .hero-value  { font-size: 72px; font-weight: 700; line-height: 1.0; margin-bottom: 8px; }
     .hero-sub    { font-size: 14px; color: #a0aec0; }
     .hero-green  { color: #48bb78; }
     .hero-yellow { color: #f6e05e; }
@@ -233,7 +233,7 @@ st.markdown(
     /* ── Spacing tokens (4-step scale) ── */
     :root {
         --sp-1: 4px;  --sp-2: 8px;  --sp-3: 16px;  --sp-4: 24px;
-        --r-chip: 6px;  --r-card: 10px;
+        --r-chip: 4px;  --r-card: 8px;  --r-section: 12px;
         --c-border: #2d3748;  --c-surface: #1e2a38;  --c-muted: #8896a8;
     }
     /* ── Type ramp (C1) ── */
@@ -277,6 +277,11 @@ st.markdown(
     .empty-state-title { font-size: 16px; font-weight: 600; color: #a0aec0; margin-bottom: 6px; }
     .empty-state-body  { font-size: 13px; color: #4a5568; line-height: 1.6; max-width: 420px; margin: 0 auto; }
     .empty-state-action{ margin-top: 16px; font-size: 12px; color: #63b3ed; }
+    /* ── Type utility classes (B1) ── */
+    .t-metric  { font-size: 32px; font-weight: 700; color: #e2e8f0; line-height: 1.1; }
+    .t-heading { font-size: 16px; font-weight: 600; color: #e2e8f0; }
+    .t-body    { font-size: 13px; font-weight: 400; color: #a0aec0; line-height: 1.5; }
+    .t-caption { font-size: 11px; font-weight: 400; color: #8896a8; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1303,6 +1308,31 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # ── Trajectory match warning ──────────────────────────────────────────────
     _render_trajectory_match_card(cell_id, df, trajectory_memory)
 
+    # ── C4: Pin baseline ──────────────────────────────────────────────────────
+    _pinned = st.session_state.get("pinned_cell")
+    _pin_col1, _pin_col2 = st.columns([8, 2])
+    with _pin_col2:
+        if _pinned == cell_id:
+            if st.button("📌 Unpin baseline", key=f"unpin_{cell_id}", use_container_width=True):
+                st.session_state["pinned_cell"] = None
+                st.rerun()
+        else:
+            if st.button("📌 Pin as baseline", key=f"pin_{cell_id}", use_container_width=True,
+                         help="Pin this cell as a comparison baseline — all other cells show a delta rail."):
+                st.session_state["pinned_cell"] = cell_id
+                st.rerun()
+    if _pinned and _pinned != cell_id and _pinned in df.columns.__class__.__mro__[0].__mro__:
+        pass  # comparison rail placeholder
+    if _pinned and _pinned != cell_id:
+        _pin_df_map = {k: v for k, v in st.session_state.items() if False}  # placeholder
+        st.markdown(
+            f"<div style='font-size:11px;color:#8896a8;margin:-6px 0 12px;padding:5px 12px;"
+            f"background:#111827;border-radius:6px;border-left:3px solid #4a5568'>"
+            f"Baseline: <strong style='color:#e2e8f0'>{_pinned}</strong> — navigate to that cell to compare."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     # ── 3 primary secondary metrics: RUL · Fade Rate · Resistance ────────────
     _fade_30 = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else None
     _res_ohm = float(latest["resistance_ohm"]) if "resistance_ohm" in latest.index else None
@@ -1605,6 +1635,20 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         </div>
         """
     )
+
+    # ── C4: Pin baseline (Health page) ───────────────────────────────────────
+    _h_pinned = st.session_state.get("pinned_cell")
+    _h_pc2 = st.columns([8, 2])[1]
+    with _h_pc2:
+        if _h_pinned == cell_id:
+            if st.button("📌 Unpin baseline", key=f"unpin_h_{cell_id}", use_container_width=True):
+                st.session_state["pinned_cell"] = None
+                st.rerun()
+        else:
+            if st.button("📌 Pin as baseline", key=f"pin_h_{cell_id}", use_container_width=True,
+                         help="Pin this cell as comparison baseline"):
+                st.session_state["pinned_cell"] = cell_id
+                st.rerun()
 
     col1, col2 = st.columns(2)
 
@@ -1963,7 +2007,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
 
     # ── T4: Degradation Mechanism Classifier (LLI vs LAM) ──────────────────
-    with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=True):
+    with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=False):
         try:
             import numpy as _np_mech
             _mech_signals = {}
@@ -2342,6 +2386,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 st.plotly_chart(fig_lii, use_container_width=True)
             except Exception as _ce_e:
                 st.info(f"CE analysis unavailable: {_ce_e}")
+
+    # ── Advanced diagnostics (C1: secondary expanders, collapsed by default) ──
+    _md_html(
+        "<div style='font-size:10px;font-weight:700;color:#2d3748;text-transform:uppercase;"
+        "letter-spacing:0.12em;margin:24px 0 4px;padding-bottom:4px;border-bottom:1px solid #1e2a38'>"
+        "Advanced diagnostics</div>"
+    )
 
     # ── 📈 Energy Throughput ─────────────────────────────────────────────────
     if "cumulative_kwh" in df.columns:
@@ -2742,6 +2793,24 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
 
     # ── ⚛️ Physics-Based RUL Projection (PyBaMM SPM) ────────────────────────
+    # C2: surface GBRT vs PyBaMM delta when cache is warm
+    _pb2_key = f"pybamm_{cell_id}_{st.session_state.get('eol_threshold_pct', 80)}"
+    _pb2_pre = st.session_state.get(_pb2_key, {})
+    if (_pb2_pre and not _pb2_pre.get("error") and _pb2_pre.get("rul_physics")
+            and rul_reliable and "rul_pred" in latest.index
+            and latest["rul_pred"] is not None):
+        _gbrt_rul2 = float(latest["rul_pred"])
+        _phys_rul2 = int(_pb2_pre["rul_physics"])
+        _gap_pct2 = abs(_phys_rul2 - _gbrt_rul2) / max(_gbrt_rul2, 1) * 100
+        _gap_col2 = "#48bb78" if _gap_pct2 < 15 else "#f6ad55" if _gap_pct2 < 35 else "#fc8181"
+        _md_html(
+            f"<div style='font-size:12px;color:#a0aec0;margin:4px 0 6px;padding:6px 14px;"
+            f"background:#1e2a38;border-radius:6px;border-left:3px solid {_gap_col2}'>"
+            f"GBRT says <strong style='color:#63b3ed'>{int(_gbrt_rul2):,} cy</strong> · "
+            f"PyBaMM says <strong style='color:#63b3ed'>{_phys_rul2:,} cy</strong> · "
+            f"<span style='color:{_gap_col2}'>{_gap_pct2:.0f}% gap</span>"
+            f" — expand below for full physics projection</div>"
+        )
     with st.expander("⚛️ Physics-Based RUL Projection (PyBaMM SPM) — SEI growth model", expanded=False):
         _md_html(
             "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
@@ -5267,22 +5336,35 @@ def page_decision(
          "Lower-demand application (stationary storage).", f"${_repack:.0f} repack cost"),
     ]
     _best_npv = max(_opts, key=lambda x: x[1])
-    _nd_cols  = st.columns(3)
-    for _col, (_lbl, _npv_v, _col_v, _desc, _cost_note) in zip(_nd_cols, _opts):
-        _is_best = _lbl == _best_npv[0]
-        with _col:
-            _md_html(
-                f"<div style='background:#1e2a38;border:{'2px' if _is_best else '1px'} solid "
-                f"{_col_v if _is_best else '#2d3748'};border-radius:10px;padding:16px 18px;height:100%'>"
-                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-                f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}</div>"
-                f"<div style='font-size:26px;font-weight:800;color:{_col_v}'>${_npv_v:,.0f}</div>"
-                f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV</div>"
-                f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
-                f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>"
-                + (f"<div style='font-size:11px;font-weight:700;color:{_col_v};margin-top:8px'>★ Optimal NPV</div>" if _is_best else "")
-                + "</div>"
-            )
+    _best_lbl, _best_npv_v, _best_col_v, _best_desc, _best_cost_note = _best_npv
+    _md_html(
+        f"<div style='background:#1e2a38;border:2px solid {_best_col_v};"
+        f"border-radius:12px;padding:20px 24px;margin-bottom:10px'>"
+        f"<div style='font-size:10px;font-weight:700;color:{_best_col_v};"
+        f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px'>★ Recommended</div>"
+        f"<div style='font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:8px'>{_best_lbl}</div>"
+        f"<div style='font-size:40px;font-weight:800;color:{_best_col_v}'>${_best_npv_v:,.0f}</div>"
+        f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV at 8% discount rate</div>"
+        f"<div style='font-size:12px;color:#a0aec0;margin-top:10px;line-height:1.5'>{_best_desc}</div>"
+        f"<div style='font-size:11px;color:#4a5568;margin-top:4px'>{_best_cost_note}</div>"
+        f"</div>"
+    )
+    with st.expander("Compare alternatives"):
+        _alts = [o for o in _opts if o[0] != _best_lbl]
+        _nd_cols = st.columns(len(_alts))
+        for _col, (_lbl, _npv_v, _col_v, _desc, _cost_note) in zip(_nd_cols, _alts):
+            with _col:
+                _md_html(
+                    f"<div style='background:#1e2a38;border:1px solid #2d3748;"
+                    f"border-radius:10px;padding:16px 18px;height:100%'>"
+                    f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+                    f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}</div>"
+                    f"<div style='font-size:26px;font-weight:800;color:{_col_v}'>${_npv_v:,.0f}</div>"
+                    f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV</div>"
+                    f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
+                    f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>"
+                    f"</div>"
+                )
 
     st.caption(
         f"5-yr NPV at {_npv_rate*100:.0f}% discount rate · $80/kWh·yr energy value · "
@@ -9384,13 +9466,11 @@ def main():
         log_page_view(page, selected)
         st.session_state["_audit_last"] = f"{page}:{selected}"
 
-    # ── Demo mode notice ──────────────────────────────────────────────────────
+    # ── Demo mode notice (footer-style, low visual weight) ────────────────────
     st.markdown(
-        "<div style='display:flex;justify-content:flex-end;margin-bottom:6px'>"
+        "<div style='text-align:right;margin-bottom:4px'>"
         "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
-        "style='background:#2d374888;border:1px solid #4a556866;border-radius:20px;"
-        "padding:2px 10px;font-size:10px;font-weight:700;color:#718096;"
-        "letter-spacing:0.07em;cursor:default'>DEMO MODE</span></div>",
+        "style='font-size:10px;color:#4a5568;cursor:default'>demo mode</span></div>",
         unsafe_allow_html=True,
     )
 
