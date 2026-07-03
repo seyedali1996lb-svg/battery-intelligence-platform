@@ -4740,8 +4740,13 @@ def page_copilot(
         answer_business_case,
         QUERY_LABELS,
         FOLLOW_UP_MAP,
-        llm_answer,
     )
+    try:
+        from copilot import llm_answer as _llm_answer_fn
+    except ImportError:
+        def _llm_answer_fn(query, template_answer, api_key):  # type: ignore[misc]
+            return template_answer
+    llm_answer = _llm_answer_fn
 
     st.markdown("# Copilot")
 
