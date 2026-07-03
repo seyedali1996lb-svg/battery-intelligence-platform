@@ -1385,6 +1385,23 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str):
         )
     _md_html(provenance_banner(_cp, _prov_detail))
 
+    # ── Chemistry inline indicator ────────────────────────────────────────────
+    _chem_label = {
+        "severson":  "LFP · Lithium Iron Phosphate (Severson 2019)",
+        "nasa":      "LiCoO₂ NCA · Lithium Cobalt Oxide (NASA PCoE)",
+        "synthetic": "LiCoO₂ · Lithium Cobalt Oxide (synthetic)",
+        "uploaded":  "User-defined chemistry",
+    }.get(st.session_state.get("data_mode", "synthetic"), "LiCoO₂")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px'>"
+        f"<span style='font-size:10px;font-weight:700;background:#2d374899;"
+        f"border:1px solid #4a5568;color:#a0aec0;padding:2px 9px;border-radius:6px;"
+        f"letter-spacing:0.06em'>CHEMISTRY</span>"
+        f"<span style='font-size:13px;color:#a0aec0'>{_chem_label}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     latest = df.iloc[-1]
     current_soh = latest["soh_pct"]
     status_label, status_colour = soh_status(current_soh)
@@ -3066,10 +3083,10 @@ def page_fleet(featured_dfs: dict, bundles: dict):
         x_lo, x_hi = 55, max(r["soh"] for r in cal_rows) + 5
         y_hi        = max(rul_vals) * 1.05
         for (sx, sy, label, c) in [
-            (soh_thresh - 1, rul_med + y_hi * 0.02, "ACT",      "#f6ad55"),
-            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE", "#48bb78"),
-            (soh_thresh - 1, y_hi * 0.04,           "CRITICAL", "#fc8181"),
-            (soh_thresh + 1, y_hi * 0.04,           "WATCH",    "#d69e2e"),
+            (soh_thresh - 1, rul_med + y_hi * 0.02, "INSPECT / REPLACE", "#f6ad55"),
+            (soh_thresh + 1, rul_med + y_hi * 0.02, "CONTINUE",          "#48bb78"),
+            (soh_thresh - 1, y_hi * 0.04,           "CRITICAL",          "#fc8181"),
+            (soh_thresh + 1, y_hi * 0.04,           "WATCH",             "#d69e2e"),
         ]:
             fig_risk.add_annotation(
                 x=sx, y=sy, text=label, showarrow=False,
