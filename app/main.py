@@ -821,6 +821,64 @@ def _command_palette_dialog():
         st.rerun()
 
 
+# Guided tour — 4-step onboarding modal shown once per session for first-time
+# visitors. Uses the same @st.dialog pattern as the Command Palette above.
+_TOUR_STEPS = [
+    (
+        "Real measured data, not a toy demo",
+        "This fleet leads with <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 "
+        "measurements, not synthetic curves. Watch for the "
+        "<strong>Failure trajectory match</strong> chip in the sidebar: it flags cells "
+        "whose degradation pattern closely resembles a cell that already failed.",
+    ),
+    (
+        "Fleet — see every cell at a glance",
+        "The Fleet page ranks every cell by health and flags which ones need attention "
+        "first, with a grade (A/B/C) and proactive alerts for anything trending toward "
+        "end-of-life.",
+    ),
+    (
+        "Decide & Ask — turn health into a decision",
+        "Decide & Ask recommends Continue / Inspect / Second-Life / Recycle for each cell, "
+        "backed by an NPV comparison. Every decision you log is kept in an auditable trail.",
+    ),
+    (
+        "Compliance — EU Battery Passport",
+        "The Compliance page tracks EU Battery Passport completeness field-by-field, so you "
+        "can see exactly what regulatory data is available, estimated, or still missing.",
+    ),
+]
+
+
+@st.dialog("Welcome — Guided Tour")
+def _guided_tour_dialog():
+    step = st.session_state.get("tour_step", 0)
+    title, body = _TOUR_STEPS[step]
+
+    st.progress((step + 1) / len(_TOUR_STEPS))
+    st.markdown(f"#### {title}")
+    _md_html(f"<div style='font-size:14px;color:#a0aec0;line-height:1.6'>{body}</div>")
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    _col_skip, _col_next = st.columns([1, 2])
+    with _col_skip:
+        if st.button("Skip tour", key="tour_skip", use_container_width=True):
+            st.session_state["tour_seen"] = True
+            st.rerun()
+    with _col_next:
+        _is_last = step == len(_TOUR_STEPS) - 1
+        if st.button(
+            "Finish tour" if _is_last else "Next →",
+            key="tour_next", type="primary", use_container_width=True,
+        ):
+            if _is_last:
+                st.session_state["tour_seen"] = True
+                st.session_state["page"] = "compliance"
+            else:
+                st.session_state["tour_step"] = step + 1
+            st.rerun()
+
+
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                    up_meta: dict | None, sev_n: int = 0,
                    active_fdfs: dict | None = None,
@@ -8203,6 +8261,14 @@ def main():
     featured_dfs_all, bundles, split_cycles_all = load_everything()
     _train_placeholder.empty()
 
+    # ── Guided tour (once per session, first-time visitors) ───────────────────
+    if "tour_seen" not in st.session_state:
+        st.session_state["tour_seen"] = False
+    if "tour_step" not in st.session_state:
+        st.session_state["tour_step"] = 0
+    if not st.session_state["tour_seen"]:
+        _guided_tour_dialog()
+
     # ── Failure trajectory memory (built once per session) ────────────────────
     # Uses ALL cells across all sources so the signature library is as large
     # as possible, regardless of which data source is currently active.
@@ -8320,12 +8386,14 @@ def main():
         if _role_picked:
             st.session_state["user_role"] = _role_picked
             st.session_state["role_chosen"] = True
-            if _role_picked == "Executive":
-                st.session_state.page = "exec_summary"
-            elif _role_picked == "Fleet Manager":
-                st.session_state.page = "fleet"
-            else:
-                st.session_state.page = "overview"
+            # Don't clobber the guided tour's "Finish tour" destination.
+            if not (st.session_state.get("tour_seen") and st.session_state.get("page") == "compliance"):
+                if _role_picked == "Executive":
+                    st.session_state.page = "exec_summary"
+                elif _role_picked == "Fleet Manager":
+                    st.session_state.page = "fleet"
+                else:
+                    st.session_state.page = "overview"
             st.rerun()
         st.stop()
 

@@ -590,6 +590,12 @@ def page_settings(featured_dfs: dict, bundles: dict):
     else:
         st.caption("Without an API key the Copilot uses template answers grounded on bundle values.")
 
+    _section("Onboarding")
+    if st.button("↺ Replay guided tour", key="settings_replay_tour"):
+        st.session_state["tour_seen"] = False
+        st.session_state["tour_step"] = 0
+        st.rerun()
+
     _section("About")
 
     phase_rows = [
