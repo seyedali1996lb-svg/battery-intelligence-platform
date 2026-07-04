@@ -1988,6 +1988,100 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     except Exception:
         pass
 
+    # ── E1: 12-month SOH trajectory forecast with uncertainty cone ──────────────
+    st.markdown("<div class='section-header'>12-Month SOH Forecast</div>", unsafe_allow_html=True)
+    import numpy as _np_e1
+    _e1_last_cycle = int(df["cycle_number"].iloc[-1])
+    _e1_last_soh   = float(df["soh_pct"].iloc[-1])
+    _e1_fade_30    = float(latest.get("fade_rate_30cy", 0.0)) * 100   # % per cycle
+    _e1_fade_acc   = 0.0
+    if "fade_rate_30cy" in df.columns and len(df) >= 60:
+        _e1_f1 = float(df["fade_rate_30cy"].iloc[-30:].mean()) * 100
+        _e1_f0 = float(df["fade_rate_30cy"].iloc[-60:-30].mean()) * 100
+        _e1_fade_acc = max(0.0, _e1_f1 - _e1_f0) / 30  # % SOH / cycle² acceleration
+    _e1_cpd = float(st.session_state.get("cycles_per_day", 1.0))
+    _CYCLES_12M    = int(365 * _e1_cpd)
+    _e1_q10        = float(df["rul_q10"].iloc[-1]) if "rul_q10" in df.columns else None
+    _e1_q90        = float(df["rul_q90"].iloc[-1]) if "rul_q90" in df.columns else None
+    _e1_eol        = float(st.session_state.get("eol_threshold_pct", 80.0))
+
+    # Reduced C-rate scenario: stress model says C-rate^0.7 factor
+    _e1_crate_prof = CELL_STRESS_PROFILES.get(cell_id, {}).get("c_rate", 1.0)
+    _e1_reduced    = max(0.1, _e1_crate_prof - 0.5)
+    _e1_stress_ratio = (_e1_reduced / _e1_crate_prof) ** 0.7 if _e1_crate_prof > 0.1 else 1.0
+    _e1_fade_reduced = _e1_fade_30 * _e1_stress_ratio
+
+    def _e1_proj(fade_base, accel, n_cycles):
+        cycles = _np_e1.arange(1, n_cycles + 1)
+        soh    = _e1_last_soh - fade_base * cycles - 0.5 * accel * cycles**2
+        return (_e1_last_cycle + cycles).tolist(), _np_e1.clip(soh, _e1_eol - 10, 102).tolist()
+
+    _e1_cx,  _e1_cy  = _e1_proj(_e1_fade_30, _e1_fade_acc, _CYCLES_12M)
+    _e1_rx,  _e1_ry  = _e1_proj(_e1_fade_reduced, _e1_fade_acc * _e1_stress_ratio, _CYCLES_12M)
+
+    # Uncertainty cone from Q10/Q90 if available, else ±25% fade
+    _e1_fade_lo = _e1_fade_30 * 0.75
+    _e1_fade_hi = _e1_fade_30 * 1.35 + _e1_fade_acc * _CYCLES_12M * 0.5
+    _e1_ux, _e1_uy_lo = _e1_proj(_e1_fade_lo, 0, _CYCLES_12M)
+    _e1_ux, _e1_uy_hi = _e1_proj(_e1_fade_hi, _e1_fade_acc, _CYCLES_12M)
+
+    _fig_e1 = go.Figure()
+    # Historical SOH
+    _e1_hist = df[["cycle_number", "soh_pct"]].tail(100)
+    _fig_e1.add_trace(go.Scatter(
+        x=_e1_hist["cycle_number"].tolist(), y=_e1_hist["soh_pct"].tolist(),
+        name="Actual SOH", line=dict(color="#63b3ed", width=2), mode="lines",
+        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Actual</extra>",
+    ))
+    # Uncertainty cone (filled band)
+    _fig_e1.add_trace(go.Scatter(
+        x=_e1_ux + _e1_ux[::-1],
+        y=_e1_uy_hi + _e1_uy_lo[::-1],
+        fill="toself", fillcolor="rgba(99,179,237,0.10)", line=dict(width=0),
+        name="Uncertainty cone", hoverinfo="skip",
+    ))
+    # Base forecast (current C-rate)
+    _fig_e1.add_trace(go.Scatter(
+        x=_e1_cx, y=_e1_cy, name=f"Forecast (current {_e1_crate_prof:.1f}C)",
+        line=dict(color="#63b3ed", width=2, dash="dash"), mode="lines",
+        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Forecast</extra>",
+    ))
+    # Reduced C-rate scenario
+    _fig_e1.add_trace(go.Scatter(
+        x=_e1_rx, y=_e1_ry, name=f"Reduced C-rate ({_e1_reduced:.1f}C)",
+        line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
+        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Reduced C-rate</extra>",
+    ))
+    _fig_e1.add_hline(y=_e1_eol, line_dash="dot", line_color="#e53e3e", line_width=1,
+                      annotation_text=f"EOL ({_e1_eol:.0f}%)", annotation_position="bottom right",
+                      annotation_font_color="#e53e3e", annotation_font_size=10)
+    _fig_e1.add_vline(x=_e1_last_cycle, line_dash="dot", line_color="#4a5568", line_width=1,
+                      annotation_text="Now", annotation_position="top left",
+                      annotation_font_color="#4a5568", annotation_font_size=10)
+    _fig_e1.update_layout(
+        height=300,
+        **base_layout(
+            height=300, legend=LEGEND_H,
+            xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+                       zeroline=False, range=[max(_e1_eol - 8, 55), 102]),
+        ),
+    )
+    st.plotly_chart(_fig_e1, use_container_width=True)
+    # Plain-English summary
+    _e1_soh_12m   = max(_e1_eol - 2, _e1_last_soh - _e1_fade_30 * _CYCLES_12M - 0.5 * _e1_fade_acc * _CYCLES_12M**2)
+    _e1_soh_12m_r = max(_e1_eol - 2, _e1_last_soh - _e1_fade_reduced * _CYCLES_12M)
+    _e1_gain      = _e1_soh_12m_r - _e1_soh_12m
+    _e1_txt       = (
+        f"At current C-rate ({_e1_crate_prof:.1f}C), projected SOH in 12 months: "
+        f"<strong style='color:#63b3ed'>{_e1_soh_12m:.1f}%</strong>. "
+        + (f"Reducing to {_e1_reduced:.1f}C could preserve an additional "
+           f"<strong style='color:#48bb78'>{_e1_gain:.1f}% SOH</strong> "
+           f"({_e1_soh_12m_r:.1f}% projected)." if _e1_gain > 0.1 else "")
+        + f" Uncertainty cone: ±25–35% fade variability. ◐ SIMULATED — linear extrapolation."
+    )
+    _md_html(f"<div style='font-size:12px;color:#a0aec0;padding:4px 0 16px;line-height:1.6'>{_e1_txt}</div>")
+
     _mc_left, _mc_right = st.columns([3, 2])
     with _mc_left:
         _md_html(
@@ -4485,6 +4579,39 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         page_grading(list(featured_dfs.keys()), featured_dfs, bundles, list(featured_dfs.keys())[0])
         return
 
+    # ── E6: Weekly fleet health summary card ──────────────────────────────────
+    import datetime as _dt_e6
+    _e6_today    = _dt_e6.date.today().strftime("%d %b %Y")
+    _e6_eol_cnt  = sum(1 for r in rows if r["status"] == "End of Life")
+    _e6_deg_cnt  = sum(1 for r in rows if r["status"] == "Degrading")
+    _e6_accel    = sum(1 for r in rows if r["trend"] == "Accelerating")
+    _e6_traj_cnt = sum(1 for r in rows if trajectory_memory and trajectory_memory.match(r["cell_id"], featured_dfs.get(r["cell_id"], pd.DataFrame())) is not None) if trajectory_memory else 0
+    _REPL_USD    = 150
+    _DELAY_30D   = 30  # days
+    _CPD         = float(st.session_state.get("cycles_per_day", 1.0))
+    _e6_at_risk  = [r for r in rows if r.get("cycles_to_eol") is not None and r["cycles_to_eol"] < _CPD * _DELAY_30D]
+    _e6_capex30  = len(_e6_at_risk) * _REPL_USD
+    _e6_col      = "#fc8181" if (_e6_eol_cnt > 0 or _e6_accel > 1) else ("#f6ad55" if _e6_deg_cnt > 0 else "#48bb78")
+    with st.expander(f"This Week — Fleet Digest · {_e6_today}", expanded=True):
+        _e6_bullets = []
+        if _e6_eol_cnt:
+            _e6_bullets.append(f"<strong style='color:#fc8181'>{_e6_eol_cnt} cell{'s' if _e6_eol_cnt!=1 else ''}</strong> at or past EOL — replace immediately.")
+        if _e6_deg_cnt:
+            _e6_bullets.append(f"<strong style='color:#f6ad55'>{_e6_deg_cnt} cell{'s' if _e6_deg_cnt!=1 else ''}</strong> degrading (80–90% SOH).")
+        if _e6_accel:
+            _e6_bullets.append(f"<strong style='color:#f6ad55'>{_e6_accel} cell{'s' if _e6_accel!=1 else ''}</strong> showing accelerating fade — inspect next cycle.")
+        if _e6_traj_cnt:
+            _e6_bullets.append(f"<strong style='color:#ef4444'>{_e6_traj_cnt} trajectory match{'es' if _e6_traj_cnt!=1 else ''}</strong> detected against known failure patterns.")
+        if _e6_capex30:
+            _e6_bullets.append(f"Estimated replacement CAPEX if delayed 30 days: <strong style='color:#e2e8f0'>${_e6_capex30:,}</strong> ({len(_e6_at_risk)} cell{'s' if len(_e6_at_risk)!=1 else ''} reaching EOL).")
+        if not _e6_bullets:
+            _e6_bullets.append("<strong style='color:#48bb78'>All cells healthy</strong> — no action required this week.")
+        _bullets_html = "".join(f"<li style='margin-bottom:6px'>{b}</li>" for b in _e6_bullets)
+        _md_html(
+            f"<ul style='margin:0;padding-left:20px;font-size:13px;color:#a0aec0;line-height:1.7'>"
+            f"{_bullets_html}</ul>"
+        )
+
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
 
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
@@ -4883,6 +5010,88 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             st.info("SOH distribution trend requires ≥ 2 cells with cycle history.")
     except Exception as _hist_e:
         st.info(f"SOH trend histogram unavailable: {_hist_e}")
+
+    # ── E2: Fleet what-if scenario planner ────────────────────────────────────
+    st.markdown("<div class='section-header'>Fleet What-If Scenario Planner</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Adjust operating conditions to see the projected impact on fleet-average RUL "
+        "and replacement CAPEX. Uses the Arrhenius stress model applied to each cell's "
+        "current fade rate (◐ SIMULATED — indicative only)."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _e2c1, _e2c2 = st.columns(2)
+    with _e2c1:
+        _e2_crate_delta = st.slider(
+            "C-rate adjustment (all cells)",
+            min_value=-1.0, max_value=1.0, value=0.0, step=0.1,
+            format="%.1fC",
+            key="e2_crate_delta",
+            help="Positive = higher load → faster degradation. Negative = reduced load → slower.",
+        )
+    with _e2c2:
+        _e2_temp_delta = st.slider(
+            "Temperature adjustment (°C)",
+            min_value=-10, max_value=10, value=0, step=1,
+            key="e2_temp_delta",
+            help="Arrhenius model: every +10°C roughly doubles degradation rate.",
+        )
+    import numpy as _np_e2, math as _math_e2
+    _e2_stress_rows = []
+    _REPL_COST_E2   = 150
+    _CYCLES_24M_E2  = int(730 * float(st.session_state.get("cycles_per_day", 1.0)))
+    for _r in rows:
+        _cid       = _r["cell_id"]
+        _prof      = CELL_STRESS_PROFILES.get(_cid, {})
+        _t_base    = _prof.get("temp_mean", 25.0)
+        _c_base    = _prof.get("c_rate", 1.0)
+        _t_new     = _t_base + _e2_temp_delta
+        _c_new     = max(0.1, _c_base + _e2_crate_delta)
+        # Arrhenius ratio: exp(-Ea/R * (1/T_new - 1/T_base)), Ea=50 kJ/mol, R=8.314
+        _e2_k_temp  = _math_e2.exp(-50000 / 8.314 * (1/(_t_new+273.15) - 1/(_t_base+273.15)))
+        _e2_k_crate = (_c_new / _c_base) ** 0.7 if _c_base > 0.05 else 1.0
+        _e2_stress  = _e2_k_temp * _e2_k_crate
+        _fade_base  = abs(_r["fade_30"]) / 1000   # mSOH/cy → fraction
+        _fade_new   = _fade_base * _e2_stress
+        _soh_now    = _r["soh"]
+        _eol        = float(st.session_state.get("eol_threshold_pct", 80.0))
+        _rul_base   = (_soh_now - _eol) / max(_fade_base, 1e-9) if _fade_base > 0 else None
+        _rul_new    = (_soh_now - _eol) / max(_fade_new, 1e-9) if _fade_new > 0 else None
+        _e2_stress_rows.append({
+            "cell_id": _cid, "rul_base": _rul_base, "rul_new": _rul_new,
+            "fade_base": _fade_base, "fade_new": _fade_new,
+        })
+    _e2_rul_base  = [r["rul_base"] for r in _e2_stress_rows if r["rul_base"] is not None]
+    _e2_rul_new   = [r["rul_new"]  for r in _e2_stress_rows if r["rul_new"]  is not None]
+    if _e2_rul_base and _e2_rul_new:
+        _e2_avg_base = float(_np_e2.mean(_e2_rul_base))
+        _e2_avg_new  = float(_np_e2.mean(_e2_rul_new))
+        _e2_delta    = _e2_avg_new - _e2_avg_base
+        _e2_repl_base = sum(1 for r in _e2_stress_rows if r["rul_base"] is not None and r["rul_base"] < _CYCLES_24M_E2)
+        _e2_repl_new  = sum(1 for r in _e2_stress_rows if r["rul_new"]  is not None and r["rul_new"]  < _CYCLES_24M_E2)
+        _e2_capex_saved = (_e2_repl_base - _e2_repl_new) * _REPL_COST_E2
+        _e2_col = "#48bb78" if _e2_delta >= 0 else "#fc8181"
+        _e2_dir = "increase" if _e2_delta >= 0 else "decrease"
+        _e2c3, _e2c4, _e2c5 = st.columns(3)
+        _e2c3.metric("Fleet-avg RUL change", f"{_e2_delta:+.0f} cy",
+                     help="Projected change in average fleet remaining life")
+        _e2c4.metric("Replacements avoided (24 mo)", f"{_e2_repl_base - _e2_repl_new:+d}",
+                     help="Cells no longer reaching EOL within 24 months under new conditions")
+        _e2c5.metric("CAPEX impact (24 mo)", f"${_e2_capex_saved:+,.0f}",
+                     help="Replacement cost saved (or added) at $150/cell over 24 months")
+        _e2_txt = (
+            f"Under the adjusted conditions (C-rate {_e2_crate_delta:+.1f}C, temp {_e2_temp_delta:+d}°C), "
+            f"fleet-average RUL would <strong style='color:{_e2_col}'>{_e2_dir} by {abs(_e2_delta):.0f} cycles</strong>. "
+            + (f"Estimated CAPEX saving over 24 months: <strong style='color:#48bb78'>${_e2_capex_saved:,.0f}</strong>."
+               if _e2_capex_saved > 0 else
+               f"Estimated additional CAPEX over 24 months: <strong style='color:#fc8181'>${abs(_e2_capex_saved):,.0f}</strong>.")
+            if _e2_crate_delta != 0 or _e2_temp_delta != 0 else
+            "Adjust the sliders above to model a different operating scenario."
+        )
+        _md_html(f"<div style='font-size:12px;color:#a0aec0;padding:8px 0 16px;line-height:1.6'>{_e2_txt}</div>")
+    else:
+        st.info("RUL projection unavailable — ensure at least one cell has a calibrated fade rate.")
 
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
@@ -5805,25 +6014,78 @@ def page_decision(
     _log_col, _ = st.columns([1, 3])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
         _entry = {
+            "id":         f"{selected}_{datetime.datetime.now().strftime('%H%M%S')}",
             "cell_id":    selected,
             "action":     action_label,
             "confidence": conf_label,
             "soh_pct":    round(soh, 1),
             "timestamp":  datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "status":     "Pending",
+            "outcome_soh": None,
         }
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_entry)
-        st.success(f"Logged: {action_label} for {selected} at {_entry['timestamp']}")
+        st.success(f"Logged: {action_label} for {selected}")
 
+    # E4: Audit trail with status chips and outcome tracking
     _dlog = st.session_state.get("decision_log", [])
     if _dlog:
-        with st.expander(f"Decision Log ({len(_dlog)} entries)"):
+        with st.expander(f"Decision Audit Trail ({len(_dlog)} entries)", expanded=False):
+            _STATUS_COLOURS = {
+                "Pending": "#718096", "Approved": "#63b3ed",
+                "Completed": "#48bb78", "Verified": "#9f7aea",
+            }
+            for _i, _dl in enumerate(_dlog):
+                _sc   = _STATUS_COLOURS.get(_dl.get("status", "Pending"), "#718096")
+                _sc22 = _sc + "22"
+                _cols_e4 = st.columns([3, 2, 2, 2, 1])
+                _cols_e4[0].markdown(
+                    f"<div style='padding:6px 0'>"
+                    f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"
+                    f"{_dl['cell_id']} — {_dl['action']}</div>"
+                    f"<div style='font-size:11px;color:#4a5568'>{_dl['timestamp']} · SOH {_dl['soh_pct']}%</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                _new_status = _cols_e4[1].selectbox(
+                    "Status", options=["Pending", "Approved", "Completed", "Verified"],
+                    index=["Pending", "Approved", "Completed", "Verified"].index(
+                        _dl.get("status", "Pending")),
+                    key=f"e4_status_{_i}",
+                    label_visibility="collapsed",
+                )
+                if _new_status != _dl.get("status"):
+                    st.session_state["decision_log"][_i]["status"] = _new_status
+                    st.rerun()
+                _cols_e4[2].markdown(
+                    f"<div style='padding:8px 0'>"
+                    f"<span style='background:{_sc22};border:1px solid {_sc}44;color:{_sc};"
+                    f"font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px'>"
+                    f"{_dl.get('status', 'Pending')}</span></div>",
+                    unsafe_allow_html=True,
+                )
+                # Outcome tracking: prompt for SOH when marked Completed
+                if _dl.get("status") == "Completed" and _dl.get("outcome_soh") is None:
+                    _new_soh = _cols_e4[3].number_input(
+                        "Actual SOH after action (%)", min_value=0.0, max_value=100.0,
+                        value=float(_dl["soh_pct"]), step=0.5,
+                        key=f"e4_soh_{_i}", label_visibility="collapsed",
+                    )
+                    if _cols_e4[4].button("Save", key=f"e4_save_{_i}"):
+                        st.session_state["decision_log"][_i]["outcome_soh"] = round(_new_soh, 1)
+                        st.session_state["decision_log"][_i]["status"] = "Verified"
+                        st.rerun()
+                elif _dl.get("outcome_soh") is not None:
+                    _delta_soh = _dl["outcome_soh"] - _dl["soh_pct"]
+                    _delta_col = "#48bb78" if _delta_soh >= 0 else "#fc8181"
+                    _cols_e4[3].markdown(
+                        f"<div style='padding:8px 0;font-size:12px;color:{_delta_col}'>"
+                        f"Outcome: {_dl['outcome_soh']}% "
+                        f"({_delta_soh:+.1f}%)</div>",
+                        unsafe_allow_html=True,
+                    )
             import pandas as _pd_log
-            st.dataframe(
-                _pd_log.DataFrame(_dlog)[["timestamp","cell_id","action","confidence","soh_pct"]],
-                use_container_width=True, hide_index=True,
-            )
             st.download_button(
                 "Export log as CSV",
                 data=_pd_log.DataFrame(_dlog).to_csv(index=False).encode(),
@@ -6458,6 +6720,50 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     st.markdown("# Battery Passport")
     st.markdown(f"##### Battery Passport Interface · {selected}")
 
+    # ── E8: Passport completeness score ───────────────────────────────────────
+    _e8_n_avail = summ.get("n_available", 0)
+    _e8_n_est   = summ.get("n_estimated", 0)
+    _e8_n_unavail = summ.get("n_unavailable", 0)
+    _e8_total   = max(1, summ.get("n_total", _e8_n_avail + _e8_n_est + _e8_n_unavail))
+    _e8_score   = round((_e8_n_avail + _e8_n_est * 0.5) / _e8_total * 100)
+    _e8_col1, _e8_col2 = st.columns([3, 1])
+    with _e8_col1:
+        _e8_bar_colour = "#48bb78" if _e8_score >= 70 else ("#f6ad55" if _e8_score >= 40 else "#fc8181")
+        st.markdown(
+            f"<div style='margin-bottom:4px;font-size:12px;color:#a0aec0'>"
+            f"Passport completeness: <strong style='color:{_e8_bar_colour}'>{_e8_score}%</strong> "
+            f"&nbsp;·&nbsp; {_e8_n_avail} available · {_e8_n_est} estimated · {_e8_n_unavail} unavailable</div>",
+            unsafe_allow_html=True,
+        )
+        st.progress(_e8_score / 100)
+    with _e8_col2:
+        if _e8_n_unavail > 0:
+            with st.expander(f"Fill {_e8_n_unavail} gaps", expanded=False):
+                _E8_HOW_TO: dict[str, str] = {
+                    "manufacturer": "Set in sidebar → Cell Metadata → Manufacturer",
+                    "chemistry":    "Detected automatically once enough cycle data is loaded",
+                    "carbon_footprint_kg_co2": "Upload manufacturer LCA document in Import page",
+                    "recycled_content_pct":    "Enter on Import page → Advanced → Recycled content",
+                    "supply_chain_due_diligence": "Link supplier declaration PDF in Import page",
+                    "hazardous_substances":    "Set on Import page → Advanced → Hazardous substances",
+                    "end_of_life_instructions": "Auto-populated once chemistry is confirmed",
+                    "second_life_status":       "Set on Decision page after repurpose decision is logged",
+                }
+                _all_fields: list[dict] = []
+                for _grp_key in ("identity", "soh", "lifecycle", "carbon"):
+                    _all_fields.extend(p.get(_grp_key, []))
+                _missing = [f for f in _all_fields if f.get("state") == "unavailable"]
+                for _mf in _missing:
+                    _fname  = _mf.get("label", _mf.get("field", "Unknown field"))
+                    _tip    = _E8_HOW_TO.get(str(_mf.get("field", "")), "Provide this data on the Import page")
+                    st.markdown(
+                        f"<div style='font-size:11px;padding:4px 0;border-bottom:1px solid #2d3748;'>"
+                        f"<span style='color:#fc8181'>●</span> <strong style='color:#e2e8f0'>{_fname}</strong>"
+                        f"<br><span style='color:#718096;font-size:10px'>How to fill: {_tip}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+    st.markdown("")
+
     _md_html(
         f"""
         <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);
@@ -6571,6 +6877,45 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         </div>
         """
     )
+
+
+    # ── E3: QR Code generator ─────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:12px;margin-top:24px'>8 · Physical Deployment — QR Code</div>",
+        unsafe_allow_html=True,
+    )
+    _qr_api_base = st.text_input(
+        "API base URL (for QR code)",
+        value="http://localhost:8000",
+        key="passport_qr_base",
+        help="Points to your FastAPI deployment. The QR encodes /cells/{cell_id}.",
+    )
+    if st.button("Generate QR Code", key="passport_qr_btn"):
+        try:
+            import qrcode as _qrlib
+            import io as _io
+            _qr_url = f"{_qr_api_base.rstrip('/')}/cells/{selected}"
+            _qr = _qrlib.QRCode(error_correction=_qrlib.constants.ERROR_CORRECT_M, box_size=6, border=3)
+            _qr.add_data(_qr_url)
+            _qr.make(fit=True)
+            _qr_img = _qr.make_image(fill_color="white", back_color="#0e1117")
+            _qr_buf = _io.BytesIO()
+            _qr_img.save(_qr_buf, format="PNG")
+            _qr_buf.seek(0)
+            st.image(_qr_buf, caption=f"Scan to open live passport for {selected}", width=200)
+            st.download_button(
+                "Download QR PNG", data=_qr_buf.getvalue(),
+                file_name=f"passport_qr_{selected}.png", mime="image/png",
+                key="passport_qr_dl",
+            )
+            st.caption(f"Encoded URL: {_qr_url} · Print and affix to battery for on-site scanning.")
+        except ImportError:
+            st.warning(
+                "qrcode library not installed. Add `qrcode[pil]` to requirements.txt "
+                "and restart the app."
+            )
 
 
 def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
@@ -8828,6 +9173,33 @@ def page_import():
         unsafe_allow_html=True,
     )
 
+    # E5: Cell cohort tagging UI
+    st.markdown(section_header_html("Cell Cohort Tags"), unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:12px'>"
+        "Tag cells by batch, supplier, or operating site. Tags are used in the Compare page "
+        "for cohort-level analysis. Session-scoped — not persisted after page refresh."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _e5_all_ids = [
+        *[f"B{n}" for n in ["0005", "0006", "0007", "0018"]],
+        *[f"Cell{i}" for i in range(1, 9)],
+    ]
+    if "cell_cohort_tags" not in st.session_state:
+        st.session_state["cell_cohort_tags"] = {}
+    _e5_cols = st.columns(3)
+    for _e5i, _e5id in enumerate(_e5_all_ids):
+        with _e5_cols[_e5i % 3]:
+            _cur_tag = st.session_state["cell_cohort_tags"].get(_e5id, "")
+            _new_tag = st.text_input(
+                f"{_e5id}", value=_cur_tag,
+                placeholder="e.g. Batch-A, Site-1, SupplierX",
+                key=f"e5_tag_{_e5id}",
+            )
+            if _new_tag != _cur_tag:
+                st.session_state["cell_cohort_tags"][_e5id] = _new_tag
+
 
 # ---------------------------------------------------------------------------
 # Page: Compare
@@ -9191,6 +9563,68 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         st.info("scikit-learn required for clustering (already in requirements.txt).")
     except Exception as _ce:
         st.info(f"Clustering unavailable: {_ce}")
+
+    # ── E5: Cohort analysis ────────────────────────────────────────────────────
+    _e5_tags = st.session_state.get("cell_cohort_tags", {})
+    _tagged  = {cid: tag for cid, tag in _e5_tags.items() if tag.strip() and cid in active_fdfs}
+    if _tagged:
+        st.markdown("<div class='section-header'>Cohort Analysis</div>", unsafe_allow_html=True)
+        st.caption("Cells grouped by tag (set on Import page). Comparing avg SOH and fade rate across cohorts.")
+        _cohorts: dict[str, list] = {}
+        for cid, tag in _tagged.items():
+            _cohorts.setdefault(tag, []).append(cid)
+        for cid in active_fdfs:
+            if cid not in _tagged:
+                _cohorts.setdefault("(untagged)", []).append(cid)
+        _cohort_stats = []
+        for _ctag, _ccids in _cohorts.items():
+            _sohs  = [float(active_fdfs[c]["soh_pct"].iloc[-1]) for c in _ccids if c in active_fdfs]
+            _fades = [float(active_fdfs[c]["fade_rate_30cy"].iloc[-1]) * 1000
+                      for c in _ccids if c in active_fdfs and "fade_rate_30cy" in active_fdfs[c].columns]
+            if not _sohs:
+                continue
+            _cohort_stats.append({
+                "cohort": _ctag, "n": len(_sohs),
+                "avg_soh": sum(_sohs) / len(_sohs),
+                "avg_fade": sum(_fades) / len(_fades) if _fades else None,
+                "cells": ", ".join(_ccids),
+            })
+        if len(_cohort_stats) >= 2:
+            import numpy as _np_e5
+            _fig_coh = go.Figure()
+            _coh_colours = ["#63b3ed", "#48bb78", "#f6ad55", "#fc8181", "#9f7aea"]
+            for _ci, _cs in enumerate(_cohort_stats):
+                _cc = _coh_colours[_ci % len(_coh_colours)]
+                _fig_coh.add_trace(go.Bar(
+                    name=_cs["cohort"], x=[_cs["cohort"]], y=[_cs["avg_soh"]],
+                    marker_color=_cc, width=0.5,
+                    text=[f"{_cs['avg_soh']:.1f}%"], textposition="outside",
+                    hovertemplate=f"<b>{_cs['cohort']}</b><br>Avg SOH: %{{y:.1f}}%<br>Cells: {_cs['cells']}<extra></extra>",
+                ))
+            _fig_coh.add_hline(y=80, line_dash="dot", line_color="#fc8181", line_width=1)
+            _fig_coh.update_layout(
+                height=260, showlegend=False,
+                **base_layout(
+                    xaxis=dict(title="Cohort", gridcolor="#232d3b", linecolor="#2d3748"),
+                    yaxis=dict(title="Avg SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+                               zeroline=False, range=[50, 105]),
+                ),
+            )
+            st.plotly_chart(_fig_coh, use_container_width=True)
+            # Cohort comparison narrative
+            _best  = max(_cohort_stats, key=lambda c: c["avg_soh"])
+            _worst = min(_cohort_stats, key=lambda c: c["avg_soh"])
+            if _best["cohort"] != _worst["cohort"]:
+                _gap = _best["avg_soh"] - _worst["avg_soh"]
+                _md_html(
+                    f"<div style='font-size:12px;color:#a0aec0;padding:4px 0 12px'>"
+                    f"<strong style='color:#e2e8f0'>{_worst['cohort']}</strong> is degrading "
+                    f"faster than <strong style='color:#e2e8f0'>{_best['cohort']}</strong> — "
+                    f"{_gap:.1f}% average SOH gap. Possible batch, supplier, or operating condition difference.</div>"
+                )
+    else:
+        with st.expander("Cohort analysis (no tags set)", expanded=False):
+            st.info("Tag cells on the Import page by batch, supplier, or site to compare cohort health here.")
 
 
 # ---------------------------------------------------------------------------

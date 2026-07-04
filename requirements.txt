@@ -11,3 +11,4 @@ pybamm
 paho-mqtt
 fastapi[standard]
 uvicorn
+qrcode[pil]
