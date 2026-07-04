@@ -8603,7 +8603,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "<strong style='color:#8896a8'>Model</strong> — "
         "Two separate GBRT instances (synthetic / NASA); leave-cell-out cross-validation<br>"
         "<strong style='color:#8896a8'>Data</strong> — "
-        "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007)<br>"
+        "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007) + "
+        "12 Severson LFP cells (Severson et al., 2019, when cached)<br>"
         "<strong style='color:#8896a8'>Regulatory</strong> — "
         "EU Battery Regulation (EU) 2023/1542 — field structure demonstration only; "
         "not a compliance claim<br>"
@@ -8847,9 +8848,10 @@ def page_import():
         )
         st.markdown("**Severson 2019 (Nature Energy)**")
         st.markdown(
-            "Download `batch1.pkl`, `batch2.pkl`, `batch3.pkl` from data.matr.io "
-            "(Severson et al., Nature Energy 2019). "
-            "Upload them below — the importer auto-detects `.pkl` files and loads all cells."
+            "Severson cells load automatically from local cache when available — "
+            "switch to the Severson data source in the sidebar once cached. "
+            "Download the raw batch files from data.matr.io to populate the cache; "
+            "manual upload isn't needed."
         )
         st.link_button("Download Severson Dataset (data.matr.io)", "https://data.matr.io/1/")
         st.markdown("**CALCE Battery Research Group**")
@@ -8860,65 +8862,29 @@ def page_import():
         st.link_button("Download CALCE Dataset", "https://web.calce.umd.edu/batteries/data.htm")
 
     # ── Section 2: Upload widget ────────────────────────────────────────────
-    _section("Upload CSV / XLSX / PKL")
+    _section("Upload CSV / XLSX")
 
     uploaded = st.file_uploader(
         "Upload battery cycle data",
-        type=["csv", "xlsx", "pkl"],
+        type=["csv", "xlsx"],
         accept_multiple_files=True,
         key="import_csv_upload",
-        help="CSV/XLSX: Battery Intelligence Platform format. PKL: Severson batch file.",
+        help="CSV/XLSX: Battery Intelligence Platform format.",
         label_visibility="collapsed",
     )
 
-    # Handle Severson .pkl upload (multi-file uploader returns a list)
-    _pkl_files = [f for f in (uploaded or []) if f.name.endswith(".pkl")]
-    _csv_files = [f for f in (uploaded or []) if not f.name.endswith(".pkl")]
+    uploaded = uploaded[0] if uploaded else None
 
-    for _pkl_file in _pkl_files:
-        try:
-            import tempfile
-            from severson_loader import load_severson_batch
-            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
-                tmp.write(_pkl_file.read())
-                tmp_path = tmp.name
-            cell_dfs = load_severson_batch(tmp_path)
-            st.success(f"Loaded {len(cell_dfs)} cells from Severson batch file")
-            preview_rows = [
-                {
-                    "Cell ID": cid,
-                    "Cycles": len(_df),
-                    "Final SOH": f"{(_df.capacity_ah.iloc[-1] / max(_df.capacity_ah.iloc[0], 1e-9) * 100):.1f}%",
-                }
-                for cid, _df in cell_dfs.items()
-            ]
-            _preview_df = pd.DataFrame(preview_rows)
-            st.dataframe(_preview_df.head(200), use_container_width=True)
-            if len(_preview_df) > 200:
-                st.caption(f"Showing 200 of {len(_preview_df)} rows. All rows are loaded into the model.")
-            st.session_state["severson_cells"] = cell_dfs
-            st.info("Severson cells loaded. Switch to Overview to analyze individual cells (pipeline integration coming in next phase).")
-        except Exception as _e:
-            st.error(f"Could not load Severson batch file '{_pkl_file.name}': {_e}")
-
-    # For CSV/XLSX, take the first file (existing single-file flow)
-    uploaded = _csv_files[0] if _csv_files else None
-
-    if uploaded is None and not _pkl_files:
+    if uploaded is None:
         st.markdown(
             "<div style='background:#1a202c;border:1px dashed #2d3748;border-radius:10px;"
             "padding:40px;text-align:center;color:#4a5568;font-size:13px'>"
-            "Drag and drop a CSV, XLSX, or PKL file here, or click to browse.<br>"
+            "Drag and drop a CSV or XLSX file here, or click to browse.<br>"
             "<span style='font-size:11px;color:#2d3748;margin-top:6px;display:block'>"
-            "CSV/XLSX: 7 columns required — download the template for the exact format. "
-            "PKL: Severson batch file.</span>"
+            "7 columns required — download the template for the exact format.</span>"
             "</div>",
             unsafe_allow_html=True,
         )
-        return
-
-    if uploaded is None:
-        # Only pkl files were uploaded — handled above; nothing more to do.
         return
 
     # ── Parse + validate ────────────────────────────────────────────────────
