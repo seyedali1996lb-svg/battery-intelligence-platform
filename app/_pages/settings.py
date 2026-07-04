@@ -1,26 +1,22 @@
-"""Page: Settings"""
+"""Page: Settings."""
 
 import sys
 import os
+import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import streamlit as st
-import pandas as pd
 
-from utils import _md_html, NASA_CELL_IDS
-from design_system import C_GREEN, C_AMBER, C_MUTED, C_ORANGE, section_header_html
-
-
-def _clear_uploaded_data():
-    for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_mode_meta"]:
-        st.session_state.pop(k, None)
-    st.session_state["data_mode"] = "nasa"
+from design_system import make_badge, section_header_html
+from utils import _md_html, _action_bar, NASA_CELL_IDS
 
 
 def page_settings(featured_dfs: dict, bundles: dict):
+    _action_bar("settings")
     from lco_eval import RUL_RELIABLE_FLOOR
+    from design_system import C_GREEN, C_AMBER, C_MUTED, C_ORANGE
 
     def _section(title: str):
         st.markdown(section_header_html(title), unsafe_allow_html=True)
@@ -28,7 +24,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown("# Settings")
     st.markdown("##### Platform configuration · model transparency · reliability controls")
 
-    # ── Section 0: Uploaded data ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 0: Uploaded data (shown only when uploaded data is in session)
+    # ────────────────────────────────────────────────────────────────────────
     up_fdfs = st.session_state.get("uploaded_featured_dfs", {})
     if up_fdfs:
         _section("My Data")
@@ -45,7 +43,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>My Data · this session only</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{n_up} cells</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.8'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.8'>"
             f"{'⚠ LCO limited — fewer than 3 cells<br>' if lco_lim else ''}"
             f"{calib_cnt} Calibrating · {n_up - calib_cnt} reliable<br>"
             f"{'Temperature assumed 25°C for: ' + ', '.join(temp_assumed) if temp_assumed else 'Temperature measured for all cells'}"
@@ -69,7 +67,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
             unsafe_allow_html=True,
         )
 
-    # ── Section 1: Data sources ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 1: Data sources
+    # ────────────────────────────────────────────────────────────────────────
     _section("Data Sources")
 
     synth_ids = [c for c in featured_dfs if c not in NASA_CELL_IDS and c not in up_fdfs]
@@ -83,11 +83,12 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#fc8181;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>Synthetic cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(synth_ids)}</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
             f"Physics-informed simulation (Arrhenius SEI growth, empirical C-rate factor, "
             f"Rainflow DoD scaling). Resistance: 0.15–0.40 Ω internal. "
             f"<strong>Not real measured data.</strong></div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>{', '.join(synth_ids)}</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"{', '.join(synth_ids)}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -98,7 +99,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;font-weight:600;color:#48bb78;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
-            f"<div style='font-size:12px;color:#718096;margin-top:4px;line-height:1.6'>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
             f"LiCoO₂ 18650 cells, ~2 Ah, 24°C, 2A constant discharge. "
             f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
@@ -111,7 +112,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;margin-top:12px;padding:10px 14px;"
         "background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
-        "<strong style='color:#718096'>Why two separate models?</strong> "
+        "<strong style='color:#8896a8'>Why two separate models?</strong> "
         "Synthetic and NASA cells use incompatible resistance scales (0.15–0.40 Ω vs 0.04–0.07 Ω Re). "
         "A combined model produced R²=−0.49. Two separate GBRT models, each trained and validated "
         "on its own data source, keep the predictions honest. Fleet ranking uses SOH "
@@ -119,78 +120,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
-    # ── Section 1b: Model Card ──
-    _section("Model Card — GBRT SOH / RUL Estimator")
-
-    st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
-        "A model card discloses what the model is, what data it was trained on, "
-        "how it was validated, and what it should and should not be used for. "
-        "This card follows the Mitchell et al. (2019) model card format."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    import datetime as _dt
-    _train_date = "2024-01 (initial) → updated each app start if cache invalid"
-    _mc_rows = [
-        ("Model type",        "Gradient-Boosted Regression Trees (scikit-learn GradientBoostingRegressor)"),
-        ("Targets",           "SOH (% capacity remaining) and RUL (cycles to 80% EOL threshold)"),
-        ("Architecture",      "Two separate GBRT instances — one for NASA PCoE cells, one for synthetic cells. Combined model R²=−0.49 due to incompatible resistance scales (0.04–0.07 Ω vs 0.15–0.40 Ω)."),
-        ("Hyperparameters",   "n_estimators=300, max_depth=4, learning_rate=0.05, subsample=0.8, loss=squared_error (SOH); same with quantile loss for RUL uncertainty bounds"),
-        ("Training data",     "NASA PCoE Battery Aging Dataset (Saha & Goebel 2007): 4 LiCoO₂ 18650 cells (~2 Ah, 24°C, 2A discharge) · 8 synthetic cells (physics-informed: Arrhenius SEI, empirical C-rate, Rainflow DoD)"),
-        ("Validation method", "Leave-Cell-Out (LCO) cross-validation: train on N−1 cells, test on held-out cell. Row-level train/test split is not used — it leaks cell identity into training."),
-        ("EOL definition",    "80% of initial capacity (industry standard; configurable in Settings)"),
-        ("Feature set",       "cycle_number, fade_rate_{10,30,50}cy, fade_acceleration, soh_velocity_50cy, resistance_{ohm,normalized,trend_30cy}, temp_rolling_30cy, dqdv_{peak_value,peak_soc,area,fwhm}, ce_rolling_30cy, ce_drop_rate"),
-        ("Intended use",      "Engineering decision support — prioritisation, inspection scheduling, second-life routing. Not for safety-critical go/no-go decisions."),
-        ("Known limitations", (
-            "1. RUL is unreliable below fold R²=0.30 (B0018: R²=0.22, withheld). "
-            "2. Model was not tested on NMC/NCA/LFP — transfer to other chemistries is unknown. "
-            "3. Only 4 real cells — fleet-level statistics are indicative, not statistically robust. "
-            "4. Synthetic cells share the same physics model used for generation — they cannot reveal model failure modes outside that model's assumptions. "
-            "5. Temperature assumed 25°C for cells without measured temperature column."
-        )),
-        ("Out-of-scope uses", "Certified safety assessments · Regulatory compliance claims · Financial warranty calculations without independent validation"),
-        ("Bias / fairness",   "No demographic bias considerations apply (physical cells). Cell-to-cell manufacturing variation is a known source of model error — real batteries vary more than the synthetic fleet captures."),
-        ("Last trained",      _train_date),
-    ]
-
-    for field, value in _mc_rows:
-        is_limit = field in ("Known limitations", "Out-of-scope uses")
-        val_colour = "#fc8181" if is_limit else "#a0aec0"
-        st.markdown(
-            f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
-            f"<div style='min-width:160px;font-size:11px;font-weight:600;color:#4a5568;"
-            f"text-transform:uppercase;letter-spacing:0.06em;padding-top:2px;flex-shrink:0'>{field}</div>"
-            f"<div style='flex:1;font-size:12px;color:{val_colour};line-height:1.7'>{value}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-    # Per-cell LCO summary inside model card
-    with st.expander("Per-cell validation results", expanded=False):
-        for source_key, bundle in bundles.items():
-            if bundle is None:
-                continue
-            lco_per = bundle["metrics"].get("lco_per_cell", {})
-            per_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
-            label   = "NASA PCoE" if source_key == "nasa" else "Synthetic"
-            colour  = "#48bb78" if source_key == "nasa" else "#fc8181"
-            st.markdown(f"<div style='font-size:12px;font-weight:600;color:{colour};margin:12px 0 6px'>{label} model · {bundle['metrics'].get('n_cells','?')} cells · {bundle['metrics'].get('n_rows',0):,} rows</div>", unsafe_allow_html=True)
-            _hdr = st.columns([2, 1, 1, 1])
-            for c, h in zip(_hdr, ["Cell", "SOH R²", "RUL R²", "RUL Status"]):
-                c.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em'>{h}</div>", unsafe_allow_html=True)
-            for cell_id, fold in lco_per.items():
-                ok     = per_ok.get(cell_id, True)
-                s_col  = "#48bb78" if ok else "#fc8181"
-                status = "Calibrated" if ok else f"Withheld (R²={fold.get('rul_r2',0):.2f} < 0.30)"
-                row    = st.columns([2, 1, 1, 1])
-                row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:3px 0'>{cell_id}</div>", unsafe_allow_html=True)
-                row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{fold.get('soh_r2',0):.3f}</div>", unsafe_allow_html=True)
-                row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{fold.get('rul_r2',0):.3f}</div>", unsafe_allow_html=True)
-                row[3].markdown(f"<div style='font-size:13px;color:{s_col};padding:3px 0'>{status}</div>", unsafe_allow_html=True)
-
-    # ── Section 2: Model transparency ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2: Model transparency
+    # ────────────────────────────────────────────────────────────────────────
     _section("Model Transparency — Leave-Cell-Out Validation")
 
     st.markdown(
@@ -206,33 +138,41 @@ def page_settings(featured_dfs: dict, bundles: dict):
         if bundle is None:
             continue
         m = bundle["metrics"]
-        lco_per    = m.get("lco_per_cell", {})
+        lco_per = m.get("lco_per_cell", {})
         per_cell_ok = m.get("per_cell_rul_reliable", {})
-        label  = "NASA PCoE" if source_key == "nasa" else "Synthetic"
+        label = "NASA PCoE" if source_key == "nasa" else "Synthetic"
         colour = "#48bb78" if source_key == "nasa" else "#fc8181"
 
-        st.markdown(f"<div style='font-size:12px;font-weight:600;color:{colour};margin:16px 0 8px'>{label} model</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='font-size:12px;font-weight:600;color:{colour};"
+            f"margin:16px 0 8px'>{label} model</div>",
+            unsafe_allow_html=True,
+        )
 
         header_cols = st.columns([2, 1, 1, 1, 2])
         for col, hdr in zip(header_cols, ["Cell", "SOH fold R²", "RUL fold R²", "RUL status", "Note"]):
-            col.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>", unsafe_allow_html=True)
+            col.markdown(
+                f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+                f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
+                unsafe_allow_html=True,
+            )
 
         for cell_id, fold in lco_per.items():
-            soh_r2 = fold.get("soh_r2", None)
-            rul_r2 = fold.get("rul_r2", None)
-            ok     = per_cell_ok.get(cell_id, True)
+            soh_r2  = fold.get("soh_r2", None)
+            rul_r2  = fold.get("rul_r2", None)
+            ok      = per_cell_ok.get(cell_id, True)
             status_c = C_GREEN if ok else C_ORANGE
             status_l = "Calibrated" if ok else "Not calibrated"
             note = "" if ok else f"fold R²={rul_r2:.2f} < {RUL_RELIABLE_FLOOR} floor — RUL withheld"
-            row = st.columns([2, 1, 1, 1, 2])
-            row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
-            row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{soh_r2:.2f}</div>", unsafe_allow_html=True)
-            row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{rul_r2:.2f}</div>", unsafe_allow_html=True)
-            row[3].markdown(f"<div style='font-size:13px;color:{status_c};padding:4px 0'>{status_l}</div>", unsafe_allow_html=True)
-            row[4].markdown(f"<div style='font-size:11px;color:#4a5568;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
+            row_cols = st.columns([2, 1, 1, 1, 2])
+            row_cols[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
+            row_cols[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{soh_r2:.2f}</div>", unsafe_allow_html=True)
+            row_cols[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{rul_r2:.2f}</div>", unsafe_allow_html=True)
+            row_cols[3].markdown(f"<div style='font-size:13px;color:{status_c};padding:4px 0'>{status_l}</div>", unsafe_allow_html=True)
+            row_cols[4].markdown(f"<div style='font-size:11px;color:#4a5568;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
 
         st.markdown(
-            f"<div style='display:flex;gap:24px;font-size:12px;color:#718096;"
+            f"<div style='display:flex;gap:24px;font-size:12px;color:#8896a8;"
             f"padding:8px 0;border-top:1px solid #2d3748;margin-top:4px'>"
             f"<span>Dataset SOH R²: <strong style='color:#e2e8f0'>{m.get('lco_soh_r2', 0):.3f}</strong></span>"
             f"<span>Dataset RUL R²: <strong style='color:#e2e8f0'>{m.get('lco_rul_r2', 0):.3f}</strong></span>"
@@ -242,16 +182,47 @@ def page_settings(featured_dfs: dict, bundles: dict):
             unsafe_allow_html=True,
         )
 
-    # ── Section 2b: Application EOL threshold ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2b: Application Profile + EOL threshold
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Application Profile")
+    _PROFILES = {
+        "Custom (manual)":       None,
+        "EV / Passenger Vehicle": 80.0,
+        "Stationary Storage":    70.0,
+        "Industrial UPS":        75.0,
+        "Second-Life Reuse":     60.0,
+    }
+    _cur_profile = st.session_state.get("app_profile", "Custom (manual)")
+    _new_profile = st.selectbox(
+        "Application profile",
+        options=list(_PROFILES.keys()),
+        index=list(_PROFILES.keys()).index(_cur_profile) if _cur_profile in _PROFILES else 0,
+        key="app_profile_select",
+        help="Selecting a profile auto-sets the EOL threshold below. "
+             "You can still override it manually after selecting a profile.",
+    )
+    if _new_profile != _cur_profile:
+        st.session_state["app_profile"] = _new_profile
+        if _PROFILES[_new_profile] is not None:
+            st.session_state["eol_threshold_pct"] = _PROFILES[_new_profile]
+        st.rerun()
+    if _PROFILES.get(_new_profile) is not None:
+        st.caption(
+            f"Profile '{_new_profile}' sets EOL threshold to {_PROFILES[_new_profile]:.0f}% SOH. "
+            f"Adjust the slider below to override."
+        )
+
     _section("Application End-of-Life Threshold")
 
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
         "The EOL threshold defines when a cell is 'retired' for your application. "
-        "The standard industry convention is <strong style='color:#718096'>80% SOH</strong>, "
-        "but this is not universal. "
+        "The standard industry convention is <strong style='color:#8896a8'>80% SOH</strong>, "
+        "but this is not universal — a delivery van needing 90% range may retire at 88%, "
+        "while stationary grid storage may run to 70%. "
         "Changing this threshold adjusts the displayed RUL on the Overview page "
-        "using the current fade rate — <strong style='color:#718096'>it does not retrain the model</strong>. "
+        "using the current fade rate — <strong style='color:#8896a8'>it does not retrain the model</strong>. "
         "The model was trained on 80% EOL; the adjusted RUL is a fade-rate projection, not a new model prediction.</div>",
         unsafe_allow_html=True,
     )
@@ -259,7 +230,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
     eol_col1, eol_col2 = st.columns([4, 1])
     with eol_col1:
         new_eol = st.slider(
-            "Application EOL threshold (%)", min_value=70, max_value=95, step=1,
+            "Application EOL threshold (%)",
+            min_value=70, max_value=95, step=1,
             value=int(st.session_state.get("eol_threshold_pct", 80)),
             key="settings_eol_threshold",
             help="RUL on Overview will reflect cycles remaining until SOH hits this value.",
@@ -287,7 +259,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
             unsafe_allow_html=True,
         )
 
-    # ── Section 2c: Alert thresholds ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 2c: Alert thresholds
+    # ────────────────────────────────────────────────────────────────────────
     _section("🔔 Alert Thresholds")
 
     st.markdown(
@@ -299,19 +273,32 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
     _at_col1, _at_col2, _at_col3 = st.columns(3)
     with _at_col1:
-        soh_alert = st.slider("SOH Warning Threshold (%)", 70, 95,
-            int(st.session_state.get("soh_alert_pct", 85)), key="soh_alert_pct")
+        soh_alert = st.slider(
+            "SOH Warning Threshold (%)", 70, 95,
+            int(st.session_state.get("soh_alert_pct", 85)),
+            key="soh_alert_pct",
+        )
         st.caption("Show warning banner when any cell's SOH drops below this level.")
     with _at_col2:
-        resistance_alert = st.slider("Resistance Alert Multiplier (×initial)", 1.2, 3.0,
-            float(st.session_state.get("resistance_alert_mult", 1.8)), step=0.1, key="resistance_alert_mult")
+        resistance_alert = st.slider(
+            "Resistance Alert Multiplier (×initial)", 1.2, 3.0,
+            float(st.session_state.get("resistance_alert_mult", 1.8)),
+            step=0.1,
+            key="resistance_alert_mult",
+        )
         st.caption("Alert when resistance exceeds this multiple of the cell's initial resistance.")
     with _at_col3:
-        spread_alert = st.slider("Pack Spread Alert (%)", 1.0, 10.0,
-            float(st.session_state.get("spread_alert_pct", 5.0)), step=0.5, key="spread_alert_pct")
+        spread_alert = st.slider(
+            "Pack Spread Alert (%)", 1.0, 10.0,
+            float(st.session_state.get("spread_alert_pct", 5.0)),
+            step=0.5,
+            key="spread_alert_pct",
+        )
         st.caption("Alert when SOH spread across fleet cells exceeds this threshold.")
 
-    # ── Section 3: RUL reliability threshold ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3: RUL reliability threshold
+    # ────────────────────────────────────────────────────────────────────────
     _section("RUL Reliability Threshold")
 
     st.markdown(
@@ -319,7 +306,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "The reliability floor gates whether RUL predictions are shown or suppressed. "
         "Cells whose held-out fold R² falls below this value have RUL withheld across "
         "all pages — shown as 'Not calibrated' instead of a cycle count. "
-        "<strong style='color:#718096'>This is a read-only preview</strong> — "
+        "Adjusting the slider below shows which cells would flip at different thresholds. "
+        "<strong style='color:#8896a8'>This is a read-only preview</strong> — "
         "the active floor is hardcoded at "
         f"<code style='color:#63b3ed'>{RUL_RELIABLE_FLOOR}</code> in "
         "<code style='color:#63b3ed'>src/lco_eval.py</code> and requires a code change to modify.</div>",
@@ -329,9 +317,11 @@ def page_settings(featured_dfs: dict, bundles: dict):
     slider_col, reset_col = st.columns([5, 1])
     with slider_col:
         preview_floor = st.slider(
-            "Preview threshold", min_value=0.0, max_value=0.5,
+            "Preview threshold",
+            min_value=0.0, max_value=0.5,
             value=float(st.session_state.get("settings_rul_floor_preview", RUL_RELIABLE_FLOOR)),
-            step=0.05, key="settings_rul_floor_preview",
+            step=0.05,
+            key="settings_rul_floor_preview",
             help=f"Active floor in code: {RUL_RELIABLE_FLOOR}. Drag to see which cells would flip at different thresholds.",
         )
     with reset_col:
@@ -355,8 +345,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
     th_cols = st.columns([2, 1, 1, 1, 2])
     for col, hdr in zip(th_cols, ["Cell", "RUL fold R²", f"At {RUL_RELIABLE_FLOOR} (active)", f"At {preview_floor:.2f} (preview)", "Change"]):
-        col.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>", unsafe_allow_html=True)
+        col.markdown(
+            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
+            unsafe_allow_html=True,
+        )
 
+    # Example callout: at R²≥0.25 the B0018 NASA cell would cross the floor
     if 0.20 <= preview_floor <= 0.29:
         st.markdown(
             "<div style='font-size:12px;color:#d69e2e;margin:4px 0 8px;"
@@ -383,7 +378,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
         row[3].markdown(f"<div style='padding:4px 0'>{_status(preview_ok)}</div>", unsafe_allow_html=True)
         row[4].markdown(f"<div style='padding:4px 0'>{change_html}</div>", unsafe_allow_html=True)
 
-    # ── Section 3b: Model cache ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 3b: Model cache
+    # ────────────────────────────────────────────────────────────────────────
     _section("Model Cache")
 
     st.markdown(
@@ -397,9 +394,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
     from bundle_cache import clear_cache as _clear_bundle_cache, CACHE_DIR as _CACHE_DIR
     import pathlib as _pathlib
-    cache_files  = list(_CACHE_DIR.glob("*.joblib")) if _CACHE_DIR.exists() else []
+    cache_files = list(_CACHE_DIR.glob("*.joblib")) if _CACHE_DIR.exists() else []
     cache_size_mb = sum(f.stat().st_size for f in cache_files) / (1024 * 1024) if cache_files else 0
-    cache_info   = f"{len(cache_files)} bundle(s) · {cache_size_mb:.1f} MB" if cache_files else "No cache on disk — will train fresh on next load"
+    cache_info = f"{len(cache_files)} bundle(s) · {cache_size_mb:.1f} MB" if cache_files else "No cache on disk — will train fresh on next load"
 
     st.markdown(
         f"<div style='font-size:13px;color:#a0aec0;margin-bottom:12px'>"
@@ -415,7 +412,184 @@ def page_settings(featured_dfs: dict, bundles: dict):
             st.success("Model cache cleared — models will retrain on next app load.")
             st.rerun()
 
-    # ── Section 4: About ──
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 4: CRM Configuration (Critical Raw Materials)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("CRM Configuration (EU Battery Regulation Art. 13)")
+    st.caption(
+        "Configure the critical raw material percentages for your cell chemistries. "
+        "These values feed the Passport page CRM section and can be updated as supply-chain "
+        "audit data becomes available. Leave blank to use built-in estimates."
+    )
+
+    with st.expander("LFP (Severson cells — LiFePO4)", expanded=False):
+        st.number_input(
+            "Lithium (Li) content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+            value=float(st.session_state.get("crm_lfp_li_pct", 4.4)),
+            key="crm_lfp_li_pct",
+            help="LFP cathode + graphite anode. Default 4.4 wt% from literature.",
+        )
+
+    with st.expander("LiCoO2 / NCA (NASA cells)", expanded=False):
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_co_pct", 14.0)), key="crm_nca_co_pct",
+                help="LiCoO2 baseline ~14 wt%.")
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_ni_pct", 0.0)), key="crm_nca_ni_pct",
+                help="Pure LiCoO2 has no Ni. NMC variants: 15–33 wt%.")
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_nca_li_pct", 7.0)), key="crm_nca_li_pct",
+                help="Cathode + anode combined estimate.")
+        with _c2:
+            st.number_input("Recycled Co — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_nca_recycled_co_pct", 0.0)),
+                key="crm_nca_recycled_co_pct",
+                help="EU 2030 target: 12%. Enter actual audit figure.")
+            st.number_input("Recycled Ni — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_nca_recycled_ni_pct", 0.0)),
+                key="crm_nca_recycled_ni_pct",
+                help="EU 2030 target: 4%. Enter actual audit figure.")
+
+    with st.expander("Synthetic cells (LiCoO2 model)", expanded=False):
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_co_pct", 14.0)), key="crm_synth_co_pct")
+        with _c2:
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_ni_pct", 0.0)), key="crm_synth_ni_pct")
+        with _c3:
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_synth_li_pct", 7.0)), key="crm_synth_li_pct")
+
+    with st.expander("User-uploaded cells", expanded=False):
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_user_co_pct", 0.0)), key="crm_user_co_pct")
+            st.number_input("Ni content — wt%", min_value=0.0, max_value=40.0, step=0.1,
+                value=float(st.session_state.get("crm_user_ni_pct", 0.0)), key="crm_user_ni_pct")
+            st.number_input("Li content — wt%", min_value=0.0, max_value=20.0, step=0.1,
+                value=float(st.session_state.get("crm_user_li_pct", 0.0)), key="crm_user_li_pct")
+        with _c2:
+            st.number_input("Recycled Co — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_user_recycled_co_pct", 0.0)),
+                key="crm_user_recycled_co_pct")
+            st.number_input("Recycled Ni — %", min_value=0.0, max_value=100.0, step=0.5,
+                value=float(st.session_state.get("crm_user_recycled_ni_pct", 0.0)),
+                key="crm_user_recycled_ni_pct")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 5: Cost-of-Delay multiplier
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Cost-of-Delay Multiplier")
+    st.markdown(
+        f"{make_badge('Illustrative — not sourced', '#718096')} &nbsp;"
+        "The residual value penalty per % SOH below EOL threshold at replacement is "
+        "a modelling assumption with no universal market data behind it. "
+        "Adjust to match your fleet's observed resale or second-life market.",
+        unsafe_allow_html=True,
+    )
+    _cod_mult = st.slider(
+        "Value penalty per % SOH below EOL at replacement (%)",
+        min_value=0.5, max_value=5.0, step=0.5,
+        value=float(st.session_state.get("cost_of_delay_mult", 2.0)),
+        key="settings_cod_mult",
+        help="Default 2.0: each % SOH below EOL threshold at actual replacement = 2% additional value loss. Illustrative only.",
+    )
+    if _cod_mult != st.session_state.get("cost_of_delay_mult", 2.0):
+        st.session_state["cost_of_delay_mult"] = _cod_mult
+        st.rerun()
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 6: About
+    # ────────────────────────────────────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────────────────
+    # Webhook Notifications
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Anomaly Webhook Notifications")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "POST a JSON payload to your endpoint whenever IEC 62619:2022 anomaly flags fire in the "
+        "Live Monitor. Use this to trigger Slack alerts, PagerDuty incidents, or CMMS tickets."
+        "</div>"
+    )
+    _wh_col1, _wh_col2 = st.columns([3, 1])
+    _wh_url = _wh_col1.text_input(
+        "Webhook URL", value=st.session_state.get("webhook_url", ""),
+        placeholder="https://hooks.slack.com/services/...",
+        key="webhook_url",
+    )
+    _wh_secret = _wh_col2.text_input(
+        "HMAC secret (optional)", value=st.session_state.get("webhook_secret", ""),
+        type="password", key="webhook_secret",
+        help="If set, each request includes X-Signature-256: hmac-sha256 of the body.",
+    )
+    _wh_events = st.multiselect(
+        "Fire on", key="webhook_events",
+        options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
+                 "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY"],
+        default=st.session_state.get("webhook_events",
+            ["THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH"]),
+        help="Only anomaly types checked here will trigger a webhook POST.",
+    )
+    if _wh_url:
+        _wh_test_col, _ = st.columns([1, 4])
+        if _wh_test_col.button("Send test ping", key="webhook_test_btn"):
+            try:
+                import requests as _req_wh, json as _json_wh, hashlib as _hash_wh, hmac as _hmac_wh
+                _payload = _json_wh.dumps({
+                    "event": "TEST_PING",
+                    "source": "battery-intelligence-platform",
+                    "message": "Webhook connectivity test from Settings page.",
+                    "timestamp": datetime.datetime.now().isoformat(),
+                }).encode()
+                _headers = {"Content-Type": "application/json"}
+                if st.session_state.get("webhook_secret"):
+                    _sig = _hmac_wh.new(
+                        st.session_state["webhook_secret"].encode(),
+                        _payload, _hash_wh.sha256,
+                    ).hexdigest()
+                    _headers["X-Signature-256"] = f"sha256={_sig}"
+                _resp = _req_wh.post(_wh_url, data=_payload, headers=_headers, timeout=5)
+                if _resp.status_code < 300:
+                    st.success(f"Test ping sent — HTTP {_resp.status_code}")
+                else:
+                    st.warning(f"Webhook responded with HTTP {_resp.status_code}: {_resp.text[:120]}")
+            except Exception as _wh_e:
+                st.error(f"Webhook test failed: {_wh_e}")
+    else:
+        st.caption("Enter a webhook URL above to enable push notifications.")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # LLM Copilot API Key
+    # ────────────────────────────────────────────────────────────────────────
+    _section("AI Copilot — Language Model")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "When an Anthropic API key is set, the Copilot answers in natural language using "
+        "<strong style='color:#e2e8f0'>Claude Haiku</strong> — strictly constrained to the "
+        "values in this platform's model bundle (no hallucination of numbers). "
+        "Without a key, template answers are used as fallback."
+        "</div>"
+    )
+    _llm_key = st.text_input(
+        "Anthropic API key", type="password",
+        value=st.session_state.get("anthropic_api_key", ""),
+        placeholder="sk-ant-...",
+        key="anthropic_api_key",
+        help="Key is stored in session state only — never written to disk or transmitted except to Anthropic.",
+    )
+    if _llm_key:
+        if _llm_key.startswith("sk-ant-"):
+            st.success("Claude Haiku active — Copilot will use natural language responses.")
+        else:
+            st.warning("Key doesn't look like an Anthropic key (expected sk-ant-...). Check and re-enter.")
+    else:
+        st.caption("Without an API key the Copilot uses template answers grounded on bundle values.")
+
     _section("About")
 
     phase_rows = [
@@ -436,7 +610,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
             f"<div style='min-width:64px;font-size:11px;font-weight:600;color:#4a5568;padding-top:2px'>{ph}</div>"
             f"<div style='min-width:120px;font-size:13px;font-weight:600;color:#e2e8f0'>{name}</div>"
-            f"<div style='flex:1;font-size:12px;color:#718096;line-height:1.5'>{desc}</div>"
+            f"<div style='flex:1;font-size:12px;color:#8896a8;line-height:1.5'>{desc}</div>"
             f"<div style='min-width:48px;font-size:12px;font-weight:600;color:{status_c};text-align:right'>{status}</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -446,111 +620,26 @@ def page_settings(featured_dfs: dict, bundles: dict):
     st.markdown(
         "<div style='font-size:12px;color:#4a5568;line-height:1.8;padding:14px 18px;"
         "background:#1a202c;border-radius:8px'>"
-        "<strong style='color:#718096'>Stack</strong> — "
+        "<strong style='color:#8896a8'>Stack</strong> — "
         "scikit-learn GBRT · Streamlit · Plotly · reportlab<br>"
-        "<strong style='color:#718096'>Model</strong> — "
+        "<strong style='color:#8896a8'>Model</strong> — "
         "Two separate GBRT instances (synthetic / NASA); leave-cell-out cross-validation<br>"
-        "<strong style='color:#718096'>Data</strong> — "
-        "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007)<br>"
-        "<strong style='color:#718096'>Regulatory</strong> — "
+        "<strong style='color:#8896a8'>Data</strong> — "
+        "8 synthetic cells (physics-informed) + 4 NASA PCoE cells (Saha &amp; Goebel, 2007) + "
+        "12 Severson LFP cells (Severson et al., 2019, when cached)<br>"
+        "<strong style='color:#8896a8'>Regulatory</strong> — "
         "EU Battery Regulation (EU) 2023/1542 — field structure demonstration only; "
         "not a compliance claim<br>"
+        "<strong style='color:#8896a8'>Source</strong> — "
+        "<a href='https://github.com/seyedali1996lb-svg/battery-intelligence-platform' "
+        "style='color:#63b3ed'>github.com/seyedali1996lb-svg/battery-intelligence-platform</a>"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    # ── Section 5: Production Roadmap ──
-    _section("Production Roadmap")
 
-    st.markdown(
-        "<div style='font-size:12px;color:#718096;line-height:1.6;margin-bottom:16px'>"
-        "This platform is a functional Phase 1 product. The gaps below are documented honestly — "
-        "each has a defined path to resolution for a production deployment.</div>",
-        unsafe_allow_html=True,
-    )
-
-    roadmap_items = [
-        ("Authentication & RBAC",
-         "Current state: demo login wall (session-scoped). Production: OAuth 2.0 via Okta or Azure AD; "
-         "role-based UI rendering per user identity; JWT session tokens.",
-         "High"),
-        ("Multi-tenancy",
-         "Current state: global st.cache_resource shared across all sessions — user A's uploads are "
-         "visible to user B in a multi-worker deployment. Production: tenant-scoped data isolation "
-         "via PostgreSQL row-level security or separate schema per tenant.",
-         "High"),
-        ("Data persistence",
-         "Current state: uploaded data is session-scoped and lost on page refresh. Production: "
-         "PostgreSQL + TimescaleDB for time-series cycle data; S3/blob for raw files. "
-         "SQLite is an acceptable intermediate step for single-user local deployment.",
-         "High"),
-        ("REST API / BMS integration",
-         "Current state: no external interface. Production: FastAPI layer over the model pipeline; "
-         "webhook endpoints for real-time BMS telemetry (MQTT or Kafka ingest); "
-         "versioned REST API for SCADA / CMMS integration.",
-         "Medium"),
-        ("Audit log persistence",
-         "Current state: in-memory session log (see Audit Log section below). "
-         "Production: append-only PostgreSQL audit table with user identity, timestamp, "
-         "action, and cell reference. Required for regulated-industry deployment.",
-         "Medium"),
-        ("Scalability",
-         "Current state: all cells loaded into memory at startup; synchronous model training "
-         "blocks UI for 20–60 s. Production: lazy per-cell data loading; background training "
-         "thread with progress websocket; pre-aggregated summary metrics in database; "
-         "Parquet columnar storage for cycle data.",
-         "Medium"),
-        ("Real EIS data",
-         "Current state: Nyquist plots and EIS decomposition are physics approximations on DC "
-         "resistance values — not measured impedance spectra. Production: Gamry / BioLogic "
-         "potentiostat integration; impedance.py for DRT fitting; Warburg from real frequency-domain data.",
-         "High"),
-        ("Dataset expansion",
-         "Current state: 12 cells (8 synthetic + 4 NASA 18650 from 2007). Production: "
-         "Severson 2019 (124 LFP cells, publicly available); CALCE NMC/LFP; Oxford LiCoO₂; "
-         "minimum 50+ real cells for a defensible RUL model.",
-         "Critical"),
-    ]
-
-    priority_color = {"Critical": "#fc8181", "High": "#f6ad55", "Medium": "#48bb78"}
-
-    for title, detail, priority in roadmap_items:
-        pc = priority_color.get(priority, "#718096")
-        with st.expander(f"{title}  —  priority: {priority}"):
-            st.markdown(
-                f"<div style='font-size:12px;color:#a0aec0;line-height:1.7'>{detail}</div>",
-                unsafe_allow_html=True,
-            )
-
-    # ── Section 6: Audit Log ──
-    _section("Session Audit Log")
-
-    st.markdown(
-        "<div style='font-size:12px;color:#4a5568;line-height:1.6;margin-bottom:12px'>"
-        "Records page views, Copilot queries, and logged decisions for this session. "
-        "Cleared when the session ends. A production deployment would persist this to a database.</div>",
-        unsafe_allow_html=True,
-    )
-
-    from audit import get_log, export_csv as audit_csv
-    log_records = get_log()
-
-    if log_records:
-        import pandas as _pd
-        log_df = _pd.DataFrame(log_records)
-        st.dataframe(log_df.head(200), use_container_width=True, hide_index=True)
-        if len(log_df) > 200:
-            st.caption(f"Showing up to 200 rows — {len(log_df)} total.")
-        st.download_button(
-            "Export audit log (CSV)",
-            data=audit_csv(),
-            file_name="battery_intel_audit.csv",
-            mime="text/csv",
-            key="settings_audit_export",
-        )
-    else:
-        st.markdown(
-            "<div style='font-size:12px;color:#2d3748;padding:16px;text-align:center'>"
-            "No activity recorded yet in this session.</div>",
-            unsafe_allow_html=True,
-        )
+def _clear_uploaded_data():
+    """Remove all uploaded data from session state and revert to NASA mode."""
+    for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_mode_meta"]:
+        st.session_state.pop(k, None)
+    st.session_state["data_mode"] = "nasa"

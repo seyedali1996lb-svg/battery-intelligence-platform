@@ -1,8 +1,8 @@
-"""Page: Import"""
+"""Page: Import."""
 
 import sys
 import os
-import io
+import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -11,21 +11,17 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _md_html, LEGEND_H, base_layout
 from design_system import section_header_html
+from utils import _action_bar, base_layout, LEGEND_H
+from import_adapter import adapt_upload_to_pipeline
 from features import build_features, get_model_matrix
 from model import train_models, predict
 from lco_eval import run_lco, RUL_RELIABLE_FLOOR
-from import_adapter import adapt_upload_to_pipeline
+from _pages.settings import _clear_uploaded_data
 
 
-def _clear_uploaded_data():
-    for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_mode_meta"]:
-        st.session_state.pop(k, None)
-    st.session_state["data_mode"] = "nasa"
-
-
-def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
+def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
+    """Training pipeline wired to the Analyse button — called from page_import()."""
     import datetime
 
     step_labels = [
@@ -38,24 +34,37 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
         ("load",        "Loading results into dashboard"),
     ]
 
-    if st.button("⚡ Analyse this data", type="primary", use_container_width=True, key="import_run_analysis"):
-        st.markdown("<div style='font-size:11px;color:#718096;margin-bottom:12px'>~60–90 seconds</div>", unsafe_allow_html=True)
+    if st.button(
+        "⚡ Analyse this data",
+        type="primary",
+        use_container_width=True,
+        key="import_run_analysis",
+    ):
+        st.markdown(
+            "<div style='font-size:11px;color:#8896a8;margin-bottom:12px'>~60–90 seconds</div>",
+            unsafe_allow_html=True,
+        )
         slots = {k: st.empty() for k, _ in step_labels}
 
         def _step(key: str, icon: str, text: str):
             c = "#48bb78" if icon == "✓" else "#f6ad55" if icon == "⚠" else "#63b3ed"
-            slots[key].markdown(f"<div style='font-size:13px;color:{c};padding:3px 0'>{icon} {text}</div>", unsafe_allow_html=True)
+            slots[key].markdown(
+                f"<div style='font-size:13px;color:{c};padding:3px 0'>{icon} {text}</div>",
+                unsafe_allow_html=True,
+            )
 
         for key, label in step_labels:
             _step(key, "☐", label)
 
         try:
+            # 1 — Parse
             _step("parse", "⏳", "Parsing uploaded data…")
-            battery  = adapt_upload_to_pipeline(df_raw)
-            n_up     = len(battery["cells"])
+            battery = adapt_upload_to_pipeline(df_raw)
+            n_up    = len(battery["cells"])
             total_cy = sum(len(c["cycles"]) for c in battery["cells"].values())
             _step("parse", "✓", f"Parsed — {n_up} cells, {total_cy:,} cycles")
 
+            # 2 — Features
             _step("features", "⏳", "Engineering features…")
             all_X, all_y_soh, all_y_rul = [], [], []
             cell_featured = {}
@@ -69,6 +78,7 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
             y_rul_all = pd.concat(all_y_rul)
             _step("features", "✓", f"Features built — {len(X_all):,} rows")
 
+            # 3+4 — Train (train_models trains both SOH and RUL in one call)
             _step("soh", "⏳", "Training SOH model…")
             _step("rul", "⏳", "Training RUL model…")
             up_bndl = train_models(X_all, y_soh_all, y_rul_all)
@@ -77,15 +87,17 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
             _step("soh", "✓", "SOH model trained")
             _step("rul", "✓", "RUL model trained")
 
+            # 5 — LCO
             _step("lco", "⏳", "Running leave-cell-out validation…")
             cell_cycles = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
             lco = run_lco(cell_cycles)
-            up_bndl["metrics"]["lco_soh_r2"]  = lco["soh_r2"]
-            up_bndl["metrics"]["lco_rul_r2"]  = lco["rul_r2"]
-            up_bndl["metrics"]["rul_reliable"] = lco["rul_reliable"]
-            up_bndl["metrics"]["lco_per_cell"] = lco["per_cell"]
+            up_bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
+            up_bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
+            up_bndl["metrics"]["rul_reliable"]  = lco["rul_reliable"]
+            up_bndl["metrics"]["lco_per_cell"]  = lco["per_cell"]
             _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
 
+            # 6 — Per-cell reliability
             _step("reliability", "⏳", "Computing per-cell reliability…")
             per_cell_ok = {
                 cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
@@ -98,10 +110,11 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
             _step("reliability", "✓", "Per-cell reliability computed"
                   + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
 
+            # 7 — Build featured_dfs / split_cycles
             _step("load", "⏳", "Loading results into dashboard…")
             up_fdfs, up_sc = {}, {}
             for cid, (df_feat, X) in cell_featured.items():
-                preds  = predict(up_bndl, X)
+                preds = predict(up_bndl, X)
                 df_out = df_feat.loc[X.index].copy()
                 df_out["soh_pred"]       = preds["soh_pred"]
                 df_out["rul_pred"]       = preds["rul_pred"]
@@ -110,20 +123,24 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
                 split_idx    = int(len(X) * 0.8)
                 up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
 
+            # ── Store in session_state ──────────────────────────────────────
+            # Uploaded data never touches the filesystem and never persists
+            # between sessions or across users — session_state only.
             st.session_state["uploaded_featured_dfs"] = up_fdfs
             st.session_state["uploaded_bundle"]       = up_bndl
             st.session_state["uploaded_split_cycles"] = up_sc
             st.session_state["uploaded_mode_meta"]    = {
-                "n_cells":                   n_up,
-                "cell_ids":                  list(up_fdfs.keys()),
-                "upload_date":               datetime.date.today().isoformat(),
-                "calibrating_count":         calibrating_cnt,
-                "lco_limited":               lco_limited,
+                "n_cells":                  n_up,
+                "cell_ids":                 list(up_fdfs.keys()),
+                "upload_date":              datetime.date.today().isoformat(),
+                "calibrating_count":        calibrating_cnt,
+                "lco_limited":              lco_limited,
                 "temperature_assumed_cells": battery["temperature_assumed_cells"],
             }
+            # Auto-switch to My Data mode
             st.session_state["data_mode"] = "uploaded"
             _step("load", "✓", "Done — results loaded into all pages")
-            st.rerun()
+            st.rerun()  # triggers _show_upload_summary() on next render
 
         except Exception as exc:
             import traceback
@@ -132,19 +149,23 @@ def _run_analysis_button(df_raw: pd.DataFrame, summary: dict):
 
 
 def _show_upload_summary():
+    """Post-analysis summary panel shown on the Import page after a successful upload."""
     meta = st.session_state["uploaded_mode_meta"]
     n    = meta["n_cells"]
     k    = meta["calibrating_count"]
     lco  = st.session_state["uploaded_bundle"]["metrics"]
+
     lco_lim_note = (
         "\n⚠ LCO run on fewer than 3 cells — reliability estimates are less stable than usual."
         if meta.get("lco_limited") else ""
     )
     rul_reliable_count = n - k
+
     st.markdown(
         f"<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
         f"border-radius:10px;padding:20px 24px;margin-bottom:16px'>"
-        f"<div style='font-size:16px;font-weight:700;color:#48bb78;margin-bottom:12px'>✓ Analysis complete</div>"
+        f"<div style='font-size:16px;font-weight:700;color:#48bb78;margin-bottom:12px'>"
+        f"✓ Analysis complete</div>"
         f"<div style='font-size:13px;color:#a0aec0;line-height:2'>"
         f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
         f"SOH model R²: <strong style='color:#e2e8f0'>{lco.get('lco_soh_r2', 0):.2f}</strong> "
@@ -155,6 +176,7 @@ def _show_upload_summary():
         f"</div>",
         unsafe_allow_html=True,
     )
+
     col_view, col_clear = st.columns([2, 1])
     with col_view:
         if st.button("View results →", type="primary", use_container_width=True, key="import_view_results"):
@@ -167,31 +189,45 @@ def _show_upload_summary():
 
 
 def page_import():
+    _action_bar("import")
+    import io
+    import os
+
     def _section(title: str):
         st.markdown(section_header_html(title), unsafe_allow_html=True)
 
     st.markdown("# Import Your Battery Data")
+    st.warning("Uploaded data is processed in a shared session environment — do not upload proprietary or personal data in this demonstration.")
     st.markdown("##### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
 
+    # ── Section 1: Hero card ────────────────────────────────────────────────
     h1, h2 = st.columns(2)
-    template_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "import_template.csv")
+
+    template_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "import_template.csv"
+    )
     with h1:
         try:
             with open(template_path, "rb") as f:
                 template_bytes = f.read()
             st.download_button(
                 label="⬇ Download Template CSV",
-                data=template_bytes, file_name="battery_import_template.csv",
-                mime="text/csv", use_container_width=True,
+                data=template_bytes,
+                file_name="battery_import_template.csv",
+                mime="text/csv",
+                use_container_width=True,
             )
         except FileNotFoundError:
             st.error("Template file not found at data/import_template.csv")
+
     with h2:
         if st.button("📖 View Format Guide", use_container_width=True, key="import_guide_toggle"):
             st.session_state["import_guide_open"] = not st.session_state.get("import_guide_open", False)
 
     if st.session_state.get("import_guide_open", False):
-        guide_path = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "import_format_guide.md")
+        guide_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "docs", "import_format_guide.md"
+        )
         try:
             with open(guide_path, "r", encoding="utf-8") as f:
                 guide_text = f.read()
@@ -200,67 +236,54 @@ def page_import():
         except FileNotFoundError:
             st.warning("Format guide not found at docs/import_format_guide.md")
 
+    # ── Section 1b: External Benchmark Datasets ─────────────────────────────
     with st.expander("📦 External Benchmark Datasets", expanded=False):
-        st.markdown("Use the loaders in `src/severson_loader.py` and `src/calce_loader.py` to integrate published benchmark datasets into the pipeline.")
+        st.markdown(
+            "Use the loaders in `src/severson_loader.py` and `src/calce_loader.py` "
+            "to integrate published benchmark datasets into the pipeline."
+        )
         st.markdown("**Severson 2019 (Nature Energy)**")
-        st.markdown("Download `batch1.pkl`, `batch2.pkl`, `batch3.pkl` from data.matr.io (Severson et al., Nature Energy 2019). Upload them below — the importer auto-detects `.pkl` files and loads all cells.")
+        st.markdown(
+            "Severson cells load automatically from local cache when available — "
+            "switch to the Severson data source in the sidebar once cached. "
+            "Download the raw batch files from data.matr.io to populate the cache; "
+            "manual upload isn't needed."
+        )
         st.link_button("Download Severson Dataset (data.matr.io)", "https://data.matr.io/1/")
         st.markdown("**CALCE Battery Research Group**")
-        st.markdown("Download CSV or XLSX files from the CALCE battery data portal. The importer handles column-name variation across CALCE sub-datasets.")
+        st.markdown(
+            "Download CSV or XLSX files from the CALCE battery data portal. "
+            "The importer handles column-name variation across CALCE sub-datasets."
+        )
         st.link_button("Download CALCE Dataset", "https://web.calce.umd.edu/batteries/data.htm")
 
-    _section("Upload CSV / XLSX / PKL")
+    # ── Section 2: Upload widget ────────────────────────────────────────────
+    _section("Upload CSV / XLSX")
 
     uploaded = st.file_uploader(
         "Upload battery cycle data",
-        type=["csv", "xlsx", "pkl"],
+        type=["csv", "xlsx"],
         accept_multiple_files=True,
         key="import_csv_upload",
-        help="CSV/XLSX: Battery Intelligence Platform format. PKL: Severson batch file.",
+        help="CSV/XLSX: Battery Intelligence Platform format.",
         label_visibility="collapsed",
     )
 
-    _pkl_files = [f for f in (uploaded or []) if f.name.endswith(".pkl")]
-    _csv_files = [f for f in (uploaded or []) if not f.name.endswith(".pkl")]
+    uploaded = uploaded[0] if uploaded else None
 
-    for _pkl_file in _pkl_files:
-        try:
-            import tempfile
-            from severson_loader import load_severson_batch
-            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
-                tmp.write(_pkl_file.read())
-                tmp_path = tmp.name
-            cell_dfs = load_severson_batch(tmp_path)
-            st.success(f"Loaded {len(cell_dfs)} cells from Severson batch file")
-            preview_rows = [
-                {"Cell ID": cid, "Cycles": len(_df),
-                 "Final SOH": f"{(_df.capacity_ah.iloc[-1] / max(_df.capacity_ah.iloc[0], 1e-9) * 100):.1f}%"}
-                for cid, _df in cell_dfs.items()
-            ]
-            st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
-            st.session_state["severson_cells"] = cell_dfs
-            st.info("Severson cells loaded. Switch to Overview to analyze individual cells.")
-        except Exception as _e:
-            st.error(f"Could not load Severson batch file '{_pkl_file.name}': {_e}")
-
-    uploaded = _csv_files[0] if _csv_files else None
-
-    if uploaded is None and not _pkl_files:
+    if uploaded is None:
         st.markdown(
             "<div style='background:#1a202c;border:1px dashed #2d3748;border-radius:10px;"
             "padding:40px;text-align:center;color:#4a5568;font-size:13px'>"
-            "Drag and drop a CSV, XLSX, or PKL file here, or click to browse.<br>"
+            "Drag and drop a CSV or XLSX file here, or click to browse.<br>"
             "<span style='font-size:11px;color:#2d3748;margin-top:6px;display:block'>"
-            "CSV/XLSX: 7 columns required — download the template for the exact format. "
-            "PKL: Severson batch file.</span>"
+            "7 columns required — download the template for the exact format.</span>"
             "</div>",
             unsafe_allow_html=True,
         )
         return
 
-    if uploaded is None:
-        return
-
+    # ── Parse + validate ────────────────────────────────────────────────────
     try:
         _fname = getattr(uploaded, "name", "")
         if _fname.endswith((".xlsx", ".xls")):
@@ -271,8 +294,10 @@ def page_import():
         st.error(f"Could not parse file: {exc}")
         return
 
+    # ── CALCE auto-detection fallback ────────────────────────────────────────
+    # If standard validation fails badly, try the CALCE loader before giving up.
     _calce_tried = False
-    _calce_df    = None
+    _calce_df = None
     try:
         from calce_loader import load_calce_file
         import tempfile as _tmpmod
@@ -283,7 +308,7 @@ def page_import():
                 _tmp.write(uploaded.read())
                 _tmp_path = _tmp.name
             try:
-                _calce_df   = load_calce_file(_tmp_path)
+                _calce_df = load_calce_file(_tmp_path)
                 _calce_tried = True
             except Exception:
                 _calce_df = None
@@ -291,6 +316,7 @@ def page_import():
     except Exception:
         pass
 
+    # ── Fuzzy column matching ─────────────────────────────────────────────
     from import_validator import validate_upload, fuzzy_match_columns, apply_column_mapping
 
     col_mapping = fuzzy_match_columns(df_raw)
@@ -298,7 +324,7 @@ def page_import():
     if renames:
         rename_items = "".join(
             f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
-            f"<span style='color:#718096'>{orig}</span>"
+            f"<span style='color:#8896a8'>{orig}</span>"
             f"<span style='color:#4a5568;padding:0 8px'>→</span>"
             f"<span style='color:#48bb78'>{canon}</span>"
             f"</div>"
@@ -319,21 +345,27 @@ def page_import():
         )
         df_raw = apply_column_mapping(df_raw, col_mapping)
 
-    result   = validate_upload(df_raw)
+    result = validate_upload(df_raw)
     errors   = result["errors"]
     warnings = result["warnings"]
     summary  = result["summary"]
 
+    # ── CALCE fallback: if validation produced errors and CALCE succeeded ─────
     if errors and _calce_tried and _calce_df is not None and len(_calce_df) > 50:
-        st.info(f"Standard format not detected — auto-detected as CALCE format ({len(_calce_df)} cycles loaded). Using CALCE loader.")
+        st.info(
+            f"Standard format not detected — auto-detected as CALCE format "
+            f"({len(_calce_df)} cycles loaded). Using CALCE loader."
+        )
+        # Wrap into multi-cell format expected by adapt_upload_to_pipeline
         _fname_stem = os.path.splitext(getattr(uploaded, "name", "calce_cell"))[0]
         df_raw = _calce_df.copy()
         df_raw["cell_id"] = _fname_stem
-        result   = validate_upload(df_raw)
+        result = validate_upload(df_raw)
         errors   = result["errors"]
         warnings = result["warnings"]
         summary  = result["summary"]
 
+    # ── Validation results banner ────────────────────────────────────────────
     if errors:
         st.markdown(
             f"<div style='background:rgba(197,48,48,0.12);border:1px solid rgba(197,48,48,0.4);"
@@ -351,9 +383,14 @@ def page_import():
                 unsafe_allow_html=True,
             )
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:12px;color:#718096;margin-top:8px'>Fix these issues in your CSV and re-upload.</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:12px;color:#8896a8;margin-top:8px'>"
+            "Fix these issues in your CSV and re-upload.</div>",
+            unsafe_allow_html=True,
+        )
         return
 
+    # No errors — show warning banner if needed
     if warnings:
         st.markdown(
             f"<div style='background:rgba(183,121,31,0.10);border:1px solid rgba(183,121,31,0.35);"
@@ -371,17 +408,30 @@ def page_import():
                 unsafe_allow_html=True,
             )
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:12px;color:#718096;margin:12px 0 8px'>Acknowledge each note to continue:</div>", unsafe_allow_html=True)
+
+        # One checkbox per warning — all must be ticked before proceeding
+        st.markdown(
+            "<div style='font-size:12px;color:#8896a8;margin:12px 0 8px'>"
+            "Acknowledge each note to continue:</div>",
+            unsafe_allow_html=True,
+        )
         all_acked = True
         for i, w in enumerate(warnings):
+            # Short label: first sentence of the warning, truncated
             short = w.split(".")[0][:90] + ("…" if len(w.split(".")[0]) > 90 else "")
             acked = st.checkbox(f"I understand: {short}", key=f"import_ack_{i}")
             if not acked:
                 all_acked = False
+
         if not all_acked:
-            st.markdown("<div style='font-size:12px;color:#718096;margin-top:12px'>Tick all boxes above to enable the Proceed button.</div>", unsafe_allow_html=True)
-            return
+            st.markdown(
+                "<div style='font-size:12px;color:#8896a8;margin-top:12px'>"
+                "Tick all boxes above to enable the Proceed button.</div>",
+                unsafe_allow_html=True,
+            )
+            return   # Proceed button not rendered until all ticked
     else:
+        # Clean upload
         st.markdown(
             "<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
             "border-radius:10px;padding:14px 20px;margin:16px 0'>"
@@ -390,9 +440,14 @@ def page_import():
             unsafe_allow_html=True,
         )
 
+    # ── Section 3: Data preview ─────────────────────────────────────────────
     _section("Data Preview")
 
-    st.markdown("<div style='font-size:12px;color:#718096;margin-bottom:10px'>One row per cell:</div>", unsafe_allow_html=True)
+    # Summary table — one row per cell
+    st.markdown(
+        "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>One row per cell:</div>",
+        unsafe_allow_html=True,
+    )
 
     df_raw_clean = df_raw.copy()
     df_raw_clean["capacity_ah"]    = pd.to_numeric(df_raw_clean["capacity_ah"],    errors="coerce")
@@ -400,7 +455,11 @@ def page_import():
 
     tbl_cols = st.columns([2, 1, 2, 2, 1])
     for col, hdr in zip(tbl_cols, ["Cell ID", "Cycles", "Capacity range (Ah)", "Resistance range (Ω)", "Temp"]):
-        col.markdown(f"<div style='font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px'>{hdr}</div>", unsafe_allow_html=True)
+        col.markdown(
+            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px'>{hdr}</div>",
+            unsafe_allow_html=True,
+        )
 
     has_temp = "temperature_c" in df_raw_clean.columns
     for cid, n_cy in summary["cycles_per_cell"].items():
@@ -415,8 +474,13 @@ def page_import():
         row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{n_cy}</div>", unsafe_allow_html=True)
         row[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{cap_min:.3f} – {cap_max:.3f}</div>", unsafe_allow_html=True)
         row[3].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:3px 0'>{res_min:.4f} – {res_max:.4f}</div>", unsafe_allow_html=True)
-        row[4].markdown(f"<div style='font-size:13px;padding:3px 0;color:{'#48bb78' if temp_ok else '#4a5568'}'>{'Yes' if temp_ok else 'No'}</div>", unsafe_allow_html=True)
+        row[4].markdown(
+            f"<div style='font-size:13px;padding:3px 0;color:{'#48bb78' if temp_ok else '#4a5568'}'>"
+            f"{'Yes' if temp_ok else 'No'}</div>",
+            unsafe_allow_html=True,
+        )
 
+    # Capacity fade chart
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
     fig_prev = go.Figure()
@@ -425,14 +489,19 @@ def page_import():
         cell_df = df_raw_clean[df_raw_clean["cell_id"].astype(str).str.strip() == cid].sort_values("cycle_number")
         cap = pd.to_numeric(cell_df["capacity_ah"], errors="coerce").dropna()
         if len(cap) >= 3:
-            first_third = cap.iloc[:max(1, len(cap)//3)].mean()
-            last_third  = cap.iloc[-max(1, len(cap)//3):].mean()
+            # Check if capacity is trending upward (may indicate mAh/Ah unit error)
+            first_third  = cap.iloc[:max(1, len(cap)//3)].mean()
+            last_third   = cap.iloc[-max(1, len(cap)//3):].mean()
             if last_third > first_third * 1.05:
                 capacity_going_up = True
         fig_prev.add_trace(go.Scatter(
-            x=cell_df["cycle_number"].tolist(), y=cell_df["capacity_ah"].tolist(),
-            mode="lines", name=cid, line=dict(width=1.5),
+            x=cell_df["cycle_number"].tolist(),
+            y=cell_df["capacity_ah"].tolist(),
+            mode="lines",
+            name=cid,
+            line=dict(width=1.5),
         ))
+
     fig_prev.update_layout(
         **base_layout(
             height=280,
@@ -442,7 +511,10 @@ def page_import():
                        title=dict(text="Capacity (Ah)", font=dict(size=11))),
         )
     )
-    fig_prev.update_layout(legend=LEGEND_H, title=dict(text="Capacity fade — uploaded cells", font=dict(size=12, color="#a0aec0"), x=0))
+    fig_prev.update_layout(
+        legend=LEGEND_H,
+        title=dict(text="Capacity fade — uploaded cells", font=dict(size=12, color="#a0aec0"), x=0),
+    )
     st.plotly_chart(fig_prev, use_container_width=True)
 
     if capacity_going_up:
@@ -456,6 +528,7 @@ def page_import():
             unsafe_allow_html=True,
         )
 
+    # ── Section 4: Confirmation ─────────────────────────────────────────────
     _section("Analyse This Data")
 
     st.markdown(
@@ -470,6 +543,7 @@ def page_import():
         unsafe_allow_html=True,
     )
 
+    # Show completion summary if upload has already been processed this session
     if st.session_state.get("uploaded_featured_dfs") and st.session_state.get("uploaded_mode_meta"):
         _show_upload_summary()
     else:
@@ -482,3 +556,30 @@ def page_import():
         "</div>",
         unsafe_allow_html=True,
     )
+
+    # E5: Cell cohort tagging UI
+    st.markdown(section_header_html("Cell Cohort Tags"), unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:12px'>"
+        "Tag cells by batch, supplier, or operating site. Tags are used in the Compare page "
+        "for cohort-level analysis. Session-scoped — not persisted after page refresh."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _e5_all_ids = [
+        *[f"B{n}" for n in ["0005", "0006", "0007", "0018"]],
+        *[f"Cell{i}" for i in range(1, 9)],
+    ]
+    if "cell_cohort_tags" not in st.session_state:
+        st.session_state["cell_cohort_tags"] = {}
+    _e5_cols = st.columns(3)
+    for _e5i, _e5id in enumerate(_e5_all_ids):
+        with _e5_cols[_e5i % 3]:
+            _cur_tag = st.session_state["cell_cohort_tags"].get(_e5id, "")
+            _new_tag = st.text_input(
+                f"{_e5id}", value=_cur_tag,
+                placeholder="e.g. Batch-A, Site-1, SupplierX",
+                key=f"e5_tag_{_e5id}",
+            )
+            if _new_tag != _cur_tag:
+                st.session_state["cell_cohort_tags"][_e5id] = _new_tag
