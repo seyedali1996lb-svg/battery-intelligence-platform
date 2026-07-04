@@ -3128,23 +3128,41 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         _phys_rul2 = int(_pb2_pre["rul_physics"])
         _gap_pct2 = abs(_phys_rul2 - _gbrt_rul2) / max(_gbrt_rul2, 1) * 100
         _gap_col2 = "#48bb78" if _gap_pct2 < 15 else "#f6ad55" if _gap_pct2 < 35 else "#fc8181"
-        _md_html(
-            f"<div style='font-size:12px;color:#a0aec0;margin:4px 0 6px;padding:6px 14px;"
-            f"background:#1e2a38;border-radius:6px;border-left:3px solid {_gap_col2}'>"
-            f"GBRT says <strong style='color:#63b3ed'>{int(_gbrt_rul2):,} cy</strong> · "
-            f"PyBaMM says <strong style='color:#63b3ed'>{_phys_rul2:,} cy</strong> · "
-            f"<span style='color:{_gap_col2}'>{_gap_pct2:.0f}% gap</span>"
-            f" — expand below for full physics projection</div>"
+        _conv_label = (
+            "✓ Models converge — high confidence" if _gap_pct2 < 15 else
+            f"⚡ Models diverge {_gap_pct2:.0f}% — expand for interpretation" if _gap_pct2 < 35 else
+            f"⚠ Large divergence {_gap_pct2:.0f}% — review recommended"
         )
-    with st.expander("⚛️ Physics-Based RUL Projection (PyBaMM SPM) — SEI growth model", expanded=False):
         _md_html(
-            "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
-            "Single Particle Model (SPM) anchors the nominal capacity from the cell's "
-            "electrochemistry. An SEI growth fade equation "
-            "<code>SOH(n) = 1 − β·√n</code> is then fitted to the measured cycle history "
-            "and projected forward. Genuinely different from the GBRT linear extrapolation: "
-            "this projection slows as the cell ages (√n growth), consistent with diffusion-limited "
-            "SEI thickening."
+            f"<div style='font-size:12px;margin:4px 0 6px;padding:6px 14px;"
+            f"background:#1e2a38;border-radius:6px;border-left:3px solid {_gap_col2}'>"
+            f"<span style='color:{_gap_col2};font-weight:600'>{_conv_label}</span>"
+            f"<span style='color:#718096;margin-left:10px'>"
+            f"Physics: <strong style='color:#68d391'>{_phys_rul2:,} cy</strong> &nbsp;·&nbsp; "
+            f"Data: <strong style='color:#f6ad55'>{int(_gbrt_rul2):,} cy</strong></span></div>"
+        )
+    with st.expander("Model Comparison — Physics (PyBaMM SPM) vs Data (GBRT)", expanded=False):
+        _md_html(
+            "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px'>"
+            "<div style='background:#0e1117;border:1px solid #2d3748;border-radius:8px;padding:12px'>"
+            "<div style='font-size:10px;font-weight:700;color:#68d391;text-transform:uppercase;"
+            "letter-spacing:0.08em;margin-bottom:6px'>⚛ PyBaMM SPM — Physics model</div>"
+            "<div style='font-size:12px;color:#a0aec0;line-height:1.6'>"
+            "Derives nominal capacity from electrochemistry (Single Particle Model), then fits "
+            "<code>SOH(n) = 1 − β√n</code> to the measured history. "
+            "The √n term reflects diffusion-limited SEI growth slowing over time.<br>"
+            "<span style='color:#4a5568;font-size:11px'>Strong in: early life · new cells · unknown chemistry.<br>"
+            "Weak in: post-knee acceleration · non-SEI failure modes.</span>"
+            "</div></div>"
+            "<div style='background:#0e1117;border:1px solid #2d3748;border-radius:8px;padding:12px'>"
+            "<div style='font-size:10px;font-weight:700;color:#f6ad55;text-transform:uppercase;"
+            "letter-spacing:0.08em;margin-bottom:6px'>📊 GBRT — Data-driven model</div>"
+            "<div style='font-size:12px;color:#a0aec0;line-height:1.6'>"
+            "Gradient-boosted trees trained across the full cell population under leave-cell-out "
+            "validation. Extrapolates the current rolling fade rate forward linearly.<br>"
+            "<span style='color:#4a5568;font-size:11px'>Strong in: cells with rich history · mid–late life.<br>"
+            "Weak in: early life (fade still decelerating) · sparse data.</span>"
+            "</div></div>"
             "</div>"
         )
         _pybamm_cache_key = f"pybamm_{cell_id}_{st.session_state.get('eol_threshold_pct', 80)}"
@@ -3423,7 +3441,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 f"<div style='border-top:1px solid #1e2a38;padding-top:12px;"
                 f"background:{_div_colour}0d;border-radius:6px;padding:12px 14px;margin-top:2px'>"
                 f"<div style='font-size:10px;font-weight:700;color:{_div_colour};text-transform:uppercase;"
-                f"letter-spacing:0.08em;margin-bottom:5px'>⚖ Why They Disagree</div>"
+                f"letter-spacing:0.08em;margin-bottom:5px'>⚖ Model Verdict</div>"
                 f"<div style='color:#a0aec0'>{_div_explain}</div>"
                 f"</div>"
 
@@ -4560,7 +4578,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     )
     _fq_source = _fq4.multiselect(
         "Source", options=["NASA", "Synthetic", "Uploaded"],
-        default=st.session_state.get("fq_source", ["NASA", "Synthetic", "Uploaded"]),
+        default=st.session_state.get("fq_source", ["NASA"]),
         key="fq_source",
     )
     _fq_active = (
@@ -7022,41 +7040,6 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
         type="primary",
     )
 
-    # ── M2: Scheduled Report Configuration ──────────────────────────────────
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-header'>Scheduled Reports</div>", unsafe_allow_html=True)
-    _md_html(
-        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:16px 20px;margin-bottom:16px'>"
-        "<div style='font-size:12px;color:#8896a8;line-height:1.65'>"
-        "<strong style='color:#a0aec0'>Production feature.</strong> "
-        "In a deployed instance, reports can be scheduled to run automatically and delivered via "
-        "email or webhook. Configure below to preview the settings interface — "
-        "scheduling requires a running task queue (Celery / APScheduler) in your deployment."
-        "</div></div>"
-    )
-    _sr1, _sr2, _sr3 = st.columns(3)
-    with _sr1:
-        _schedule_freq = st.selectbox(
-            "Frequency", ["Weekly", "Monthly", "Quarterly", "On EOL alert"], key="sched_freq"
-        )
-    with _sr2:
-        _schedule_email = st.text_input("Recipient email", value="", placeholder="engineer@company.com", key="sched_email")
-    with _sr3:
-        _schedule_include = st.multiselect(
-            "Include",
-            ["SOH chart", "RUL projection", "Second-life recommendation", "Assumption register"],
-            default=["SOH chart", "RUL projection"],
-            key="sched_include",
-        )
-    if st.button("Save schedule (demo — no-op)", key="sched_save"):
-        if _schedule_email:
-            st.success(
-                f"Schedule saved: {_schedule_freq} report to {_schedule_email} "
-                f"including {', '.join(_schedule_include)}. "
-                f"(Demo mode — no emails will be sent. Connect a task queue to activate.)"
-            )
-        else:
-            st.warning("Enter a recipient email to save the schedule.")
 
 
 def page_recommendations(
@@ -9741,24 +9724,25 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         "</div>"
     )
 
-    _cfg_col1, _cfg_col2, _cfg_col3 = st.columns([2, 1, 1])
-    _broker_host = _cfg_col1.text_input(
-        "MQTT broker", value=st.session_state.get("mqtt_host", DEFAULT_HOST),
-        key="mqtt_host_input",
-        help="Hostname of your MQTT broker. Default: test.mosquitto.org (public, no auth).",
-    )
-    _broker_port = _cfg_col2.number_input(
-        "Port", value=int(st.session_state.get("mqtt_port", DEFAULT_PORT)),
-        min_value=1, max_value=65535, step=1, key="mqtt_port_input",
-    )
-    _replay_speed = _cfg_col3.selectbox(
+    _replay_speed = st.selectbox(
         "Replay speed", options=[1, 5, 10, 20], index=2,
         format_func=lambda x: f"{x}×",
         key="mqtt_speed_input",
         help="How many telemetry readings per second the replay publisher sends.",
     )
-    st.session_state["mqtt_host"] = _broker_host
-    st.session_state["mqtt_port"] = _broker_port
+    with st.expander("⚙ Broker settings", expanded=False):
+        _cfg_col1, _cfg_col2 = st.columns([3, 1])
+        _broker_host = _cfg_col1.text_input(
+            "MQTT broker", value=st.session_state.get("mqtt_host", DEFAULT_HOST),
+            key="mqtt_host_input",
+            help="Hostname of your MQTT broker. Default: test.mosquitto.org (public, no auth).",
+        )
+        _broker_port = _cfg_col2.number_input(
+            "Port", value=int(st.session_state.get("mqtt_port", DEFAULT_PORT)),
+            min_value=1, max_value=65535, step=1, key="mqtt_port_input",
+        )
+        st.session_state["mqtt_host"] = _broker_host
+        st.session_state["mqtt_port"] = _broker_port
 
     # ── Cell selector for replay ──────────────────────────────────────────────
     _replay_cell = st.selectbox(
