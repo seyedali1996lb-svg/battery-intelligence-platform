@@ -287,7 +287,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Light mode override (injected when toggle is on) ──
+# ── Light mode override (toggle in sidebar). Default stays dark until the
+# HTML-card inline-style pass (trajectory-match banner, provenance badges,
+# etc.) is done in a follow-up — flipping the default now would show those
+# dark boxes against a light background app-wide.
 if st.session_state.get("light_mode", False):
     st.markdown(
         """
@@ -1112,6 +1115,16 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                      help="Search pages and navigate quickly"):
             _command_palette_dialog()
 
+        # Theme toggle — separate widget key from the state key it drives,
+        # since Streamlit forbids setting a widget-keyed session_state value
+        # after the widget has been instantiated this run.
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        _lm_current = st.session_state.get("light_mode", False)
+        _lm_toggle = st.toggle("Light mode", value=_lm_current, key="light_mode_toggle")
+        if _lm_toggle != _lm_current:
+            st.session_state["light_mode"] = _lm_toggle
+            st.rerun()
+
     return selected
 
 
@@ -1123,17 +1136,27 @@ def base_layout(**overrides) -> dict:
     # Plotly 6 strict validation: do NOT pass `legend` or `title` here.
     # They must go in a separate fig.update_layout(legend=..., title=...) call.
     # Passing them through **base_layout() raises ValueError on Plotly 6+.
+    _light = st.session_state.get("light_mode", False)
+    _font_c = "#4a5568" if _light else "#a0aec0"
+    _grid_c = "#e2e8f0" if _light else "#232d3b"
+    _line_c = "#cbd5e0" if _light else "#2d3748"
     layout = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#a0aec0", size=12),
+        font=dict(color=_font_c, size=12),
         margin=dict(l=10, r=10, t=36, b=10),
         hovermode="x unified",
     )
-    if "xaxis" not in overrides:
-        layout["xaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
-    if "yaxis" not in overrides:
-        layout["yaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
+    # Merge (not replace) so a caller-supplied xaxis/yaxis dict (e.g. just a
+    # custom title or range) still inherits theme-aware grid/line colors
+    # unless it explicitly overrides them itself.
+    _default_axis = dict(gridcolor=_grid_c, linecolor=_line_c, zeroline=False)
+    for _axis_key in ("xaxis", "yaxis"):
+        _caller_axis = overrides.pop(_axis_key, None)
+        _merged = dict(_default_axis)
+        if _caller_axis:
+            _merged.update(_caller_axis)
+        layout[_axis_key] = _merged
     layout.update(overrides)
     return layout
 
@@ -1598,8 +1621,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                     **base_layout(
                         height=180,
                         showlegend=False,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Abs error (SOH %)", gridcolor="#232d3b", linecolor="#2d3748",
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Abs error (SOH %)",
                                    zeroline=False, range=[0, max(_max_err * 1.2, 3)]),
                     ),
                 )
@@ -1729,8 +1752,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_cal.update_layout(
                     **base_layout(
                         height=260, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Days elapsed", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Days elapsed", zeroline=False),
                     ),
                 )
                 fig_cal.update_layout(title=dict(text="Calendar Time vs Cycle Count", font=dict(size=12, color="#a0aec0"), x=0))
@@ -1826,8 +1849,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     fig.update_layout(
         **base_layout(
             height=340, legend=LEGEND_H,
-            xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+            xaxis=dict(title="Cycle", zeroline=False),
+            yaxis=dict(title="SOH %",
                        zeroline=False, range=[y_min, 101]),
         ),
     )
@@ -1978,8 +2001,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             height=280,
             **base_layout(
                 legend=LEGEND_H,
-                xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(title="mAh lost", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                xaxis=dict(title="Cycle", zeroline=False),
+                yaxis=dict(title="mAh lost", zeroline=False),
             ),
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -2010,8 +2033,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         fig2.update_layout(
             **base_layout(
                 height=280, legend=LEGEND_H,
-                xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(title="mΩ", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                xaxis=dict(title="Cycle", zeroline=False),
+                yaxis=dict(title="mΩ", zeroline=False),
             ),
         )
         st.plotly_chart(fig2, use_container_width=True)
@@ -2129,8 +2152,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _fig_e1.update_layout(
         **base_layout(
             height=300, legend=LEGEND_H,
-            xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+            xaxis=dict(title="Cycle", zeroline=False),
+            yaxis=dict(title="SOH %",
                        zeroline=False, range=[max(_e1_eol - 8, 55), 102]),
         ),
     )
@@ -2260,8 +2283,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     fig3.update_layout(
         **base_layout(
             height=280, legend=LEGEND_H,
-            xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="mAh lost per cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            xaxis=dict(title="Cycle", zeroline=False),
+            yaxis=dict(title="mAh lost per cycle", zeroline=False),
         ),
     )
     st.plotly_chart(fig3, use_container_width=True)
@@ -2596,8 +2619,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             fig_vq.update_layout(
                 **base_layout(
                     height=300, legend=LEGEND_H,
-                    xaxis=dict(title="Discharge Capacity (Ah)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                    yaxis=dict(title="Voltage (V)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    xaxis=dict(title="Discharge Capacity (Ah)", zeroline=False),
+                    yaxis=dict(title="Voltage (V)", zeroline=False),
                 ),
             )
             fig_vq.update_layout(title=dict(text="Simulated Discharge Voltage Curves (V vs Q)", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2621,10 +2644,10 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_peak.update_layout(
                     **base_layout(
                         height=300, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Peak SOC Position", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False, color="#63b3ed"),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Peak SOC Position", zeroline=False, color="#63b3ed"),
                         yaxis2=dict(title="Peak Amplitude (Ah/V)", overlaying="y", side="right",
-                                    gridcolor="#232d3b", linecolor="#2d3748", zeroline=False, color="#f6ad55"),
+                                    zeroline=False, color="#f6ad55"),
                     ),
                 )
                 fig_peak.update_layout(title=dict(text="dQ/dV Peak Shift Over Aging", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2643,8 +2666,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_fwhm.update_layout(
                     **base_layout(
                         height=260, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="FWHM (Ah)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="FWHM (Ah)", zeroline=False),
                     ),
                 )
                 fig_fwhm.update_layout(title=dict(text="dQ/dV Peak Width (FWHM) — Broadening = increased heterogeneity", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2740,8 +2763,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_ce.update_layout(
                     **base_layout(
                         height=280, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Coulombic Efficiency (%)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Coulombic Efficiency (%)", zeroline=False),
                     ),
                 )
                 fig_ce.update_layout(title=dict(text="Coulombic Efficiency — Q_discharge / Q_charge", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2761,8 +2784,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_lii.update_layout(
                     **base_layout(
                         height=220, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Cumulative Li loss (mAh)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Cumulative Li loss (mAh)", zeroline=False),
                     ),
                 )
                 fig_lii.update_layout(title=dict(text="Cumulative Lithium Inventory Loss (LLI) from CE Deficit", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2814,8 +2837,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_kwh.update_layout(
                     **base_layout(
                         height=250, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Cumulative kWh", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Cumulative kWh", zeroline=False),
                     ),
                 )
                 fig_kwh.update_layout(title=dict(text="Cumulative Energy Throughput (kWh) — Warranty Accounting Metric", font=dict(size=12, color="#a0aec0"), x=0))
@@ -2907,13 +2930,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                             marker=dict(color="#fc8181", size=7, symbol="x"),
                         ))
                     _fig_plat.update_layout(
-                        height=220, paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                        font=dict(color="#e2e8f0"), margin=dict(l=10, r=10, t=28, b=10),
-                        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="CE (%)", gridcolor="#1e2a38", linecolor="#2d3748",
-                                   range=[99.0, 100.05]),
-                        legend=dict(font=dict(size=10, color="#718096")),
+                        **base_layout(
+                            height=220,
+                            xaxis=dict(title="Cycle"),
+                            yaxis=dict(title="CE (%)", range=[99.0, 100.05]),
+                        ),
                     )
+                    _fig_plat.update_layout(legend=dict(font=dict(size=10, color="#718096")))
                     st.plotly_chart(_fig_plat, use_container_width=True)
 
                 # Interpretation
@@ -3003,8 +3026,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 _fig_nyq.update_layout(
                     **base_layout(
                         height=300, legend=LEGEND_H,
-                        xaxis=dict(title="Z' (Ω) — Real", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="-Z'' (Ω) — Imaginary", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Z' (Ω) — Real", zeroline=False),
+                        yaxis=dict(title="-Z'' (Ω) — Imaginary", zeroline=False),
                     ),
                 )
                 _fig_nyq.update_layout(title=dict(text="Nyquist Plot at 3 Lifecycle Stages (CPE Modified Randles)", font=dict(size=12, color="#a0aec0"), x=0))
@@ -3026,8 +3049,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 _fig_eis_trend.update_layout(
                     **base_layout(
                         height=270, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="Resistance (Ω)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="Resistance (Ω)", zeroline=False),
                     ),
                 )
                 _fig_eis_trend.update_layout(title=dict(text="Resistance Component Trends — Simulated Proxy", font=dict(size=12, color="#a0aec0"), x=0))
@@ -3106,8 +3129,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                     _fig_form.update_layout(
                         **base_layout(
                             height=260, legend=LEGEND_H,
-                            xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                            yaxis=dict(title="Coulombic Efficiency (%)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                            xaxis=dict(title="Cycle", zeroline=False),
+                            yaxis=dict(title="Coulombic Efficiency (%)", zeroline=False),
                         ),
                     )
                     _fig_form.update_layout(title=dict(text="CE Stabilisation — Formation Window (First 30 Cycles)", font=dict(size=12, color="#a0aec0"), x=0))
@@ -3161,8 +3184,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             _fig_rate.update_layout(
                 **base_layout(
                     height=280, legend=LEGEND_H,
-                    xaxis=dict(title="C-rate", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                    yaxis=dict(title="Capacity Retention (%)", range=[0, 115], gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    xaxis=dict(title="C-rate", zeroline=False),
+                    yaxis=dict(title="Capacity Retention (%)", range=[0, 115], zeroline=False),
                 ),
             )
             _fig_rate.update_layout(title=dict(text="Rate Capability: Capacity Retention at Current SOH", font=dict(size=12, color="#a0aec0"), x=0))
@@ -3325,14 +3348,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             )
 
             _fig_pb.update_layout(
-                height=340,
-                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                font=dict(color="#e2e8f0"),
-                margin=dict(l=10, r=10, t=36, b=10),
-                hovermode="x unified",
-                xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False,
-                           range=[max(0, min(_pb["proj_soh"] or [60]) - 5), 102]),
+                **base_layout(
+                    height=340,
+                    xaxis=dict(title="Cycle"),
+                    yaxis=dict(title="SOH %",
+                               range=[max(0, min(_pb["proj_soh"] or [60]) - 5), 102]),
+                ),
+            )
+            _fig_pb.update_layout(
                 legend=dict(font=dict(size=10, color="#718096")),
                 title=dict(
                     text=f"PyBaMM SPM · {_pb['chem_label']} · SEI growth fade",
@@ -4867,8 +4890,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     fig.update_layout(
         height=280,
         **base_layout(
-            xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+            xaxis=dict(title="Cell", zeroline=False),
+            yaxis=dict(title="SOH %",
                        zeroline=False, range=[50, 102]),
         ),
     )
@@ -4959,9 +4982,9 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         fig_risk.update_layout(
             height=320,
             **base_layout(
-                xaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
+                xaxis=dict(title="SOH %",
                            zeroline=False, range=[x_lo, x_hi]),
-                yaxis=dict(title="Est. RUL (cycles)", gridcolor="#232d3b", linecolor="#2d3748",
+                yaxis=dict(title="Est. RUL (cycles)",
                            zeroline=False, range=[-y_hi * 0.08, y_hi]),
             ),
         )
@@ -5024,8 +5047,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                 _fig_spread.update_layout(
                     **base_layout(
                         height=280, legend=LEGEND_H,
-                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="σ(SOH) %", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        xaxis=dict(title="Cycle", zeroline=False),
+                        yaxis=dict(title="σ(SOH) %", zeroline=False),
                     ),
                 )
                 _fig_spread.update_layout(title=dict(text=f"Fleet SOH Spread ({len(featured_dfs)} cells)", font=dict(size=12, color="#a0aec0"), x=0))
@@ -5089,7 +5112,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                 violingap=0.2,
                 violinmode="overlay",
                 **base_layout(
-                    xaxis=dict(title="SOH %", range=[50, 105], gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    xaxis=dict(title="SOH %", range=[50, 105], zeroline=False),
                     yaxis=dict(visible=False),
                     legend=LEGEND_H,
                 ),
@@ -5419,12 +5442,10 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         _fig_pack.add_hline(y=_pack_soh, line_dash="dash", line_color="#63b3ed", line_width=1,
                             annotation_text=f"Pack SOH {_pack_soh:.1f}%", annotation_font_color="#63b3ed")
         _fig_pack.update_layout(
-            height=250,
-            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-            font=dict(color="#e2e8f0"),
-            margin=dict(l=10, r=10, t=36, b=10),
-            xaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False, range=[50, 102]),
+            **base_layout(
+                height=250,
+                yaxis=dict(title="SOH %", range=[50, 102]),
+            ),
         )
         st.plotly_chart(_fig_pack, use_container_width=True)
 

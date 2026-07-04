@@ -108,17 +108,27 @@ def _analysis_provenance(cell_id: str, analysis: str = "derived") -> str:
 # ---------------------------------------------------------------------------
 
 def base_layout(**overrides) -> dict:
+    _light = st.session_state.get("light_mode", False)
+    _font_c = "#4a5568" if _light else "#a0aec0"
+    _grid_c = "#e2e8f0" if _light else "#232d3b"
+    _line_c = "#cbd5e0" if _light else "#2d3748"
     layout = dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#a0aec0", size=12),
+        font=dict(color=_font_c, size=12),
         margin=dict(l=10, r=10, t=36, b=10),
         hovermode="x unified",
     )
-    if "xaxis" not in overrides:
-        layout["xaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
-    if "yaxis" not in overrides:
-        layout["yaxis"] = dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False)
+    # Merge (not replace) so a caller-supplied xaxis/yaxis dict (e.g. just a
+    # custom title or range) still inherits theme-aware grid/line colors
+    # unless it explicitly overrides them itself.
+    _default_axis = dict(gridcolor=_grid_c, linecolor=_line_c, zeroline=False)
+    for _axis_key in ("xaxis", "yaxis"):
+        _caller_axis = overrides.pop(_axis_key, None)
+        _merged = dict(_default_axis)
+        if _caller_axis:
+            _merged.update(_caller_axis)
+        layout[_axis_key] = _merged
     layout.update(overrides)
     return layout
 
