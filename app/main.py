@@ -292,35 +292,115 @@ if st.session_state.get("light_mode", False):
     st.markdown(
         """
         <style>
-        /* ── Background & surface ── */
-        .stApp, [data-testid="stAppViewContainer"] { background: #f7f8fa !important; }
-        section[data-testid="stSidebar"] { background: #ffffff !important; border-right: 1px solid #e2e8f0 !important; }
-        /* ── Text ── */
-        .stApp, .stApp p, .stApp li, .stApp label,
-        div[data-testid="stMarkdownContainer"] { color: #1a202c !important; }
-        h1, h2, h3 { color: #1a202c !important; }
-        /* ── Sidebar nav buttons ── */
-        section[data-testid="stSidebar"] button[kind="secondary"] { color: #4a5568 !important; }
-        section[data-testid="stSidebar"] button[kind="secondary"]:hover { background: rgba(0,0,0,0.05) !important; color: #1a202c !important; }
-        section[data-testid="stSidebar"] button[kind="primary"] { background: rgba(49,130,206,0.12) !important; color: #2b6cb0 !important; }
-        section[data-testid="stSidebar"] button[kind="primary"]:hover { background: rgba(49,130,206,0.2) !important; }
-        /* ── Cards & chips ── */
-        .hero-card { background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%) !important; border-color: #cbd5e0 !important; }
-        .metric-chip { background: #ffffff !important; border-color: #e2e8f0 !important; }
-        .metric-chip-value { color: #1a202c !important; }
+        /* ���═ LIGHT MODE — full-coverage enterprise theme ══════════════════ */
+
+        /* ── Page & sidebar backgrounds ── */
+        .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMainBlockContainer"],
+        .main .block-container { background: #f7f8fa !important; color: #1a202c !important; }
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div:first-child {
+            background: #ffffff !important;
+            border-right: 1px solid #e2e8f0 !important;
+        }
+
+        /* ── Typography ── */
+        .stApp p, .stApp li, .stApp label, .stApp span,
+        div[data-testid="stMarkdownContainer"],
+        div[data-testid="stMarkdownContainer"] * { color: #1a202c !important; }
+        h1, h2, h3, h4 { color: #1a202c !important; }
+        .hero-label  { color: #4a5568 !important; }
+        .hero-sub    { color: #4a5568 !important; }
+        .t-body, .t-caption { color: #4a5568 !important; }
         .metric-chip-label, .metric-chip-sub { color: #4a5568 !important; }
-        .hero-sub { color: #4a5568 !important; }
-        .hero-label { color: #4a5568 !important; }
+
+        /* ── Sidebar nav ── */
+        section[data-testid="stSidebar"] button[kind="secondary"] {
+            color: #4a5568 !important; background: transparent !important;
+        }
+        section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+            background: rgba(0,0,0,0.05) !important; color: #1a202c !important;
+        }
+        section[data-testid="stSidebar"] button[kind="primary"] {
+            background: rgba(49,130,206,0.10) !important; color: #2b6cb0 !important;
+        }
+        section[data-testid="stSidebar"] button[kind="primary"]:hover {
+            background: rgba(49,130,206,0.18) !important;
+        }
+
+        /* ── Cards, chips, surfaces ── */
+        .hero-card {
+            background: linear-gradient(135deg, #edf2f7 0%, #e2e8f0 100%) !important;
+            border-color: #cbd5e0 !important;
+        }
+        .metric-chip {
+            background: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.07) !important;
+        }
+        .metric-chip-value { color: #1a202c !important; }
+        .empty-state {
+            border-color: #cbd5e0 !important;
+            background: #f7f8fa !important;
+        }
+        .empty-state-title { color: #2d3748 !important; }
+        .empty-state-body  { color: #4a5568 !important; }
+
         /* ── Section headers ── */
-        .section-header { color: #4a5568 !important; border-color: #e2e8f0 !important; }
-        /* ── Streamlit widgets ── */
-        div[data-testid="stMetricValue"] { color: #1a202c !important; }
-        .stSelectbox label, .stSlider label { color: #4a5568 !important; }
-        /* ── Expanders ── */
-        div[data-testid="stExpander"] { border-color: #e2e8f0 !important; }
-        /* ── Sidebar info text ── */
-        section[data-testid="stSidebar"] div[style*="color:#4a5568"] { color: #4a5568 !important; }
+        .section-header {
+            color: #4a5568 !important;
+            border-color: #e2e8f0 !important;
+        }
+
+        /* ── Streamlit native widgets ── */
+        div[data-testid="stMetricValue"]  { color: #1a202c !important; }
+        div[data-testid="stMetricLabel"]  { color: #4a5568 !important; }
+        div[data-testid="stMetricDelta"]  { color: #2d3748 !important; }
+        .stSelectbox label,
+        .stSlider label,
+        .stRadio label,
+        .stCheckbox label,
+        .stTextInput label,
+        .stNumberInput label { color: #4a5568 !important; }
+        .stTextInput input,
+        .stNumberInput input,
+        .stSelectbox [data-baseweb="select"] {
+            background: #ffffff !important;
+            border-color: #cbd5e0 !important;
+            color: #1a202c !important;
+        }
+        div[data-testid="stExpander"] {
+            border-color: #e2e8f0 !important;
+            background: #ffffff !important;
+        }
+        div[data-testid="stExpander"] summary {
+            background: #f7f8fa !important;
+            color: #2d3748 !important;
+        }
+        /* st.info / st.warning / st.error boxes */
+        div[data-testid="stInfo"]    { background: #ebf8ff !important; border-color: #90cdf4 !important; color: #2c5282 !important; }
+        div[data-testid="stWarning"] { background: #fffaf0 !important; border-color: #f6ad55 !important; color: #744210 !important; }
+        div[data-testid="stError"]   { background: #fff5f5 !important; border-color: #fc8181 !important; color: #742a2a !important; }
+
+        /* ── Plotly chart backgrounds ── */
+        .js-plotly-plot .plotly,
+        .js-plotly-plot .bg { fill: #f7f8fa !important; }
+        .js-plotly-plot text { fill: #4a5568 !important; }
+        .gridlayer path { stroke: #e2e8f0 !important; }
+
+        /* ── Sidebar inline divs with dark hard-coded colours ── */
+        section[data-testid="stSidebar"] div[style*="color:#8896a8"],
+        section[data-testid="stSidebar"] div[style*="color:#4a5568"],
         section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color: #4a5568 !important; }
+        section[data-testid="stSidebar"] div[style*="color:#e2e8f0"],
+        section[data-testid="stSidebar"] div[style*="color:#a0aec0"] { color: #2d3748 !important; }
+        section[data-testid="stSidebar"] div[style*="background:#1e2a38"],
+        section[data-testid="stSidebar"] div[style*="background:#1a202c"] {
+            background: #f0f4f8 !important;
+            border-color: #e2e8f0 !important;
+        }
+        /* ══ END LIGHT MODE ════════════════════════════════════════════════ */
         </style>
         """,
         unsafe_allow_html=True,
@@ -539,8 +619,7 @@ NAV_GROUPS = [
         ("Live Monitor", "live_monitor"),
     ]),
     ("Configure", [
-        ("Import",    "import"),
-        ("Settings",  "settings"),
+        ("Configure", "configure"),
     ]),
 ]
 
@@ -798,34 +877,22 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         with st.expander("Data source", expanded=False):
             render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
 
-        # ── Role selector (A2: compact after onboarding) ──
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        # ── Role selector (A2: compact inline — no nested expander) ──
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         _cur_role = st.session_state.get("user_role", "Engineer")
-        _rc1, _rc2 = st.columns([3, 1])
+        _role_icons = {"Engineer": "⚙", "Fleet Manager": "🗂", "Executive": "📊"}
+        _role_icon = _role_icons.get(_cur_role, "⚙")
+        _rc1, _rc2 = st.columns([4, 1])
         with _rc1:
             st.markdown(
-                f"<div style='font-size:11px;color:#8896a8;padding:4px 0'>"
-                f"Viewing as: <span style='color:#e2e8f0;font-weight:600'>{_cur_role}</span></div>",
+                f"<div style='font-size:11px;color:#8896a8;padding:4px 0 2px'>"
+                f"{_role_icon} <span style='color:#e2e8f0;font-weight:600'>{_cur_role}</span></div>",
                 unsafe_allow_html=True,
             )
         with _rc2:
-            if st.button("Change", key="change_role_btn", use_container_width=True):
+            if st.button("↺", key="change_role_btn", use_container_width=True,
+                         help="Switch role (Engineer / Fleet Manager / Executive)"):
                 st.session_state["role_chosen"] = False
-                st.rerun()
-        with st.expander("Switch role", expanded=False):
-            _role = st.radio(
-                "Role",
-                options=["Engineer", "Fleet Manager", "Executive"],
-                index=["Engineer", "Fleet Manager", "Executive"].index(_cur_role),
-                key="role_radio",
-                label_visibility="collapsed",
-                horizontal=False,
-            )
-            if _role != _cur_role:
-                st.session_state["user_role"] = _role
-                st.session_state["role_chosen"] = True
-                if _role == "Executive" and st.session_state.get("page") not in ("exec_summary", "fleet", "consequences"):
-                    st.session_state.page = "exec_summary"
                 st.rerun()
 
         # ── Nav (grouped) ──
@@ -866,16 +933,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                     st.session_state.page = key
                     st.rerun()
 
-        # ── Chemistry display (read-only — model is chemistry-specific per data source) ──
-        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
-            "letter-spacing:0.08em;padding:0 4px 8px'>Chemistry</div>",
-            unsafe_allow_html=True,
-        )
-        # Derive chemistry from the active data mode — no user override.
-        # Allowing users to select Li-S or SSB while the model is trained on
-        # LiCoO₂/LFP data would produce physically incorrect results silently.
+        # Derive chemistry from active mode — stored for page-level display
         _mode_chem = st.session_state.get("data_mode", "synthetic")
         _chem_label = {
             "severson":  "LFP (Severson 2019)",
@@ -883,12 +941,6 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             "synthetic": "LiCoO₂ (synthetic)",
             "uploaded":  "User-defined",
         }.get(_mode_chem, "LiCoO₂")
-        st.markdown(
-            f"<div style='font-size:13px;color:#a0aec0;padding:4px 4px 2px'>{_chem_label}</div>"
-            f"<div style='font-size:10px;color:#4a5568;padding:0 4px 8px'>Set by data source · "
-            f"Multi-chemistry selector on roadmap</div>",
-            unsafe_allow_html=True,
-        )
         st.session_state["active_chemistry"] = _chem_label
 
         # ── Cell selector ──
@@ -961,87 +1013,29 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                         else:
                             st.warning(_msg)
 
-        # ── Cell annotation — varies by active mode ──
+        # ── Cell annotation — compact one-liner ──
         if mode == "uploaded":
             temp_assumed_cells = (up_meta or {}).get("temperature_assumed_cells", [])
             temp_assumed = selected in temp_assumed_cells
-            temp_note    = "25°C (assumed)" if temp_assumed else "measured"
-            st.markdown(
-                f"<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-                f"Source: user upload · this session only<br>"
-                f"Temperature: <span style='color:{'#718096' if temp_assumed else '#a0aec0'}'>"
-                f"{temp_note}</span><br>"
-                f"<span style='color:#63b3ed'>Uploaded cell</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            _ann_color, _ann_text = ("#63b3ed", "Uploaded · T " + ("assumed" if temp_assumed else "measured"))
         elif mode == "nasa":
-            st.markdown(
-                "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-                "Source: NASA PCoE Battery Aging Dataset<br>"
-                "T=24°C &nbsp; C-rate=2A &nbsp; DoD=100%<br>"
-                "<span style='color:#48bb78'>Real measured data</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
+            _ann_color, _ann_text = "#48bb78", "NASA PCoE · real · T=24°C · 2A"
         elif mode == "severson":
-            st.markdown(
-                "<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-                "Source: Severson 2019 · Nature Energy<br>"
-                "LFP chemistry · 4 cycle-life bands<br>"
-                "<span style='color:#48bb78'>Real measured data</span>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        else:  # synthetic
-            p  = CELL_STRESS_PROFILES.get(selected, {})
+            _ann_color, _ann_text = "#48bb78", "Severson 2019 · real · LFP"
+        else:
+            p = CELL_STRESS_PROFILES.get(selected, {})
             sf = _stress_factor(p.get("temp_mean", 25), p.get("c_rate", 1), p.get("dod", 1))
-            st.markdown(
-                f"<div style='font-size:11px;color:#4a5568;padding:4px 4px 0;line-height:1.7'>"
-                f"T={p.get('temp_mean',25):.0f}°C &nbsp; "
-                f"C-rate={p.get('c_rate',1.0):.1f}C &nbsp; "
-                f"DoD={p.get('dod',1.0)*100:.0f}%<br>"
-                f"Stress: {sf:.2f}× baseline &nbsp; "
-                f"<span style='color:#fc8181'>Synthetic</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            _ann_color, _ann_text = "#fc8181", f"Synthetic · {sf:.2f}× stress · T={p.get('temp_mean',25):.0f}°C"
+        st.markdown(
+            f"<div style='font-size:10px;color:{_ann_color};padding:4px 4px 0'>{_ann_text}</div>",
+            unsafe_allow_html=True,
+        )
 
-        # D4: ⌘K command palette button
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        if st.button("⌘K  Command Palette", key="cmd_palette_btn", use_container_width=True,
-                     help="Open command palette (Ctrl+K / ⌘K)"):
+        # D4: Command palette — button only, no fragile JS keyboard injection
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        if st.button("Search pages…", key="cmd_palette_btn", use_container_width=True,
+                     help="Search pages and navigate quickly"):
             _command_palette_dialog()
-        # Inject JS to wire Ctrl+K / ⌘K to click the button
-        st.markdown(
-            """<script>
-            (function() {
-                document.addEventListener('keydown', function(e) {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                        e.preventDefault();
-                        var btns = window.parent.document.querySelectorAll('button');
-                        for (var i = 0; i < btns.length; i++) {
-                            if (btns[i].innerText.includes('Command Palette')) {
-                                btns[i].click(); break;
-                            }
-                        }
-                    }
-                });
-            })();
-            </script>""",
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size:11px;color:#2d3748;padding:0 4px;line-height:1.7'>"
-            "Phase 1 · scikit-learn GBRT<br>"
-            "8 synthetic + 4 NASA real cells<br>"
-            "Cell-to-cell stress variation (T, C-rate, DoD)<br>"
-            "<span style='color:#fc8181'>⚠ Synthetic cells: not real measured data</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
 
     return selected
 
@@ -1526,14 +1520,13 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                                   annotation_text="Reliable", annotation_position="top right",
                                   annotation_font_color="#48bb78", annotation_font_size=10)
                 _fig_d6.update_layout(
-                    height=180,
-                    margin=dict(l=10, r=10, t=28, b=10),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#a0aec0", size=10),
-                    showlegend=False,
-                    xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-                    yaxis=dict(title="Abs error (SOH %)", gridcolor="#1e2a38", linecolor="#2d3748",
-                               zeroline=False, range=[0, max(_max_err * 1.2, 3)]),
+                    **base_layout(
+                        height=180,
+                        showlegend=False,
+                        xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                        yaxis=dict(title="Abs error (SOH %)", gridcolor="#232d3b", linecolor="#2d3748",
+                                   zeroline=False, range=[0, max(_max_err * 1.2, 3)]),
+                    ),
                 )
                 st.plotly_chart(_fig_d6, use_container_width=True)
                 st.caption(
@@ -1670,7 +1663,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             except Exception as _e:
                 st.info(f"Calendar age analysis unavailable: {_e}")
 
-    st.markdown("<div class='section-header'>State of Health — Full History</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     df_train = _rdf[_rdf["cycle_number"] <= split_cycle]
     df_test  = _rdf[_rdf["cycle_number"] >  split_cycle]
@@ -1884,7 +1877,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     res_anomalies = df[df.get("resistance_anomaly", pd.Series(False, index=df.index))] if "resistance_anomaly" in df.columns else df.iloc[0:0]
 
     with col1:
-        st.markdown("<div class='section-header'>Capacity Fade</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=_rdf["cycle_number"], y=_rdf["capacity_fade_ah"] * 1000,
@@ -1917,7 +1910,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown("<div class='section-header'>Internal Resistance</div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
             x=_rdf["cycle_number"], y=_rdf["resistance_ohm"] * 1000,
@@ -2059,7 +2052,6 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                       annotation_text="Now", annotation_position="top left",
                       annotation_font_color="#4a5568", annotation_font_size=10)
     _fig_e1.update_layout(
-        height=300,
         **base_layout(
             height=300, legend=LEGEND_H,
             xaxis=dict(title="Cycle", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
@@ -3717,7 +3709,7 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
         )
 
     # ── Actual vs Predicted ──
-    st.markdown("<div class='section-header'>Actual vs Predicted SOH — Test Cycles (all cells)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
     td       = bundle["test_data"]
     actual   = td["y_soh_test"]
@@ -3752,7 +3744,12 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
     st.markdown("<div class='section-header'>Temperature–Degradation Analysis (Arrhenius)</div>", unsafe_allow_html=True)
     _afdfs = active_fdfs if active_fdfs is not None else {}
     if len(_afdfs) <= 1:
-        st.info("Select multiple cells to enable cross-cell temperature analysis.")
+        _empty_state(
+            "Multi-cell data required",
+            "Cross-cell Arrhenius analysis needs at least 2 cells with temperature records.",
+            "Switch to a multi-cell data source or upload multiple cells.",
+            icon="📈",
+        )
     else:
         import numpy as _np_arr
         _arr_rows = []
@@ -3837,7 +3834,12 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                     "Pre-exponential factor A = exp(intercept) characterises attempt frequency."
                 )
         else:
-            st.info("Need at least 2 cells with valid data for Arrhenius plot.")
+            _empty_state(
+                "Not enough cells for Arrhenius analysis",
+                "Need at least 2 cells with valid temperature data to fit the Arrhenius model.",
+                "Add a second data source or upload multi-cell data.",
+                icon="🌡",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -4757,7 +4759,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     )
 
     # ── SOH distribution chart ──
-    st.markdown("<div class='section-header'>SOH Distribution Across Fleet</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
     sorted_ids  = [r["cell_id"] for r in rows]
     sorted_sohs = [r["soh"] for r in rows]
@@ -4785,7 +4787,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Risk matrix: SOH vs RUL ──
-    st.markdown("<div class='section-header'>Risk Matrix — SOH vs Remaining Life</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
     cal_rows   = [r for r in rows if r["rul_ok"] and r["rul"] is not None]
     uncal_rows = [r for r in rows if not (r["rul_ok"] and r["rul"] is not None)]
@@ -4889,7 +4891,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
 
     # ── Cell-to-Cell Spread Trending ────────────────────────────────────────
-    st.markdown("<div class='section-header'>Fleet Spread Over Time — σ(SOH)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     _md_html("""<div style="font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6">A <strong style="color:#e2e8f0">rising σ(SOH)</strong> means one cell is falling behind the fleet — the earliest warning of a cell that will force a pack-level service event. When spread exceeds ~3%, investigation is warranted.</div>""")
     try:
         import numpy as _np_sp
@@ -4944,12 +4946,16 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                 _trend_dir = "rising" if _sigma_smoothed.iloc[-1] > _sigma_smoothed.iloc[max(0, len(_sigma_smoothed)//2)] else "falling or stable"
                 st.caption(f"Peak spread: {_peak_sigma:.2f}% SOH — current trend: {_trend_dir}.")
         else:
-            st.info("Fleet spread analysis requires ≥ 2 cells with overlapping cycle ranges.")
+            _empty_state(
+                "Fleet spread needs multiple cells",
+                "Spread analysis requires ≥ 2 cells with overlapping cycle ranges.",
+                icon="📊",
+            )
     except Exception as _sp_e:
         st.info(f"Spread trend unavailable: {_sp_e}")
 
     # ── SOH Distribution Shift Over Time (histogram animation) ─────────────
-    st.markdown("<div class='section-header'>SOH Distribution Shift Over Time</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
     _md_html(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "The <strong style='color:#e2e8f0'>histogram shifting left</strong> is the primary signal a "
@@ -5007,7 +5013,11 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             st.plotly_chart(_fig_hist, use_container_width=True)
             st.caption(f"Violin distribution of SOH across {len(_nonempty_h)} cells at {_n_snapshots} cycle snapshots. Left shift = fleet aging.")
         else:
-            st.info("SOH distribution trend requires ≥ 2 cells with cycle history.")
+            _empty_state(
+                "Distribution shift needs multiple cells",
+                "SOH distribution analysis requires ≥ 2 cells with cycle history.",
+                icon="📊",
+            )
     except Exception as _hist_e:
         st.info(f"SOH trend histogram unavailable: {_hist_e}")
 
@@ -5091,7 +5101,12 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         )
         _md_html(f"<div style='font-size:12px;color:#a0aec0;padding:8px 0 16px;line-height:1.6'>{_e2_txt}</div>")
     else:
-        st.info("RUL projection unavailable — ensure at least one cell has a calibrated fade rate.")
+        _empty_state(
+            "RUL projection unavailable",
+            "At least one cell needs a calibrated fade rate to generate fleet-wide RUL projections.",
+            "Import data with ≥ 30 cycles to calibrate the fade model.",
+            icon="⏱",
+        )
 
     # ── Second-life screening ──
     st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
@@ -9220,7 +9235,11 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         cell_b = st.selectbox("Cell B", options=cell_ids, index=min(1, len(cell_ids) - 1), key="compare_cell_b")
 
     if cell_a == cell_b:
-        st.info("Select two different cells to compare.")
+        _empty_state(
+            "Select two different cells",
+            "Cell A and Cell B must be different to generate a comparison.",
+            icon="↔",
+        )
         return
 
     df_a = active_fdfs[cell_a]
@@ -9306,7 +9325,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         )
         st.plotly_chart(_fig_res, use_container_width=True)
     else:
-        st.info("Resistance data not available for one or both selected cells.")
+        _empty_state("Resistance data unavailable", "One or both cells are missing resistance measurements.", icon="Ω")
 
     # ── Engineering Radar Chart (CATL / A123 format) ─────────────────────────
     st.markdown("<div class='section-header'>Engineering Radar — Multi-Metric Health Profile</div>", unsafe_allow_html=True)
@@ -10367,13 +10386,17 @@ def main():
         page_grading(cell_ids, active_fdfs, bundles, selected)
     elif page == "live_monitor":
         page_live_monitor(cell_ids, active_fdfs)
-    elif page == "settings":
-        page_settings(
-            featured_dfs_all,
-            {"nasa": bundles["nasa"], "synth": bundles["synth"], "uploaded": up_bundle},
-        )
-    elif page == "import":
-        page_import()
+    elif page in ("settings", "import", "configure"):
+        # Merged Configure page — Import and Settings as tabs
+        st.markdown("# Configure")
+        _cfg_tab_import, _cfg_tab_settings = st.tabs(["Import Data", "Settings"])
+        with _cfg_tab_import:
+            page_import()
+        with _cfg_tab_settings:
+            page_settings(
+                featured_dfs_all,
+                {"nasa": bundles["nasa"], "synth": bundles["synth"], "uploaded": up_bundle},
+            )
     elif page in COMING_SOON_META:
         page_coming_soon(page)
     else:
