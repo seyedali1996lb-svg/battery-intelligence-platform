@@ -707,6 +707,42 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
+# D4: Command palette dialog — ⌘K / Ctrl+K from any page
+@st.dialog("Command Palette")
+def _command_palette_dialog():
+    _PALETTE_ROUTES = {
+        "fleet": ("fleet",    ["fleet", "cells", "monitor", "attention", "ranking", "overview", "all cells"]),
+        "overview": ("overview", ["health", "cell", "soh", "status", "check"]),
+        "compliance": ("compliance", ["passport", "eu", "compliance", "regulation", "eol"]),
+        "decision": ("decision",  ["decision", "replace", "repurpose", "second life", "what should"]),
+        "copilot": ("copilot",   ["copilot", "ask", "budget", "cost", "risk", "question"]),
+        "health": ("health",    ["degrading", "mechanism", "lli", "lam", "fade", "resistance"]),
+    }
+    st.markdown("### ⌘ Command Palette")
+    _pal_input = st.text_input(
+        "What do you want to do?",
+        placeholder="e.g. 'show cells with high fade', 'replacement budget', 'EU passport'…",
+        key="_palette_input",
+    )
+    st.caption("Navigates to the best matching page. Press Enter or click Go.")
+    if st.button("Go", key="_palette_go", use_container_width=True, type="primary") and _pal_input:
+        _lower = _pal_input.lower()
+        _dest = "copilot"  # default
+        _best_score = 0
+        for _page, (_route, _keywords) in _PALETTE_ROUTES.items():
+            _score = sum(1 for kw in _keywords if kw in _lower)
+            if _score > _best_score:
+                _best_score = _score
+                _dest = _route
+        st.session_state.page = _dest
+        if _dest == "copilot":
+            st.session_state["copilot_free_text"] = _pal_input
+            st.session_state.pop("copilot_query", None)
+        elif _dest == "fleet" and any(kw in _lower for kw in ["fade", "soh below", "worst"]):
+            st.session_state["fleet_filter_query"] = _pal_input
+        st.rerun()
+
+
 def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                    up_meta: dict | None, sev_n: int = 0,
                    active_fdfs: dict | None = None,
@@ -970,6 +1006,31 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 f"</div>",
                 unsafe_allow_html=True,
             )
+
+        # D4: ⌘K command palette button
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        if st.button("⌘K  Command Palette", key="cmd_palette_btn", use_container_width=True,
+                     help="Open command palette (Ctrl+K / ⌘K)"):
+            _command_palette_dialog()
+        # Inject JS to wire Ctrl+K / ⌘K to click the button
+        st.markdown(
+            """<script>
+            (function() {
+                document.addEventListener('keydown', function(e) {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                        e.preventDefault();
+                        var btns = window.parent.document.querySelectorAll('button');
+                        for (var i = 0; i < btns.length; i++) {
+                            if (btns[i].innerText.includes('Command Palette')) {
+                                btns[i].click(); break;
+                            }
+                        }
+                    }
+                });
+            })();
+            </script>""",
+            unsafe_allow_html=True,
+        )
 
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
@@ -1281,11 +1342,41 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     sparkline_svg = _soh_sparkline_svg(df["soh_pct"])
     interval_html = ""
+    # D5: epistemic vs aleatoric uncertainty explanation
+    _unc_explanation = ""
     if not rul_calibrating and rul_q10 is not None and rul_q90 is not None and rul_q90 > rul_q10:
+        _band_width = rul_q90 - rul_q10
+        _band_pct   = _band_width / max(float(current_rul), 1) * 100 if current_rul else 0
+        if _band_pct > 40:
+            # Wide band — diagnose source
+            if current_cycle < 60:
+                _unc_explanation = (
+                    f"Wide uncertainty ({_band_width:.0f}-cycle spread) because this cell has only "
+                    f"{current_cycle} cycles — the model hasn't seen enough of its degradation curve "
+                    f"(epistemic). Uncertainty will narrow as cycles accumulate."
+                )
+            elif fold_r2 is not None and fold_r2 < 0.55:
+                _unc_explanation = (
+                    f"Wide uncertainty ({_band_width:.0f}-cycle spread) reflects genuine cell-to-cell "
+                    f"variability in this chemistry — the model has enough data but the degradation "
+                    f"pathway is inherently variable (aleatoric, R²={fold_r2:.2f})."
+                )
+            else:
+                _unc_explanation = (
+                    f"Uncertainty band spans {_band_width:.0f} cycles ({_band_pct:.0f}% of median RUL). "
+                    f"Mix of data sparsity and chemistry variability — "
+                    f"interval will tighten with more cycles."
+                )
+        elif _band_pct > 15:
+            _unc_explanation = (
+                f"Moderate uncertainty ({_band_width:.0f}-cycle band). "
+                f"Model is well-calibrated; remaining spread reflects natural cycle-to-cycle variation."
+            )
         interval_html = (
             f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
             f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
-            f"</div>"
+            + (f"&nbsp;·&nbsp;<span style='color:#4a5568'>{_unc_explanation}</span>" if _unc_explanation else "")
+            + f"</div>"
         )
 
     _md_html(
@@ -1397,6 +1488,58 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"</div>",
             unsafe_allow_html=True,
         )
+
+    # ── D6: Model confidence history ─────────────────────────────────────────
+    if "soh_pct" in df.columns and "soh_pred" in df.columns:
+        _conf_df = df[["cycle_number", "soh_pct", "soh_pred"]].dropna()
+        if len(_conf_df) >= 20:
+            with st.expander("Prediction confidence history", expanded=False):
+                # Rolling absolute error as proxy for model confidence at each cycle window
+                import numpy as _np_d6
+                _err = (_conf_df["soh_pct"] - _conf_df["soh_pred"]).abs()
+                _win = min(20, max(5, len(_conf_df) // 8))
+                _roll_err = _err.rolling(_win, min_periods=3).mean()
+                _cycles_d6 = _conf_df["cycle_number"].tolist()
+                _err_vals  = _roll_err.tolist()
+                _min_err   = float(_np_d6.nanmin(_err_vals)) if _err_vals else 0
+                _max_err   = float(_np_d6.nanmax(_err_vals)) if _err_vals else 1
+                _trend_dir = "improving" if _err_vals[-1] < _err_vals[0] else (
+                    "stable" if abs(_err_vals[-1] - _err_vals[0]) < 0.5 else "diverging")
+                _converged = _err_vals[-1] < 1.5 if _err_vals else False
+                _interp = (
+                    "Model has converged — error is low and stable. Confidence is high."
+                    if _converged and _trend_dir in ("stable", "improving") else
+                    "Model is still calibrating — wait for more cycles for tighter estimates."
+                    if _trend_dir == "diverging" else
+                    "Model confidence is improving as more data accumulates."
+                )
+                _fig_d6 = go.Figure()
+                _fig_d6.add_trace(go.Scatter(
+                    x=_cycles_d6, y=_err_vals,
+                    mode="lines",
+                    line=dict(color="#63b3ed", width=2),
+                    name="Rolling MAE (SOH %)",
+                    fill="tozeroy", fillcolor="rgba(99,179,237,0.08)",
+                    hovertemplate="Cycle %{x}<br>Error: %{y:.2f}%<extra></extra>",
+                ))
+                _fig_d6.add_hline(y=1.5, line_dash="dot", line_color="#48bb78", line_width=1,
+                                  annotation_text="Reliable", annotation_position="top right",
+                                  annotation_font_color="#48bb78", annotation_font_size=10)
+                _fig_d6.update_layout(
+                    height=180,
+                    margin=dict(l=10, r=10, t=28, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#a0aec0", size=10),
+                    showlegend=False,
+                    xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                    yaxis=dict(title="Abs error (SOH %)", gridcolor="#1e2a38", linecolor="#2d3748",
+                               zeroline=False, range=[0, max(_max_err * 1.2, 3)]),
+                )
+                st.plotly_chart(_fig_d6, use_container_width=True)
+                st.caption(
+                    f"Rolling {_win}-cycle mean absolute error between predicted and measured SOH. "
+                    f"Trend: {_trend_dir}. {_interp}"
+                )
 
     # ── 3 primary secondary metrics: RUL · Fade Rate · Resistance ────────────
     _fade_30 = float(latest["fade_rate_30cy"]) if "fade_rate_30cy" in latest.index else None
@@ -5116,28 +5259,37 @@ def page_copilot(
     )
 
     query = st.session_state.get("copilot_query", None)
+    # D3: track free-text query separately from chip selection
+    _free_text_query = st.session_state.get("copilot_free_text", None)
 
     # ── Ask bar ────────────────────────────────────────────────────────────
     _ask_input = st.text_input(
         "Ask a question",
         value="",
-        placeholder="Type a question or choose below — e.g. 'What is this cell's health?'",
+        placeholder="Ask anything — e.g. 'Why is RUL uncertainty so wide?' or 'Which cells need attention?'",
         label_visibility="collapsed",
         key="copilot_ask_bar",
     )
-    if _ask_input:
-        # Match typed text against query labels (case-insensitive substring)
+    if _ask_input and _ask_input != st.session_state.get("_last_ask", ""):
+        st.session_state["_last_ask"] = _ask_input
         _typed_lower = _ask_input.lower()
         _matched = next(
             (k for k, v in QUERY_LABELS.items() if _typed_lower in v.lower()),
             None,
         )
-        if _matched and _matched != query:
+        if _matched:
             st.session_state.copilot_query = _matched
-            st.rerun()
+            st.session_state.pop("copilot_free_text", None)
+        else:
+            # D3: unmatched → free-text, route to LLM or template fallback
+            st.session_state["copilot_free_text"] = _ask_input
+            st.session_state.pop("copilot_query", None)
+            query = None
+        st.rerun()
 
-    # ── Chip grid ──────────────────────────────────────────────────────────
-    # Technical questions
+    _free_text_query = st.session_state.get("copilot_free_text", None)
+
+    # ── Chip grid — suggestions beneath the text input ─────────────────────
     st.markdown(
         "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
         "letter-spacing:0.1em;padding:10px 0 4px'>Cell questions</div>",
@@ -5175,14 +5327,42 @@ def page_copilot(
                 st.session_state.copilot_query = _key
                 st.rerun()
 
-    if not query:
+    if not query and not _free_text_query:
         st.markdown(
             "<div style='text-align:center;padding:40px 24px;color:#4a5568;font-size:14px'>"
-            "Choose a question above or type one. The Copilot answers using only "
+            "Type a question above or choose a topic. The Copilot answers using only "
             "values already computed by the model pipeline for "
             "<strong style='color:#8896a8'>" + selected + "</strong>.</div>",
             unsafe_allow_html=True,
         )
+        return
+
+    # D3: Free-text path — route to LLM (or template summary as fallback)
+    if _free_text_query and not query:
+        _api_key_ft = st.session_state.get("anthropic_api_key", "")
+        _ctx_ft = build_cell_context(selected, featured_dfs, bundles)
+        _template_ft = context_summary(_ctx_ft)
+        _llm_key_ft = "claude-haiku-4-5-20251001"
+        st.markdown(
+            f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>"
+            f"Answering: <em style='color:#8896a8'>{_free_text_query}</em>"
+            + (" · Claude Haiku" if _api_key_ft else " · Template fallback")
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.spinner("Thinking…"):
+            try:
+                _ft_answer = llm_answer(_free_text_query, _template_ft, _api_key_ft)
+            except Exception as _e:
+                _ft_answer = _template_ft
+        _md_html(
+            f"<div style='background:#1a202c;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:18px 22px;font-size:14px;color:#a0aec0;line-height:1.7'>{_ft_answer}</div>"
+        )
+        if st.button("Clear", key="cpft_clear"):
+            st.session_state.pop("copilot_free_text", None)
+            st.session_state.pop("_last_ask", None)
+            st.rerun()
         return
 
     # ── Pre-compute fleet stats (cheap: just iterates already-computed DataFrames) ──
@@ -9256,6 +9436,47 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             _ccol.plotly_chart(_fig_lm, use_container_width=True)
 
     # ── Anomaly log ───────────────────────────────────────────────────────────
+    # D2: Rule-based differential diagnosis per anomaly type
+    def _anomaly_diagnosis(kind: str, detail: str, value=None, threshold=None) -> str:
+        k = str(kind).upper()
+        if "THERMAL_RUNAWAY" in k:
+            return (
+                "Rapid temperature rise detected. If during active charge/discharge, "
+                "halt immediately — possible separator failure or internal short. "
+                "If at replay start, may be measurement artifact; monitor next 5 readings."
+            )
+        if "UNDERTEMPERATURE" in k:
+            return (
+                "Cell below safe operating temperature. Lithium plating risk during "
+                "charge is elevated below 0 °C. Suspend charging until temperature recovers. "
+                "Discharge at reduced rate is acceptable."
+            )
+        if "TEMP_RATE" in k:
+            return (
+                "Temperature rising faster than expected. Not yet critical, but watch the "
+                "next 3–5 readings. If rise continues, check for cooling system fault or "
+                "abnormal load. CE trend will confirm if chemistry is involved."
+            )
+        if "CAPACITY_PLUNGE" in k:
+            return (
+                "SOC dropped sharply in one reading. Most likely a BMS communication glitch "
+                "or measurement artifact — single-cycle drops rarely reflect true capacity loss. "
+                "Check if the drop persists next cycle before escalating."
+            )
+        if "VOLTAGE_HIGH" in k:
+            return (
+                "Voltage above upper limit. Overcharge condition — stop charging immediately. "
+                "Sustained overcharge accelerates electrolyte decomposition and SEI growth. "
+                "Check charger cutoff threshold against cell specification."
+            )
+        if "VOLTAGE_LOW" in k:
+            return (
+                "Voltage below lower cutoff. Deep discharge causes copper dissolution and "
+                "irreversible capacity loss. Discontinue discharge. If voltage does not "
+                "recover at rest, the cell may need retirement evaluation."
+            )
+        return "Monitor subsequent readings. If pattern repeats, correlate with SOH trend."
+
     st.markdown("<div class='section-header'>Anomaly Log</div>", unsafe_allow_html=True)
     if _anom:
         _anom_recent = list(reversed(_anom[-50:]))
@@ -9265,13 +9486,18 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             _akind = _a.get("kind", "UNKNOWN")
             _adet  = _a.get("detail", "")
             _ats   = _a.get("ts", "")[:19].replace("T", " ")
+            _diag  = _anomaly_diagnosis(_akind, _adet, _a.get("value"), _a.get("threshold"))
             st.markdown(
                 f"<div style='background:{_ac}11;border-left:3px solid {_ac};"
-                f"border-radius:4px;padding:6px 12px;margin-bottom:4px;font-size:12px'>"
+                f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
+                f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
                 f"<span style='color:{_ac};font-weight:700'>{_akind}</span>"
-                f"<span style='color:#4a5568;margin:0 8px'>·</span>"
-                f"<span style='color:#a0aec0'>{_adet}</span>"
-                f"<span style='color:#4a5568;float:right;font-size:11px'>{_ats}</span>"
+                f"<span style='color:#4a5568;font-size:11px'>{_ats}</span>"
+                f"</div>"
+                f"<div style='color:#a0aec0;margin-bottom:4px'>{_adet}</div>"
+                f"<div style='color:#718096;font-size:11px;border-top:1px solid {_ac}22;"
+                f"padding-top:4px;margin-top:4px'>"
+                f"<span style='color:{_ac};font-weight:600'>Diagnosis: </span>{_diag}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
