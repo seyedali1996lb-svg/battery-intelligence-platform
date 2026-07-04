@@ -607,15 +607,14 @@ NAV_GROUPS = [
     ("Analyse", [
         ("Overview",   "overview"),
         ("Health",     "health"),
-        ("Compare",    "compare"),
-        ("Copilot",    "copilot"),
+        ("Explore",    "compare"),
     ]),
     ("EU Passport", [          # A6: promoted from 3rd to 2nd — 2027 deadline
         ("Compliance", "compliance"),
     ]),
     ("Operate", [
-        ("Fleet",        "fleet"),      # A5: Grading moved here as a Fleet tab
-        ("Decision",     "decision"),
+        ("Fleet",        "fleet"),
+        ("Decide & Ask", "decision"),
         ("Live Monitor", "live_monitor"),
     ]),
     ("Configure", [
@@ -849,29 +848,47 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             unsafe_allow_html=True,
         )
 
-        # A1: Task picker — replaces top mode switcher as primary nav entry
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-            "letter-spacing:0.1em;padding:0 4px 6px'>What do you need today?</div>",
-            unsafe_allow_html=True,
+        # A1: Inline page search (replaces 3-column task picker)
+        _SIDEBAR_SEARCH_ROUTES = {
+            "fleet":      ["fleet", "cells", "monitor", "ranking", "attention", "all cells", "worst"],
+            "overview":   ["overview", "cell health", "soh", "status", "check cell"],
+            "compliance": ["passport", "eu", "compliance", "regulation", "eol", "battery passport"],
+            "decision":   ["decision", "replace", "repurpose", "second life", "what should", "copilot", "ask", "cost", "budget", "risk"],
+            "health":     ["health", "degrading", "mechanism", "lli", "lam", "fade", "resistance"],
+            "compare":    ["compare", "cluster", "cohort", "side by side", "explore"],
+            "configure":  ["import", "settings", "upload", "configure", "data source", "threshold"],
+            "live_monitor": ["live", "mqtt", "streaming", "bms", "anomaly"],
+        }
+        _sb_query = st.text_input(
+            "search", placeholder="Search pages…",
+            key="_sidebar_search", label_visibility="collapsed",
         )
-        _t1, _t2, _t3 = st.columns(3)
-        with _t1:
-            if st.button("🔍\nMonitor\nfleet", key="task_fleet", use_container_width=True,
-                         help="Open Fleet view — all cells ranked by health"):
-                st.session_state.page = "fleet"
-                st.rerun()
-        with _t2:
-            if st.button("🔬\nCheck\ncell", key="task_cell", use_container_width=True,
-                         help="Open Overview for a specific cell"):
-                st.session_state.page = "overview"
-                st.rerun()
-        with _t3:
-            if st.button("📋\nEU\nPassport", key="task_passport", use_container_width=True,
-                         help="Open EU Battery Passport compliance view"):
-                st.session_state.page = "compliance"
-                st.rerun()
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        if _sb_query and _sb_query != st.session_state.get("_last_sb_search", ""):
+            st.session_state["_last_sb_search"] = _sb_query
+            _sq = _sb_query.lower().strip()
+            _best_dest, _best_score = "fleet", 0
+            for _dest, _kws in _SIDEBAR_SEARCH_ROUTES.items():
+                _sc = sum(1 for k in _kws if k in _sq)
+                if _sc > _best_score:
+                    _best_score, _best_dest = _sc, _dest
+            if _best_score == 0:
+                # fall through to copilot with free-text
+                _best_dest = "decision"
+                st.session_state["copilot_free_text"] = _sb_query
+            st.session_state.page = _best_dest
+            st.rerun()
+        # Quick-access strip (single row, compact)
+        _qa1, _qa2, _qa3 = st.columns(3)
+        with _qa1:
+            if st.button("Fleet", key="qa_fleet", use_container_width=True):
+                st.session_state.page = "fleet"; st.rerun()
+        with _qa2:
+            if st.button("Cell", key="qa_cell", use_container_width=True):
+                st.session_state.page = "overview"; st.rerun()
+        with _qa3:
+            if st.button("Passport", key="qa_passport", use_container_width=True):
+                st.session_state.page = "compliance"; st.rerun()
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
         # ── Data source (collapsed by default) ──
         with st.expander("Data source", expanded=False):
@@ -2575,46 +2592,41 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 fig_fwhm.update_layout(title=dict(text="dQ/dV Peak Width (FWHM) — Broadening = increased heterogeneity", font=dict(size=12, color="#a0aec0"), x=0))
                 st.plotly_chart(fig_fwhm, use_container_width=True)
 
-            # ── ⚗️ Degradation Mechanism Interpretation ──
-            st.markdown("<div class='section-header'>Degradation Mechanism Interpretation</div>", unsafe_allow_html=True)
+            # ── ⚗️ Degradation Mechanism — single classification card ──
+            _dom_mech, _dom_explain = "Inconclusive", "Insufficient dQ/dV data for classification."
             if all(c in df.columns for c in ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_fwhm"]):
                 import numpy as _np2
-                early_mech = df[df.cycle_number <= df.cycle_number.quantile(0.10)]
-                late_mech  = df[df.cycle_number >= df.cycle_number.quantile(0.90)]
-                if len(early_mech) > 0 and len(late_mech) > 0 and early_mech.dqdv_peak_value.mean() > 1e-9 and early_mech.dqdv_fwhm.mean() > 1e-9:
-                    peak_soc_shift  = early_mech.dqdv_peak_soc.mean() - late_mech.dqdv_peak_soc.mean()
-                    amplitude_drop  = (early_mech.dqdv_peak_value.mean() - late_mech.dqdv_peak_value.mean()) / early_mech.dqdv_peak_value.mean() * 100
-                    fwhm_change     = (late_mech.dqdv_fwhm.mean() - early_mech.dqdv_fwhm.mean()) / early_mech.dqdv_fwhm.mean() * 100
-                    if peak_soc_shift > 0.05 and amplitude_drop > 10:
-                        dominant = "LLI + LAM (mixed)"
-                    elif peak_soc_shift > 0.05:
-                        dominant = "LLI (Loss of Lithium Inventory)"
-                    elif amplitude_drop > 15:
-                        dominant = "LAM (Loss of Active Material)"
-                    elif fwhm_change > 20:
-                        dominant = "LAM_NE (Graphite heterogeneity)"
+                _em = df[df.cycle_number <= df.cycle_number.quantile(0.10)]
+                _lm = df[df.cycle_number >= df.cycle_number.quantile(0.90)]
+                if len(_em) > 0 and len(_lm) > 0 and _em.dqdv_peak_value.mean() > 1e-9 and _em.dqdv_fwhm.mean() > 1e-9:
+                    _ps  = _em.dqdv_peak_soc.mean() - _lm.dqdv_peak_soc.mean()
+                    _ad  = (_em.dqdv_peak_value.mean() - _lm.dqdv_peak_value.mean()) / _em.dqdv_peak_value.mean() * 100
+                    _fw  = (_lm.dqdv_fwhm.mean() - _em.dqdv_fwhm.mean()) / _em.dqdv_fwhm.mean() * 100
+                    if _ps > 0.05 and _ad > 10:
+                        _dom_mech = "LLI + LAM"
+                        _dom_explain = "Both SEI lithium loss and electrode material loss are active. Typical of combined calendar + high-rate cycling stress."
+                    elif _ps > 0.05:
+                        _dom_mech = "LLI — Loss of Lithium Inventory"
+                        _dom_explain = "SEI growth is consuming cyclable lithium. Peak shift to lower SOC values. Common in calendar-aged or high-temperature cells."
+                    elif _ad > 15:
+                        _dom_mech = "LAM — Loss of Active Material"
+                        _dom_explain = "Electrode active sites are being lost. Peak amplitude decreasing proportionally to capacity loss. Common in high C-rate cycling."
+                    elif _fw > 20:
+                        _dom_mech = "LAM-NE — Graphite heterogeneity"
+                        _dom_explain = "Peak broadening without large position shift suggests graphite particle cracking or lithium plating creating heterogeneous intercalation."
                     else:
-                        dominant = "Early stage / inconclusive"
-                    _mech_explanations = {
-                        "LLI (Loss of Lithium Inventory)": "SEI layer growth is consuming cyclable lithium. Common in calendar aging and elevated temperature operation. Characteristic: peak shifts to lower SOC values.",
-                        "LAM (Loss of Active Material)": "Electrode active sites are being lost, reducing overall capacity. Common with high C-rate cycling. Characteristic: peak amplitude decreases proportionally to capacity loss.",
-                        "LLI + LAM (mixed)": "Both mechanisms active simultaneously. Typical of aged cells with combined calendar and cycle stress.",
-                        "LAM_NE (Graphite heterogeneity)": "Graphite particle cracking or lithium plating creating heterogeneous intercalation sites. Characteristic: peak broadening without large position shift.",
-                        "Early stage / inconclusive": "Insufficient degradation to identify dominant mechanism. Continue monitoring — revisit after further cycling.",
-                    }
-                    explanation = _mech_explanations.get(dominant, "")
-                    m1, m2, m3 = st.columns(3)
-                    with m1:
-                        st.metric("Peak SOC Shift", f"{peak_soc_shift:+.3f}", "← left = LLI signature")
-                    with m2:
-                        st.metric("Amplitude Drop", f"{amplitude_drop:.1f}%", "↓ drop = LAM signature")
-                    with m3:
-                        st.metric("FWHM Change", f"{fwhm_change:+.1f}%", "↑ broaden = heterogeneity")
-                    st.info(f"**Dominant mechanism: {dominant}**\n\n{explanation}")
-                else:
-                    st.info("Insufficient dQ/dV data to classify degradation mechanism.")
-            else:
-                st.info("dQ/dV columns unavailable for mechanism interpretation.")
+                        _dom_mech = "Early stage"
+                        _dom_explain = "Degradation has not yet reached a classifiable signature. Monitor after further cycling."
+            _mech_col = "#f6ad55" if "LAM" in _dom_mech or "LLI" in _dom_mech else "#8896a8"
+            _md_html(
+                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
+                f"padding:12px 16px;margin-top:8px'>"
+                f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;letter-spacing:0.08em;"
+                f"margin-bottom:4px'>Dominant mechanism</div>"
+                f"<div style='font-size:15px;font-weight:700;color:{_mech_col};margin-bottom:6px'>{_dom_mech}</div>"
+                f"<div style='font-size:12px;color:#a0aec0;line-height:1.5'>{_dom_explain}</div>"
+                f"</div>"
+            )
           except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")
 
@@ -4348,7 +4360,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     )
 
     # ── T1: Executive Fleet Dashboard ───────────────────────────────────────
-    with st.expander("📊 Executive Dashboard — Fleet Intelligence Summary", expanded=True):
+    with st.expander("📊 Fleet Summary", expanded=False):
         import numpy as _np_exec
         # CAPEX forecast: cells at risk of EOL within 3/6/12 months
         # Assume 200 cycles/month (typical daily EV cycling)
@@ -6113,6 +6125,44 @@ def page_decision(
     with st.expander("Full economics & breakeven analysis", expanded=False):
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
 
+    # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
+    st.markdown("<div class='section-header'>Ask about this cell</div>", unsafe_allow_html=True)
+    _dc_bundle = bundles.get("nasa") if selected in NASA_CELL_IDS else bundles.get("synth")
+    if _dc_bundle:
+        try:
+            from battery_copilot import build_cell_context, answer_query
+            from copilot_llm import llm_answer
+            _dc_ctx = build_cell_context(selected, df, _dc_bundle, rul_reliable)
+            _dc_input = st.text_input(
+                "Question", placeholder="e.g. 'Why is this cell degrading faster than others?'",
+                key="decision_copilot_input", label_visibility="collapsed",
+            )
+            _dc_chips_row = st.columns(4)
+            _dc_presets = [
+                ("What should I do?",   "what_to_do"),
+                ("Replacement budget?", "budget"),
+                ("What's the risk?",    "risk"),
+                ("Repurpose options?",  "repurpose"),
+            ]
+            for _dci, (_dclbl, _dckey) in enumerate(_dc_presets):
+                if _dc_chips_row[_dci].button(_dclbl, key=f"dc_chip_{_dckey}", use_container_width=True):
+                    st.session_state["decision_copilot_input"] = _dclbl
+                    st.rerun()
+            if _dc_input:
+                _api_key_dc = st.session_state.get("anthropic_api_key", "")
+                _template_dc = answer_query(_dc_input, _dc_ctx)
+                _dc_answer = llm_answer(_dc_input, _template_dc, _api_key_dc) if _api_key_dc else _template_dc
+                _badge_dc = make_badge("Claude Haiku", "#667eea") if _api_key_dc else make_badge("Template", "#718096")
+                _md_html(
+                    f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                    f"padding:16px 20px;margin-top:8px'>"
+                    f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{_badge_dc} · {selected}</div>"
+                    f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_dc_answer}</div>"
+                    f"</div>"
+                )
+        except Exception as _dc_e:
+            st.caption(f"Copilot unavailable: {_dc_e}")
+
 
 # ---------------------------------------------------------------------------
 # Page: Consequences
@@ -6516,35 +6566,28 @@ def page_consequences(
     st.plotly_chart(bev_fig, use_container_width=True)
 
     # ── H1: NPV / Scenario Planner ──────────────────────────────────────────
-    with st.expander("📈 NPV Scenario Planner — Replace Now vs Wait vs Repurpose", expanded=False):
-        import numpy as _np_npv
+    with st.expander("📈 NPV Scenario Planner — Replace / Wait / Repurpose", expanded=False):
         st.markdown(
             "<div style='font-size:12px;color:#8896a8;margin-bottom:12px'>"
-            "Compare three strategies using net present value (NPV) over a 5-year horizon. "
-            "Adjust discount rate, energy price, and replacement cost to explore your economics.</div>",
+            "5-year NPV comparison across three strategies. "
+            "Energy value and replacement cost use cited defaults — adjust discount rate only.</div>",
             unsafe_allow_html=True,
         )
-        _nc1, _nc2, _nc3 = st.columns(3)
-        with _nc1:
-            _npv_rate    = st.slider("Discount rate (%/yr)", 3.0, 20.0, 8.0, 0.5, key="npv_rate") / 100
-        with _nc2:
-            _energy_usd  = st.slider("Energy value ($/kWh·yr)", 20.0, 200.0, 80.0, 5.0, key="npv_energy")
-        with _nc3:
-            _repl_cost   = st.slider("New-cell cost ($)", 50.0, 500.0, 150.0, 10.0, key="npv_repl_cost")
+        _npv_rate = st.slider("Discount rate (WACC, %/yr)", 3.0, 20.0, 8.0, 0.5, key="npv_rate") / 100
 
+        _energy_usd  = 80.0   # IEA 2024 LCOS range $60–140/kWh·yr — illustrative midpoint
+        _repl_cost   = 150.0  # BNEF 2024 range $100–200/cell
+        _repack_approx = float(st.session_state.get("sl_repack_cost", 30.0))
         _years = list(range(1, 6))
 
         def _pv_factor(r, t):
             return 1.0 / ((1 + r) ** t)
 
-        # Strategy A: Replace now
         _cap_now = CELL_NOMINAL_KWH
         _a_annual = _cap_now * _energy_usd
         _a_npv = sum(_a_annual * _pv_factor(_npv_rate, t) for t in _years) - _repl_cost
 
-        # Strategy B: Wait until EOL (use remaining RUL, then replace)
-        _rul_years = (rul_pred / 200.0 / 12.0) if rul_pred else 1.5   # rough years remaining
-        _rul_years = min(_rul_years, 5.0)
+        _rul_years = min((rul_pred / 200.0 / 12.0) if rul_pred else 1.5, 5.0)
         _b_cap_degraded = CELL_NOMINAL_KWH * (soh / 100.0)
         _b_annual = _b_cap_degraded * _energy_usd
         _b_npv = (
@@ -6553,54 +6596,35 @@ def page_consequences(
             - _repl_cost * _pv_factor(_npv_rate, _rul_years)
         )
 
-        # Strategy C: Repurpose to second-life (lower-demand application)
-        _sl_cap = CELL_NOMINAL_KWH * (soh / 100.0) * 0.85   # 85% usable in second-life
-        _sl_energy_discount = 0.6                             # second-life earns 60% of primary energy rate
-        _sl_annual = _sl_cap * _energy_usd * _sl_energy_discount
-        _repack_approx = float(st.session_state.get("sl_repack_cost", 30.0))
+        _sl_annual = CELL_NOMINAL_KWH * (soh / 100.0) * 0.85 * _energy_usd * 0.6
         _c_npv = sum(_sl_annual * _pv_factor(_npv_rate, t) for t in _years) - _repack_approx
 
-        _strategies = {
-            "A: Replace Now":     (_a_npv, "#fc8181"),
-            "B: Wait to EOL":     (_b_npv, "#f6ad55"),
-            "C: Repurpose (2L)":  (_c_npv, "#68d391"),
-        }
-        _best = max(_strategies.items(), key=lambda x: x[1][0])
+        _strategies = [
+            ("Replace Now",    _a_npv, "#fc8181",  f"Replace immediately at ${_repl_cost:.0f}/cell. Full capacity from cycle 1."),
+            ("Wait to EOL",    _b_npv, "#f6ad55",  f"Run {_rul_years:.1f} yr at {soh:.0f}% SOH, then replace. Defers CAPEX."),
+            ("Repurpose (2L)", _c_npv, "#68d391",  f"Second-life at 60% energy rate, ${_repack_approx:.0f} repack. Extends asset life."),
+        ]
+        _best_npv = max(_strategies, key=lambda x: x[1])
 
         _md_html(
-            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'>"
+            "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px'>"
             + "".join(
-                f"<div style='background:#1e2a38;border:1px solid {'#2d3748' if k != _best[0] else c};border-radius:10px;padding:14px 16px'>"
-                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px'>{k}</div>"
-                f"<div style='font-size:24px;font-weight:800;color:{c}'>${v:,.0f}</div>"
+                f"<div style='background:#1e2a38;border:2px solid {('#2d3748' if lbl != _best_npv[0] else col)};border-radius:10px;padding:14px 16px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+                f"letter-spacing:0.08em;margin-bottom:6px'>{lbl}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:{col}'>${v:,.0f}</div>"
                 f"<div style='font-size:10px;color:#718096;margin-top:4px'>5-yr NPV</div>"
-                + (f"<div style='font-size:10px;font-weight:700;color:{c};margin-top:6px'>★ OPTIMAL</div>" if k == _best[0] else "")
+                + (f"<div style='font-size:10px;font-weight:700;color:{col};margin-top:6px'>★ Optimal</div>" if lbl == _best_npv[0] else "")
+                + f"<div style='font-size:10px;color:#4a5568;margin-top:8px;line-height:1.4'>{desc}</div>"
                 + "</div>"
-                for k, (v, c) in _strategies.items()
+                for lbl, v, col, desc in _strategies
             )
             + "</div>"
         )
-
-        # Cumulative NPV chart
-        _fig_npv = go.Figure()
-        for _label, (_total_npv, _col) in _strategies.items():
-            _cum = [_total_npv * (t / 5.0) for t in _years]  # simplified linear accumulation
-            _fig_npv.add_trace(go.Scatter(
-                x=_years, y=_cum, mode="lines+markers", name=_label,
-                line=dict(color=_col, width=2),
-                hovertemplate="Year %{x}: $%{y:,.0f}<extra>" + _label + "</extra>",
-            ))
-        _fig_npv.update_layout(**base_layout(
-            height=240,
-            xaxis=dict(title="Year", dtick=1, gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="Cumulative NPV ($)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=True),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                        font=dict(size=10), bgcolor="rgba(0,0,0,0)"),
-        ))
-        st.plotly_chart(_fig_npv, use_container_width=True)
         st.caption(
-            f"Assumptions: {_rul_years:.1f} yr remaining life · CELL_NOMINAL_KWH={CELL_NOMINAL_KWH:.4f} kWh · "
-            f"second-life repack cost = slider default ${_repack_approx:.0f}. Illustrative model — not financial advice."
+            f"Defaults: $80/kWh·yr energy {make_badge('IEA 2024', '#718096')} · "
+            f"${_repl_cost:.0f}/cell replacement {make_badge('BNEF 2024', '#718096')} · "
+            f"${_repack_approx:.0f} repack. Illustrative — not financial advice."
         )
 
     # ────────────────────────────────────────────────────────────────────────
@@ -9222,8 +9246,24 @@ def page_import():
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     _action_bar("compare")
-    st.markdown("# Cell Comparison")
+    st.markdown("# Explore")
 
+    _exp_view = st.radio(
+        "view", ["Compare", "Cluster", "Cohort"],
+        horizontal=True, key="explore_view_radio", label_visibility="collapsed",
+    )
+
+    # ── Cluster tab ──────────────────────────────────────────────────────────
+    if _exp_view == "Cluster":
+        _page_explore_cluster(cell_ids, active_fdfs, bundles)
+        return
+
+    # ── Cohort tab ───────────────────────────────────────────────────────────
+    if _exp_view == "Cohort":
+        _page_explore_cohort(active_fdfs)
+        return
+
+    # ── Compare tab (default) ─────────────────────────────────────────────
     if len(cell_ids) < 2:
         st.warning("Comparison requires at least 2 cells in the active fleet.")
         return
@@ -9416,7 +9456,14 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
-    # ── Cross-Fleet Degradation Clustering ───────────────────────────────────
+    # end of Compare view — Cluster and Cohort are handled via radio+return above
+
+# ---------------------------------------------------------------------------
+# Explore sub-pages (Cluster / Cohort) — called from page_compare radio switch
+# ---------------------------------------------------------------------------
+
+def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
+    """Cross-fleet degradation clustering view."""
     st.markdown(
         "<div class='section-header'>Cross-Fleet Degradation Clustering</div>",
         unsafe_allow_html=True,
@@ -9583,6 +9630,23 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     except Exception as _ce:
         st.info(f"Clustering unavailable: {_ce}")
 
+def _page_explore_cohort(active_fdfs: dict):
+    """Cohort analysis view — cells grouped by user-set tags."""
+    # ── Inline cohort tagging ─────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>Tag cells by batch, supplier, or site</div>", unsafe_allow_html=True)
+    st.caption("Tags are applied immediately. Use cohort names like 'Batch-A', 'Site-London', 'Supplier-X'.")
+    if "cell_cohort_tags" not in st.session_state:
+        st.session_state["cell_cohort_tags"] = {}
+    _tag_cols = st.columns(min(4, len(active_fdfs)))
+    for _ti, _tcid in enumerate(active_fdfs.keys()):
+        with _tag_cols[_ti % 4]:
+            _cur_tag = st.session_state["cell_cohort_tags"].get(_tcid, "")
+            _new_tag = st.text_input(_tcid, value=_cur_tag, key=f"cohort_tag_explore_{_tcid}",
+                                     placeholder="e.g. Batch-A")
+            if _new_tag != _cur_tag:
+                st.session_state["cell_cohort_tags"][_tcid] = _new_tag
+                st.rerun()
+
     # ── E5: Cohort analysis ────────────────────────────────────────────────────
     _e5_tags = st.session_state.get("cell_cohort_tags", {})
     _tagged  = {cid: tag for cid, tag in _e5_tags.items() if tag.strip() and cid in active_fdfs}
@@ -9642,8 +9706,11 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
                     f"{_gap:.1f}% average SOH gap. Possible batch, supplier, or operating condition difference.</div>"
                 )
     else:
-        with st.expander("Cohort analysis (no tags set)", expanded=False):
-            st.info("Tag cells on the Import page by batch, supplier, or site to compare cohort health here.")
+        _empty_state(
+            "No cohort tags set yet",
+            "Tag cells above by batch, supplier, or site to compare cohort health.",
+            icon="🏷",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -10380,7 +10447,8 @@ def main():
             _page_regulatory_alerts(selected, df, active_fdfs, bundles)
     elif page in ("fleet", "exec_summary"):
         page_fleet(active_fdfs, bundles, trajectory_memory=trajectory_memory)
-    elif page == "decision":
+    elif page in ("decision", "copilot"):
+        # Copilot is now embedded in the Decision page
         page_decision(selected, df, active_fdfs, bundles, rul_reliable)
     elif page == "grading":
         page_grading(cell_ids, active_fdfs, bundles, selected)
