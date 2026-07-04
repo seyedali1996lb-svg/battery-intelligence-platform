@@ -63,6 +63,28 @@ def _md_html(html: str) -> None:
     st.markdown(cleaned, unsafe_allow_html=True)
 
 
+def _empty_state(
+    title: str,
+    reason: str,
+    action: str = "",
+    icon: str = "○",
+) -> None:
+    """Render a designed empty state instead of a bare st.info()."""
+    _md_html(
+        f"<div class='empty-state'>"
+        f"<div class='empty-state-icon'>{icon}</div>"
+        f"<div class='empty-state-title'>{title}</div>"
+        f"<div class='empty-state-body'>{reason}</div>"
+        + (f"<div class='empty-state-action'>{action}</div>" if action else "")
+        + "</div>"
+    )
+
+
+def _action_bar(page: str) -> None:
+    """No-op spacer — sidebar covers all navigation needs."""
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # Provenance helpers
 # ---------------------------------------------------------------------------
