@@ -12,3 +12,4 @@ paho-mqtt
 fastapi[standard]
 uvicorn
 qrcode[pil]
+sqlalchemy
