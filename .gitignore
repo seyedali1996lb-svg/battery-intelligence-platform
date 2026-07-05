@@ -23,6 +23,9 @@ data/raw/Cell*_summary.csv
 # App persistence DB (decisions, cohort tags, settings, trajectory signatures)
 data/app.db
 
+# Per-organization uploaded fleet bundles (trained model + DataFrames, one per org)
+data/tenant_bundles/
+
 # Jupyter
 .ipynb_checkpoints/
 

@@ -17,7 +17,7 @@ from import_adapter import adapt_upload_to_pipeline
 from features import build_features, get_model_matrix
 from model import train_models, predict
 from lco_eval import run_lco, RUL_RELIABLE_FLOOR
-from bundle_cache import load_features_cached, save_features_cached
+from bundle_cache import load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
 
 
@@ -140,14 +140,16 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 split_idx    = int(len(X) * 0.8)
                 up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
 
-            # ── Store in session_state ──────────────────────────────────────
-            # The full DataFrames/model bundle never touch the filesystem and
-            # never persist between sessions or across users — session_state
-            # only. A small metadata row (cell count, upload date, cache key)
-            # is persisted below for cross-session visibility/audit only.
+            # ── Store in session_state + persist per-org ─────────────────────
+            # The full DataFrames/model bundle are kept in session_state for
+            # this session's rendering, and also persisted to disk keyed by
+            # org_id (src/bundle_cache.py's save_tenant_bundle) so this org's
+            # uploaded fleet survives a refresh or a new login — not just a
+            # metadata row like before.
             st.session_state["uploaded_featured_dfs"] = up_fdfs
             st.session_state["uploaded_bundle"]       = up_bndl
             st.session_state["uploaded_split_cycles"] = up_sc
+            save_tenant_bundle(st.session_state["auth_org_id"], (up_fdfs, up_bndl, up_sc))
             _upload_meta = {
                 "n_cells":                  n_up,
                 "cell_ids":                 list(up_fdfs.keys()),
@@ -158,7 +160,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
             }
             st.session_state["uploaded_mode_meta"] = _upload_meta
             import db
-            db.save_upload_meta(_upload_meta, _upload_key)
+            db.save_upload_meta(st.session_state["auth_org_id"], _upload_meta, _upload_key)
             # Auto-switch to My Data mode
             st.session_state["data_mode"] = "uploaded"
             _step("load", "✓", "Done — results loaded into all pages")
@@ -594,7 +596,7 @@ def page_import():
     ]
     import db
     if "cell_cohort_tags" not in st.session_state:
-        st.session_state["cell_cohort_tags"] = db.load_cohort_tags()
+        st.session_state["cell_cohort_tags"] = db.load_cohort_tags(st.session_state["auth_org_id"])
     _e5_cols = st.columns(3)
     for _e5i, _e5id in enumerate(_e5_all_ids):
         with _e5_cols[_e5i % 3]:
@@ -606,4 +608,4 @@ def page_import():
             )
             if _new_tag != _cur_tag:
                 st.session_state["cell_cohort_tags"][_e5id] = _new_tag
-                db.save_cohort_tag(_e5id, _new_tag)
+                db.save_cohort_tag(st.session_state["auth_org_id"], _e5id, _new_tag)

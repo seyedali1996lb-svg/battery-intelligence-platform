@@ -1564,14 +1564,14 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             if st.button("📌 Unpin baseline", key=f"unpin_{cell_id}", use_container_width=True):
                 import db as _db
                 st.session_state["pinned_cell"] = None
-                _db.set_setting("pinned_cell", None)
+                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", None)
                 st.rerun()
         else:
             if st.button("📌 Pin as baseline", key=f"pin_{cell_id}", use_container_width=True,
                          help="Pin this cell as a comparison baseline — all other cells show a delta rail."):
                 import db as _db
                 st.session_state["pinned_cell"] = cell_id
-                _db.set_setting("pinned_cell", cell_id)
+                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", cell_id)
                 st.rerun()
     if _pinned and _pinned != cell_id and _pinned in df.columns.__class__.__mro__[0].__mro__:
         pass  # comparison rail placeholder
@@ -1966,14 +1966,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             if st.button("📌 Unpin baseline", key=f"unpin_h_{cell_id}", use_container_width=True):
                 import db as _db
                 st.session_state["pinned_cell"] = None
-                _db.set_setting("pinned_cell", None)
+                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", None)
                 st.rerun()
         else:
             if st.button("📌 Pin as baseline", key=f"pin_h_{cell_id}", use_container_width=True,
                          help="Pin this cell as comparison baseline"):
                 import db as _db
                 st.session_state["pinned_cell"] = cell_id
-                _db.set_setting("pinned_cell", cell_id)
+                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", cell_id)
                 st.rerun()
 
     col1, col2 = st.columns(2)
@@ -3638,7 +3638,9 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
         ))
         try:
             _feat_names = bundle["feature_names"]
-            _bundle_id = mode  # stable key per data source
+            # Stable key per data source — except "uploaded", which is org-owned
+            # data, so two orgs' bundles must not collide in this process-wide cache.
+            _bundle_id = mode if mode != "uploaded" else f'uploaded-{st.session_state["auth_org_id"]}'
             _mean_abs_soh, _mean_abs_rul = _get_shap_values(_bundle_id, bundle)
             if _mean_abs_soh is None:
                 raise RuntimeError("SHAP computation failed")
@@ -4280,7 +4282,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     _wh_evts_f = st.session_state.get("webhook_events", [])
     if _wh_url_f and "FLEET_DIGEST" in _wh_evts_f:
         _today = datetime.date.today().isoformat()
-        if _db_fleet.get_setting("last_digest_sent") != _today:
+        if _db_fleet.get_setting(st.session_state["auth_org_id"], "last_digest_sent") != _today:
             from notifications import send_webhook
             _n_cells_f = len(featured_dfs)
             _n_flagged_f = sum(
@@ -4293,7 +4295,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                 {"n_cells": _n_cells_f, "n_flagged_below_eol": _n_flagged_f, "trigger": "fleet_page_load"},
                 _wh_url_f, st.session_state.get("webhook_secret", ""),
             )
-            _db_fleet.set_setting("last_digest_sent", _today)
+            _db_fleet.set_setting(st.session_state["auth_org_id"], "last_digest_sent", _today)
 
     # ── Executive summary bar (always visible) ──────────────────────────────
     _fe_rows = []
@@ -6225,7 +6227,7 @@ def page_decision(
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_entry)
-        _db.save_decision(_entry)
+        _db.save_decision(st.session_state["auth_org_id"], _entry)
         st.success(f"Logged: {action_label} for {selected}")
 
     # E4: Audit trail with status chips and outcome tracking
@@ -6258,7 +6260,7 @@ def page_decision(
                 if _new_status != _dl.get("status"):
                     st.session_state["decision_log"][_i]["status"] = _new_status
                     import db as _db
-                    _db.update_decision(_dl["id"], status=_new_status)
+                    _db.update_decision(st.session_state["auth_org_id"], _dl["id"], status=_new_status)
                     st.rerun()
                 _cols_e4[2].markdown(
                     f"<div style='padding:8px 0'>"
@@ -6278,7 +6280,7 @@ def page_decision(
                         st.session_state["decision_log"][_i]["outcome_soh"] = round(_new_soh, 1)
                         st.session_state["decision_log"][_i]["status"] = "Verified"
                         import db as _db
-                        _db.update_decision(_dl["id"], outcome_soh=round(_new_soh, 1), status="Verified")
+                        _db.update_decision(st.session_state["auth_org_id"], _dl["id"], outcome_soh=round(_new_soh, 1), status="Verified")
                         st.rerun()
                 elif _dl.get("outcome_soh") is not None:
                     _delta_soh = _dl["outcome_soh"] - _dl["soh_pct"]
@@ -7402,7 +7404,7 @@ def page_recommendations(
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_log_entry)
-        _db.save_decision(_log_entry)
+        _db.save_decision(st.session_state["auth_org_id"], _log_entry)
         st.success(f"Decision logged: {action_label} for {selected} at {_log_entry['timestamp']}")
 
     _dlog = st.session_state.get("decision_log", [])
@@ -8428,10 +8430,10 @@ def main():
         import db as _db_tm
         _db_tm.init_db()
         _tm = TrajectoryMemory()
-        _persisted_sigs = _db_tm.load_failure_signatures()
+        _persisted_sigs = _db_tm.load_failure_signatures(st.session_state["auth_org_id"])
         _tm.build(featured_dfs_all)
         _tm.merge_dedupe_by_cell_id(_persisted_sigs)
-        _tm.save()
+        _tm.save(st.session_state["auth_org_id"])
         st.session_state["trajectory_memory"] = _tm
     trajectory_memory: TrajectoryMemory = st.session_state["trajectory_memory"]
 
@@ -8456,20 +8458,20 @@ def main():
     import db as _db_main
     _db_main.init_db()
     if "decision_log" not in st.session_state:
-        st.session_state["decision_log"] = _db_main.load_decisions()
+        st.session_state["decision_log"] = _db_main.load_decisions(st.session_state["auth_org_id"])
     if "pinned_cell" not in st.session_state:
-        st.session_state["pinned_cell"] = _db_main.get_setting("pinned_cell")
+        st.session_state["pinned_cell"] = _db_main.get_setting(st.session_state["auth_org_id"], "pinned_cell")
     if "app_profile" not in st.session_state:
-        _persisted_profile = _db_main.get_setting("app_profile")
+        _persisted_profile = _db_main.get_setting(st.session_state["auth_org_id"], "app_profile")
         if _persisted_profile is not None:
             st.session_state["app_profile"] = _persisted_profile
     if "cost_of_delay_mult" not in st.session_state:
-        _persisted_cod = _db_main.get_setting("cost_of_delay_mult")
+        _persisted_cod = _db_main.get_setting(st.session_state["auth_org_id"], "cost_of_delay_mult")
         if _persisted_cod is not None:
             st.session_state["cost_of_delay_mult"] = _persisted_cod
     for _wh_key in ("webhook_url", "webhook_secret", "webhook_events"):
         if _wh_key not in st.session_state:
-            _persisted_wh = _db_main.get_setting(_wh_key)
+            _persisted_wh = _db_main.get_setting(st.session_state["auth_org_id"], _wh_key)
             if _persisted_wh is not None:
                 st.session_state[_wh_key] = _persisted_wh
 
@@ -8477,7 +8479,7 @@ def main():
     # Changing this does NOT retrain the model; it rescales the displayed RUL
     # using the current fade rate to project to the user-defined threshold.
     if "eol_threshold_pct" not in st.session_state:
-        st.session_state["eol_threshold_pct"] = _db_main.get_setting("eol_threshold_pct", 80.0)
+        st.session_state["eol_threshold_pct"] = _db_main.get_setting(st.session_state["auth_org_id"], "eol_threshold_pct", 80.0)
 
     # ── Resolve active data from current mode ─────────────────────────────────
     mode      = st.session_state["data_mode"]
@@ -8485,6 +8487,19 @@ def main():
     up_sc     = st.session_state.get("uploaded_split_cycles", {})
     up_bundle = st.session_state.get("uploaded_bundle")
     up_meta   = st.session_state["uploaded_mode_meta"]
+
+    # If "My Data" mode is selected but this session hasn't uploaded anything
+    # yet (e.g. a returning user in a fresh browser session), try to reload
+    # this org's previously-uploaded bundle from disk before falling back to
+    # the empty state below — an org's uploaded fleet now survives a refresh.
+    if mode == "uploaded" and (not up_fdfs or up_bundle is None):
+        from bundle_cache import load_tenant_bundle
+        _persisted_tenant = load_tenant_bundle(st.session_state["auth_org_id"])
+        if _persisted_tenant is not None:
+            up_fdfs, up_bundle, up_sc = _persisted_tenant
+            st.session_state["uploaded_featured_dfs"] = up_fdfs
+            st.session_state["uploaded_bundle"]       = up_bundle
+            st.session_state["uploaded_split_cycles"] = up_sc
 
     # Guard: if mode is "uploaded" but the bundle was cleared (e.g. after reset),
     # fall back silently to NASA mode.

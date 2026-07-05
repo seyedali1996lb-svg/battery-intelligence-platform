@@ -237,15 +237,15 @@ class TrajectoryMemory:
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
-    def save(self) -> None:
-        """Persist the current signature library to SQLite (src/db.py)."""
+    def save(self, org_id: int) -> None:
+        """Persist the current signature library to SQLite (src/db.py), scoped to org_id."""
         import db
-        db.save_failure_signatures(self._signatures)
+        db.save_failure_signatures(org_id, self._signatures)
 
-    def load(self) -> None:
-        """Replace the current signature library with what's persisted in SQLite."""
+    def load(self, org_id: int) -> None:
+        """Replace the current signature library with what's persisted for org_id in SQLite."""
         import db
-        self._signatures = db.load_failure_signatures()
+        self._signatures = db.load_failure_signatures(org_id)
 
     def merge_dedupe_by_cell_id(self, other: list[FailureSignature]) -> None:
         """

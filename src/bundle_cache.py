@@ -109,6 +109,31 @@ def save_features_cached(key: str, battery_dict: dict, raw_fdfs: dict, model_inp
     joblib.dump((raw_fdfs, model_inputs), data_path, compress=3)
 
 
+TENANT_BUNDLE_DIR = pathlib.Path(__file__).parent.parent / "data" / "tenant_bundles"
+
+
+def save_tenant_bundle(org_id: int, triple: tuple) -> None:
+    """
+    Persist an organization's uploaded ("My Data") (featured_dfs, bundle,
+    split_cycles) triple to disk, keyed by org_id — not content-addressed
+    like the caches above (there's no original CSV kept to regenerate this
+    from), so it's simply overwritten on each new upload for that org.
+    """
+    TENANT_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(triple, TENANT_BUNDLE_DIR / f"{org_id}.joblib", compress=3)
+
+
+def load_tenant_bundle(org_id: int):
+    """Returns the org's persisted (featured_dfs, bundle, split_cycles) triple, or None."""
+    path = TENANT_BUNDLE_DIR / f"{org_id}.joblib"
+    if not path.exists():
+        return None
+    try:
+        return joblib.load(path)
+    except Exception:
+        return None
+
+
 def clear_cache(key: str | None = None, features_only: bool = False):
     """Delete cached files.
 

@@ -174,7 +174,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         )
 
         if st.button("Sign out", key="signout_btn", use_container_width=False):
-            for k in ["authenticated", "auth_user", "auth_role", "auth_name"]:
+            for k in ["authenticated", "auth_user", "auth_role", "auth_name", "auth_org_id", "auth_org_name"]:
                 st.session_state.pop(k, None)
             st.rerun()
 
