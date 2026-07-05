@@ -148,14 +148,14 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             _wh_evts_lm = st.session_state.get("webhook_events", [])
             _wh_sec_lm  = st.session_state.get("webhook_secret", "")
             if _wh_url_lm and _wh_evts_lm:
-                try:
-                    import requests as _req_lm, json as _json_lm, hashlib as _hl, hmac as _hm
-                    for _an in _new_anomaly:
-                        _evt_type = _an.get("anomaly_type", "")
-                        if _evt_type not in _wh_evts_lm:
-                            continue
-                        _body = _json_lm.dumps({
-                            "event":      _evt_type,
+                from notifications import send_webhook
+                for _an in _new_anomaly:
+                    _evt_type = _an.get("anomaly_type", "")
+                    if _evt_type not in _wh_evts_lm:
+                        continue
+                    send_webhook(
+                        _evt_type,
+                        {
                             "cell_id":    _an.get("cell_id", _replay_cell),
                             "severity":   _an.get("severity", "HIGH"),
                             "value":      _an.get("value"),
@@ -163,15 +163,9 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                             "message":    _an.get("message", ""),
                             "standard":   "IEC 62619:2022",
                             "timestamp":  _an.get("timestamp", datetime.datetime.now().isoformat()),
-                            "source":     "battery-intelligence-platform",
-                        }).encode()
-                        _hdrs = {"Content-Type": "application/json"}
-                        if _wh_sec_lm:
-                            _sig = _hm.new(_wh_sec_lm.encode(), _body, _hl.sha256).hexdigest()
-                            _hdrs["X-Signature-256"] = f"sha256={_sig}"
-                        _req_lm.post(_wh_url_lm, data=_body, headers=_hdrs, timeout=3)
-                except Exception:
-                    pass  # never crash the live view over a webhook failure
+                        },
+                        _wh_url_lm, _wh_sec_lm,
+                    )
 
     _telem = st.session_state["lm_telemetry"]
     _anom  = st.session_state["lm_anomalies"]

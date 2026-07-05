@@ -4273,6 +4273,28 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     _action_bar("fleet")
     st.markdown("# Which cells need attention this week?")
 
+    # ── Best-effort daily fleet digest (session/page-load-triggered, not a
+    # real background cron — this app has no daemon process available) ──────
+    import db as _db_fleet
+    _wh_url_f  = st.session_state.get("webhook_url", "")
+    _wh_evts_f = st.session_state.get("webhook_events", [])
+    if _wh_url_f and "FLEET_DIGEST" in _wh_evts_f:
+        _today = datetime.date.today().isoformat()
+        if _db_fleet.get_setting("last_digest_sent") != _today:
+            from notifications import send_webhook
+            _n_cells_f = len(featured_dfs)
+            _n_flagged_f = sum(
+                1 for _df in featured_dfs.values()
+                if len(_df) and "soh_pct" in _df.columns
+                and float(_df["soh_pct"].iloc[-1]) < st.session_state.get("eol_threshold_pct", 80.0)
+            )
+            send_webhook(
+                "FLEET_DIGEST",
+                {"n_cells": _n_cells_f, "n_flagged_below_eol": _n_flagged_f, "trigger": "fleet_page_load"},
+                _wh_url_f, st.session_state.get("webhook_secret", ""),
+            )
+            _db_fleet.set_setting("last_digest_sent", _today)
+
     # ── Executive summary bar (always visible) ──────────────────────────────
     _fe_rows = []
     for _fid, _fdf in featured_dfs.items():
@@ -4542,6 +4564,29 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             _traj_matches = trajectory_memory.match_fleet(featured_dfs)
         except Exception:
             _traj_matches = {}
+
+    # Proactive webhook push — once per cell_id per session, not on every rerun.
+    _wh_url_tm  = st.session_state.get("webhook_url", "")
+    _wh_evts_tm = st.session_state.get("webhook_events", [])
+    if _traj_matches and _wh_url_tm and "TRAJECTORY_MATCH" in _wh_evts_tm:
+        if "_alerted_trajectory_cells" not in st.session_state:
+            st.session_state["_alerted_trajectory_cells"] = set()
+        from notifications import send_webhook
+        for _tcid, _tm in _traj_matches.items():
+            if _tcid in st.session_state["_alerted_trajectory_cells"]:
+                continue
+            send_webhook(
+                "TRAJECTORY_MATCH",
+                {
+                    "cell_id": _tcid, "warning_level": _tm.warning_level,
+                    "best_similarity": _tm.best_similarity, "best_cell_id": _tm.best_cell_id,
+                    "failure_mode": _tm.failure_mode,
+                    "cycles_remaining_min": _tm.cycles_remaining_min,
+                    "cycles_remaining_max": _tm.cycles_remaining_max,
+                },
+                _wh_url_tm, st.session_state.get("webhook_secret", ""),
+            )
+            st.session_state["_alerted_trajectory_cells"].add(_tcid)
 
     if _traj_matches:
         _tm_crit  = {c: m for c, m in _traj_matches.items() if m.warning_level == "critical"}
@@ -6876,6 +6921,27 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     _e8_n_unavail = summ.get("n_unavailable", 0)
     _e8_total   = max(1, summ.get("n_total", _e8_n_avail + _e8_n_est + _e8_n_unavail))
     _e8_score   = round((_e8_n_avail + _e8_n_est * 0.5) / _e8_total * 100)
+
+    # Proactive webhook push — once per cell per session, only below threshold.
+    _wh_url_pg  = st.session_state.get("webhook_url", "")
+    _wh_evts_pg = st.session_state.get("webhook_events", [])
+    _PASSPORT_GAP_THRESHOLD = 60
+    if _wh_url_pg and "PASSPORT_GAP" in _wh_evts_pg and _e8_score < _PASSPORT_GAP_THRESHOLD:
+        if "_alerted_passport_gap_cells" not in st.session_state:
+            st.session_state["_alerted_passport_gap_cells"] = set()
+        if selected not in st.session_state["_alerted_passport_gap_cells"]:
+            from notifications import send_webhook
+            send_webhook(
+                "PASSPORT_GAP",
+                {
+                    "cell_id": selected, "completeness_pct": _e8_score,
+                    "n_available": _e8_n_avail, "n_estimated": _e8_n_est,
+                    "n_unavailable": _e8_n_unavail,
+                },
+                _wh_url_pg, st.session_state.get("webhook_secret", ""),
+            )
+            st.session_state["_alerted_passport_gap_cells"].add(selected)
+
     _e8_col1, _e8_col2 = st.columns([3, 1])
     with _e8_col1:
         _e8_bar_colour = "#48bb78" if _e8_score >= 70 else ("#f6ad55" if _e8_score >= 40 else "#fc8181")

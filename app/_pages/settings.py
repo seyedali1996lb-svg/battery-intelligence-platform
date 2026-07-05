@@ -536,39 +536,52 @@ def page_settings(featured_dfs: dict, bundles: dict):
     _wh_events = st.multiselect(
         "Fire on", key="webhook_events",
         options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
-                 "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY"],
+                 "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY",
+                 "FLEET_DIGEST", "TRAJECTORY_MATCH", "PASSPORT_GAP"],
         default=st.session_state.get("webhook_events",
             ["THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH"]),
-        help="Only anomaly types checked here will trigger a webhook POST.",
+        help="Only event types checked here will trigger a webhook POST. FLEET_DIGEST/"
+             "TRAJECTORY_MATCH/PASSPORT_GAP are session/page-load-triggered best-effort "
+             "alerts, not a real background cron.",
     )
     db.set_setting("webhook_url", _wh_url)
     db.set_setting("webhook_secret", _wh_secret)
     db.set_setting("webhook_events", _wh_events)
     if _wh_url:
-        _wh_test_col, _ = st.columns([1, 4])
+        from notifications import send_webhook
+        _wh_test_col, _wh_digest_col, _ = st.columns([1, 1, 3])
         if _wh_test_col.button("Send test ping", key="webhook_test_btn"):
-            try:
-                import requests as _req_wh, json as _json_wh, hashlib as _hash_wh, hmac as _hmac_wh
-                _payload = _json_wh.dumps({
-                    "event": "TEST_PING",
-                    "source": "battery-intelligence-platform",
-                    "message": "Webhook connectivity test from Settings page.",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                }).encode()
-                _headers = {"Content-Type": "application/json"}
-                if st.session_state.get("webhook_secret"):
-                    _sig = _hmac_wh.new(
-                        st.session_state["webhook_secret"].encode(),
-                        _payload, _hash_wh.sha256,
-                    ).hexdigest()
-                    _headers["X-Signature-256"] = f"sha256={_sig}"
-                _resp = _req_wh.post(_wh_url, data=_payload, headers=_headers, timeout=5)
-                if _resp.status_code < 300:
-                    st.success(f"Test ping sent — HTTP {_resp.status_code}")
+            _ok = send_webhook(
+                "TEST_PING",
+                {"message": "Webhook connectivity test from Settings page."},
+                _wh_url, _wh_secret,
+            )
+            if _ok:
+                st.success("Test ping sent.")
+            else:
+                st.warning("Webhook did not return a success response — check the URL and endpoint.")
+        if _wh_digest_col.button("Send digest now", key="webhook_digest_btn",
+                                  help="Manually trigger the fleet digest webhook (also checked "
+                                       "automatically, best-effort, on Fleet page load)."):
+            if "FLEET_DIGEST" not in _wh_events:
+                st.warning("Add FLEET_DIGEST to 'Fire on' above to enable this.")
+            else:
+                _n_cells = len(featured_dfs)
+                _n_flagged = sum(
+                    1 for _df in featured_dfs.values()
+                    if len(_df) and "soh_pct" in _df.columns
+                    and float(_df["soh_pct"].iloc[-1]) < st.session_state.get("eol_threshold_pct", 80.0)
+                )
+                _ok = send_webhook(
+                    "FLEET_DIGEST",
+                    {"n_cells": _n_cells, "n_flagged_below_eol": _n_flagged},
+                    _wh_url, _wh_secret,
+                )
+                if _ok:
+                    db.set_setting("last_digest_sent", datetime.date.today().isoformat())
+                    st.success(f"Digest sent — {_n_cells} cells, {_n_flagged} below EOL threshold.")
                 else:
-                    st.warning(f"Webhook responded with HTTP {_resp.status_code}: {_resp.text[:120]}")
-            except Exception as _wh_e:
-                st.error(f"Webhook test failed: {_wh_e}")
+                    st.warning("Webhook did not return a success response.")
     else:
         st.caption("Enter a webhook URL above to enable push notifications.")
 
