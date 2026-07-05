@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 
 from design_system import make_badge, section_header_html
-from utils import _md_html, _action_bar, NASA_CELL_IDS
+from utils import _md_html, _action_bar, _empty_state, NASA_CELL_IDS
 import db
 
 
@@ -571,6 +571,50 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 st.error(f"Webhook test failed: {_wh_e}")
     else:
         st.caption("Enter a webhook URL above to enable push notifications.")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # BMS Connector (Victron VRM)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("BMS Connector (Victron VRM)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Pull real cycle data directly from a Victron VRM installation instead of manual CSV "
+        "upload. Paste your own VRM API token and installation ID below — credentials are "
+        "never hardcoded and this platform never contacts VRM without both fields set."
+        "</div>"
+    )
+    _bms_col1, _bms_col2 = st.columns(2)
+    _vrm_token = _bms_col1.text_input(
+        "VRM API token", value=st.session_state.get("vrm_api_token", ""),
+        type="password", key="vrm_api_token",
+        help="Generate under VRM Portal -> Settings -> Integrations -> API access tokens.",
+    )
+    _vrm_install_id = _bms_col2.text_input(
+        "VRM installation ID", value=st.session_state.get("vrm_installation_id", ""),
+        key="vrm_installation_id",
+    )
+    db.set_setting("vrm_api_token", _vrm_token)
+    db.set_setting("vrm_installation_id", _vrm_install_id)
+    if not (_vrm_token and _vrm_install_id):
+        _empty_state(
+            "Not yet connected",
+            "Paste your VRM API token and installation ID above to enable pulling real cycle "
+            "data directly from your Victron installation.",
+            icon="🔌",
+        )
+    else:
+        if st.button("Test VRM connection", key="vrm_test_btn"):
+            from bms_connectors import fetch_victron_vrm
+            try:
+                _vrm_df = fetch_victron_vrm(
+                    "https://vrmapi.victronenergy.com/v2", _vrm_token, _vrm_install_id,
+                )
+                if _vrm_df is None or len(_vrm_df) == 0:
+                    st.warning("Connected, but no battery records were returned for this installation.")
+                else:
+                    st.success(f"Fetched {len(_vrm_df)} records from VRM installation {_vrm_install_id}.")
+            except Exception as _vrm_e:
+                st.error(f"VRM connection failed: {_vrm_e}")
 
     # ────────────────────────────────────────────────────────────────────────
     # LLM Copilot API Key
