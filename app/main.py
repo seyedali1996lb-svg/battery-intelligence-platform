@@ -8334,9 +8334,17 @@ def main():
     # ── Failure trajectory memory (built once per session) ────────────────────
     # Uses ALL cells across all sources so the signature library is as large
     # as possible, regardless of which data source is currently active.
+    # Signatures persist across sessions (src/db.py): load what's already
+    # known, merge in freshly-built signatures from this session's cells
+    # (freshest wins per cell_id), then save the merged library back.
     if "trajectory_memory" not in st.session_state:
+        import db as _db_tm
+        _db_tm.init_db()
         _tm = TrajectoryMemory()
+        _persisted_sigs = _db_tm.load_failure_signatures()
         _tm.build(featured_dfs_all)
+        _tm.merge_dedupe_by_cell_id(_persisted_sigs)
+        _tm.save()
         st.session_state["trajectory_memory"] = _tm
     trajectory_memory: TrajectoryMemory = st.session_state["trajectory_memory"]
 

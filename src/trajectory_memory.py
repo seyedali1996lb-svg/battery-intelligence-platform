@@ -235,6 +235,29 @@ class TrajectoryMemory:
     def n_signatures(self) -> int:
         return len(self._signatures)
 
+    # ── Persistence ──────────────────────────────────────────────────────────
+
+    def save(self) -> None:
+        """Persist the current signature library to SQLite (src/db.py)."""
+        import db
+        db.save_failure_signatures(self._signatures)
+
+    def load(self) -> None:
+        """Replace the current signature library with what's persisted in SQLite."""
+        import db
+        self._signatures = db.load_failure_signatures()
+
+    def merge_dedupe_by_cell_id(self, other: list[FailureSignature]) -> None:
+        """
+        Union self._signatures with `other`, keyed by cell_id. When a cell_id
+        appears in both, the version already in self._signatures wins (it was
+        just freshly built from the currently-loaded cells, so it's the most
+        up-to-date signature for that cell).
+        """
+        by_id = {sig.cell_id: sig for sig in other}
+        by_id.update({sig.cell_id: sig for sig in self._signatures})
+        self._signatures = list(by_id.values())
+
     # ── Query ──────────────────────────────────────────────────────────────
 
     def match(
