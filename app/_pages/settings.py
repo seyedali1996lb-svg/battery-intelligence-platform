@@ -205,10 +205,10 @@ def page_settings(featured_dfs: dict, bundles: dict):
     )
     if _new_profile != _cur_profile:
         st.session_state["app_profile"] = _new_profile
-        db.set_setting("app_profile", _new_profile)
+        db.set_setting(st.session_state["auth_org_id"], "app_profile", _new_profile)
         if _PROFILES[_new_profile] is not None:
             st.session_state["eol_threshold_pct"] = _PROFILES[_new_profile]
-            db.set_setting("eol_threshold_pct", _PROFILES[_new_profile])
+            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", _PROFILES[_new_profile])
         st.rerun()
     if _PROFILES.get(_new_profile) is not None:
         st.caption(
@@ -243,13 +243,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.markdown("<div style='padding-top:26px'>", unsafe_allow_html=True)
         if st.button("Reset to 80%", key="settings_eol_reset"):
             st.session_state["eol_threshold_pct"] = 80.0
-            db.set_setting("eol_threshold_pct", 80.0)
+            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", 80.0)
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     if new_eol != int(st.session_state.get("eol_threshold_pct", 80)):
         st.session_state["eol_threshold_pct"] = float(new_eol)
-        db.set_setting("eol_threshold_pct", float(new_eol))
+        db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", float(new_eol))
         st.rerun()
 
     if new_eol != 80:
@@ -506,7 +506,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
     )
     if _cod_mult != st.session_state.get("cost_of_delay_mult", 2.0):
         st.session_state["cost_of_delay_mult"] = _cod_mult
-        db.set_setting("cost_of_delay_mult", _cod_mult)
+        db.set_setting(st.session_state["auth_org_id"], "cost_of_delay_mult", _cod_mult)
         st.rerun()
 
     # ────────────────────────────────────────────────────────────────────────
@@ -544,9 +544,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
              "TRAJECTORY_MATCH/PASSPORT_GAP are session/page-load-triggered best-effort "
              "alerts, not a real background cron.",
     )
-    db.set_setting("webhook_url", _wh_url)
-    db.set_setting("webhook_secret", _wh_secret)
-    db.set_setting("webhook_events", _wh_events)
+    db.set_setting(st.session_state["auth_org_id"], "webhook_url", _wh_url)
+    db.set_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret)
+    db.set_setting(st.session_state["auth_org_id"], "webhook_events", _wh_events)
     if _wh_url:
         from notifications import send_webhook
         _wh_test_col, _wh_digest_col, _ = st.columns([1, 1, 3])
@@ -578,7 +578,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
                     _wh_url, _wh_secret,
                 )
                 if _ok:
-                    db.set_setting("last_digest_sent", datetime.date.today().isoformat())
+                    db.set_setting(st.session_state["auth_org_id"], "last_digest_sent", datetime.date.today().isoformat())
                     st.success(f"Digest sent — {_n_cells} cells, {_n_flagged} below EOL threshold.")
                 else:
                     st.warning("Webhook did not return a success response.")
@@ -606,8 +606,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "VRM installation ID", value=st.session_state.get("vrm_installation_id", ""),
         key="vrm_installation_id",
     )
-    db.set_setting("vrm_api_token", _vrm_token)
-    db.set_setting("vrm_installation_id", _vrm_install_id)
+    db.set_setting(st.session_state["auth_org_id"], "vrm_api_token", _vrm_token)
+    db.set_setting(st.session_state["auth_org_id"], "vrm_installation_id", _vrm_install_id)
     if not (_vrm_token and _vrm_install_id):
         _empty_state(
             "Not yet connected",
@@ -646,7 +646,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         type="password", key="circunomics_api_key",
         help="Issued by Circunomics after partner onboarding — not a public self-serve key.",
     )
-    db.set_setting("circunomics_api_key", _circ_key)
+    db.set_setting(st.session_state["auth_org_id"], "circunomics_api_key", _circ_key)
     if not _circ_key:
         _empty_state(
             "Not yet connected",
@@ -666,6 +666,40 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 st.error(f"Circunomics connection failed: {_circ_result['error']}")
             else:
                 st.success("Circunomics connection succeeded.")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Team Members (admin-only — invite teammates into this organization)
+    # ────────────────────────────────────────────────────────────────────────
+    if st.session_state.get("auth_role") == "admin":
+        _section(f"Team Members — {st.session_state.get('auth_org_name', '')}")
+        _md_html(
+            "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+            "Add teammates to this organization. They sign in with their own username/password "
+            "and see this organization's data — decisions, cohort tags, settings, and uploaded "
+            "fleet — never another organization's."
+            "</div>"
+        )
+        _tm_col1, _tm_col2 = st.columns(2)
+        _tm_username = _tm_col1.text_input("Username", key="invite_username", placeholder="bob")
+        _tm_display  = _tm_col2.text_input("Display name (optional)", key="invite_display", placeholder="Bob Chen")
+        _tm_col3, _tm_col4 = st.columns(2)
+        _tm_password = _tm_col3.text_input("Password", key="invite_password", type="password")
+        _tm_role     = _tm_col4.selectbox(
+            "Role", ["engineer", "fleet", "compliance", "admin"], key="invite_role",
+        )
+        if st.button("Add teammate", key="invite_submit_btn"):
+            if not (_tm_username.strip() and _tm_password):
+                st.error("Username and password are required.")
+            elif len(_tm_password) < 6:
+                st.error("Password must be at least 6 characters.")
+            else:
+                _invite_result = db.create_user(
+                    st.session_state["auth_org_id"], _tm_username, _tm_password, _tm_role, _tm_display,
+                )
+                if "error" in _invite_result:
+                    st.error(_invite_result["error"])
+                else:
+                    st.success(f"Added {_tm_username} ({_tm_role}) to {st.session_state.get('auth_org_name', 'this organization')}.")
 
     # ────────────────────────────────────────────────────────────────────────
     # LLM Copilot API Key
