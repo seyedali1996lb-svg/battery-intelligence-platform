@@ -141,12 +141,14 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
 
             # ── Store in session_state ──────────────────────────────────────
-            # Uploaded data never touches the filesystem and never persists
-            # between sessions or across users — session_state only.
+            # The full DataFrames/model bundle never touch the filesystem and
+            # never persist between sessions or across users — session_state
+            # only. A small metadata row (cell count, upload date, cache key)
+            # is persisted below for cross-session visibility/audit only.
             st.session_state["uploaded_featured_dfs"] = up_fdfs
             st.session_state["uploaded_bundle"]       = up_bndl
             st.session_state["uploaded_split_cycles"] = up_sc
-            st.session_state["uploaded_mode_meta"]    = {
+            _upload_meta = {
                 "n_cells":                  n_up,
                 "cell_ids":                 list(up_fdfs.keys()),
                 "upload_date":              datetime.date.today().isoformat(),
@@ -154,6 +156,9 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 "lco_limited":              lco_limited,
                 "temperature_assumed_cells": battery["temperature_assumed_cells"],
             }
+            st.session_state["uploaded_mode_meta"] = _upload_meta
+            import db
+            db.save_upload_meta(_upload_meta, _upload_key)
             # Auto-switch to My Data mode
             st.session_state["data_mode"] = "uploaded"
             _step("load", "✓", "Done — results loaded into all pages")
@@ -587,8 +592,9 @@ def page_import():
         *[f"B{n}" for n in ["0005", "0006", "0007", "0018"]],
         *[f"Cell{i}" for i in range(1, 9)],
     ]
+    import db
     if "cell_cohort_tags" not in st.session_state:
-        st.session_state["cell_cohort_tags"] = {}
+        st.session_state["cell_cohort_tags"] = db.load_cohort_tags()
     _e5_cols = st.columns(3)
     for _e5i, _e5id in enumerate(_e5_all_ids):
         with _e5_cols[_e5i % 3]:
@@ -600,3 +606,4 @@ def page_import():
             )
             if _new_tag != _cur_tag:
                 st.session_state["cell_cohort_tags"][_e5id] = _new_tag
+                db.save_cohort_tag(_e5id, _new_tag)

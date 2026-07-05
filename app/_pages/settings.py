@@ -11,6 +11,7 @@ import streamlit as st
 
 from design_system import make_badge, section_header_html
 from utils import _md_html, _action_bar, NASA_CELL_IDS
+import db
 
 
 def page_settings(featured_dfs: dict, bundles: dict):
@@ -204,8 +205,10 @@ def page_settings(featured_dfs: dict, bundles: dict):
     )
     if _new_profile != _cur_profile:
         st.session_state["app_profile"] = _new_profile
+        db.set_setting("app_profile", _new_profile)
         if _PROFILES[_new_profile] is not None:
             st.session_state["eol_threshold_pct"] = _PROFILES[_new_profile]
+            db.set_setting("eol_threshold_pct", _PROFILES[_new_profile])
         st.rerun()
     if _PROFILES.get(_new_profile) is not None:
         st.caption(
@@ -240,11 +243,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.markdown("<div style='padding-top:26px'>", unsafe_allow_html=True)
         if st.button("Reset to 80%", key="settings_eol_reset"):
             st.session_state["eol_threshold_pct"] = 80.0
+            db.set_setting("eol_threshold_pct", 80.0)
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     if new_eol != int(st.session_state.get("eol_threshold_pct", 80)):
         st.session_state["eol_threshold_pct"] = float(new_eol)
+        db.set_setting("eol_threshold_pct", float(new_eol))
         st.rerun()
 
     if new_eol != 80:
@@ -501,6 +506,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
     )
     if _cod_mult != st.session_state.get("cost_of_delay_mult", 2.0):
         st.session_state["cost_of_delay_mult"] = _cod_mult
+        db.set_setting("cost_of_delay_mult", _cod_mult)
         st.rerun()
 
     # ────────────────────────────────────────────────────────────────────────
@@ -535,6 +541,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
             ["THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH"]),
         help="Only anomaly types checked here will trigger a webhook POST.",
     )
+    db.set_setting("webhook_url", _wh_url)
+    db.set_setting("webhook_secret", _wh_secret)
+    db.set_setting("webhook_events", _wh_events)
     if _wh_url:
         _wh_test_col, _ = st.columns([1, 4])
         if _wh_test_col.button("Send test ping", key="webhook_test_btn"):

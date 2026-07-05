@@ -1562,12 +1562,16 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     with _pin_col2:
         if _pinned == cell_id:
             if st.button("📌 Unpin baseline", key=f"unpin_{cell_id}", use_container_width=True):
+                import db as _db
                 st.session_state["pinned_cell"] = None
+                _db.set_setting("pinned_cell", None)
                 st.rerun()
         else:
             if st.button("📌 Pin as baseline", key=f"pin_{cell_id}", use_container_width=True,
                          help="Pin this cell as a comparison baseline — all other cells show a delta rail."):
+                import db as _db
                 st.session_state["pinned_cell"] = cell_id
+                _db.set_setting("pinned_cell", cell_id)
                 st.rerun()
     if _pinned and _pinned != cell_id and _pinned in df.columns.__class__.__mro__[0].__mro__:
         pass  # comparison rail placeholder
@@ -1960,12 +1964,16 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     with _h_pc2:
         if _h_pinned == cell_id:
             if st.button("📌 Unpin baseline", key=f"unpin_h_{cell_id}", use_container_width=True):
+                import db as _db
                 st.session_state["pinned_cell"] = None
+                _db.set_setting("pinned_cell", None)
                 st.rerun()
         else:
             if st.button("📌 Pin as baseline", key=f"pin_h_{cell_id}", use_container_width=True,
                          help="Pin this cell as comparison baseline"):
+                import db as _db
                 st.session_state["pinned_cell"] = cell_id
+                _db.set_setting("pinned_cell", cell_id)
                 st.rerun()
 
     col1, col2 = st.columns(2)
@@ -6137,6 +6145,7 @@ def page_decision(
 
     _log_col, _ = st.columns([1, 3])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
+        import db as _db
         _entry = {
             "id":         f"{selected}_{datetime.datetime.now().strftime('%H%M%S')}",
             "cell_id":    selected,
@@ -6150,6 +6159,7 @@ def page_decision(
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_entry)
+        _db.save_decision(_entry)
         st.success(f"Logged: {action_label} for {selected}")
 
     # E4: Audit trail with status chips and outcome tracking
@@ -6181,6 +6191,8 @@ def page_decision(
                 )
                 if _new_status != _dl.get("status"):
                     st.session_state["decision_log"][_i]["status"] = _new_status
+                    import db as _db
+                    _db.update_decision(_dl["id"], status=_new_status)
                     st.rerun()
                 _cols_e4[2].markdown(
                     f"<div style='padding:8px 0'>"
@@ -6199,6 +6211,8 @@ def page_decision(
                     if _cols_e4[4].button("Save", key=f"e4_save_{_i}"):
                         st.session_state["decision_log"][_i]["outcome_soh"] = round(_new_soh, 1)
                         st.session_state["decision_log"][_i]["status"] = "Verified"
+                        import db as _db
+                        _db.update_decision(_dl["id"], outcome_soh=round(_new_soh, 1), status="Verified")
                         st.rerun()
                 elif _dl.get("outcome_soh") is not None:
                     _delta_soh = _dl["outcome_soh"] - _dl["soh_pct"]
@@ -7287,16 +7301,21 @@ def page_recommendations(
     _log_col, _ = st.columns([1, 3])
     if _log_col.button("Log Decision", key="rec_log_decision", use_container_width=True,
                        help="Record this recommendation to the session decision log"):
+        import db as _db
         _log_entry = {
+            "id":         f"{selected}_{datetime.datetime.now().strftime('%H%M%S')}",
             "cell_id":    selected,
             "action":     action_label,
             "confidence": conf_label,
             "soh_pct":    round(soh, 1),
             "timestamp":  datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "status":     "Pending",
+            "outcome_soh": None,
         }
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_log_entry)
+        _db.save_decision(_log_entry)
         st.success(f"Decision logged: {action_label} for {selected} at {_log_entry['timestamp']}")
 
     _dlog = st.session_state.get("decision_log", [])
@@ -8337,11 +8356,33 @@ def main():
         st.session_state["data_mode"] = default_mode
     if "uploaded_mode_meta" not in st.session_state:
         st.session_state["uploaded_mode_meta"] = None
+
+    # ── Persistence hydration (SQLite-backed, first run per session only) ─────
+    import db as _db_main
+    _db_main.init_db()
+    if "decision_log" not in st.session_state:
+        st.session_state["decision_log"] = _db_main.load_decisions()
+    if "pinned_cell" not in st.session_state:
+        st.session_state["pinned_cell"] = _db_main.get_setting("pinned_cell")
+    if "app_profile" not in st.session_state:
+        _persisted_profile = _db_main.get_setting("app_profile")
+        if _persisted_profile is not None:
+            st.session_state["app_profile"] = _persisted_profile
+    if "cost_of_delay_mult" not in st.session_state:
+        _persisted_cod = _db_main.get_setting("cost_of_delay_mult")
+        if _persisted_cod is not None:
+            st.session_state["cost_of_delay_mult"] = _persisted_cod
+    for _wh_key in ("webhook_url", "webhook_secret", "webhook_events"):
+        if _wh_key not in st.session_state:
+            _persisted_wh = _db_main.get_setting(_wh_key)
+            if _persisted_wh is not None:
+                st.session_state[_wh_key] = _persisted_wh
+
     # Application EOL threshold — user-configurable in Settings.
     # Changing this does NOT retrain the model; it rescales the displayed RUL
     # using the current fade rate to project to the user-defined threshold.
     if "eol_threshold_pct" not in st.session_state:
-        st.session_state["eol_threshold_pct"] = 80.0
+        st.session_state["eol_threshold_pct"] = _db_main.get_setting("eol_threshold_pct", 80.0)
 
     # ── Resolve active data from current mode ─────────────────────────────────
     mode      = st.session_state["data_mode"]

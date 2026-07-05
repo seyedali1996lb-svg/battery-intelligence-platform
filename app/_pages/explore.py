@@ -418,8 +418,9 @@ def _page_explore_cohort(active_fdfs: dict):
     # ── Inline cohort tagging ─────────────────────────────────────────────────
     st.markdown("<div class='section-header'>Tag cells by batch, supplier, or site</div>", unsafe_allow_html=True)
     st.caption("Tags are applied immediately. Use cohort names like 'Batch-A', 'Site-London', 'Supplier-X'.")
+    import db
     if "cell_cohort_tags" not in st.session_state:
-        st.session_state["cell_cohort_tags"] = {}
+        st.session_state["cell_cohort_tags"] = db.load_cohort_tags()
     _tag_cols = st.columns(min(4, len(active_fdfs)))
     for _ti, _tcid in enumerate(active_fdfs.keys()):
         with _tag_cols[_ti % 4]:
@@ -428,6 +429,7 @@ def _page_explore_cohort(active_fdfs: dict):
                                      placeholder="e.g. Batch-A")
             if _new_tag != _cur_tag:
                 st.session_state["cell_cohort_tags"][_tcid] = _new_tag
+                db.save_cohort_tag(_tcid, _new_tag)
                 st.rerun()
 
     # ── Cohort analysis ────────────────────────────────────────────────────────
