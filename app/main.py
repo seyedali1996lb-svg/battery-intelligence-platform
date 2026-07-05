@@ -6133,24 +6133,44 @@ def page_decision(
                 help="Opens second-life battery exchange (demo — not a live API call)",
                 use_container_width=True,
             ):
-                _listing = {
-                    "cell_id":        selected,
-                    "soh_pct":        round(soh, 1),
-                    "chemistry":      "LFP" if selected.startswith("S-") else "LiCoO2",
-                    "capacity_ah":    round(_cap_now * (soh / 100) * 1000 / 3.7, 2),
-                    "asking_usd":     round(_c_npv * 0.4, 2),
-                    "listed_at":      datetime.datetime.now().isoformat(),
-                    "platform":       "battery-intelligence-platform",
-                    "note":           "Demo listing — not submitted to a live exchange",
-                }
-                if "sl_listings" not in st.session_state:
-                    st.session_state["sl_listings"] = []
-                st.session_state["sl_listings"].append(_listing)
-                st.success(
-                    f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "
-                    f"(demo — no real API call made). In production this would POST to "
-                    f"the Circunomics or Battery Lifecycle Company marketplace API."
-                )
+                _circ_chemistry = "LFP" if selected.startswith("S-") else "LiCoO2"
+                _circ_capacity_ah = round(_cap_now * (soh / 100) * 1000 / 3.7, 2)
+                _circ_asking_usd = round(_c_npv * 0.4, 2)
+                _circ_api_key = st.session_state.get("circunomics_api_key", "")
+                _circ_result = None
+                if _circ_api_key:
+                    from circunomics_adapter import list_cell_on_circunomics
+                    _circ_result = list_cell_on_circunomics(
+                        selected, soh, _circ_chemistry, _circ_capacity_ah,
+                        _circ_asking_usd, _circ_api_key,
+                    )
+                if _circ_result is not None and "error" not in _circ_result:
+                    st.success(
+                        f"Listing submitted to Circunomics for {selected} at "
+                        f"${_circ_asking_usd:.2f}."
+                    )
+                else:
+                    _listing = {
+                        "cell_id":        selected,
+                        "soh_pct":        round(soh, 1),
+                        "chemistry":      _circ_chemistry,
+                        "capacity_ah":    _circ_capacity_ah,
+                        "asking_usd":     _circ_asking_usd,
+                        "listed_at":      datetime.datetime.now().isoformat(),
+                        "platform":       "battery-intelligence-platform",
+                        "note":           "Demo listing — not submitted to a live exchange",
+                    }
+                    if "sl_listings" not in st.session_state:
+                        st.session_state["sl_listings"] = []
+                    st.session_state["sl_listings"].append(_listing)
+                    if _circ_result is not None:
+                        st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")
+                    else:
+                        st.success(
+                            f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "
+                            f"(demo — no real API call made). Configure a Circunomics API key in "
+                            f"Settings to submit real listings."
+                        )
             if _mk_col2.button(
                 "List on Battery-Lifecycle.com →", key="sl_list_blc",
                 help="Second-life exchange for industrial battery packs (demo)",

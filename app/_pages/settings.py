@@ -630,6 +630,44 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 st.error(f"VRM connection failed: {_vrm_e}")
 
     # ────────────────────────────────────────────────────────────────────────
+    # Second-Life Marketplace (Circunomics)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Second-Life Marketplace (Circunomics)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Submit second-life listings directly to Circunomics instead of the local demo "
+        "listing. Circunomics does not publish a public self-serve API — this requires a "
+        "partner API key issued after onboarding. Without a key, the Decision page's "
+        "\"List on Circunomics\" button keeps using the local demo listing behavior."
+        "</div>"
+    )
+    _circ_key = st.text_input(
+        "Circunomics API key", value=st.session_state.get("circunomics_api_key", ""),
+        type="password", key="circunomics_api_key",
+        help="Issued by Circunomics after partner onboarding — not a public self-serve key.",
+    )
+    db.set_setting("circunomics_api_key", _circ_key)
+    if not _circ_key:
+        _empty_state(
+            "Not yet connected",
+            "Paste a Circunomics partner API key above to submit listings directly instead "
+            "of the local demo listing.",
+            icon="♻",
+        )
+    else:
+        if st.button("Test Circunomics connection", key="circ_test_btn"):
+            from circunomics_adapter import list_cell_on_circunomics
+            _circ_result = list_cell_on_circunomics(
+                "TEST-CELL", 80.0, "LiCoO2", 2.0, 50.0, _circ_key,
+            )
+            if _circ_result is None:
+                st.warning("No API key configured.")
+            elif "error" in _circ_result:
+                st.error(f"Circunomics connection failed: {_circ_result['error']}")
+            else:
+                st.success("Circunomics connection succeeded.")
+
+    # ────────────────────────────────────────────────────────────────────────
     # LLM Copilot API Key
     # ────────────────────────────────────────────────────────────────────────
     _section("AI Copilot — Language Model")
