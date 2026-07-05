@@ -18,6 +18,10 @@ _CRM_DEFAULTS = {
     "lico2_ni_pct":  0.0,
     "lico2_li_pct":  7.0,
     "lfp_li_pct":    4.4,
+    "nca_co_pct":    3.0,
+    "nca_ni_pct":   12.0,
+    "nca_al_pct":    0.5,
+    "nca_li_pct":    7.0,
 }
 
 
@@ -41,6 +45,8 @@ class ChemistryProfile:
             return LFPSeversonProfile()
         if cell_id in _NASA_CELL_IDS:
             return LiCoO2NASAProfile()
+        if cell_id.startswith("OX-"):
+            return NCAOxfordProfile()
         if cell_id.startswith(("Cell", "OxBat")):
             return LiCoO2SyntheticProfile()
         return UserDefinedProfile()
@@ -135,6 +141,59 @@ class LiCoO2NASAProfile(ChemistryProfile):
     def get_health_sections(self) -> list[str]:
         return ["capacity_fade", "resistance", "coulombic_efficiency",
                 "rate_capability", "resistance_proxy", "dqdv"]
+
+
+class NCAOxfordProfile(ChemistryProfile):
+    """
+    NCA (Oxford Path-Dependent 2020, Group 1 only). Only ~14 sparse
+    reference-test checkpoints per cell exist for this source — see
+    src/oxford_loader.py — so dQ/dV simulation (needs dense per-cycle
+    data) does not apply, matching the honesty pattern already used for
+    LFP cells above.
+    """
+    display_name    = "NCA (Oxford Path-Dependent 2020)"
+    short_name      = "NCA"
+    dqdv_applicable = False
+    provenance      = "measured"
+    dataset_citation = "Raj et al., Batteries & Supercaps 2020 (ODC-ODbL)"
+
+    def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
+        s  = settings or {}
+        co = s.get("crm_nca_oxford_co_pct", _CRM_DEFAULTS["nca_co_pct"])
+        ni = s.get("crm_nca_oxford_ni_pct", _CRM_DEFAULTS["nca_ni_pct"])
+        al = s.get("crm_nca_oxford_al_pct", _CRM_DEFAULTS["nca_al_pct"])
+        li = s.get("crm_nca_oxford_li_pct", _CRM_DEFAULTS["nca_li_pct"])
+        return [
+            {"label": "Nickel (Ni) content",
+             "value": f"~{ni:.1f} wt% (NCA cathode, est.)", "state": "estimated",
+             "note": "NCA (LiNiCoAlO2) is nickel-dominant, unlike LiCoO2 or LFP. "
+                     "Configurable in Settings -> CRM. EU Art. 13 supply-chain due "
+                     "diligence required from 2026."},
+            {"label": "Cobalt (Co) content",
+             "value": f"~{co:.1f} wt% (NCA cathode, est.)", "state": "estimated",
+             "note": "Lower Co share than LiCoO2 by design. Configurable in Settings -> CRM."},
+            {"label": "Aluminium (Al) content",
+             "value": f"~{al:.1f} wt% (dopant, est.)", "state": "estimated",
+             "note": "Al stabilises the layered structure at high Ni content; not tracked "
+                     "for the other chemistries in this platform since it's NCA-specific."},
+            {"label": "Lithium (Li) content",
+             "value": f"~{li:.1f} wt% (cathode + anode, est.)", "state": "estimated",
+             "note": "Configurable in Settings -> CRM. "
+                     "Recycled Li target: 4% by 2027, 10% by 2031 (EU Annex X)."},
+            {"label": "Recycled Co content", "value": "Not specified -- enter in Settings -> CRM",
+             "state": "unavailable",
+             "note": "EU 2030 target: 12% recycled Co (Annex X). Enter in Settings -> CRM."},
+            {"label": "Recycled Ni content", "value": "Not specified -- enter in Settings -> CRM",
+             "state": "unavailable",
+             "note": "EU 2030 target: 4% recycled Ni (Annex X). Enter in Settings -> CRM."},
+            {"label": "Article 52 due diligence", "value": "Not assessed", "state": "unavailable",
+             "note": "Third-party audit of Ni/Co/Li supply chain required for EU market access."},
+        ]
+
+    def get_health_sections(self) -> list[str]:
+        # No dense per-cycle data for this source (see module docstring) — only
+        # the coarse capacity-fade curve shown in Explore's Reference Datasets view.
+        return ["capacity_fade"]
 
 
 class LiCoO2SyntheticProfile(ChemistryProfile):

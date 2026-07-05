@@ -15,3 +15,4 @@ qrcode[pil]
 sqlalchemy
 pytest
 bcrypt
+mat-io

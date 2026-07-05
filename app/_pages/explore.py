@@ -18,7 +18,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     st.markdown("# Explore")
 
     _exp_view = st.radio(
-        "view", ["Compare", "Cluster", "Cohort", "Pack Builder"],
+        "view", ["Compare", "Cluster", "Cohort", "Pack Builder", "Reference Datasets"],
         horizontal=True, key="explore_view_radio", label_visibility="collapsed",
     )
 
@@ -35,6 +35,11 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     # ── Pack Builder tab ─────────────────────────────────────────────────────
     if _exp_view == "Pack Builder":
         _page_pack_builder(cell_ids, active_fdfs)
+        return
+
+    # ── Reference Datasets tab ──────────────────────────────────────────────
+    if _exp_view == "Reference Datasets":
+        _page_reference_datasets()
         return
 
     # ── Compare tab (default) ─────────────────────────────────────────────
@@ -573,6 +578,88 @@ def _page_explore_cohort(active_fdfs: dict):
             "Tag cells above by batch, supplier, or site to compare cohort health.",
             icon="🏷",
         )
+
+
+def _page_reference_datasets():
+    """
+    Real measured degradation data from additional public datasets that
+    aren't wired into the app's data_mode/model pipeline — currently just
+    the Oxford Path-Dependent NCA cells. Deliberately a standalone view,
+    not a 5th data_mode: with only ~14 reference-test checkpoints per cell
+    across 3 cells, there isn't enough data to honestly leave-cell-out
+    validate a predictive model the way NASA/Severson/synthetic cells get
+    one — this shows the real measured capacity-fade curve on its own
+    terms instead of forcing it through machinery built for dense
+    per-cycle data.
+    """
+    st.markdown("<div class='section-header'>Reference Datasets — Additional Chemistries</div>", unsafe_allow_html=True)
+    _md_html(
+        "<div style='font-size:12px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Real measured data from public datasets outside this platform's trained-model pipeline — "
+        "shown as evidence of chemistry diversity, not as predictions."
+        "</div>"
+    )
+
+    from oxford_loader import load_oxford_cells, any_cached as _ox_any_cached
+
+    if not _ox_any_cached():
+        _empty_state(
+            "Oxford NCA reference data not available locally",
+            "Run `python src/oxford_loader.py` once locally to download and extract the Oxford "
+            "Path-Dependent Battery Degradation Dataset (Group 1), then commit the resulting CSVs "
+            "in data/raw/oxford/.",
+            icon="🔬",
+        )
+        return
+
+    ox_cells = load_oxford_cells()
+    if not ox_cells:
+        _empty_state("No reference cells loaded", "Oxford checkpoint CSVs were found but could not be read.", icon="⚠")
+        return
+
+    st.markdown(
+        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+        "padding:14px 20px;margin-bottom:16px;font-size:12px;color:#8896a8;line-height:1.7'>"
+        "<strong style='color:#e2e8f0'>Oxford Path-Dependent Battery Degradation Dataset (2020)</strong> "
+        "&mdash; Raj et al., <em>Batteries &amp; Supercaps</em> (Wiley), ODC-ODbL license. "
+        "3 Ah NCR18650BD cells, <strong style='color:#f6ad55'>NCA</strong> (nickel cobalt aluminium oxide) "
+        "chemistry &mdash; genuinely different from this platform's NASA (LiCoO2) and Severson (LFP) cells. "
+        "Only Group 1 (3 of 12 cells in the full dataset) is included here.<br><br>"
+        "<strong style='color:#fc8181'>No predictive model is trained on this data.</strong> Each cell has "
+        "only ~14 Reference Performance Test (RPT) checkpoints over its life &mdash; not dense per-cycle "
+        "data like NASA/Severson &mdash; too few points across too few cells (3) to honestly leave-cell-out "
+        "validate a model. What's shown below is the real measured capacity-fade curve, nothing more."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    _ox_cell = st.selectbox("Cell", options=sorted(ox_cells.keys()), key="oxford_ref_cell")
+    _cp = ox_cells[_ox_cell]["checkpoints"]
+
+    _mc1, _mc2, _mc3 = st.columns(3)
+    _mc1.metric("Beginning-of-life capacity", f"{_cp['capacity_ah'].iloc[0]:.2f} Ah")
+    _mc2.metric("Latest measured SOH", f"{_cp['soh_pct'].iloc[-1]:.1f}%")
+    _mc3.metric("Checkpoints observed", f"{len(_cp)}")
+
+    _fig = go.Figure()
+    _fig.add_trace(go.Scatter(
+        x=_cp["checkpoint_index"], y=_cp["soh_pct"],
+        mode="lines+markers", name=_ox_cell,
+        line=dict(color="#f6ad55", width=2), marker=dict(size=7),
+        text=_cp["checkpoint_label"],
+        hovertemplate="<b>%{text}</b><br>SOH: %{y:.1f}%<extra></extra>",
+    ))
+    _fig.update_layout(
+        height=320,
+        **base_layout(
+            xaxis=dict(title="Reference-test checkpoint (chronological)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            yaxis=dict(title="SOH % (real measured)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+        ),
+    )
+    st.plotly_chart(_fig, use_container_width=True)
+
+    with st.expander("Per-checkpoint data"):
+        st.dataframe(_cp.set_index("checkpoint_index"), use_container_width=True)
 
 
 def _cell_source(cell_id: str) -> str:
