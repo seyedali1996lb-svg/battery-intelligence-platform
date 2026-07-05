@@ -590,7 +590,11 @@ def load_everything():
         bundle_sev,   fdfs_sev,   sc_sev   = futures["severson"].result() if "severson" in futures else (None, {}, {})
 
         _prog.progress(100, text="Platform ready ✓")
-        _status.update(label="Platform ready ✓", state="complete", expanded=False)
+        # st.status()/st.progress() return None when called outside a real
+        # Streamlit script run (e.g. imported by src/api.py under a bare
+        # uvicorn process) — guard so load_everything() works from both.
+        if _status is not None:
+            _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
     featured_dfs = {**fdfs_synth, **fdfs_nasa, **fdfs_sev}
     split_cycles = {**sc_synth, **sc_nasa, **sc_sev}

@@ -16,3 +16,4 @@ sqlalchemy
 pytest
 bcrypt
 mat-io
+PyJWT

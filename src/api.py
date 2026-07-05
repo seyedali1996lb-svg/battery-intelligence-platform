@@ -5,9 +5,13 @@ Exposes validated model outputs over HTTP so external systems (dashboards,
 BMS firmware, ERP integrations) can consume cell data without running the
 Streamlit UI.
 
-All endpoints are read-only. Model outputs come from the same
+All data endpoints are read-only. Model outputs come from the same
 `load_everything()` bundle used by the Streamlit pages — no separate
-training, no separate cache.
+training, no separate cache. Every data endpoint requires a bearer token
+from POST /auth/login (see src/db.py's Organization/User model, added for
+this app's multi-tenancy) — the same shared reference-cell bundle is
+served to every organization today; org-scoped uploaded-fleet data via
+this API is a deferred follow-up, not yet wired up.
 
 Usage
 -----
@@ -23,7 +27,8 @@ Docker (see Dockerfile.api):
 
 Endpoints
 ---------
-GET  /                      — API info + version
+GET  /                      — API info + version (unauthenticated)
+POST /auth/login            — {username, password} -> bearer token (unauthenticated)
 GET  /health                — liveness check
 GET  /cells                 — list all loaded cell IDs
 GET  /cells/{cell_id}       — latest cycle metrics for one cell
@@ -32,6 +37,9 @@ GET  /fleet/summary         — fleet-level KPIs (SOH distribution, EOL count)
 GET  /fleet/alerts          — active alert list (same logic as Alert Inbox UI)
 GET  /cells/{cell_id}/rul   — RUL prediction with reliability flag + band
 GET  /cells/{cell_id}/lineage — data lineage for a cell's metrics
+
+All endpoints other than / and /auth/login require:
+    Authorization: Bearer <token>
 """
 
 from __future__ import annotations
@@ -47,10 +55,12 @@ _APP_DIR = os.path.join(_ROOT, "app")
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
+import datetime
 from typing import Any, Optional
 
 try:
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import FastAPI, HTTPException, Query, Depends, Header
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel
 except ImportError as _e:
@@ -59,7 +69,14 @@ except ImportError as _e:
         "Install with: pip install 'fastapi[standard]' uvicorn"
     ) from _e
 
+try:
+    import jwt as _pyjwt
+except ImportError as _e:
+    raise ImportError("PyJWT is required for API auth. Install with: pip install PyJWT") from _e
+
 import numpy as np
+
+from src.db import get_user_by_username, verify_password, init_db
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 
@@ -76,6 +93,72 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Vite's dev server default origin. No production origin configured yet —
+# there's no deployed frontend target in this pass (see README).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Auth (JWT) ────────────────────────────────────────────────────────────────
+# Demo-grade secret, same honesty pattern as this app's other secrets (see
+# README's Production Readiness Roadmap "Secrets management" row) — set
+# JWT_SECRET in the environment for anything beyond local development.
+_JWT_SECRET = os.environ.get("JWT_SECRET", "dev-only-insecure-secret-change-in-production")
+_JWT_ALGORITHM = "HS256"
+_JWT_EXPIRY_HOURS = 24
+
+# Idempotent — creates tables + seeds the Demo Org on first run, matching how
+# app/_pages/login.py already calls this. The API may be the first process to
+# touch data/app.db on a fresh clone, so this can't be lazy like _get_bundle().
+init_db()
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    org_id: int
+    org_name: str
+    role: str
+    display_name: str
+
+
+def _create_access_token(user: dict) -> str:
+    payload = {
+        "sub": user["username"],
+        "org_id": user["org_id"],
+        "role": user["role"],
+        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=_JWT_EXPIRY_HOURS),
+    }
+    return _pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    """
+    FastAPI dependency — decodes the `Authorization: Bearer <token>` header
+    issued by POST /auth/login. Raises 401 on any missing/invalid/expired
+    token so every gated endpoint below fails closed, not open.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header.")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = _pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+    except _pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired.")
+    except _pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+    return {"username": payload["sub"], "org_id": payload["org_id"], "role": payload["role"]}
 
 
 # ── Bundle loading (lazy, singleton) ─────────────────────────────────────────
@@ -102,17 +185,18 @@ def _get_bundle() -> dict:
 
 def _get_featured_dfs() -> dict:
     b = _get_bundle()
-    # main.py returns a tuple or a nested dict depending on version; flatten
+    # load_everything() returns (featured_dfs, bundles, split_cycles) — see
+    # app/main.py's load_everything(). A dict-shaped fallback (from the
+    # ImportError branch in _get_bundle()) has no featured_dfs of its own.
     if isinstance(b, tuple):
-        bundles, featured_dfs = b[0], b[1]
-        return featured_dfs
+        return b[0]
     return b.get("featured_dfs", {})
 
 
 def _get_bundles() -> dict:
     b = _get_bundle()
     if isinstance(b, tuple):
-        return b[0]
+        return b[1]
     return b.get("bundles", {})
 
 
@@ -229,8 +313,9 @@ def root():
         version=API_VERSION,
         docs="/docs",
         endpoints=[
-            "GET /health",
-            "GET /cells",
+            "POST /auth/login",
+            "GET /health (auth required)",
+            "GET /cells (auth required)",
             "GET /cells/{cell_id}",
             "GET /cells/{cell_id}/history",
             "GET /cells/{cell_id}/rul",
@@ -241,8 +326,22 @@ def root():
     )
 
 
+@app.post("/auth/login", response_model=LoginResponse, summary="Log in and receive a bearer token")
+def login(body: LoginRequest):
+    user = get_user_by_username(body.username)
+    if user is None or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    return LoginResponse(
+        access_token=_create_access_token(user),
+        org_id=user["org_id"],
+        org_name=user["org_name"],
+        role=user["role"],
+        display_name=user["display_name"],
+    )
+
+
 @app.get("/health", response_model=HealthCheck, summary="Liveness check")
-def health():
+def health(current_user: dict = Depends(get_current_user)):
     try:
         fdfs = _get_featured_dfs()
         bundles = _get_bundles()
@@ -256,13 +355,13 @@ def health():
 
 
 @app.get("/cells", summary="List all cell IDs")
-def list_cells() -> dict:
+def list_cells(current_user: dict = Depends(get_current_user)) -> dict:
     fdfs = _get_featured_dfs()
     return {"cells": sorted(fdfs.keys()), "count": len(fdfs)}
 
 
 @app.get("/cells/{cell_id}", response_model=CellLatest, summary="Latest metrics for one cell")
-def cell_latest(cell_id: str):
+def cell_latest(cell_id: str, current_user: dict = Depends(get_current_user)):
     fdfs = _get_featured_dfs()
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
@@ -295,6 +394,7 @@ def cell_latest(cell_id: str):
 def cell_history(
     cell_id: str,
     limit: int = Query(200, ge=1, le=2000, description="Max rows returned (newest last)"),
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     fdfs = _get_featured_dfs()
     if cell_id not in fdfs:
@@ -337,6 +437,7 @@ def cell_history(
 def cell_rul(
     cell_id: str,
     eol_threshold: float = Query(80.0, ge=60.0, le=95.0, description="EOL SOH threshold %"),
+    current_user: dict = Depends(get_current_user),
 ):
     fdfs = _get_featured_dfs()
     if cell_id not in fdfs:
@@ -365,7 +466,7 @@ def cell_rul(
 
 
 @app.get("/cells/{cell_id}/lineage", summary="Data lineage — source of every metric")
-def cell_lineage(cell_id: str) -> dict:
+def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -> dict:
     fdfs = _get_featured_dfs()
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
@@ -411,7 +512,7 @@ def cell_lineage(cell_id: str) -> dict:
 
 
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")
-def fleet_summary():
+def fleet_summary(current_user: dict = Depends(get_current_user)):
     fdfs = _get_featured_dfs()
     bundles = _get_bundles()
     if not fdfs:
@@ -461,7 +562,7 @@ def fleet_summary():
 
 
 @app.get("/fleet/alerts", summary="Active alert list — same logic as Alert Inbox UI")
-def fleet_alerts() -> dict:
+def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
     fdfs = _get_featured_dfs()
     if not fdfs:
         raise HTTPException(status_code=503, detail="No cells loaded.")
