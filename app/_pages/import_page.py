@@ -17,6 +17,7 @@ from import_adapter import adapt_upload_to_pipeline
 from features import build_features, get_model_matrix
 from model import train_models, predict
 from lco_eval import run_lco, RUL_RELIABLE_FLOOR
+from bundle_cache import load_features_cached, save_features_cached
 from _pages.settings import _clear_uploaded_data
 
 
@@ -64,19 +65,35 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
             total_cy = sum(len(c["cycles"]) for c in battery["cells"].values())
             _step("parse", "✓", f"Parsed — {n_up} cells, {total_cy:,} cycles")
 
-            # 2 — Features
+            # 2 — Features (skip recompute if this exact upload was seen before this session)
             _step("features", "⏳", "Engineering features…")
+            import hashlib
+            _upload_key = "upload-" + hashlib.sha256(
+                pd.util.hash_pandas_object(df_raw, index=True).values.tobytes()
+            ).hexdigest()[:20]
+            _cached = load_features_cached(_upload_key, battery["cells"])
             all_X, all_y_soh, all_y_rul = [], [], []
             cell_featured = {}
-            for cid, cell in battery["cells"].items():
-                df_feat = build_features(cell["cycles"])
-                X, y_soh, y_rul = get_model_matrix(df_feat)
-                all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
-                cell_featured[cid] = (df_feat, X)
+            if _cached is not None:
+                raw_fdfs, model_inputs = _cached
+                for cid, (X, y_soh, y_rul) in model_inputs.items():
+                    all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+                    cell_featured[cid] = (raw_fdfs[cid], X)
+            else:
+                raw_fdfs, model_inputs = {}, {}
+                for cid, cell in battery["cells"].items():
+                    df_feat = build_features(cell["cycles"])
+                    X, y_soh, y_rul = get_model_matrix(df_feat)
+                    all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+                    cell_featured[cid] = (df_feat, X)
+                    raw_fdfs[cid] = df_feat
+                    model_inputs[cid] = (X, y_soh, y_rul)
+                save_features_cached(_upload_key, battery["cells"], raw_fdfs, model_inputs)
             X_all     = pd.concat(all_X)
             y_soh_all = pd.concat(all_y_soh)
             y_rul_all = pd.concat(all_y_rul)
-            _step("features", "✓", f"Features built — {len(X_all):,} rows")
+            _step("features", "✓", f"Features built — {len(X_all):,} rows"
+                  + (" (cached)" if _cached is not None else ""))
 
             # 3+4 — Train (train_models trains both SOH and RUL in one call)
             _step("soh", "⏳", "Training SOH model…")
