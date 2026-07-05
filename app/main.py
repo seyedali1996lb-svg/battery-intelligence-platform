@@ -5616,6 +5616,7 @@ def page_copilot(
         build_cell_context,
         build_fleet_stats,
         context_summary,
+        answer_query,
         answer_health,
         answer_prediction_drivers,
         answer_rul,
@@ -5727,7 +5728,7 @@ def page_copilot(
     if _free_text_query and not query:
         _api_key_ft = st.session_state.get("anthropic_api_key", "")
         _ctx_ft = build_cell_context(selected, featured_dfs, bundles)
-        _template_ft = context_summary(_ctx_ft)
+        _template_ft = answer_query(_free_text_query, _ctx_ft)
         _llm_key_ft = "claude-haiku-4-5-20251001"
         st.markdown(
             f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>"
@@ -6288,7 +6289,7 @@ def page_decision(
         try:
             from battery_copilot import build_cell_context, answer_query
             from copilot_llm import llm_answer
-            _dc_ctx = build_cell_context(selected, df, _dc_bundle, rul_reliable)
+            _dc_ctx = build_cell_context(selected, featured_dfs, bundles)
             _dc_input = st.text_input(
                 "Question", placeholder="e.g. 'Why is this cell degrading faster than others?'",
                 key="decision_copilot_input", label_visibility="collapsed",

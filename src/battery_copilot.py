@@ -302,6 +302,25 @@ def context_summary(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+def answer_query(query: str, ctx: dict) -> str:
+    """
+    Free-text query entry point. Grounds the answer in the cell's own
+    context (context_summary) and augments it with retrieved battery-
+    domain knowledge (src/copilot_retrieval.py) relevant to the question —
+    real retrieval over an authored corpus, not keyword-to-template
+    routing. Returns a plain-text answer usable directly, or as the
+    grounding template passed to copilot_llm.llm_answer() for rephrasing.
+    """
+    from copilot_retrieval import retrieve
+
+    base = context_summary(ctx)
+    related = retrieve(query, top_k=2)
+    if not related:
+        return base
+    related_block = "\n\n".join(related)
+    return f"{base}\n\nRelated background:\n{related_block}"
+
+
 # ---------------------------------------------------------------------------
 # Fleet stats builder — aggregates across all cells for anomaly & fleet answers
 # ---------------------------------------------------------------------------
