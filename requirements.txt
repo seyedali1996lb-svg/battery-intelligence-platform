@@ -14,3 +14,4 @@ uvicorn
 qrcode[pil]
 sqlalchemy
 pytest
+bcrypt
