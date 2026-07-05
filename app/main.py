@@ -7053,6 +7053,28 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
                 "and restart the app."
             )
 
+    # ── Machine-readable export (JSON-LD) ─────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
+        "margin-bottom:12px;margin-top:24px'>9 · Machine-Readable Export</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "JSON-LD export of this passport's field data, preserving each field's "
+        "available/estimated/unavailable provenance tag."
+    )
+    from passport_export import to_json_ld
+    import json as _json_dpp
+    _dpp_jsonld = to_json_ld(p, selected)
+    st.download_button(
+        "Download machine-readable passport (JSON-LD)",
+        data=_json_dpp.dumps(_dpp_jsonld, indent=2).encode(),
+        file_name=f"{selected}_passport.jsonld",
+        mime="application/ld+json",
+        key="passport_jsonld_dl",
+    )
+
 
 def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
     from passport import build_passport
