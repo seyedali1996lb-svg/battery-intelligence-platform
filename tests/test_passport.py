@@ -1,0 +1,46 @@
+"""Unit tests for src/passport.py — build_passport()."""
+
+import pandas as pd
+from passport import build_passport
+
+
+def _sample_df():
+    return pd.DataFrame({
+        "soh_pct": [100, 99, 98, 97],
+        "cycle_number": [1, 2, 3, 4],
+        "resistance_ohm": [0.05, 0.051, 0.052, 0.053],
+        "fade_rate_30cy": [0.001] * 4,
+        "capacity_ah": [2.0, 1.98, 1.96, 1.94],
+        "rul_pred": [None, None, None, 600.0],
+    })
+
+
+def test_build_passport_field_counts_are_consistent():
+    bundle = {"metrics": {"lco_soh_r2": 0.9}}
+    p = build_passport("TestCell", _sample_df(), bundle, rul_reliable=True, is_nasa=True)
+
+    all_fields = p["identity"] + p["soh"] + p["lifecycle"] + p["carbon"]
+    summ = p["summary"]
+    assert summ["n_total"] == len(all_fields)
+    assert summ["n_available"] == sum(1 for f in all_fields if f["state"] == "available")
+    assert summ["n_estimated"] == sum(1 for f in all_fields if f["state"] == "estimated")
+    assert summ["n_unavailable"] == sum(1 for f in all_fields if f["state"] == "unavailable")
+
+
+def test_build_passport_nasa_vs_synthetic_chemistry_label():
+    bundle = {"metrics": {"lco_soh_r2": 0.9}}
+    nasa_p = build_passport("B0005", _sample_df(), bundle, rul_reliable=True, is_nasa=True)
+    synth_p = build_passport("Cell1", _sample_df(), bundle, rul_reliable=True, is_nasa=False)
+
+    nasa_chem = next(f["value"] for f in nasa_p["identity"] if f["label"] == "Chemistry type")
+    synth_chem = next(f["value"] for f in synth_p["identity"] if f["label"] == "Chemistry type")
+    assert "NASA" in nasa_chem or "LiCoO" in nasa_chem
+    assert "Synthetic" in synth_chem
+
+
+def test_build_passport_rul_withheld_when_not_reliable():
+    bundle = {"metrics": {"lco_soh_r2": 0.9}}
+    p = build_passport("TestCell", _sample_df(), bundle, rul_reliable=False, is_nasa=True)
+    rul_field = next(f for f in p["soh"] if "Remaining Useful Life" in f["label"])
+    assert "Not calibrated" in rul_field["value"]
+    assert "600" not in rul_field["value"]
