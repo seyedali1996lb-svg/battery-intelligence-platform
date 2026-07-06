@@ -145,8 +145,8 @@ class LiCoO2NASAProfile(ChemistryProfile):
 
 class NCAOxfordProfile(ChemistryProfile):
     """
-    NCA (Oxford Path-Dependent 2020, Group 1 only). Only ~14 sparse
-    reference-test checkpoints per cell exist for this source — see
+    NCA (Oxford Path-Dependent 2020, all 4 groups — 12 cells). Only ~8-14
+    sparse reference-test checkpoints per cell exist for this source — see
     src/oxford_loader.py — so dQ/dV simulation (needs dense per-cycle
     data) does not apply, matching the honesty pattern already used for
     LFP cells above.

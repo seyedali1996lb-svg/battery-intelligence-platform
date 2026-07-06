@@ -1,14 +1,18 @@
 """Unit tests for src/oxford_loader.py — pure-logic pieces only.
 
-No network calls or real .mat parsing here (that needs the ~822 MB source
-zip, downloaded once locally per the module docstring) — these test the
-two pieces that don't require it: the max-Amphr-delta-across-steps
-capacity extraction rule, and the SOH-relative-to-checkpoint-0 computation.
+No network calls or real .mat parsing here (that needs the ~3.1 GB source
+zips across all 4 groups, downloaded once locally per the module docstring)
+— these test the pieces that don't require it: the max-Amphr-delta-across-
+steps capacity extraction rule, the SOH-relative-to-checkpoint-0
+computation, and the group-aware zip filename matching.
 """
 
 import numpy as np
 import pandas as pd
-from oxford_loader import _capacity_ah_from_table, _add_soh_column
+from oxford_loader import (
+    _capacity_ah_from_table, _add_soh_column, _find_zip_entry,
+    _CELL_GROUP, _PROCEDURE_LABELS, OXFORD_CELL_IDS,
+)
 
 
 def _make_maccor_table(step_specs: list[tuple]) -> pd.DataFrame:
@@ -74,3 +78,27 @@ def test_soh_column_monotonic_for_monotonic_capacity():
     })
     out = _add_soh_column(df)
     assert out["soh_pct"].is_monotonic_decreasing
+
+
+def test_find_zip_entry_matches_correct_group_prefix():
+    """Cells in different groups share the same TPG index numbering, so the
+    group prefix in the filename regex must actually be used — a Group 3
+    filename must not match when searching for a Group 1 entry."""
+    names = ["Group 1/TPG1.4-Cell 9.mat", "Group 3/TPG3.4-Cell10.mat"]
+    assert _find_zip_entry(names, 1, 9, 4) == "Group 1/TPG1.4-Cell 9.mat"
+    assert _find_zip_entry(names, 3, 10, 4) == "Group 3/TPG3.4-Cell10.mat"
+    assert _find_zip_entry(names, 1, 10, 4) is None  # right cell, wrong group
+
+
+def test_find_zip_entry_handles_inconsistent_spacing():
+    names = ["TPG2 - Cell 3.mat", "TPG2.5-Cell3.mat", "TPG2.20 - Cell 3.mat"]
+    assert _find_zip_entry(names, 2, 3, 1) == "TPG2 - Cell 3.mat"
+    assert _find_zip_entry(names, 2, 3, 5) == "TPG2.5-Cell3.mat"
+    assert _find_zip_entry(names, 2, 3, 20) == "TPG2.20 - Cell 3.mat"
+
+
+def test_all_12_cells_across_4_groups_have_procedure_labels():
+    assert set(_CELL_GROUP) == set(_PROCEDURE_LABELS)
+    assert len(_CELL_GROUP) == 12
+    assert sorted(_CELL_GROUP.values()) == sorted([1] * 3 + [2] * 3 + [3] * 3 + [4] * 3)
+    assert set(OXFORD_CELL_IDS) == {f"OX-{c}" for c in _CELL_GROUP}

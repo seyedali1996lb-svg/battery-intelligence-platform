@@ -8,9 +8,12 @@ License: ODC Open Database License (ODC-ODbL).
 
 Cells are 3 Ah NCR18650BD cylindrical cells with NCA (nickel cobalt
 aluminium oxide) positive electrodes — genuinely new chemistry for this
-app versus NASA's LiCoO2 and Severson's LFP. Only Group 1 (3 cells: 9,
-15, 20; ~822 MB compressed) is used here, not all 4 groups (~3.1 GB) —
-deliberately scoped down to keep the one-time local extraction tractable.
+app versus NASA's LiCoO2 and Severson's LFP. All 4 groups are used (12
+cells total, ~3.1 GB compressed): Group 1 (cells 9/15/20, 1-day cycling
+@ C/2), Group 2 (cells 3/4/8, 1-day cycling @ C/4), Group 3 (cells
+10/11/14, 2-day cycling @ C/2), Group 4 (cells 12/18/19, 2-day cycling
+@ C/4) — all 5 days calendar rest @ 90% SoC (10 days for Groups 3/4).
+Each group is its own zip, downloaded and cached independently.
 
 Unlike NASA/Severson, this dataset is NOT dense per-cycle data. Each cell
 only has ~14 Reference Performance Test (RPT) checkpoints across its life
@@ -46,18 +49,37 @@ import numpy as np
 import pandas as pd
 import requests
 
-_GROUP1_URL = "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dwh246s15b"
+_GROUP_URLS: dict[int, str] = {
+    1: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dwh246s15b",
+    2: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dt148fh185",
+    3: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dff365528c",
+    4: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/d41687h50f",
+}
 
 _RAW_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "raw" / "oxford"
-_ZIP_PATH = _RAW_DIR / "Group_1.zip"
 
-OXFORD_CELL_IDS: list[str] = ["OX-9", "OX-15", "OX-20"]
+
+def _zip_path(group: int) -> pathlib.Path:
+    return _RAW_DIR / f"Group_{group}.zip"
+
+
+# Which group each cell belongs to — determines both which zip to open and
+# the "TPG{group}" filename prefix used inside that zip.
+_CELL_GROUP: dict[int, int] = {
+    9: 1, 15: 1, 20: 1,
+    3: 2, 4: 2, 8: 2,
+    10: 3, 11: 3, 14: 3,
+    12: 4, 18: 4, 19: 4,
+}
+
+OXFORD_CELL_IDS: list[str] = [f"OX-{c}" for c in sorted(_CELL_GROUP)]
 
 # Per-cell TPG-file-index -> procedure label, transcribed from the dataset's
 # own Guide_to_Datafiles.pdf. Only "BoL RPT"/"RPTn" indices are reference
 # performance tests (real full discharges); "Profile"/"CCCV"/"Tester
 # Malfunction" indices are daily drive-cycle stress segments, out of scope.
 _PROCEDURE_LABELS: dict[int, dict[int, str]] = {
+    # ── Group 1 — 1-day cycling @ C/2, 5-day calendar @ 90% SoC ──
     9: {
         1: "BoL", 2: "BoL", 3: "Profile", 4: "RPT1", 5: "Profile", 6: "Profile",
         7: "Profile", 8: "RPT2", 9: "RPT3", 10: "Profile", 11: "RPT4", 12: "Profile",
@@ -76,6 +98,62 @@ _PROCEDURE_LABELS: dict[int, dict[int, str]] = {
         7: "RPT3", 8: "RPT4", 9: "Profile", 10: "RPT5", 11: "RPT6", 12: "RPT7",
         13: "RPT8", 14: "Profile", 15: "Profile", 16: "RPT9", 17: "RPT10", 18: "RPT11",
         19: "RPT12",
+    },
+    # ── Group 2 — 1-day cycling @ C/4, 5-day calendar @ 90% SoC ──
+    3: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "Profile", 8: "RPT2", 9: "Profile", 10: "Profile", 11: "RPT3", 12: "Profile",
+        13: "RPT4", 14: "Profile", 15: "Profile", 16: "Profile", 17: "RPT5", 18: "Profile",
+        19: "Profile", 20: "RPT6",
+    },
+    4: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "Profile", 8: "Profile", 9: "Profile", 10: "RPT2", 11: "Profile", 12: "RPT3",
+        13: "Profile", 14: "Profile", 15: "Tester Malfunction", 16: "Tester Malfunction",
+        17: "Profile", 18: "RPT4", 19: "Profile", 20: "Profile", 21: "Profile",
+        22: "RPT5", 23: "Profile", 24: "Profile", 25: "RPT6",
+    },
+    8: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "Profile", 8: "RPT2", 9: "Profile", 10: "Profile", 11: "Profile", 12: "RPT3",
+        13: "Profile", 14: "RPT4", 15: "Profile", 16: "Profile", 17: "Profile",
+        18: "RPT5", 19: "Profile", 20: "Profile", 21: "RPT6",
+    },
+    # ── Group 3 — 2-day cycling @ C/2, 10-day calendar @ 90% SoC ──
+    10: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "RPT1", 5: "Profile", 6: "RPT2",
+        7: "RPT3", 8: "RPT4", 9: "Profile", 10: "RPT5", 11: "RPT6", 12: "RPT7",
+        13: "RPT8", 14: "Profile", 15: "RPT9", 16: "Profile", 17: "RPT10", 18: "RPT11",
+        19: "RPT12",
+    },
+    11: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "RPT1", 5: "Profile", 6: "RPT2",
+        7: "RPT3", 8: "RPT4", 9: "Profile", 10: "RPT5", 11: "RPT6", 12: "RPT7",
+        13: "RPT8", 14: "Profile", 15: "RPT9", 16: "Profile", 17: "RPT10", 18: "RPT11",
+        19: "RPT12",
+    },
+    14: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "RPT1", 5: "Profile", 6: "RPT2",
+        7: "RPT3", 8: "RPT4", 9: "Profile", 10: "RPT5", 11: "RPT6", 12: "RPT7",
+        13: "RPT8", 14: "RPT9", 15: "Profile", 16: "RPT10", 17: "RPT11", 18: "RPT12",
+    },
+    # ── Group 4 — 2-day cycling @ C/4, 10-day calendar @ 90% SoC ──
+    12: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "RPT2", 8: "Profile", 9: "Profile", 10: "RPT3", 11: "Profile", 12: "RPT4",
+        13: "Profile", 14: "Profile", 15: "RPT5", 16: "Profile", 17: "Profile", 18: "RPT6",
+    },
+    18: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "RPT2", 8: "Profile", 9: "Profile", 10: "RPT3", 11: "Profile", 12: "RPT4",
+        13: "Profile", 14: "Profile", 15: "RPT5", 16: "Profile", 17: "Profile", 18: "RPT6",
+    },
+    19: {
+        1: "BoL", 2: "BoL", 3: "Profile", 4: "Profile", 5: "RPT1", 6: "Profile",
+        7: "Profile", 8: "RPT2", 9: "Profile", 10: "Profile", 11: "Profile", 12: "Profile",
+        13: "Profile", 14: "Profile", 15: "RPT3", 16: "Profile", 17: "Profile", 18: "RPT4",
+        19: "Profile", 20: "Profile", 21: "Profile", 22: "Profile", 23: "Profile",
+        24: "RPT5", 25: "Profile", 26: "Profile", 27: "RPT6",
     },
 }
 
@@ -155,14 +233,15 @@ def _table_from_mat_bytes(mat_bytes: bytes) -> pd.DataFrame:
     return pd.DataFrame({name: col.flatten() for name, col in zip(varnames, cols_raw)})
 
 
-def _find_zip_entry(names: list[str], cell: int, tpg_index: int) -> "str | None":
+def _find_zip_entry(names: list[str], group: int, cell: int, tpg_index: int) -> "str | None":
     """
     Filenames inside the zip are inconsistently spaced/hyphenated (e.g.
     "TPG1 - Cell 9.mat" for index 1, "TPG1.4-Cell 9.mat" for index 4,
     "TPG1.10-Cell9.mat" for index 10) — match by parsing the numeric
-    suffix rather than exact string matching.
+    suffix rather than exact string matching. The "TPG{group}" prefix
+    matches the zip a cell's own group was downloaded into.
     """
-    pattern = re.compile(rf"TPG1(?:\.(\d+))?\s*-?\s*Cell\s*{cell}(?!\d)\.mat$")
+    pattern = re.compile(rf"TPG{group}(?:\.(\d+))?\s*-?\s*Cell\s*{cell}(?!\d)\.mat$")
     for name in names:
         m = pattern.search(name)
         if m:
@@ -172,29 +251,30 @@ def _find_zip_entry(names: list[str], cell: int, tpg_index: int) -> "str | None"
     return None
 
 
-def _download_and_cache(status_fn=None) -> None:
+def _download_group_zip(group: int, status_fn=None) -> None:
+    zip_path = _zip_path(group)
     _RAW_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not _ZIP_PATH.exists():
-        if status_fn:
-            status_fn("Downloading Oxford Path-Dependent Group 1 (~822 MB, one-time)…")
-        resp = requests.get(_GROUP1_URL, stream=True, timeout=600)
-        resp.raise_for_status()
-        with open(_ZIP_PATH, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-
+    if zip_path.exists():
+        return
     if status_fn:
-        status_fn("Parsing Oxford NCA reference-test checkpoints…")
+        status_fn(f"Downloading Oxford Path-Dependent Group {group} (one-time)…")
+    resp = requests.get(_GROUP_URLS[group], stream=True, timeout=600)
+    resp.raise_for_status()
+    with open(zip_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=1 << 20):
+            f.write(chunk)
 
-    with zipfile.ZipFile(_ZIP_PATH) as z:
+
+def _extract_group(group: int, status_fn=None) -> None:
+    cells_in_group = [c for c, g in _CELL_GROUP.items() if g == group]
+    with zipfile.ZipFile(_zip_path(group)) as z:
         names = z.namelist()
-        for cell in _PROCEDURE_LABELS:
+        for cell in cells_in_group:
             labels = _PROCEDURE_LABELS[cell]
             indices = _reference_test_indices(cell)
             rows = []
             for checkpoint_index, tpg_index in enumerate(indices):
-                entry = _find_zip_entry(names, cell, tpg_index)
+                entry = _find_zip_entry(names, group, cell, tpg_index)
                 if entry is None:
                     continue
                 if status_fn:
@@ -217,6 +297,18 @@ def _download_and_cache(status_fn=None) -> None:
             df.to_csv(_csv_path(cell), index=False)
 
 
+def _download_and_cache(status_fn=None, groups: "list[int] | None" = None) -> None:
+    """Download and extract each requested group's zip in turn (default: all 4).
+    Each group's zip is only downloaded once (skipped if already on disk) and
+    can be deleted again after extraction — only the small per-cell CSVs are
+    committed to the repo."""
+    for group in (groups or sorted(_GROUP_URLS)):
+        _download_group_zip(group, status_fn=status_fn)
+        if status_fn:
+            status_fn(f"Parsing Oxford NCA reference-test checkpoints — Group {group}…")
+        _extract_group(group, status_fn=status_fn)
+
+
 def _load_cached(cell: int) -> "dict | None":
     path = _csv_path(cell)
     if not path.exists():
@@ -232,12 +324,13 @@ def _load_cached(cell: int) -> "dict | None":
     }
 
 
-def download_and_prepare(status_fn=None) -> bool:
-    """Download Group 1, extract checkpoint CSVs, and return True on success.
-    Call this once locally, then commit data/raw/oxford/*.csv to the repo —
-    the ~822 MB zip itself is never committed (gitignored)."""
+def download_and_prepare(status_fn=None, groups: "list[int] | None" = None) -> bool:
+    """Download the requested group(s) (default: all 4), extract checkpoint
+    CSVs, and return True on success. Call this once locally per group, then
+    commit data/raw/oxford/*.csv to the repo — the zips themselves are never
+    committed (gitignored)."""
     try:
-        _download_and_cache(status_fn=status_fn or print)
+        _download_and_cache(status_fn=status_fn or print, groups=groups)
         return _all_cached()
     except Exception as exc:
         print(f"[oxford] Failed: {exc}")
@@ -261,8 +354,10 @@ def load_oxford_cells() -> dict[str, dict]:
 
 
 if __name__ == "__main__":
-    print("Downloading Oxford Path-Dependent Group 1 and extracting checkpoint CSVs…")
-    ok = download_and_prepare(status_fn=print)
+    import sys as _sys
+    _groups = [int(g) for g in _sys.argv[1:]] or None
+    print(f"Downloading Oxford Path-Dependent group(s) {_groups or 'all'} and extracting checkpoint CSVs…")
+    ok = download_and_prepare(status_fn=print, groups=_groups)
     if ok:
         print(f"Done — CSVs written to {_RAW_DIR}")
         print("Commit data/raw/oxford/*.csv to the repo to enable the Reference Datasets view.")

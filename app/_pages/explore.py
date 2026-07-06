@@ -593,12 +593,12 @@ def _page_reference_datasets():
     """
     Real measured degradation data from additional public datasets that
     aren't wired into the app's data_mode/model pipeline — currently just
-    the Oxford Path-Dependent NCA cells. Deliberately a standalone view,
-    not a 5th data_mode: with only ~14 reference-test checkpoints per cell
-    across 3 cells, there isn't enough data to honestly leave-cell-out
-    validate a predictive model the way NASA/Severson/synthetic cells get
-    one — this shows the real measured capacity-fade curve on its own
-    terms instead of forcing it through machinery built for dense
+    the Oxford Path-Dependent NCA cells (all 4 groups, 12 cells). Deliberately
+    a standalone view, not a 5th data_mode: with only ~8-14 reference-test
+    checkpoints per cell across 12 cells, there isn't enough data to honestly
+    leave-cell-out validate a predictive model the way NASA/Severson/synthetic
+    cells get one — this shows the real measured capacity-fade curve on its
+    own terms instead of forcing it through machinery built for dense
     per-cycle data.
     """
     st.markdown("<div class='section-header'>Reference Datasets — Additional Chemistries</div>", unsafe_allow_html=True)
@@ -615,8 +615,8 @@ def _page_reference_datasets():
         _empty_state(
             "Oxford NCA reference data not available locally",
             "Run `python src/oxford_loader.py` once locally to download and extract the Oxford "
-            "Path-Dependent Battery Degradation Dataset (Group 1), then commit the resulting CSVs "
-            "in data/raw/oxford/.",
+            "Path-Dependent Battery Degradation Dataset (all 4 groups), then commit the resulting "
+            "CSVs in data/raw/oxford/.",
             icon="🔬",
         )
         return
@@ -633,10 +633,10 @@ def _page_reference_datasets():
         "&mdash; Raj et al., <em>Batteries &amp; Supercaps</em> (Wiley), ODC-ODbL license. "
         "3 Ah NCR18650BD cells, <strong style='color:#f6ad55'>NCA</strong> (nickel cobalt aluminium oxide) "
         "chemistry &mdash; genuinely different from this platform's NASA (LiCoO2) and Severson (LFP) cells. "
-        "Only Group 1 (3 of 12 cells in the full dataset) is included here.<br><br>"
+        "All 4 groups (12 cells) are included here.<br><br>"
         "<strong style='color:#fc8181'>No predictive model is trained on this data.</strong> Each cell has "
-        "only ~14 Reference Performance Test (RPT) checkpoints over its life &mdash; not dense per-cycle "
-        "data like NASA/Severson &mdash; too few points across too few cells (3) to honestly leave-cell-out "
+        "only ~8-14 Reference Performance Test (RPT) checkpoints over its life &mdash; not dense per-cycle "
+        "data like NASA/Severson &mdash; too few points across too few cells (12) to honestly leave-cell-out "
         "validate a model. What's shown below is the real measured capacity-fade curve, nothing more."
         "</div>",
         unsafe_allow_html=True,
