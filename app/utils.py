@@ -51,6 +51,9 @@ FEATURE_LABELS = {
     "resistance_normalized": "Resistance (norm.)",
     "resistance_trend_30cy": "Resistance trend",
     "temp_rolling_30cy":   "Temperature (30-cy avg)",
+    "c_rate_rolling_10cy": "C-rate (10-cy avg)",
+    "stress_index":        "Composite stress index",
+    "dod_proxy":           "Depth of Discharge (proxy)",
 }
 
 # ---------------------------------------------------------------------------
