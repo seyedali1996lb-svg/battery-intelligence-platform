@@ -133,19 +133,47 @@ def page_decision(
         ("Repurpose (2nd life)", _c_npv, "#68d391",
          "Lower-demand application (stationary storage).", f"${_repack:.0f} repack cost"),
     ]
-    _best_npv = max(_opts, key=lambda x: x[1])
-    _best_lbl, _best_npv_v, _best_col_v, _best_desc, _best_cost_note = _best_npv
+    _npv_max = max(_opts, key=lambda x: x[1])
+
+    # The financial widget used to badge whichever option had the highest
+    # NPV as "★ Recommended", completely independent of the operational
+    # verdict above it -- live-reproduced: the hero card said "Continue
+    # Operation, High confidence" while this widget's own "★ Recommended"
+    # badge sat on "Repurpose (2nd life)" at a negative NPV, two contradictory
+    # "recommended" badges on one screen. The financial section must always
+    # foreground the option consistent with the operational headline instead;
+    # the NPV-maximizing option is still shown, but only as a labelled
+    # alternative when it actually differs.
+    _ACTION_TO_NPV_LABEL = {
+        "continue":     "Wait to EOL",
+        "inspect":      "Wait to EOL",
+        "second_life":  "Repurpose (2nd life)",
+        "recycle":      "Replace Now",
+    }
+    _aligned_lbl = _ACTION_TO_NPV_LABEL.get(action, _npv_max[0])
+    _aligned_opt = next((o for o in _opts if o[0] == _aligned_lbl), _npv_max)
+    _best_lbl, _best_npv_v, _best_col_v, _best_desc, _best_cost_note = _aligned_opt
+    _financial_disagrees = _aligned_opt[0] != _npv_max[0]
+
+    _badge_text = "★ Consistent with recommendation" if _financial_disagrees else "★ Recommended"
     _md_html(
         f"<div style='background:#1e2a38;border:2px solid {_best_col_v};"
         f"border-radius:12px;padding:20px 24px;margin-bottom:10px'>"
         f"<div style='font-size:10px;font-weight:700;color:{_best_col_v};"
-        f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px'>★ Recommended</div>"
+        f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px'>{_badge_text}</div>"
         f"<div style='font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:8px'>{_best_lbl}</div>"
         f"<div style='font-size:40px;font-weight:800;color:{_best_col_v}'>${_best_npv_v:,.0f}</div>"
         f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV at 8% discount rate</div>"
         f"<div style='font-size:12px;color:#a0aec0;margin-top:10px;line-height:1.5'>{_best_desc}</div>"
         f"<div style='font-size:11px;color:#4a5568;margin-top:4px'>{_best_cost_note}</div>"
-        f"</div>"
+        + (
+            f"<div style='font-size:11px;color:#94a3b8;margin-top:10px;padding-top:10px;"
+            f"border-top:1px solid #2d3748'>{_npv_max[0]} has the higher 5-yr NPV "
+            f"(${_npv_max[1]:,.0f}), but this platform's operational recommendation above "
+            f"is {action_label} — see Compare alternatives for the full picture.</div>"
+            if _financial_disagrees else ""
+        )
+        + f"</div>"
     )
     with st.expander("Compare alternatives"):
         _alts = [o for o in _opts if o[0] != _best_lbl]
@@ -156,7 +184,9 @@ def page_decision(
                     f"<div style='background:#1e2a38;border:1px solid #2d3748;"
                     f"border-radius:10px;padding:16px 18px;height:100%'>"
                     f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-                    f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}</div>"
+                    f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}"
+                    + (" · highest NPV" if _lbl == _npv_max[0] else "")
+                    + f"</div>"
                     f"<div style='font-size:26px;font-weight:800;color:{_col_v}'>${_npv_v:,.0f}</div>"
                     f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV</div>"
                     f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
