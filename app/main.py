@@ -863,7 +863,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         # ── Role selector (A2: compact inline — no nested expander) ──
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         _cur_role = st.session_state.get("user_role", "Engineer")
-        _role_icons = {"Engineer": "⚙", "Fleet Manager": "🗂", "Executive": "📊"}
+        _role_icons = {"Engineer": "⚙", "Fleet Manager": "🗂", "Executive": "📊", "Compliance Officer": "📋"}
         _role_icon = _role_icons.get(_cur_role, "⚙")
         _rc1, _rc2 = st.columns([4, 1])
         with _rc1:
@@ -901,20 +901,25 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 unsafe_allow_html=True,
             )
 
+        # A7: front-load 1-2 relevant nav groups for non-technical roles —
+        # other groups stay reachable, just collapsed, not hidden.
+        _PRIORITY_GROUPS = {
+            "Executive": {"Operate", "EU Passport"},
+            "Compliance Officer": {"EU Passport"},
+        }
+        _priority = _PRIORITY_GROUPS.get(_cur_role)
+
         for group_label, group_items in NAV_GROUPS:
-            st.markdown(
-                f"<div style='font-size:10px;font-weight:700;color:#4a5568;"
-                f"text-transform:uppercase;letter-spacing:0.1em;"
-                f"padding:10px 4px 4px;margin-top:2px'>{group_label}</div>",
-                unsafe_allow_html=True,
-            )
-            for label, key in group_items:
-                if st.button(
-                    label, key=f"nav_{key}", use_container_width=True,
-                    type="primary" if current_page == key else "secondary",
-                ):
-                    st.session_state.page = key
-                    st.rerun()
+            _has_current = any(key == current_page for _, key in group_items)
+            _expanded = True if _priority is None else (group_label in _priority or _has_current)
+            with st.expander(group_label.upper(), expanded=_expanded):
+                for label, key in group_items:
+                    if st.button(
+                        label, key=f"nav_{key}", use_container_width=True,
+                        type="primary" if current_page == key else "secondary",
+                    ):
+                        st.session_state.page = key
+                        st.rerun()
 
         # Derive chemistry from active mode — stored for page-level display
         _mode_chem = st.session_state.get("data_mode", "synthetic")
@@ -1214,7 +1219,7 @@ def main():
             "</div>",
             unsafe_allow_html=True,
         )
-        _r1, _r2, _r3 = st.columns(3)
+        _r1, _r2, _r3, _r4 = st.columns(4)
         _role_picked = None
         with _r1:
             st.markdown(
@@ -1249,6 +1254,17 @@ def main():
             )
             if st.button("Select Executive", key="onboard_exec", use_container_width=True):
                 _role_picked = "Executive"
+        with _r4:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>📋</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Compliance Officer</div>"
+                "<div style='font-size:12px;color:#718096'>EU 2023/1542 passport · Audit trail · Regulatory alerts</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select Compliance Officer", key="onboard_compliance", use_container_width=True):
+                _role_picked = "Compliance Officer"
         if _role_picked:
             st.session_state["user_role"] = _role_picked
             st.session_state["role_chosen"] = True
@@ -1258,6 +1274,8 @@ def main():
                     st.session_state.page = "exec_summary"
                 elif _role_picked == "Fleet Manager":
                     st.session_state.page = "fleet"
+                elif _role_picked == "Compliance Officer":
+                    st.session_state.page = "compliance"
                 else:
                     st.session_state.page = "overview"
             st.rerun()
