@@ -9,9 +9,11 @@ All data endpoints are read-only. Model outputs come from the same
 `load_everything()` bundle used by the Streamlit pages — no separate
 training, no separate cache. Every data endpoint requires a bearer token
 from POST /auth/login (see src/db.py's Organization/User model, added for
-this app's multi-tenancy) — the same shared reference-cell bundle is
-served to every organization today; org-scoped uploaded-fleet data via
-this API is a deferred follow-up, not yet wired up.
+this app's multi-tenancy). The shared reference-cell bundle (NASA/
+Severson/synthetic) is served to every organization; each org's own
+uploaded ("My Data") fleet — persisted via bundle_cache.save_tenant_bundle()
+the same way the Streamlit UI does — is additionally merged in for that
+org's requests only, using the org_id already carried in its bearer token.
 
 Usage
 -----
@@ -183,21 +185,43 @@ def _get_bundle() -> dict:
         return _bundle_cache
 
 
-def _get_featured_dfs() -> dict:
+def _get_org_bundle(org_id: "int | None"):
+    """Return the org's own persisted (featured_dfs, bundle, split_cycles)
+    triple via bundle_cache.load_tenant_bundle() — the exact same function
+    the Streamlit "My Data" mode uses — or None if org_id is absent or the
+    org hasn't uploaded anything yet. Loaded fresh per call (no caching)
+    since different requests may belong to different orgs."""
+    if org_id is None:
+        return None
+    try:
+        from src.bundle_cache import load_tenant_bundle  # type: ignore
+    except ImportError:
+        from bundle_cache import load_tenant_bundle  # type: ignore
+    return load_tenant_bundle(org_id)
+
+
+def _get_featured_dfs(org_id: "int | None" = None) -> dict:
     b = _get_bundle()
     # load_everything() returns (featured_dfs, bundles, split_cycles) — see
     # app/main.py's load_everything(). A dict-shaped fallback (from the
     # ImportError branch in _get_bundle()) has no featured_dfs of its own.
-    if isinstance(b, tuple):
-        return b[0]
-    return b.get("featured_dfs", {})
+    fdfs = b[0] if isinstance(b, tuple) else b.get("featured_dfs", {})
+
+    org_bundle = _get_org_bundle(org_id)
+    if org_bundle is not None:
+        org_fdfs = org_bundle[0]
+        fdfs = {**fdfs, **org_fdfs}
+    return fdfs
 
 
-def _get_bundles() -> dict:
+def _get_bundles(org_id: "int | None" = None) -> dict:
     b = _get_bundle()
-    if isinstance(b, tuple):
-        return b[1]
-    return b.get("bundles", {})
+    bundles = b[1] if isinstance(b, tuple) else b.get("bundles", {})
+
+    org_bundle = _get_org_bundle(org_id)
+    if org_bundle is not None:
+        bundles = {**bundles, "upload": org_bundle[1]}
+    return bundles
 
 
 # ── Response models ────────────────────────────────────────────────────────────
@@ -292,8 +316,21 @@ def _soh_status(soh: float) -> str:
 def _rul_reliable_for(cell_id: str, bundles: dict) -> bool:
     if cell_id in _NASA_CELL_IDS:
         bndl = bundles.get("nasa", {})
+    elif cell_id.startswith("S-"):
+        bndl = bundles.get("severson", {})
     else:
-        bndl = bundles.get("synth", bundles.get("upload", {}))
+        # "synth" and "upload" are both real keys once an org has uploaded
+        # data, so a plain dict.get("synth", dict.get("upload", {})) fallback
+        # would always pick "synth" first even for a cell that's only in the
+        # org's own upload bundle — pick whichever one actually lists this
+        # cell in its per-cell reliability map instead of guessing by key order.
+        for _key in ("synth", "upload"):
+            _candidate = bundles.get(_key, {})
+            if cell_id in _candidate.get("metrics", {}).get("per_cell_rul_reliable", {}):
+                bndl = _candidate
+                break
+        else:
+            bndl = bundles.get("upload") or bundles.get("synth", {})
     if not bndl:
         return False
     per_cell = bndl.get("metrics", {}).get("per_cell_rul_reliable", {})
@@ -343,8 +380,8 @@ def login(body: LoginRequest):
 @app.get("/health", response_model=HealthCheck, summary="Liveness check")
 def health(current_user: dict = Depends(get_current_user)):
     try:
-        fdfs = _get_featured_dfs()
-        bundles = _get_bundles()
+        fdfs = _get_featured_dfs(current_user["org_id"])
+        bundles = _get_bundles(current_user["org_id"])
         return HealthCheck(
             status="ok",
             cells_loaded=len(fdfs),
@@ -356,17 +393,17 @@ def health(current_user: dict = Depends(get_current_user)):
 
 @app.get("/cells", summary="List all cell IDs")
 def list_cells(current_user: dict = Depends(get_current_user)) -> dict:
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     return {"cells": sorted(fdfs.keys()), "count": len(fdfs)}
 
 
 @app.get("/cells/{cell_id}", response_model=CellLatest, summary="Latest metrics for one cell")
 def cell_latest(cell_id: str, current_user: dict = Depends(get_current_user)):
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
     df = fdfs[cell_id]
-    bundles = _get_bundles()
+    bundles = _get_bundles(current_user["org_id"])
     latest = df.iloc[-1]
     rul_ok = _rul_reliable_for(cell_id, bundles)
 
@@ -396,11 +433,11 @@ def cell_history(
     limit: int = Query(200, ge=1, le=2000, description="Max rows returned (newest last)"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
     df = fdfs[cell_id]
-    bundles = _get_bundles()
+    bundles = _get_bundles(current_user["org_id"])
     rul_ok = _rul_reliable_for(cell_id, bundles)
 
     # Return last `limit` cycles
@@ -439,11 +476,11 @@ def cell_rul(
     eol_threshold: float = Query(80.0, ge=60.0, le=95.0, description="EOL SOH threshold %"),
     current_user: dict = Depends(get_current_user),
 ):
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
     df = fdfs[cell_id]
-    bundles = _get_bundles()
+    bundles = _get_bundles(current_user["org_id"])
     rul_ok = _rul_reliable_for(cell_id, bundles)
     latest = df.iloc[-1]
 
@@ -467,7 +504,7 @@ def cell_rul(
 
 @app.get("/cells/{cell_id}/lineage", summary="Data lineage — source of every metric")
 def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -> dict:
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     if cell_id not in fdfs:
         _cell_not_found(cell_id)
     df = fdfs[cell_id]
@@ -513,8 +550,8 @@ def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -
 
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")
 def fleet_summary(current_user: dict = Depends(get_current_user)):
-    fdfs = _get_featured_dfs()
-    bundles = _get_bundles()
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    bundles = _get_bundles(current_user["org_id"])
     if not fdfs:
         raise HTTPException(status_code=503, detail="No cells loaded.")
 
@@ -563,7 +600,7 @@ def fleet_summary(current_user: dict = Depends(get_current_user)):
 
 @app.get("/fleet/alerts", summary="Active alert list — same logic as Alert Inbox UI")
 def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
-    fdfs = _get_featured_dfs()
+    fdfs = _get_featured_dfs(current_user["org_id"])
     if not fdfs:
         raise HTTPException(status_code=503, detail="No cells loaded.")
 
