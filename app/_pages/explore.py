@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _md_html, _empty_state, base_layout, _action_bar, NASA_CELL_IDS, SEVERSON_CELL_PREFIX
+from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder
 
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
@@ -34,7 +34,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
     # ── Pack Builder tab ─────────────────────────────────────────────────────
     if _exp_view == "Pack Builder":
-        _page_pack_builder(cell_ids, active_fdfs)
+        render_pack_builder(active_fdfs, bundles, key_prefix="explore")
         return
 
     # ── Reference Datasets tab ──────────────────────────────────────────────
@@ -671,123 +671,3 @@ def _page_reference_datasets():
         st.dataframe(_cp.set_index("checkpoint_index"), use_container_width=True)
 
 
-def _cell_source(cell_id: str) -> str:
-    """Coarse data-source tag used to block physically-meaningless mixed-source packs."""
-    if cell_id in NASA_CELL_IDS:
-        return "nasa"
-    if cell_id.startswith(SEVERSON_CELL_PREFIX):
-        return "severson"
-    return "synthetic"
-
-
-def _page_pack_builder(cell_ids: list, active_fdfs: dict):
-    """Virtual N-cell series/parallel pack simulation."""
-    st.markdown("<div class='section-header'>Virtual Pack Builder</div>", unsafe_allow_html=True)
-    _md_html(
-        "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
-        "Simulate a series or parallel pack from selected cells, using each cell's latest-cycle "
-        "capacity, resistance, and SOH. Capacity and resistance scale differently across chemistries "
-        "and sources — selections must come from a single data source (NASA, Severson, or synthetic)."
-        "</div>"
-    )
-
-    # Drop any previously-selected cells that no longer exist in this data
-    # source (e.g. after switching modes) — multiselect raises if its stored
-    # session_state value contains an option not in the new options list.
-    if "pack_builder_cells" in st.session_state:
-        st.session_state["pack_builder_cells"] = [
-            c for c in st.session_state["pack_builder_cells"] if c in cell_ids
-        ]
-    selected = st.multiselect(
-        "Cells for this pack", options=cell_ids, key="pack_builder_cells",
-        help="Pick 2 or more cells from the same data source.",
-    )
-    if len(selected) < 2:
-        _empty_state(
-            "Select at least 2 cells",
-            "Choose 2 or more cells from the same data source to build a virtual pack.",
-            icon="🔋",
-        )
-        return
-
-    sources = {_cell_source(c) for c in selected}
-    if len(sources) > 1:
-        _empty_state(
-            "Mixed data sources selected",
-            f"Selected cells span {', '.join(sorted(sources))} — capacity and resistance scales are "
-            "not comparable across chemistries/sources. Choose cells from a single source.",
-            "→ Narrow your selection to one source and try again.",
-            "⚠",
-        )
-        return
-
-    topology = st.radio(
-        "Pack topology", ["Series", "Parallel"],
-        horizontal=True, key="pack_builder_topology",
-    )
-
-    rows = []
-    for cid in selected:
-        df = active_fdfs.get(cid)
-        if df is None or len(df) == 0:
-            continue
-        cap = float(df["capacity_ah"].iloc[-1]) if "capacity_ah" in df.columns else float("nan")
-        res = float(df["resistance_ohm"].iloc[-1]) if "resistance_ohm" in df.columns else float("nan")
-        soh = float(df["soh_pct"].iloc[-1]) if "soh_pct" in df.columns else float("nan")
-        rows.append({"cell_id": cid, "capacity_ah": cap, "resistance_ohm": res, "soh_pct": soh})
-
-    pdf = pd.DataFrame(rows).dropna(subset=["capacity_ah", "soh_pct"])
-    if len(pdf) < 2:
-        _empty_state(
-            "Insufficient data",
-            "Selected cells are missing capacity or SOH data at the latest cycle.",
-            icon="⚠",
-        )
-        return
-
-    _bottleneck_idx = pdf["capacity_ah"].idxmin()
-    _bottleneck_cid = pdf.loc[_bottleneck_idx, "cell_id"]
-    _bottleneck_soh = float(pdf.loc[_bottleneck_idx, "soh_pct"])
-    _avg_soh_weighted = float((pdf["soh_pct"] * pdf["capacity_ah"]).sum() / pdf["capacity_ah"].sum())
-    _spread = float(pdf["soh_pct"].max() - pdf["soh_pct"].min())
-
-    if topology == "Series":
-        pack_capacity = float(pdf["capacity_ah"].min())
-    else:
-        pack_capacity = float(pdf["capacity_ah"].sum())
-
-    _has_resistance = pdf["resistance_ohm"].notna().all()
-    if _has_resistance:
-        if topology == "Series":
-            pack_resistance = float(pdf["resistance_ohm"].sum())
-        else:
-            pack_resistance = float(1.0 / (1.0 / pdf["resistance_ohm"]).sum())
-    else:
-        pack_resistance = float("nan")
-
-    _mc1, _mc2, _mc3, _mc4 = st.columns(4)
-    _mc1.metric("Pack capacity", f"{pack_capacity:.2f} Ah")
-    _mc2.metric("Pack resistance", f"{pack_resistance*1000:.1f} mΩ" if _has_resistance else "N/A")
-    _mc3.metric(
-        "Bottleneck-cell SOH" if topology == "Series" else "Capacity-weighted avg SOH",
-        f"{_bottleneck_soh:.1f}%" if topology == "Series" else f"{_avg_soh_weighted:.1f}%",
-    )
-    _mc4.metric("SOH spread (member cells)", f"{_spread:.1f}%")
-
-    st.caption(
-        f"Pack SOH is reported two ways since which framing is \"correct\" is a modelling choice: "
-        f"bottleneck-cell SOH ({_bottleneck_soh:.1f}%) — meaningful for series packs, where usable "
-        f"capacity is gated by the weakest cell — and capacity-weighted average SOH "
-        f"({_avg_soh_weighted:.1f}%) — meaningful for parallel packs, where capacity sums across cells."
-    )
-
-    _md_html(
-        f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-        f"padding:14px 18px;margin-top:8px'>"
-        f"<strong style='color:#fc8181'>Weakest cell: {_bottleneck_cid}</strong> — "
-        f"{'this cell caps the pack usable capacity in series topology.' if topology == 'Series' else 'lowest individual capacity contribution in parallel topology.'}"
-        f"</div>"
-    )
-
-    with st.expander("Per-cell breakdown"):
-        st.dataframe(pdf.set_index("cell_id"), use_container_width=True)
