@@ -11,7 +11,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _action_bar, _md_html, base_layout, LEGEND_H, NASA_CELL_IDS
+from utils import _action_bar, _md_html, base_layout, LEGEND_H, NASA_CELL_IDS, render_card
 from design_system import (
     make_badge, make_state_badge, section_header_html,
     BADGE_ESTIMATE, BADGE_ILLUST,
@@ -207,25 +207,24 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         "margin-bottom:12px;margin-top:20px'>7 · Compliance Status</div>",
         unsafe_allow_html=True,
     )
-    _md_html(
+    render_card(
         f"""
-        <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px;
-                    font-size:13px;color:#a0aec0;line-height:1.8">
-            <strong style="color:#e2e8f0">This is a data-structure demonstration, not a regulatory
-            submission.</strong><br><br>
-            Of {summ['n_total']} fields modelled on the EU Battery Regulation's data requirements:
-            <strong style="color:#48bb78">{summ['n_available']} are available</strong> from this
-            platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
-            cited estimates</strong> from the Consequences module, and
-            <strong style="color:#8896a8">{summ['n_unavailable']} are not available</strong> in
-            this demonstration.<br><br>
-            An actual regulatory submission under (EU) 2023/1542 would additionally require:
-            manufacturer-submitted identity and supply-chain records, a third-party accredited
-            carbon footprint audit, repair/refurbishment history tracking, and notified-body
-            sign-off — none of which a portfolio project can provide. No field on this page should
-            be read as a compliance claim.
-        </div>
-        """
+        <strong style="color:#e2e8f0">This is a data-structure demonstration, not a regulatory
+        submission.</strong><br><br>
+        Of {summ['n_total']} fields modelled on the EU Battery Regulation's data requirements:
+        <strong style="color:#48bb78">{summ['n_available']} are available</strong> from this
+        platform's validated pipeline, <strong style="color:#d69e2e">{summ['n_estimated']} are
+        cited estimates</strong> from the Consequences module, and
+        <strong style="color:#8896a8">{summ['n_unavailable']} are not available</strong> in
+        this demonstration.<br><br>
+        An actual regulatory submission under (EU) 2023/1542 would additionally require:
+        manufacturer-submitted identity and supply-chain records, a third-party accredited
+        carbon footprint audit, repair/refurbishment history tracking, and notified-body
+        sign-off — none of which a portfolio project can provide. No field on this page should
+        be read as a compliance claim.
+        """,
+        padding="20px 24px",
+        extra_style="font-size:13px;color:#a0aec0;line-height:1.8",
     )
 
 
@@ -474,16 +473,14 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         label_lines = label.split("\n")
         label_html = "<br>".join(label_lines)
         with col:
-            st.markdown(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                f"padding:16px 20px;height:100%'>"
+            render_card(
                 f"<div style='font-size:11px;color:#4a5568;line-height:1.5'>{label_html}</div>"
                 f"<div style='font-size:26px;font-weight:700;color:{colour};margin-top:6px'>{val}</div>"
                 f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>CO₂e</div>"
                 f"<div style='margin-top:8px'>{badge}</div>"
-                f"<div style='font-size:10px;color:#2d3748;margin-top:4px;line-height:1.4'>{src_note}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"<div style='font-size:10px;color:#2d3748;margin-top:4px;line-height:1.4'>{src_note}</div>",
+                padding="16px 20px",
+                extra_style="height:100%",
             )
 
     # ────────────────────────────────────────────────────────────────────────
@@ -629,9 +626,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             )
             fade_colour = "#48bb78"
 
-        st.markdown(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:18px 22px;margin-bottom:4px'>"
+        render_card(
             f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
             f"letter-spacing:0.08em;margin-bottom:8px'>Fade rate impact on carbon amortisation</div>"
             f"<div style='display:flex;align-items:baseline;gap:12px;margin-bottom:12px'>"
@@ -649,9 +644,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"wide uncertainty. "
             f"Tier thresholds (slow &lt;2 mAh/cy · moderate 2–5 mAh/cy · accelerating &gt;5 mAh/cy) "
             f"are illustrative — adjust for your cell chemistry."
-            f"</div>"
             f"</div>",
-            unsafe_allow_html=True,
+            padding="18px 22px",
+            extra_style="margin-bottom:4px",
         )
 
     # ────────────────────────────────────────────────────────────────────────
@@ -688,9 +683,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             if mat["eu_critical"] else ""
         )
         with col:
-            st.markdown(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                f"padding:14px 16px'>"
+            render_card(
                 f"<div style='font-size:12px;color:#a0aec0;font-weight:600'>"
                 f"{mat['name']}{eu_dot}</div>"
                 f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{mat['formula']}</div>"
@@ -698,9 +691,8 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 f"{scaled_g:.1f} g</div>"
                 f"<div style='font-size:11px;color:#8896a8'>est. per cell ({mat['g_range']} @ 2 Ah)</div>"
                 f"{rec_html}"
-                f"<div style='margin-top:10px'>{badge_html}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"<div style='margin-top:10px'>{badge_html}</div>",
+                padding="14px 16px",
             )
 
     ni_mat = next((m for m in CRITICAL_MATERIALS if m["name"] == "Nickel (Ni)"), None)
@@ -737,9 +729,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         current_note = target.get("current_note", "")
         bar_fill_31  = min(target["target_2031_pct"], 100)
         bar_fill_36  = min(target["target_2036_pct"], 100)
-        st.markdown(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:14px 20px;margin-bottom:10px'>"
+        render_card(
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
             f"margin-bottom:8px'>"
             f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>{target['material']}</div>"
@@ -755,9 +745,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"position:relative'>"
             f"<div style='background:#63b3ed;border-radius:4px;height:8px;width:{bar_fill_36/bar_fill_31*100:.0f}%'>"
             f"</div></div></div>"
-            f"<div style='font-size:10px;color:#4a5568'>Source: {target['source']}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"<div style='font-size:10px;color:#4a5568'>Source: {target['source']}</div>",
+            padding="14px 20px",
+            extra_style="margin-bottom:10px",
         )
 
     # ────────────────────────────────────────────────────────────────────────
