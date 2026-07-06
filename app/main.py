@@ -710,11 +710,17 @@ def _command_palette_dialog():
 
 # Guided tour — 4-step onboarding modal shown once per session for first-time
 # visitors. Uses the same @st.dialog pattern as the Command Palette above.
+#
+# Step 0's intro line used to hardcode "This fleet leads with NASA PCoE
+# cells", regardless of which data source was actually active — false
+# whenever a session started in Severson/synthetic/uploaded mode. It's now a
+# template filled in per-mode by _tour_data_mode_line() at render time,
+# mirroring the same mode -> description mapping render_sidebar() already
+# uses for its subtitle, so the two can't drift out of sync independently.
 _TOUR_STEPS = [
     (
         "Real measured data, not a toy demo",
-        "This fleet leads with <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 "
-        "measurements, not synthetic curves. Watch for the "
+        "This fleet is running on {data_mode_desc}. Watch for the "
         "<strong>Failure trajectory match</strong> chip in the sidebar: it flags cells "
         "whose degradation pattern closely resembles a cell that already failed.",
     ),
@@ -758,10 +764,24 @@ def _active_first_run_overlay() -> "str | None":
     return None
 
 
+def _tour_data_mode_line(mode: str) -> str:
+    """Mode-appropriate intro line for the guided tour's first step — mirrors
+    render_sidebar()'s subtitle mapping so both surfaces describe the
+    actually-active data source, never a hardcoded one."""
+    return {
+        "severson":  "real, measured <strong>Severson 2019 LFP</strong> cells — not synthetic curves",
+        "nasa":      "real, measured <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 measurements, not synthetic curves",
+        "synthetic": "<strong>physics-informed synthetic</strong> cells — modelled degradation, not measured data",
+        "uploaded":  "<strong>your own uploaded</strong> cell data",
+    }.get(mode, "real, measured <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 measurements, not synthetic curves")
+
+
 @st.dialog("Welcome — Guided Tour")
 def _guided_tour_dialog():
     step = st.session_state.get("tour_step", 0)
     title, body = _TOUR_STEPS[step]
+    if step == 0:
+        body = body.format(data_mode_desc=_tour_data_mode_line(st.session_state.get("data_mode", "nasa")))
 
     st.progress((step + 1) / len(_TOUR_STEPS))
     st.markdown(f"#### {title}")
