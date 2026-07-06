@@ -858,6 +858,27 @@ _TOUR_STEPS = [
 ]
 
 
+# ── First-run onboarding overlay sequencing ─────────────────────────────────
+# Rule, not a per-instance patch: at most one first-run overlay (role picker,
+# guided tour, any future one) renders per session, in this fixed order.
+# Two first-run modals stacked on top of each other on a fresh login was a
+# real, confusing bug found in review — this makes it structurally
+# impossible for a *future* onboarding overlay to reintroduce the same
+# collision, since adding one here is the only thing a new overlay needs to
+# do to be sequenced correctly (no need to hand-write an "and the other one
+# is already done" condition again, the way the tour's fix originally did).
+_FIRST_RUN_OVERLAYS = ["role_chosen", "tour_seen"]  # session_state "done" flags, in show-order
+
+
+def _active_first_run_overlay() -> "str | None":
+    """Return the session_state key of the next not-yet-completed first-run
+    overlay, or None once all of them are done."""
+    for key in _FIRST_RUN_OVERLAYS:
+        if not st.session_state.get(key, False):
+            return key
+    return None
+
+
 @st.dialog("Welcome — Guided Tour")
 def _guided_tour_dialog():
     step = st.session_state.get("tour_step", 0)
@@ -4303,63 +4324,16 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             )
             _db_fleet.set_setting(st.session_state["auth_org_id"], "last_digest_sent", _today)
 
-    # ── Executive summary bar (always visible) ──────────────────────────────
-    _fe_rows = []
-    for _fid, _fdf in featured_dfs.items():
-        if _fdf is None or _fdf.empty:
-            continue
-        _flast = _fdf.iloc[-1]
-        _fe_rows.append({
-            "soh": float(_flast.get("soh_pct", _flast.get("soh", 100))),
-            "cell_id": _fid,
-        })
-    if _fe_rows:
-        _fn         = len(_fe_rows)
-        _feol       = [r for r in _fe_rows if r["soh"] < 80]
-        _fdeg       = [r for r in _fe_rows if 80 <= r["soh"] < 90]
-        _fhealthy   = _fn - len(_feol) - len(_fdeg)
-        _fscore     = sum(r["soh"] for r in _fe_rows) / _fn
-        _score_col  = "#48bb78" if _fscore >= 90 else ("#ed8936" if _fscore >= 80 else "#fc8181")
-        _REPL_COST  = 150
-        _capex12    = (len(_feol) + len(_fdeg)) * _REPL_COST
-
-        _fe1, _fe2, _fe3, _fe4, _fe5 = st.columns(5)
-        with _fe1:
-            _md_html(
-                f"<div style='text-align:center;padding:8px 0'>"
-                f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
-                f"letter-spacing:0.1em;margin-bottom:4px'>Fleet Health</div>"
-                f"<div style='font-size:36px;font-weight:900;color:{_score_col};line-height:1'>"
-                f"{_fscore:.1f}%</div>"
-                f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
-                f"{_fhealthy} healthy · {len(_fdeg)} degrading · {len(_feol)} EOL"
-                f"</div></div>"
-            )
-        with _fe2:
-            st.metric("Cells at Risk", f"{len(_feol) + len(_fdeg)}", f"of {_fn}")
-        with _fe3:
-            st.metric("CAPEX (12 mo)", f"${_capex12:,.0f}", f"{len(_feol)+len(_fdeg)} replacements")
-        with _fe4:
-            if _feol:
-                st.error(f"{len(_feol)} cell{'s' if len(_feol)!=1 else ''} need immediate replacement")
-            elif _fdeg:
-                st.warning(f"{len(_fdeg)} cell{'s' if len(_fdeg)!=1 else ''} degrading")
-            else:
-                st.success("All cells healthy")
-        with _fe5:
-            if st.button("Business analysis →", key="fleet_to_copilot_biz", use_container_width=True):
-                st.session_state.page = "copilot"
-                st.session_state.copilot_query = "fleet_risk"
-                st.rerun()
-
-        st.markdown(
-            "<div style='height:1px;background:#2d3748;margin:16px 0'></div>",
-            unsafe_allow_html=True,
-        )
-
     # ── Build fleet summary row per cell ──
     # Bundle and per-cell reliability lookup is source-aware; uploaded cells use
     # the "upload" bundle, NASA cells the "nasa" bundle, synthetic the "synth" bundle.
+    # This is computed once, before any rendering, and every summary on this
+    # page (exec bar below, header metric chips, ranking table) reads from
+    # this same `rows` list — previously the exec bar independently recomputed
+    # its own stats straight from featured_dfs, which could silently diverge
+    # from the ranking table whenever a cell's bundle lookup failed (that
+    # exact divergence was a real bug found in review: the exec bar showed
+    # populated stats while the ranking table said "No cells loaded").
     import numpy as _np_fleet
     rows = []
     _synth_ids = set(CELL_STRESS_PROFILES.keys())
@@ -4465,6 +4439,49 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     if n_nasa:   src_parts.append(f"{n_nasa} NASA real")
     if n_upload: src_parts.append(f"{n_upload} uploaded")
     src_sub = " · ".join(src_parts) or "—"
+
+    # ── Executive summary bar (always visible) ──────────────────────────────
+    # Derived from the same `rows`/n_eol/n_degrading/n_healthy computed above
+    # — not a second, independent pass over featured_dfs — so this bar and
+    # the ranking table below can never show a different cell count again.
+    _fscore    = sum(r["soh"] for r in rows) / len(rows)
+    _score_col = "#48bb78" if _fscore >= 90 else ("#ed8936" if _fscore >= 80 else "#fc8181")
+    _REPL_COST = 150
+    _capex12   = (n_eol + n_degrading) * _REPL_COST
+
+    _fe1, _fe2, _fe3, _fe4, _fe5 = st.columns(5)
+    with _fe1:
+        _md_html(
+            f"<div style='text-align:center;padding:8px 0'>"
+            f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+            f"letter-spacing:0.1em;margin-bottom:4px'>Fleet Health</div>"
+            f"<div style='font-size:36px;font-weight:900;color:{_score_col};line-height:1'>"
+            f"{_fscore:.1f}%</div>"
+            f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+            f"{n_healthy} healthy · {n_degrading} degrading · {n_eol} EOL"
+            f"</div></div>"
+        )
+    with _fe2:
+        st.metric("Cells at Risk", f"{n_eol + n_degrading}", f"of {len(rows)}")
+    with _fe3:
+        st.metric("CAPEX (12 mo)", f"${_capex12:,.0f}", f"{n_eol + n_degrading} replacements")
+    with _fe4:
+        if n_eol:
+            st.error(f"{n_eol} cell{'s' if n_eol != 1 else ''} need immediate replacement")
+        elif n_degrading:
+            st.warning(f"{n_degrading} cell{'s' if n_degrading != 1 else ''} degrading")
+        else:
+            st.success("All cells healthy")
+    with _fe5:
+        if st.button("Business analysis →", key="fleet_to_copilot_biz", use_container_width=True):
+            st.session_state.page = "copilot"
+            st.session_state.copilot_query = "fleet_risk"
+            st.rerun()
+
+    st.markdown(
+        "<div style='height:1px;background:#2d3748;margin:16px 0'></div>",
+        unsafe_allow_html=True,
+    )
 
     _md_html(
         f"""
@@ -8444,14 +8461,13 @@ def main():
     _train_placeholder.empty()
 
     # ── Guided tour (once per session, first-time visitors) ───────────────────
-    # Deferred until after the role-onboarding interstitial (below) has been
-    # completed — both are first-run modals/overlays, and showing them at the
-    # same time stacked one on top of the other confused new users.
+    # Sequenced via _active_first_run_overlay() so it can never stack with the
+    # role-onboarding interstitial (below) or any future first-run overlay.
     if "tour_seen" not in st.session_state:
         st.session_state["tour_seen"] = False
     if "tour_step" not in st.session_state:
         st.session_state["tour_step"] = 0
-    if not st.session_state["tour_seen"] and st.session_state.get("role_chosen", False):
+    if _active_first_run_overlay() == "tour_seen":
         _guided_tour_dialog()
 
     # ── Failure trajectory memory (built once per session) ────────────────────
@@ -8565,8 +8581,10 @@ def main():
 
     cell_ids = list(active_fdfs.keys())
 
-    # A2: Role onboarding interstitial — shown once per session
-    if not st.session_state.get("role_chosen", False):
+    # A2: Role onboarding interstitial — shown once per session. Sequenced via
+    # _active_first_run_overlay() so it can never stack with the guided tour
+    # or any future first-run overlay.
+    if _active_first_run_overlay() == "role_chosen":
         st.markdown(
             "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
             "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
