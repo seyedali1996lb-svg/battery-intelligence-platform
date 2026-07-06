@@ -23,30 +23,13 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from data_loader import build_battery, get_cell_df, CELL_STRESS_PROFILES, _stress_factor
+from data_loader import build_battery, CELL_STRESS_PROFILES, _stress_factor
 from features import build_features, get_model_matrix
-from model import train_models, predict, feature_importance_df, top_drivers
+from model import train_models, predict
 from lco_eval import run_lco, RUL_RELIABLE_FLOOR
-from design_system import (
-    make_badge, make_state_badge, section_header_html,
-    BADGE_VALIDATED, BADGE_ESTIMATE, BADGE_ILLUST, BADGE_UNAVAIL,
-    BADGE_MEASURED, BADGE_SIMULATED, BADGE_SYNTHETIC,
-    BADGE_CALIBRATING, C_CALIBRATING,
-    provenance_banner,
-    ACTION_META, CONF_META,
-)
 from trajectory_memory import TrajectoryMemory
-from utils import (
-    NASA_CELL_IDS, LEGEND_H, PLOTLY_CONFIG, FEATURE_LABELS,
-    _md_html, _empty_state, _action_bar,
-    _cell_provenance, _analysis_provenance,
-    base_layout, soh_status, friendly, _soh_sparkline_svg,
-    render_pack_builder, _resample_df,
-)
-from import_adapter import adapt_upload_to_pipeline
-from bundle_cache import (load_cached, save_cached, clear_cache as clear_bundle_cache,
-                          load_features_cached, save_features_cached)
-from knee_detection import detect_knee, degradation_phases
+from utils import NASA_CELL_IDS, _md_html
+from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
 
 
 # ---------------------------------------------------------------------------
