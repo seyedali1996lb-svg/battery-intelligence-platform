@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import plotly.graph_objects as go
 
-from utils import _md_html, _empty_state, _action_bar
+from utils import _md_html, _empty_state, _action_bar, base_layout
 
 
 def page_live_monitor(cell_ids: list, active_fdfs: dict):
@@ -87,7 +87,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             st.session_state["lm_anomalies"] = []
             # Start subscriber first, then publisher
             _data_mode = st.session_state.get("data_mode", "synthetic")
-            _chem_map  = {cid: ("LFP" if cid.startswith("S-") else "NCA" if cid.startswith("B") else "LiCoO2")
+            _chem_map  = {cid: ("LFP" if cid.startswith("S-") else "LiCoO2")
                           for cid in cell_ids}
             _ok_sub = start_subscriber(
                 host=_broker_host, port=_broker_port,
@@ -237,13 +237,14 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                     hovertemplate="⚠ Anomaly<extra></extra>",
                 ))
             _fig_lm.update_layout(
-                height=200, margin=dict(l=10, r=10, t=28, b=10),
-                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                font=dict(color="#e2e8f0", size=10),
-                showlegend=False,
+                height=200,
+                **base_layout(
+                    margin=dict(l=10, r=10, t=28, b=10),
+                    showlegend=False,
+                    xaxis=dict(title="Reading #", zeroline=False),
+                    yaxis=dict(zeroline=False),
+                ),
                 title=dict(text=lbl, font=dict(size=11, color="#a0aec0"), x=0),
-                xaxis=dict(title="Reading #", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
             )
             _ccol.plotly_chart(_fig_lm, use_container_width=True)
 

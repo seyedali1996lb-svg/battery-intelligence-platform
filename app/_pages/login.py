@@ -47,10 +47,16 @@ def render_login() -> bool:
 
         with tab_signin:
             st.markdown("### Sign in")
-            username = st.text_input("Username", key="login_user", placeholder="engineer")
-            password = st.text_input("Password", key="login_pass", type="password", placeholder="••••••••")
+            # st.form() captures every field's value atomically at submit time —
+            # avoids a race between a fast Enter-key/click submit and a text_input's
+            # value not yet having committed to session_state (a known Streamlit
+            # gotcha with bare text_input + button, worse with browser autofill).
+            with st.form("signin_form"):
+                username = st.text_input("Username", key="login_user", placeholder="engineer")
+                password = st.text_input("Password", key="login_pass", type="password", placeholder="••••••••")
+                signin_submitted = st.form_submit_button("Sign in", use_container_width=True, type="primary")
 
-            if st.button("Sign in", use_container_width=True, type="primary", key="signin_btn"):
+            if signin_submitted:
                 user = db.get_user_by_username(username)
                 if user and db.verify_password(password, user["password_hash"]):
                     _log_in_user(user)
@@ -80,13 +86,15 @@ def render_login() -> bool:
                 "</div>",
                 unsafe_allow_html=True,
             )
-            org_name  = st.text_input("Organization name", key="signup_org", placeholder="Acme Batteries")
-            su_user   = st.text_input("Your username", key="signup_user", placeholder="alice")
-            su_name   = st.text_input("Display name (optional)", key="signup_display", placeholder="Alice Nguyen")
-            su_pass   = st.text_input("Password", key="signup_pass", type="password")
-            su_pass2  = st.text_input("Confirm password", key="signup_pass2", type="password")
+            with st.form("signup_form"):
+                org_name  = st.text_input("Organization name", key="signup_org", placeholder="Acme Batteries")
+                su_user   = st.text_input("Your username", key="signup_user", placeholder="alice")
+                su_name   = st.text_input("Display name (optional)", key="signup_display", placeholder="Alice Nguyen")
+                su_pass   = st.text_input("Password", key="signup_pass", type="password")
+                su_pass2  = st.text_input("Confirm password", key="signup_pass2", type="password")
+                signup_submitted = st.form_submit_button("Create organization", use_container_width=True, type="primary")
 
-            if st.button("Create organization", use_container_width=True, type="primary", key="signup_btn"):
+            if signup_submitted:
                 if not (org_name.strip() and su_user.strip() and su_pass):
                     st.error("Organization name, username, and password are required.")
                 elif su_pass != su_pass2:

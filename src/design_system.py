@@ -59,6 +59,15 @@ BADGE_ESTIMATE  = make_badge("Cited estimate",           C_AMBER)
 BADGE_ILLUST    = make_badge("Illustrative — not sourced", C_MUTED)
 BADGE_UNAVAIL   = make_badge("Not available in demo",    C_MUTED)
 
+# RUL reliability-floor gate — a per-cell fold R² below RUL_RELIABLE_FLOOR
+# withholds the RUL number. This is the app's most important trust signal
+# (it's what stops the model from guessing on cells it can't validate), so
+# every page renders it identically here rather than each page inventing
+# its own ad-hoc "not calibrated" treatment. Matches the .tag-calibrating
+# CSS class color (#f6e05e) already used on the Overview page hero.
+C_CALIBRATING     = "#f6e05e"
+BADGE_CALIBRATING = make_badge("Calibrating", C_CALIBRATING)
+
 # ---------------------------------------------------------------------------
 # Data-origin provenance badges — MUST appear on every analysis chart/section
 #

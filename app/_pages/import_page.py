@@ -529,9 +529,9 @@ def page_import():
     fig_prev.update_layout(
         **base_layout(
             height=280,
-            xaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+            xaxis=dict(zeroline=False,
                        title=dict(text="Cycle number", font=dict(size=11))),
-            yaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+            yaxis=dict(zeroline=False,
                        title=dict(text="Capacity (Ah)", font=dict(size=11))),
         )
     )

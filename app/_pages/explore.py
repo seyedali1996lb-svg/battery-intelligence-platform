@@ -47,11 +47,20 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         st.warning("Comparison requires at least 2 cells in the active fleet.")
         return
 
+    # If either selection is stale (e.g. after switching data source, the
+    # previously-picked cell isn't in the new cell_ids list), correct the
+    # stored session_state value before the widgets below are instantiated —
+    # index= alone only applies the first time a given key is created.
+    if st.session_state.get("compare_cell_a") not in cell_ids:
+        st.session_state["compare_cell_a"] = cell_ids[0]
+    if st.session_state.get("compare_cell_b") not in cell_ids:
+        st.session_state["compare_cell_b"] = cell_ids[min(1, len(cell_ids) - 1)]
+
     col1, col2 = st.columns(2)
     with col1:
-        cell_a = st.selectbox("Cell A", options=cell_ids, index=0, key="compare_cell_a")
+        cell_a = st.selectbox("Cell A", options=cell_ids, key="compare_cell_a")
     with col2:
-        cell_b = st.selectbox("Cell B", options=cell_ids, index=min(1, len(cell_ids) - 1), key="compare_cell_b")
+        cell_b = st.selectbox("Cell B", options=cell_ids, key="compare_cell_b")
 
     if cell_a == cell_b:
         _empty_state(
@@ -108,12 +117,10 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     ))
     _fig_soh.update_layout(
         height=300,
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-        font=dict(color="#e2e8f0"),
-        margin=dict(l=10, r=10, t=36, b=10),
-        hovermode="x unified",
-        xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-        yaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+        **base_layout(
+            xaxis=dict(title="Cycle", zeroline=False),
+            yaxis=dict(title="SOH %", zeroline=False),
+        ),
         legend=dict(font=dict(size=11, color="#718096")),
     )
     st.plotly_chart(_fig_soh, use_container_width=True)
@@ -134,12 +141,10 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         ))
         _fig_res.update_layout(
             height=280,
-            paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-            font=dict(color="#e2e8f0"),
-            margin=dict(l=10, r=10, t=36, b=10),
-            hovermode="x unified",
-            xaxis=dict(title="Cycle", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="Resistance (mΩ)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+            **base_layout(
+                xaxis=dict(title="Cycle", zeroline=False),
+                yaxis=dict(title="Resistance (mΩ)", zeroline=False),
+            ),
             legend=dict(font=dict(size=11, color="#718096")),
         )
         st.plotly_chart(_fig_res, use_container_width=True)
@@ -203,14 +208,20 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
                 line=dict(color="#fc8181", width=2),
                 fill="toself", fillcolor="rgba(252,129,129,0.08)",
             ))
+            # base_layout() doesn't cover polar charts (radialaxis/angularaxis,
+            # not xaxis/yaxis) — apply the same light/dark theme check directly.
+            _radar_light = st.session_state.get("light_mode", False)
+            _radar_font  = "#4a5568" if _radar_light else "#a0aec0"
+            _radar_grid  = "#e2e8f0" if _radar_light else "#1e2a38"
+            _radar_line  = "#cbd5e0" if _radar_light else "#2d3748"
             _fig_radar.update_layout(
                 height=380,
-                paper_bgcolor="#0e1117",
-                font=dict(color="#e2e8f0", size=12),
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color=_radar_font, size=12),
                 polar=dict(
-                    bgcolor="#0e1117",
-                    radialaxis=dict(visible=True, range=[0, 1], gridcolor="#1e2a38", linecolor="#2d3748", tickfont=dict(size=9, color="#4a5568")),
-                    angularaxis=dict(gridcolor="#1e2a38", linecolor="#2d3748", tickfont=dict(size=11, color="#a0aec0")),
+                    bgcolor="rgba(0,0,0,0)",
+                    radialaxis=dict(visible=True, range=[0, 1], gridcolor=_radar_grid, linecolor=_radar_line, tickfont=dict(size=9, color=_radar_font)),
+                    angularaxis=dict(gridcolor=_radar_grid, linecolor=_radar_line, tickfont=dict(size=11, color=_radar_font)),
                 ),
                 legend=dict(font=dict(size=11, color="#718096")),
                 margin=dict(l=60, r=60, t=30, b=30),
@@ -358,12 +369,12 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
 
             _fig_cl.update_layout(
                 height=360,
-                paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                font=dict(color="#e2e8f0"),
-                margin=dict(l=10, r=10, t=36, b=40),
-                hovermode="closest",
-                xaxis=dict(title="SOH %", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(title="30-cy Fade Rate (mSOH/cy)", gridcolor="#1e2a38", linecolor="#2d3748", zeroline=False),
+                **base_layout(
+                    hovermode="closest",
+                    xaxis=dict(title="SOH %", zeroline=False),
+                    yaxis=dict(title="30-cy Fade Rate (mSOH/cy)", zeroline=False),
+                    margin=dict(l=10, r=10, t=36, b=40),
+                ),
                 legend=dict(font=dict(size=10, color="#718096")),
                 title=dict(text=f"Fleet degradation clusters (k={_best_k}, silhouette-optimised)",
                            font=dict(size=12, color="#a0aec0"), x=0),
@@ -478,9 +489,8 @@ def _page_explore_cohort(active_fdfs: dict):
             _fig_coh.update_layout(
                 height=260, showlegend=False,
                 **base_layout(
-                    xaxis=dict(title="Cohort", gridcolor="#232d3b", linecolor="#2d3748"),
-                    yaxis=dict(title="Avg SOH %", gridcolor="#232d3b", linecolor="#2d3748",
-                               zeroline=False, range=[50, 105]),
+                    xaxis=dict(title="Cohort"),
+                    yaxis=dict(title="Avg SOH %", zeroline=False, range=[50, 105]),
                 ),
             )
             st.plotly_chart(_fig_coh, use_container_width=True)
@@ -554,9 +564,8 @@ def _page_explore_cohort(active_fdfs: dict):
                 _fig_traj.update_layout(
                     height=300,
                     **base_layout(
-                        xaxis=dict(title="Cycle Number", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                        yaxis=dict(title="SOH %", gridcolor="#232d3b", linecolor="#2d3748",
-                                   zeroline=False, range=[50, 105]),
+                        xaxis=dict(title="Cycle Number", zeroline=False),
+                        yaxis=dict(title="SOH %", zeroline=False, range=[50, 105]),
                     ),
                 )
                 st.plotly_chart(_fig_traj, use_container_width=True)
@@ -652,8 +661,8 @@ def _page_reference_datasets():
     _fig.update_layout(
         height=320,
         **base_layout(
-            xaxis=dict(title="Reference-test checkpoint (chronological)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-            yaxis=dict(title="SOH % (real measured)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            xaxis=dict(title="Reference-test checkpoint (chronological)", zeroline=False),
+            yaxis=dict(title="SOH % (real measured)", zeroline=False),
         ),
     )
     st.plotly_chart(_fig, use_container_width=True)
@@ -682,6 +691,13 @@ def _page_pack_builder(cell_ids: list, active_fdfs: dict):
         "</div>"
     )
 
+    # Drop any previously-selected cells that no longer exist in this data
+    # source (e.g. after switching modes) — multiselect raises if its stored
+    # session_state value contains an option not in the new options list.
+    if "pack_builder_cells" in st.session_state:
+        st.session_state["pack_builder_cells"] = [
+            c for c in st.session_state["pack_builder_cells"] if c in cell_ids
+        ]
     selected = st.multiselect(
         "Cells for this pack", options=cell_ids, key="pack_builder_cells",
         help="Pick 2 or more cells from the same data source.",

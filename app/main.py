@@ -31,6 +31,7 @@ from design_system import (
     make_badge, make_state_badge, section_header_html,
     BADGE_VALIDATED, BADGE_ESTIMATE, BADGE_ILLUST, BADGE_UNAVAIL,
     BADGE_MEASURED, BADGE_SIMULATED, BADGE_SYNTHETIC,
+    BADGE_CALIBRATING, C_CALIBRATING,
     provenance_banner,
     ACTION_META, CONF_META,
 )
@@ -732,7 +733,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
         {
             "key":       "nasa",
             "label":     "NASA PCoE",
-            "status":    f"{nasa_n} cells · real measured · NCA chemistry",
+            "status":    f"{nasa_n} cells · real measured · LiCoO2 chemistry",
             "available": nasa_n > 0,
         },
         {
@@ -1019,7 +1020,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         _mode_chem = st.session_state.get("data_mode", "synthetic")
         _chem_label = {
             "severson":  "LFP (Severson 2019)",
-            "nasa":      "LiCoO₂ NCA (NASA PCoE)",
+            "nasa":      "LiCoO₂ (NASA PCoE)",
             "synthetic": "LiCoO₂ (synthetic)",
             "uploaded":  "User-defined",
         }.get(_mode_chem, "LiCoO₂")
@@ -1040,9 +1041,16 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             _nav_target = st.session_state.pop("_nav_cell")
             if _nav_target in cell_ids:
                 st.session_state["selected_cell"] = _nav_target
-        # Determine default index — preserve current selection when cell list changes
+        # Determine default index — preserve current selection when cell list changes.
+        # If the previously-selected cell isn't in the new list (e.g. after switching
+        # data source), the widget's *stored* session_state value must be corrected
+        # here, before the widget is instantiated below — passing index= alone only
+        # sets the default the first time this key is ever created, so a stale value
+        # from a prior data source otherwise keeps rendering even though it's invalid.
         _cur_sel = st.session_state.get("selected_cell")
-        _sel_idx = cell_ids.index(_cur_sel) if _cur_sel in cell_ids else 0
+        if _cur_sel not in cell_ids:
+            st.session_state["selected_cell"] = cell_ids[0]
+        _sel_idx = cell_ids.index(st.session_state["selected_cell"])
         selected = st.selectbox(
             "Select cell",
             options=cell_ids,
@@ -1915,7 +1923,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # ── Chemistry inline indicator ────────────────────────────────────────────
     _chem_label = {
         "severson":  "LFP · Lithium Iron Phosphate (Severson 2019)",
-        "nasa":      "LiCoO₂ NCA · Lithium Cobalt Oxide (NASA PCoE)",
+        "nasa":      "LiCoO₂ · Lithium Cobalt Oxide (NASA PCoE)",
         "synthetic": "LiCoO₂ · Lithium Cobalt Oxide (synthetic)",
         "uploaded":  "User-defined chemistry",
     }.get(st.session_state.get("data_mode", "synthetic"), "LiCoO₂")
@@ -3615,9 +3623,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
         fig.update_layout(
             height=height,
             **base_layout(
-                xaxis=dict(title="% importance", gridcolor="#232d3b", linecolor="#2d3748",
-                           zeroline=False, range=[0, fi["importance_pct"].max() * 1.12]),
-                yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
+                xaxis=dict(title="% importance", zeroline=False, range=[0, fi["importance_pct"].max() * 1.12]),
+                yaxis=dict(autorange="reversed"),
             ),
         )
         return fig
@@ -3685,9 +3692,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                     _fig_shap.update_layout(
                         height=340,
                         **base_layout(
-                            xaxis=dict(title="Mean |SHAP value|", gridcolor="#232d3b", linecolor="#2d3748",
-                                       zeroline=False, range=[0, _max_shap * 1.12]),
-                            yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
+                            xaxis=dict(title="Mean |SHAP value|", zeroline=False, range=[0, _max_shap * 1.12]),
+                            yaxis=dict(autorange="reversed"),
                         ),
                     )
                     _fig_shap.update_layout(title=dict(
@@ -3723,9 +3729,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
                 _fig_wf.update_layout(
                     height=320,
                     **base_layout(
-                        xaxis=dict(title="SHAP value (impact on SOH prediction)", gridcolor="#232d3b",
-                                   linecolor="#2d3748", zeroline=True, zerolinecolor="#4a5568"),
-                        yaxis=dict(autorange="reversed", gridcolor="#232d3b", linecolor="#2d3748"),
+                        xaxis=dict(title="SHAP value (impact on SOH prediction)", zeroline=True, zerolinecolor="#4a5568"),
+                        yaxis=dict(autorange="reversed"),
                     ),
                 )
                 _fig_wf.update_layout(title=dict(
@@ -3857,10 +3862,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
     fig2.update_layout(
         height=300,
         **base_layout(
-            xaxis=dict(title="Actual SOH %", gridcolor="#232d3b", linecolor="#2d3748",
-                       zeroline=False, range=[ax_min, ax_max]),
-            yaxis=dict(title="Predicted SOH %", gridcolor="#232d3b", linecolor="#2d3748",
-                       zeroline=False, range=[ax_min, ax_max]),
+            xaxis=dict(title="Actual SOH %", zeroline=False, range=[ax_min, ax_max]),
+            yaxis=dict(title="Predicted SOH %", zeroline=False, range=[ax_min, ax_max]),
         ),
     )
     st.plotly_chart(fig2, use_container_width=True)
@@ -3911,8 +3914,8 @@ def page_insights(df: pd.DataFrame, bundle: dict, cell_id: str,
             _fig_arr.update_layout(
                 **base_layout(
                     height=320, legend=LEGEND_H,
-                    xaxis=dict(title="1000 / T (K⁻¹)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                    yaxis=dict(title="ln(Fade Rate per Cycle)", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+                    xaxis=dict(title="1000 / T (K⁻¹)", zeroline=False),
+                    yaxis=dict(title="ln(Fade Rate per Cycle)", zeroline=False),
                 ),
             )
             _fig_arr.update_layout(title=dict(text="Arrhenius Plot: ln(Fade Rate) vs 1000/T", font=dict(size=12, color="#a0aec0"), x=0))
@@ -4086,9 +4089,8 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
         _fig_grade.update_layout(
             **base_layout(
                 height=300,
-                xaxis=dict(title="Cell", gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
-                yaxis=dict(title="Grade Score (0–100)", gridcolor="#232d3b",
-                           linecolor="#2d3748", zeroline=False, range=[0, 115]),
+                xaxis=dict(title="Cell", zeroline=False),
+                yaxis=dict(title="Grade Score (0–100)", zeroline=False, range=[0, 115]),
             ),
         )
         _fig_grade.add_hline(y=75, line_dash="dot", line_color="#48bb78", line_width=1,
@@ -4365,6 +4367,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     def _bundle_for_cell(cid: str) -> dict | None:
         if cid in NASA_CELL_IDS:
             return bundles.get("nasa")
+        if cid.startswith("S-"):
+            return bundles.get("severson")
         if cid in _synth_ids:
             return bundles.get("synth")
         return bundles.get("upload")      # uploaded cell
@@ -5417,10 +5421,18 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     st.caption("Model series or parallel configurations and assess cell matching quality for pack assembly.")
     _pb_col1, _pb_col2 = st.columns(2)
     with _pb_col1:
+        _pb_cell_ids = list(featured_dfs.keys())
+        # Drop any previously-selected cells that no longer exist in this data
+        # source (e.g. after switching modes) — multiselect raises if its
+        # stored session_state value contains an option not in the new list.
+        if "pack_cells" in st.session_state:
+            st.session_state["pack_cells"] = [
+                c for c in st.session_state["pack_cells"] if c in _pb_cell_ids
+            ]
         selected_pack_cells = st.multiselect(
             "Select cells for pack",
-            options=list(featured_dfs.keys()),
-            default=list(featured_dfs.keys())[:min(4, len(featured_dfs))],
+            options=_pb_cell_ids,
+            default=_pb_cell_ids[:min(4, len(_pb_cell_ids))],
             key="pack_cells",
         )
     with _pb_col2:
@@ -5896,8 +5908,8 @@ def page_copilot(
                 _bar_fig.update_layout(
                     height=300,
                     **base_layout(
-                        xaxis=dict(title="% importance", gridcolor="#232d3b", zeroline=False),
-                        yaxis=dict(autorange="reversed", gridcolor="#232d3b"),
+                        xaxis=dict(title="% importance", zeroline=False),
+                        yaxis=dict(autorange="reversed"),
                     ),
                 )
                 st.plotly_chart(_bar_fig, use_container_width=True)
@@ -6106,10 +6118,18 @@ def page_decision(
     if soh <= 90:
         st.markdown("<div class='section-header'>Application Fit Scores</div>", unsafe_allow_html=True)
         _af_cols = st.columns(min(len(fit_scores), 4))
-        for _i, (_app_name, _score) in enumerate(fit_scores.items()):
+        _af_colour = {"fit": "#48bb78", "marginal": "#f6ad55", "not_fit": "#fc8181"}
+        for _i, (_app_key, _app) in enumerate(fit_scores.items()):
             with _af_cols[_i % len(_af_cols)]:
-                _acol = "#48bb78" if _score >= 70 else ("#f6ad55" if _score >= 40 else "#fc8181")
-                st.metric(_app_name.replace("_", " ").title(), f"{_score:.0f}%")
+                st.markdown(
+                    f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                    f"padding:14px 16px'>"
+                    f"<div style='font-size:11px;color:#4a5568'>{_app['short']}</div>"
+                    f"<div style='font-size:16px;font-weight:700;color:{_af_colour[_app['fit']]};margin-top:4px'>"
+                    f"{_app['fit'].replace('_', ' ').title()}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
     # ── 4b. Second-life marketplace ──────────────────────────────────────────
     if action in ("second_life", "recycle") or soh <= 85:
@@ -6310,7 +6330,14 @@ def page_decision(
 
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
     st.markdown("<div class='section-header'>Ask about this cell</div>", unsafe_allow_html=True)
-    _dc_bundle = bundles.get("nasa") if selected in NASA_CELL_IDS else bundles.get("synth")
+    if selected in NASA_CELL_IDS:
+        _dc_bundle = bundles.get("nasa")
+    elif selected.startswith("S-"):
+        _dc_bundle = bundles.get("severson")
+    elif selected in CELL_STRESS_PROFILES:
+        _dc_bundle = bundles.get("synth")
+    else:
+        _dc_bundle = bundles.get("upload")
     if _dc_bundle:
         try:
             from battery_copilot import build_cell_context, answer_query
@@ -6730,11 +6757,11 @@ def page_consequences(
         xaxis=dict(
             title="State of Health (%)",
             autorange="reversed",
-            gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+            zeroline=False,
         ),
         yaxis=dict(
             title=f"$ value{pack_label}",
-            gridcolor="#232d3b", linecolor="#2d3748", zeroline=False,
+            zeroline=False,
             rangemode="tozero",
         ),
     ))
@@ -7552,8 +7579,8 @@ def page_recommendations(
             rul_colour = "#e2e8f0"
             rul_note   = "Leave-cell-out validated"
         else:
-            rul_val    = "Not calibrated"
-            rul_colour = "#718096"
+            rul_val    = "Calibrating"
+            rul_colour = C_CALIBRATING
             rul_note   = f"Fold R² below {0.30} floor"
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
@@ -7602,7 +7629,7 @@ def page_recommendations(
             if cycles_to_inspect is not None
             else "Cycle count not estimated — RUL not calibrated for this cell."
         )
-        cycle_badge = BADGE_VALIDATED if rul_pred is not None else make_badge("Not calibrated", "#718096")
+        cycle_badge = BADGE_VALIDATED if rul_pred is not None else BADGE_CALIBRATING
         st.markdown(
             f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:20px 24px'>"
             f"<div style='font-size:14px;font-weight:600;color:#e2e8f0'>Next action: monitor fade rate</div>"
@@ -7958,9 +7985,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     fig_lc.update_layout(
         **base_layout(
             barmode="relative",
-            xaxis=dict(gridcolor="#232d3b", linecolor="#2d3748", zeroline=False),
+            xaxis=dict(zeroline=False),
             yaxis=dict(
-                gridcolor="#232d3b", linecolor="#2d3748", zeroline=True,
+                zeroline=True,
                 zerolinecolor="#4a5568",
                 title=dict(text=yaxis_label, font=dict(size=11)),
             ),
@@ -8417,11 +8444,14 @@ def main():
     _train_placeholder.empty()
 
     # ── Guided tour (once per session, first-time visitors) ───────────────────
+    # Deferred until after the role-onboarding interstitial (below) has been
+    # completed — both are first-run modals/overlays, and showing them at the
+    # same time stacked one on top of the other confused new users.
     if "tour_seen" not in st.session_state:
         st.session_state["tour_seen"] = False
     if "tour_step" not in st.session_state:
         st.session_state["tour_step"] = 0
-    if not st.session_state["tour_seen"]:
+    if not st.session_state["tour_seen"] and st.session_state.get("role_chosen", False):
         _guided_tour_dialog()
 
     # ── Failure trajectory memory (built once per session) ────────────────────

@@ -435,7 +435,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             help="LFP cathode + graphite anode. Default 4.4 wt% from literature.",
         )
 
-    with st.expander("LiCoO2 / NCA (NASA cells)", expanded=False):
+    with st.expander("LiCoO2 (NASA cells)", expanded=False):
         _c1, _c2 = st.columns(2)
         with _c1:
             st.number_input("Co content — wt%", min_value=0.0, max_value=40.0, step=0.1,
