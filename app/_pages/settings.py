@@ -630,6 +630,47 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 st.error(f"VRM connection failed: {_vrm_e}")
 
     # ────────────────────────────────────────────────────────────────────────
+    # BMS Connector (Orion Jr2)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("BMS Connector (Orion Jr2)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Pull real cycle data directly from an Orion Jr2 BMS's REST gateway instead of "
+        "manual CSV upload. No live Orion account exists to test this integration against — "
+        "it is built against Orion's publicly documented REST shape, not verified end-to-end. "
+        "Paste your own API key and cell ID below; this platform never contacts Orion without "
+        "a key set."
+        "</div>"
+    )
+    _orion_key = st.text_input(
+        "Orion BMS API key", value=st.session_state.get("orion_bms_api_key", ""),
+        type="password", key="orion_bms_api_key",
+    )
+    _orion_cell_id = st.text_input(
+        "Cell ID to monitor", value=st.session_state.get("orion_bms_cell_id", ""),
+        key="orion_bms_cell_id",
+    )
+    db.set_setting(st.session_state["auth_org_id"], "orion_bms_api_key", _orion_key)
+    db.set_setting(st.session_state["auth_org_id"], "orion_bms_cell_id", _orion_cell_id)
+    if not (_orion_key and _orion_cell_id):
+        _empty_state(
+            "Not yet connected",
+            "Paste your Orion BMS API key and a cell ID above to enable pulling real cycle "
+            "data directly from your Orion Jr2 gateway.",
+            icon="🔌",
+        )
+    else:
+        if st.button("Test Orion BMS connection", key="orion_test_btn"):
+            from bms_connectors import fetch_orion_bms
+            _orion_result = fetch_orion_bms(_orion_cell_id, _orion_key)
+            if _orion_result is None:
+                st.warning("Connected, but no battery records were returned for this cell.")
+            elif isinstance(_orion_result, dict) and "error" in _orion_result:
+                st.error(f"Orion BMS connection failed: {_orion_result['error']}")
+            else:
+                st.success(f"Fetched {len(_orion_result)} records for cell {_orion_cell_id}.")
+
+    # ────────────────────────────────────────────────────────────────────────
     # Second-Life Marketplace (Circunomics)
     # ────────────────────────────────────────────────────────────────────────
     _section("Second-Life Marketplace (Circunomics)")
