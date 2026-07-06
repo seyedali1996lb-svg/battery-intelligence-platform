@@ -12,7 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from design_system import section_header_html
-from utils import _action_bar, base_layout, LEGEND_H
+from utils import _action_bar, base_layout, LEGEND_H, render_card
 from import_adapter import adapt_upload_to_pipeline
 from features import build_features, get_model_matrix
 from model import train_models, predict
@@ -559,16 +559,14 @@ def page_import():
     # ── Section 4: Confirmation ─────────────────────────────────────────────
     _section("Analyse This Data")
 
-    st.markdown(
-        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-        "padding:20px 24px;margin-bottom:16px'>"
+    render_card(
         f"<div style='font-size:13px;color:#a0aec0;line-height:1.7'>"
         f"<strong style='color:#e2e8f0'>{summary['n_cells']} cells</strong> · "
         f"<strong style='color:#e2e8f0'>{sum(summary['cycles_per_cell'].values()):,} total cycles</strong> · "
         f"{'Temperature available' if summary['has_temperature'] else 'Temperature assumed 25°C'}"
-        f"</div>"
         f"</div>",
-        unsafe_allow_html=True,
+        padding="20px 24px",
+        extra_style="margin-bottom:16px",
     )
 
     # Show completion summary if upload has already been processed this session
