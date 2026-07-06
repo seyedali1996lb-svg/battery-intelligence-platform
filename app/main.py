@@ -6088,15 +6088,24 @@ def page_decision(
                     f"</div>"
                 )
 
-    st.markdown(
-        f"<p style='font-size:11px;color:#718096;line-height:1.6;margin:4px 0 0'>"
-        f"5-yr NPV · {_npv_rate*100:.0f}% discount rate [WACC assumption, adjust in Scenario Planner] · "
-        f"$80/kWh·yr energy value [{make_badge('Illustrative', '#718096')} IEA 2024 LCOS range $60–140/kWh·yr] · "
-        f"${_repl_cost:.0f}/cell replacement [{make_badge('Illustrative', '#718096')} BNEF 2024 range $100–200/cell] · "
-        f"${_repack:.0f} repack cost [{make_badge('Illustrative', '#718096')} engineering estimate]. "
-        f"Use the NPV Scenario Planner below to adjust assumptions — not financial advice.</p>",
-        unsafe_allow_html=True,
-    )
+    with st.popover("ⓘ Assumptions", use_container_width=False):
+        st.markdown(
+            f"<div style='font-size:12px;color:#a0aec0;line-height:1.8'>"
+            f"<strong style='color:#e2e8f0'>5-yr NPV · {_npv_rate*100:.0f}% discount rate</strong><br>"
+            f"WACC assumption — adjust in the NPV Scenario Planner below.<br><br>"
+            f"<strong style='color:#e2e8f0'>$80/kWh·yr energy value</strong> "
+            f"{make_badge('Illustrative', '#718096')}<br>"
+            f"IEA 2024 LCOS range $60–140/kWh·yr.<br><br>"
+            f"<strong style='color:#e2e8f0'>${_repl_cost:.0f}/cell replacement</strong> "
+            f"{make_badge('Illustrative', '#718096')}<br>"
+            f"BNEF 2024 range $100–200/cell.<br><br>"
+            f"<strong style='color:#e2e8f0'>${_repack:.0f} repack cost</strong> "
+            f"{make_badge('Illustrative', '#718096')}<br>"
+            f"Engineering estimate.<br><br>"
+            f"<em style='color:#4a5568'>Not financial advice.</em>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
