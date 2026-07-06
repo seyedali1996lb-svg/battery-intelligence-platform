@@ -9,6 +9,7 @@ on:
 jobs:
   lint-and-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +38,9 @@ jobs:
               sys.exit(1)
           print(f'All Python files OK')
           "
+
+      - name: Run test suite
+        run: python -m pytest tests/ -v
 
       - name: Check FEATURE_VERSION bumped when features.py changed
         run: |
