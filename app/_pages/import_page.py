@@ -183,6 +183,10 @@ def _show_upload_summary():
         "\n⚠ LCO run on fewer than 3 cells — reliability estimates are less stable than usual."
         if meta.get("lco_limited") else ""
     )
+    lco_lim_html = (
+        f'<div style="font-size:12px;color:#f6ad55;margin-top:10px">{lco_lim_note}</div>'
+        if meta.get("lco_limited") else ""
+    )
     rul_reliable_count = n - k
 
     st.markdown(
@@ -196,7 +200,7 @@ def _show_upload_summary():
         f"<span style='color:#4a5568'>(leave-cell-out)</span><br>"
         f"RUL reliable: <strong style='color:#e2e8f0'>{rul_reliable_count} of {n}</strong> cells"
         f"</div>"
-        f"{('<div style=\"font-size:12px;color:#f6ad55;margin-top:10px\">' + lco_lim_note + '</div>') if meta.get('lco_limited') else ''}"
+        f"{lco_lim_html}"
         f"</div>",
         unsafe_allow_html=True,
     )
