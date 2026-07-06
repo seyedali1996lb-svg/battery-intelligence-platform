@@ -119,6 +119,9 @@ def _render_trajectory_match_card(
           </div>
         </div>"""
     )
+    if st.button("Go to Decide & Ask →", key=f"traj_to_dec_{cell_id}", use_container_width=True):
+        st.session_state.page = "decision"
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
