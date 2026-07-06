@@ -17,6 +17,7 @@ from utils import (
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from lco_eval import RUL_RELIABLE_FLOOR
 from trajectory_memory import reconcile_rul_estimates
+from chemistry_profiles import ChemistryProfile
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +313,18 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     if not rul_calibrating and current_rul is not None and cycles_per_day > 0:
         months_remaining = current_rul / cycles_per_day / 30.44
 
-    is_nasa = cell_id in NASA_CELL_IDS
-    if is_nasa:
-        source_tag = "NASA real · 24°C · 2A discharge"
-    else:
+    # Source tag resolved via ChemistryProfile.for_cell() (not an is_nasa boolean)
+    # so Severson/Oxford/uploaded cells report as real measured data instead of
+    # falling into a "Synthetic" else-branch — same fix pattern as src/passport.py.
+    _profile = ChemistryProfile.for_cell(cell_id)
+    if _profile.provenance == "synthetic":
         p  = CELL_STRESS_PROFILES.get(cell_id, {})
         sf = _stress_factor(p.get("temp_mean",25), p.get("c_rate",1.0), p.get("dod",1.0))
         source_tag = f"Synthetic · Stress {sf:.2f}x baseline"
+    elif cell_id in NASA_CELL_IDS:
+        source_tag = "NASA real · 24°C · 2A discharge"
+    else:
+        source_tag = f"{_profile.display_name} · real measured data"
 
     sparkline_svg = _soh_sparkline_svg(df["soh_pct"])
     interval_html = ""

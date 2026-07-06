@@ -50,7 +50,7 @@ def page_decision(
     fade_30         = float(latest.get("fade_rate_30cy", 0.0))
     fade_50         = float(latest.get("fade_rate_50cy", 0.0))
     is_nasa         = selected in NASA_CELL_IDS
-    source          = "nasa" if is_nasa else "synth"
+    source          = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
     rul_pred_raw    = latest.get("rul_pred", None)
     rul_pred        = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
 

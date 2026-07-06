@@ -295,7 +295,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     from consequences import ASSUMPTIONS, application_fit, financial_comparison
 
     is_nasa = selected in NASA_CELL_IDS
-    source  = "nasa" if is_nasa else "synth"
+    source  = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
     p       = build_passport(selected, df, bundle, rul_reliable)
 
     latest  = df.iloc[-1]
@@ -382,7 +382,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     )
 
     is_nasa = selected in NASA_CELL_IDS
-    source  = "nasa" if is_nasa else "synth"
+    source  = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
     latest  = df.iloc[-1]
     soh     = float(latest["soh_pct"])
     cycles  = int(latest["cycle_number"])
