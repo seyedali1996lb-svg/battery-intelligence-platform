@@ -901,6 +901,62 @@ def answer_fleet_compare(ctx: dict, fleet_stats: dict) -> str:
 # Fleet-level answer (no specific cell required)
 # ---------------------------------------------------------------------------
 
+def answer_fleet_query(query: str, fleet_stats: dict) -> str:
+    """
+    Free-text natural-language front door for fleet-level questions — the
+    "Ask the fleet" bar on the Fleet page. Deliberately restricted to
+    fleet-level answer functions (answer_alerts, answer_replacement_budget,
+    answer_fleet_risk) that need only fleet_stats, not a pre-selected cell —
+    build_cell_context() indexes featured_dfs[cell_id] directly and cannot
+    run without one, so a genuinely cell-agnostic "ask anything" bar isn't
+    possible here. Per-cell questions ("why is B0018 degrading faster?")
+    are out of scope for this entry point; the per-cell Copilot on the
+    Decide & Ask page answers those instead.
+
+    Unmatched queries fall back to TF-IDF retrieval over the battery-
+    knowledge corpus plus an honest list of what this bar *can* answer —
+    never a fabricated answer for a question outside its scope.
+
+    Every routed answer appends an explicit reliability/calibration caveat
+    in the same breath as the numbers (which cells are excluded from a
+    fleet-wide RUL figure because their RUL isn't calibrated) rather than
+    a clean-sounding number with the caveat buried elsewhere.
+    """
+    q = query.lower().strip()
+    unreliable = fleet_stats.get("unreliable_rul", [])
+    n = fleet_stats.get("n_cells", 0)
+
+    caveat = ""
+    if unreliable:
+        shown = ", ".join(unreliable[:5]) + (", …" if len(unreliable) > 5 else "")
+        caveat = (
+            f"\n\n*Reliability note: {len(unreliable)} of {n} cells ({shown}) have RUL "
+            f"predictions below the reliability floor — excluded from any RUL-based "
+            f"figure above.*"
+        )
+
+    if any(k in q for k in ("budget", "cost", "spend", "afford", "expensive")):
+        return answer_replacement_budget(fleet_stats) + caveat
+    if any(k in q for k in ("risk", "exposure", "danger", "business case")):
+        return answer_fleet_risk(fleet_stats) + caveat
+    if any(k in q for k in ("alert", "summary", "overview", "eol", "end of life", "flag", "attention", "status")):
+        return answer_alerts(fleet_stats) + caveat
+
+    from copilot_retrieval import retrieve
+    related = retrieve(query, top_k=2)
+    fallback = (
+        "I can answer fleet-level questions about:\n\n"
+        "- **Alerts** — \"What are the current fleet alerts?\"\n"
+        "- **Replacement budget** — \"What will replacement cost over the next 12 months?\"\n"
+        "- **Fleet risk** — \"What is the business risk in my fleet?\"\n\n"
+        "For questions about one specific cell (e.g. why it's degrading faster than others), "
+        "use the per-cell Copilot on the Decide & Ask page instead."
+    )
+    if related:
+        fallback += "\n\nRelated background:\n\n" + "\n\n".join(related)
+    return fallback
+
+
 def answer_alerts(fleet_stats: dict) -> str:
     """Fleet-wide alert summary — identifies EOL cells, fastest fading, and uncalibrated RUL."""
     eol       = fleet_stats["eol_cells"]

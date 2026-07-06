@@ -668,6 +668,54 @@ def page_settings(featured_dfs: dict, bundles: dict):
                 st.success("Circunomics connection succeeded.")
 
     # ────────────────────────────────────────────────────────────────────────
+    # Maintenance/CMMS Write-Back
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Maintenance Write-Back (CMMS/ERP)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Create a maintenance ticket in your CMMS/ERP system directly from the Decide & Ask "
+        "page's recommendation. No specific target system is wired up here — this is a "
+        "documented adapter pattern built against the generic REST shape most ticketing "
+        "systems expose (Maximo, SAP PM, Fiix, UpKeep, etc.). Point it at your own system's "
+        "endpoint and API key below; without a key, the \"Create CMMS ticket\" button stays "
+        "disabled."
+        "</div>"
+    )
+    _cmms_base_url = st.text_input(
+        "CMMS/ERP API base URL", value=st.session_state.get("cmms_api_base_url", ""),
+        key="cmms_api_base_url",
+        help="e.g. https://your-instance.example-cmms.com/v1",
+    )
+    db.set_setting(st.session_state["auth_org_id"], "cmms_api_base_url", _cmms_base_url)
+    _cmms_key = st.text_input(
+        "CMMS/ERP API key", value=st.session_state.get("cmms_api_key", ""),
+        type="password", key="cmms_api_key",
+        help="Issued by your CMMS/ERP provider — not a public self-serve key.",
+    )
+    db.set_setting(st.session_state["auth_org_id"], "cmms_api_key", _cmms_key)
+    if not _cmms_key:
+        _empty_state(
+            "Not yet connected",
+            "Paste a CMMS/ERP API key above to enable ticket creation directly from the "
+            "Decide & Ask page instead of manual logging only.",
+            icon="🛠",
+        )
+    else:
+        if st.button("Test CMMS connection", key="cmms_test_btn"):
+            from cmms_adapter import create_maintenance_ticket
+            _cmms_result = create_maintenance_ticket(
+                "TEST-CELL", "Connection test", "Test ticket from Battery Intelligence Platform",
+                "low", _cmms_key,
+                api_base_url=_cmms_base_url or "https://api.example-cmms.com/v1",
+            )
+            if _cmms_result is None:
+                st.warning("No API key configured.")
+            elif "error" in _cmms_result:
+                st.error(f"CMMS connection failed: {_cmms_result['error']}")
+            else:
+                st.success("CMMS connection succeeded.")
+
+    # ────────────────────────────────────────────────────────────────────────
     # Team Members (admin-only — invite teammates into this organization)
     # ────────────────────────────────────────────────────────────────────────
     if st.session_state.get("auth_role") == "admin":

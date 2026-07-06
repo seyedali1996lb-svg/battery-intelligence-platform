@@ -4198,6 +4198,25 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     _action_bar("fleet")
     st.markdown("# Which cells need attention this week?")
 
+    # ── U5: "Ask the fleet" natural-language front door ──────────────────────
+    _af_input = st.text_input(
+        "Ask the fleet", placeholder="e.g. 'What are the current fleet alerts?' or "
+        "'What will replacement cost over the next 12 months?'",
+        key="fleet_ask_input",
+    )
+    if _af_input:
+        from battery_copilot import build_fleet_stats, answer_fleet_query
+        _af_stats = build_fleet_stats(featured_dfs, bundles)
+        _af_answer = answer_fleet_query(_af_input, _af_stats)
+        _md_html(
+            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+            f"padding:16px 20px;margin-bottom:16px'>"
+            f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{make_badge('Template', '#718096')} · Fleet</div>"
+            f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_af_answer}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     # ── Best-effort daily fleet digest (session/page-load-triggered, not a
     # real background cron — this app has no daemon process available) ──────
     import db as _db_fleet
@@ -6178,7 +6197,7 @@ def page_decision(
 
     # ── 5. Log Decision ─────────────────────────────────────────────────────
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    _log_col, _ = st.columns([1, 3])
+    _log_col, _cmms_col, _ = st.columns([1, 1, 2])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
         import db as _db
         _entry = {
@@ -6196,6 +6215,35 @@ def page_decision(
         st.session_state["decision_log"].append(_entry)
         _db.save_decision(st.session_state["auth_org_id"], _entry)
         st.success(f"Logged: {action_label} for {selected}")
+
+    # ── U4: CMMS/ERP write-back ──────────────────────────────────────────────
+    _cmms_api_key = st.session_state.get("cmms_api_key", "")
+    if _cmms_col.button(
+        "Create CMMS ticket", key="dec_cmms_btn", use_container_width=True,
+        disabled=not _cmms_api_key,
+        help="Create a maintenance ticket in your CMMS/ERP system for this recommendation. "
+             "Configure a CMMS API key in Settings to enable this."
+             if not _cmms_api_key else
+             "Creates a maintenance ticket in your configured CMMS/ERP system.",
+    ):
+        from cmms_adapter import create_maintenance_ticket
+        _cmms_base_url = st.session_state.get("cmms_api_base_url", "") or "https://api.example-cmms.com/v1"
+        _cmms_title = f"{action_label} — {selected}"
+        _cmms_desc = (
+            f"Recommended action: {action_label} (confidence: {conf_label}). "
+            f"SOH: {soh:.1f}%. " + " ".join(result["action_reasons"])
+        )
+        _cmms_priority = "high" if action in ("recycle",) else "medium" if action == "second_life" else "low"
+        _cmms_result = create_maintenance_ticket(
+            selected, _cmms_title, _cmms_desc, _cmms_priority, _cmms_api_key,
+            api_base_url=_cmms_base_url,
+        )
+        if _cmms_result is None:
+            st.warning("No CMMS API key configured — set one up in Settings first.")
+        elif "error" in _cmms_result:
+            st.error(f"CMMS ticket creation failed: {_cmms_result['error']}")
+        else:
+            st.success(f"CMMS ticket created for {selected}.")
 
     # E4: Audit trail with status chips and outcome tracking
     _dlog = st.session_state.get("decision_log", [])
