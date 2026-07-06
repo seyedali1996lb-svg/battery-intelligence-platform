@@ -41,29 +41,12 @@ from utils import (
     _md_html, _empty_state, _action_bar,
     _cell_provenance, _analysis_provenance,
     base_layout, soh_status, friendly, _soh_sparkline_svg,
-    render_pack_builder,
+    render_pack_builder, _resample_df,
 )
 from import_adapter import adapt_upload_to_pipeline
 from bundle_cache import (load_cached, save_cached, clear_cache as clear_bundle_cache,
                           load_features_cached, save_features_cached)
 from knee_detection import detect_knee, degradation_phases
-
-
-def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
-    """Return df downsampled to at most max_points rows for trend charts.
-
-    Uses uniform stride so the time axis stays evenly spaced. Always keeps
-    the first and last row so chart endpoints are accurate. Applied to all
-    trend-chart DataFrames before plotting — has no effect when len(df) <=
-    max_points, so small datasets are returned unchanged.
-    """
-    if len(df) <= max_points:
-        return df
-    step = max(1, len(df) // max_points)
-    idx  = list(range(0, len(df), step))
-    if idx[-1] != len(df) - 1:
-        idx.append(len(df) - 1)
-    return df.iloc[idx].copy()
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,23 @@ def _action_bar(page: str) -> None:
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
+def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
+    """Return df downsampled to at most max_points rows for trend charts.
+
+    Uses uniform stride so the time axis stays evenly spaced. Always keeps
+    the first and last row so chart endpoints are accurate. Applied to all
+    trend-chart DataFrames before plotting — has no effect when len(df) <=
+    max_points, so small datasets are returned unchanged.
+    """
+    if len(df) <= max_points:
+        return df
+    step = max(1, len(df) // max_points)
+    idx  = list(range(0, len(df), step))
+    if idx[-1] != len(df) - 1:
+        idx.append(len(df) - 1)
+    return df.iloc[idx].copy()
+
+
 # ---------------------------------------------------------------------------
 # Provenance helpers
 # ---------------------------------------------------------------------------
