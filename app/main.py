@@ -1557,66 +1557,65 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         unsafe_allow_html=True,
     )
 
-    # ── Benchmark comparison (M4) ────────────────────────────────────────────
-    try:
-        _bm_fdfs = bundle.get("featured_dfs") or {}
-        if len(_bm_fdfs) >= 3:
-            _peer_sohs = []
-            for _bm_cid, _bm_df in _bm_fdfs.items():
-                if _bm_cid != selected and "soh_pct" in _bm_df.columns:
-                    _peer_last = _bm_df["soh_pct"].dropna()
-                    if len(_peer_last):
-                        _peer_sohs.append(float(_peer_last.iloc[-1]))
-            if _peer_sohs:
-                import numpy as _np_bm
-                _pct_rank = int((_np_bm.array(_peer_sohs) < current_soh).sum() / len(_peer_sohs) * 100)
-                _bm_med   = float(_np_bm.median(_peer_sohs))
-                _bm_col   = "#48bb78" if _pct_rank >= 60 else "#d69e2e" if _pct_rank >= 30 else "#e53e3e"
-                _bm_word  = "better than" if _pct_rank >= 60 else "in line with" if _pct_rank >= 30 else "below"
-                st.markdown(
-                    f"<div style='font-size:12px;color:#8896a8;margin:-12px 0 16px;"
-                    f"padding:7px 14px;background:#111827;border-radius:6px;"
-                    f"border-left:3px solid {_bm_col}'>"
-                    f"Fleet benchmark: this cell's SOH is "
-                    f"<strong style='color:{_bm_col}'>{_bm_word} {_pct_rank}% of fleet peers</strong> "
-                    f"(fleet median {_bm_med:.1f}%, n={len(_peer_sohs)} cells)."
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-    except Exception:
-        pass
-
     # ── Trajectory match warning ──────────────────────────────────────────────
     _render_trajectory_match_card(cell_id, df, trajectory_memory)
 
-    # ── C4: Pin baseline ──────────────────────────────────────────────────────
-    _pinned = st.session_state.get("pinned_cell")
-    _pin_col1, _pin_col2 = st.columns([8, 2])
-    with _pin_col2:
-        if _pinned == cell_id:
-            if st.button("📌 Unpin baseline", key=f"unpin_{cell_id}", use_container_width=True):
-                import db as _db
-                st.session_state["pinned_cell"] = None
-                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", None)
-                st.rerun()
-        else:
-            if st.button("📌 Pin as baseline", key=f"pin_{cell_id}", use_container_width=True,
-                         help="Pin this cell as a comparison baseline — all other cells show a delta rail."):
-                import db as _db
-                st.session_state["pinned_cell"] = cell_id
-                _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", cell_id)
-                st.rerun()
-    if _pinned and _pinned != cell_id and _pinned in df.columns.__class__.__mro__[0].__mro__:
-        pass  # comparison rail placeholder
-    if _pinned and _pinned != cell_id:
-        _pin_df_map = {k: v for k, v in st.session_state.items() if False}  # placeholder
-        st.markdown(
-            f"<div style='font-size:11px;color:#8896a8;margin:-6px 0 12px;padding:5px 12px;"
-            f"background:#111827;border-radius:6px;border-left:3px solid #4a5568'>"
-            f"Baseline: <strong style='color:#e2e8f0'>{_pinned}</strong> — navigate to that cell to compare."
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+    # ── 📊 Fleet context: benchmark comparison + pin baseline (U1 density reduction) ──
+    with st.expander("📊 Fleet context", expanded=False):
+        # ── Benchmark comparison (M4) ────────────────────────────────────────
+        try:
+            _bm_fdfs = bundle.get("featured_dfs") or {}
+            if len(_bm_fdfs) >= 3:
+                _peer_sohs = []
+                for _bm_cid, _bm_df in _bm_fdfs.items():
+                    if _bm_cid != selected and "soh_pct" in _bm_df.columns:
+                        _peer_last = _bm_df["soh_pct"].dropna()
+                        if len(_peer_last):
+                            _peer_sohs.append(float(_peer_last.iloc[-1]))
+                if _peer_sohs:
+                    import numpy as _np_bm
+                    _pct_rank = int((_np_bm.array(_peer_sohs) < current_soh).sum() / len(_peer_sohs) * 100)
+                    _bm_med   = float(_np_bm.median(_peer_sohs))
+                    _bm_col   = "#48bb78" if _pct_rank >= 60 else "#d69e2e" if _pct_rank >= 30 else "#e53e3e"
+                    _bm_word  = "better than" if _pct_rank >= 60 else "in line with" if _pct_rank >= 30 else "below"
+                    st.markdown(
+                        f"<div style='font-size:12px;color:#8896a8;margin:0 0 16px;"
+                        f"padding:7px 14px;background:#111827;border-radius:6px;"
+                        f"border-left:3px solid {_bm_col}'>"
+                        f"Fleet benchmark: this cell's SOH is "
+                        f"<strong style='color:{_bm_col}'>{_bm_word} {_pct_rank}% of fleet peers</strong> "
+                        f"(fleet median {_bm_med:.1f}%, n={len(_peer_sohs)} cells)."
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+        except Exception:
+            pass
+
+        # ── C4: Pin baseline ──────────────────────────────────────────────────
+        _pinned = st.session_state.get("pinned_cell")
+        _pin_col1, _pin_col2 = st.columns([8, 2])
+        with _pin_col2:
+            if _pinned == cell_id:
+                if st.button("📌 Unpin baseline", key=f"unpin_{cell_id}", use_container_width=True):
+                    import db as _db
+                    st.session_state["pinned_cell"] = None
+                    _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", None)
+                    st.rerun()
+            else:
+                if st.button("📌 Pin as baseline", key=f"pin_{cell_id}", use_container_width=True,
+                             help="Pin this cell as a comparison baseline — all other cells show a delta rail."):
+                    import db as _db
+                    st.session_state["pinned_cell"] = cell_id
+                    _db.set_setting(st.session_state["auth_org_id"], "pinned_cell", cell_id)
+                    st.rerun()
+        if _pinned and _pinned != cell_id:
+            st.markdown(
+                f"<div style='font-size:11px;color:#8896a8;margin:-6px 0 0;padding:5px 12px;"
+                f"background:#111827;border-radius:6px;border-left:3px solid #4a5568'>"
+                f"Baseline: <strong style='color:#e2e8f0'>{_pinned}</strong> — navigate to that cell to compare."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
     # ── D6: Model confidence history ─────────────────────────────────────────
     if "soh_pct" in df.columns and "soh_pred" in df.columns:
@@ -1798,111 +1797,111 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             except Exception as _e:
                 st.info(f"Calendar age analysis unavailable: {_e}")
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    # ── 📈 Full trend & projections (U1 density reduction) ───────────────────
+    with st.expander("📈 Full trend & projections", expanded=False):
+        df_train = _rdf[_rdf["cycle_number"] <= split_cycle]
+        df_test  = _rdf[_rdf["cycle_number"] >  split_cycle]
 
-    df_train = _rdf[_rdf["cycle_number"] <= split_cycle]
-    df_test  = _rdf[_rdf["cycle_number"] >  split_cycle]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=_rdf["cycle_number"], y=_rdf["soh_pct"],
-        name="Actual SOH", line=dict(color="#3a4a5e", width=1), mode="lines",
-        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Actual</extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=_rdf["cycle_number"], y=_rdf["soh_rolling_avg"],
-        name="10-cycle avg", line=dict(color="#63b3ed", width=2), mode="lines",
-        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>10-cy avg</extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=df_test["cycle_number"], y=df_test["soh_pred"],
-        name="Model (test)", line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
-        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Model</extra>",
-    ))
-    # F2: ±σ confidence band derived from leave-cell-out residuals
-    if len(df_test) >= 5 and "soh_pred" in df_test.columns:
-        import numpy as _np_f2
-        _f2_valid = df_test[["cycle_number", "soh_pct", "soh_pred"]].dropna()
-        if len(_f2_valid) >= 3:
-            _sigma_f2 = float((_f2_valid["soh_pct"] - _f2_valid["soh_pred"]).std())
-            _sigma_f2 = max(min(_sigma_f2, 8.0), 0.3)
-            _cx_f2  = _f2_valid["cycle_number"].tolist()
-            _cu_f2  = (_f2_valid["soh_pred"] + _sigma_f2).clip(upper=102.0).tolist()
-            _cl_f2  = (_f2_valid["soh_pred"] - _sigma_f2).clip(lower=60.0).tolist()
-            fig.add_trace(go.Scatter(
-                x=_cx_f2 + _cx_f2[::-1],
-                y=_cu_f2 + _cl_f2[::-1],
-                fill="toself",
-                fillcolor="rgba(72,187,120,0.10)",
-                line=dict(width=0),
-                name=f"±{_sigma_f2:.1f}% model uncertainty (σ)",
-                hoverinfo="skip",
-            ))
-    fig.add_vline(
-        x=split_cycle, line_dash="dot", line_color="#4a5568", line_width=1,
-        annotation_text=f"Train → Test (cy {split_cycle})",
-        annotation_position="top left",
-        annotation_font_color="#4a5568", annotation_font_size=11,
-    )
-    # ── Scenario projections ──
-    import numpy as np
-    last_cycle = df["cycle_number"].iloc[-1]
-    last_soh   = df["soh_pct"].iloc[-1]
-    eol_line   = float(st.session_state.get("eol_threshold_pct", 80.0))
-    nominal_rate    = float(df["fade_rate_50cy"].iloc[-1]) * 100   # % SOH / cycle
-    optimistic_rate = nominal_rate * 0.6
-    pessimistic_rate = nominal_rate * 1.5
-
-    def _proj(rate):
-        if rate > 1e-9:
-            n_steps = min(500, int((last_soh - eol_line) / rate) + 10)
-        else:
-            n_steps = 200
-        n_steps = max(n_steps, 2)
-        proj_cycles = np.arange(last_cycle, last_cycle + n_steps)
-        proj_soh    = last_soh - rate * np.arange(n_steps)
-        proj_soh    = np.clip(proj_soh, 60.0, None)
-        return proj_cycles.tolist(), proj_soh.tolist()
-
-    for rate, name, color in [
-        (nominal_rate,     "Nominal projection",          "#63b3ed"),
-        (optimistic_rate,  "Optimistic (−40% stress)",    "#48bb78"),
-        (pessimistic_rate, "Pessimistic (+50% stress)",   "#fc8181"),
-    ]:
-        px, py = _proj(rate)
+        fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=px, y=py, name=name, mode="lines",
-            line=dict(dash="dash", width=1.5, color=color),
-            opacity=0.7,
-            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>" + name + "</extra>",
+            x=_rdf["cycle_number"], y=_rdf["soh_pct"],
+            name="Actual SOH", line=dict(color="#3a4a5e", width=1), mode="lines",
+            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Actual</extra>",
         ))
+        fig.add_trace(go.Scatter(
+            x=_rdf["cycle_number"], y=_rdf["soh_rolling_avg"],
+            name="10-cycle avg", line=dict(color="#63b3ed", width=2), mode="lines",
+            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>10-cy avg</extra>",
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_test["cycle_number"], y=df_test["soh_pred"],
+            name="Model (test)", line=dict(color="#48bb78", width=2, dash="dot"), mode="lines",
+            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Model</extra>",
+        ))
+        # F2: ±σ confidence band derived from leave-cell-out residuals
+        if len(df_test) >= 5 and "soh_pred" in df_test.columns:
+            import numpy as _np_f2
+            _f2_valid = df_test[["cycle_number", "soh_pct", "soh_pred"]].dropna()
+            if len(_f2_valid) >= 3:
+                _sigma_f2 = float((_f2_valid["soh_pct"] - _f2_valid["soh_pred"]).std())
+                _sigma_f2 = max(min(_sigma_f2, 8.0), 0.3)
+                _cx_f2  = _f2_valid["cycle_number"].tolist()
+                _cu_f2  = (_f2_valid["soh_pred"] + _sigma_f2).clip(upper=102.0).tolist()
+                _cl_f2  = (_f2_valid["soh_pred"] - _sigma_f2).clip(lower=60.0).tolist()
+                fig.add_trace(go.Scatter(
+                    x=_cx_f2 + _cx_f2[::-1],
+                    y=_cu_f2 + _cl_f2[::-1],
+                    fill="toself",
+                    fillcolor="rgba(72,187,120,0.10)",
+                    line=dict(width=0),
+                    name=f"±{_sigma_f2:.1f}% model uncertainty (σ)",
+                    hoverinfo="skip",
+                ))
+        fig.add_vline(
+            x=split_cycle, line_dash="dot", line_color="#4a5568", line_width=1,
+            annotation_text=f"Train → Test (cy {split_cycle})",
+            annotation_position="top left",
+            annotation_font_color="#4a5568", annotation_font_size=11,
+        )
+        # ── Scenario projections ──
+        import numpy as np
+        last_cycle = df["cycle_number"].iloc[-1]
+        last_soh   = df["soh_pct"].iloc[-1]
+        eol_line   = float(st.session_state.get("eol_threshold_pct", 80.0))
+        nominal_rate    = float(df["fade_rate_50cy"].iloc[-1]) * 100   # % SOH / cycle
+        optimistic_rate = nominal_rate * 0.6
+        pessimistic_rate = nominal_rate * 1.5
 
-    fig.add_hline(
-        y=eol_line, line_dash="dot", line_color="#e53e3e", line_width=1,
-        annotation_text=f"EOL threshold ({eol_line:.0f}%)",
-        annotation_position="bottom right",
-    )
-    y_min = max(df["soh_pct"].min() - 2, 60)
-    fig.update_layout(
-        **base_layout(
-            height=340, legend=LEGEND_H,
-            xaxis=dict(title="Cycle", zeroline=False),
-            yaxis=dict(title="SOH %",
-                       zeroline=False, range=[y_min, 101]),
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    _ov_prov = _cell_provenance(cell_id)
-    if cell_id.startswith("S-"):
-        _ov_caption = "Capacity data: ● MEASURED (Severson 2019, Nature Energy). Projections: ◐ SIMULATED (linear extrapolation)."
-    elif _ov_prov == "measured":
-        _ov_caption = "Capacity data: ● MEASURED (NASA PCoE). Projections: ◐ SIMULATED (linear extrapolation)."
-    else:
-        _ov_caption = "All data: ○ SYNTHETIC — no physical measurements underlie any value."
-    st.caption(
-        "Projections assume constant fade rate. Optimistic = 40% stress reduction. Pessimistic = 50% stress increase. "
-        + _ov_caption
-    )
+        def _proj(rate):
+            if rate > 1e-9:
+                n_steps = min(500, int((last_soh - eol_line) / rate) + 10)
+            else:
+                n_steps = 200
+            n_steps = max(n_steps, 2)
+            proj_cycles = np.arange(last_cycle, last_cycle + n_steps)
+            proj_soh    = last_soh - rate * np.arange(n_steps)
+            proj_soh    = np.clip(proj_soh, 60.0, None)
+            return proj_cycles.tolist(), proj_soh.tolist()
+
+        for rate, name, color in [
+            (nominal_rate,     "Nominal projection",          "#63b3ed"),
+            (optimistic_rate,  "Optimistic (−40% stress)",    "#48bb78"),
+            (pessimistic_rate, "Pessimistic (+50% stress)",   "#fc8181"),
+        ]:
+            px, py = _proj(rate)
+            fig.add_trace(go.Scatter(
+                x=px, y=py, name=name, mode="lines",
+                line=dict(dash="dash", width=1.5, color=color),
+                opacity=0.7,
+                hovertemplate="Cycle %{x}: %{y:.1f}%<extra>" + name + "</extra>",
+            ))
+
+        fig.add_hline(
+            y=eol_line, line_dash="dot", line_color="#e53e3e", line_width=1,
+            annotation_text=f"EOL threshold ({eol_line:.0f}%)",
+            annotation_position="bottom right",
+        )
+        y_min = max(df["soh_pct"].min() - 2, 60)
+        fig.update_layout(
+            **base_layout(
+                height=340, legend=LEGEND_H,
+                xaxis=dict(title="Cycle", zeroline=False),
+                yaxis=dict(title="SOH %",
+                           zeroline=False, range=[y_min, 101]),
+            ),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        _ov_prov = _cell_provenance(cell_id)
+        if cell_id.startswith("S-"):
+            _ov_caption = "Capacity data: ● MEASURED (Severson 2019, Nature Energy). Projections: ◐ SIMULATED (linear extrapolation)."
+        elif _ov_prov == "measured":
+            _ov_caption = "Capacity data: ● MEASURED (NASA PCoE). Projections: ◐ SIMULATED (linear extrapolation)."
+        else:
+            _ov_caption = "All data: ○ SYNTHETIC — no physical measurements underlie any value."
+        st.caption(
+            "Projections assume constant fade rate. Optimistic = 40% stress reduction. Pessimistic = 50% stress increase. "
+            + _ov_caption
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2461,139 +2460,36 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # ── T4: Degradation Mechanism Classifier (LLI vs LAM) ──────────────────
     with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=False):
         try:
-            import numpy as _np_mech
-            _mech_signals = {}
-            _mech_confidence_notes = []
-
-            # Signal 1: CE trend slope → LLI indicator (works for all chemistries)
-            if "coulombic_efficiency" in df.columns:
-                _ce_valid = df[["cycle_number", "coulombic_efficiency"]].dropna()
-                if len(_ce_valid) >= 10:
-                    _ce_arr = _ce_valid["coulombic_efficiency"].values
-                    _cy_arr = _ce_valid["cycle_number"].values.astype(float)
-                    _ce_slope = _np_mech.polyfit(_cy_arr, _ce_arr, 1)[0]
-                    _ce_deficit_pct = (1.0 - _ce_arr.mean()) * 100
-                    _mech_signals["lli_ce_slope"] = _ce_slope
-                    _mech_signals["lli_ce_deficit"] = _ce_deficit_pct
-                    _mech_confidence_notes.append("CE trend")
-
-            # Signal 2: Capacity fade linearity — linear fade = LLI, accelerating = LAM
-            if "soh_pct" in df.columns:
-                _soh_valid = df[["cycle_number", "soh_pct"]].dropna()
-                if len(_soh_valid) >= 20:
-                    _cy_s = _soh_valid["cycle_number"].values.astype(float)
-                    _soh_s = _soh_valid["soh_pct"].values
-                    # Fit linear + quadratic — if quadratic term >> 0, accelerating (LAM)
-                    _cy_norm = (_cy_s - _cy_s.min()) / max(_cy_s.max() - _cy_s.min(), 1)
-                    _p2 = _np_mech.polyfit(_cy_norm, _soh_s, 2)
-                    _nonlinearity = float(_p2[0])  # positive curvature = accelerating fade
-                    _fade_total = float(_soh_s[0] - _soh_s[-1]) if len(_soh_s) > 0 else 0
-                    _mech_signals["lam_nonlinearity"] = _nonlinearity
-                    _mech_signals["fade_total"] = _fade_total
-                    _mech_confidence_notes.append("fade shape")
-
-            # Signal 3: Resistance rise rate → SEI/LAM indicator
-            if "resistance_normalized" in df.columns:
-                _r_valid = df[["cycle_number", "resistance_normalized"]].dropna()
-                if len(_r_valid) >= 10:
-                    _r_slope = _np_mech.polyfit(
-                        _r_valid["cycle_number"].values.astype(float),
-                        _r_valid["resistance_normalized"].values, 1
-                    )[0]
-                    _mech_signals["resistance_slope"] = _r_slope * 1000  # Ω/1000cy
-                    _mech_confidence_notes.append("resistance")
-
-            # ── Classification logic ──
-            _lli_score = 0
-            _lam_score = 0
-
-            _ce_slope_val = _mech_signals.get("lli_ce_slope", 0)
-            if _ce_slope_val < -1e-6:   # declining CE → LLI
-                _lli_score += 3
-            _ce_def = _mech_signals.get("lli_ce_deficit", 0)
-            if _ce_def > 0.05:          # CE deficit > 0.05% → active LLI
-                _lli_score += 2
-
-            _nonlin = _mech_signals.get("lam_nonlinearity", 0)
-            if _nonlin < -0.5:          # accelerating fade → LAM
-                _lam_score += 3
-            elif _nonlin > 0.5:         # decelerating (stabilising) → LLI
-                _lli_score += 1
-
-            _r_slope = _mech_signals.get("resistance_slope", 0)
-            if _r_slope > 0.02:         # fast resistance rise → LAM (particle contact loss)
-                _lam_score += 2
-            elif 0.005 < _r_slope <= 0.02:
-                _lli_score += 1         # moderate rise → SEI (LLI-associated)
-
-            # Verdict
-            _total = _lli_score + _lam_score
-            if _total == 0:
-                _verdict = "Insufficient data"
-                _verdict_color = "#718096"
-                _verdict_icon = "○"
-                _verdict_body = "Not enough degradation signals to classify mechanism. Continue cycling."
-            elif _lli_score > _lam_score * 1.5:
-                _verdict = "LLI — Loss of Lithium Inventory"
-                _verdict_color = "#f6ad55"
-                _verdict_icon = "◑"
-                _verdict_body = (
-                    "Declining coulombic efficiency and/or near-linear capacity fade indicate "
-                    "that cyclable lithium is being consumed by SEI layer growth. "
-                    "Root cause: calendar aging, elevated temperature, or overcharge events. "
-                    "Mitigation: reduce SOC window, lower charge temperature, avoid prolonged full-charge storage."
-                )
-            elif _lam_score > _lli_score * 1.5:
-                _verdict = "LAM — Loss of Active Material"
-                _verdict_color = "#fc8181"
-                _verdict_icon = "◕"
-                _verdict_body = (
-                    "Accelerating capacity fade and/or fast resistance rise indicate electrode "
-                    "active sites are being lost. Root cause: high C-rate stress, mechanical particle "
-                    "cracking, or lithium plating followed by dead lithium formation. "
-                    "Mitigation: reduce peak charge/discharge rate, improve thermal management."
-                )
-            else:
-                _verdict = "Mixed LLI + LAM"
-                _verdict_color = "#b794f4"
-                _verdict_icon = "●"
-                _verdict_body = (
-                    "Both LLI and LAM mechanisms are active simultaneously. "
-                    "Typical of aged cells under combined calendar and cycle stress. "
-                    "Prioritise temperature control (targets LLI) while also reducing peak C-rate (targets LAM)."
-                )
-
-            # Confidence from number of available signals
-            _conf = len(_mech_confidence_notes)
-            _conf_label = {0: "No data", 1: "Low", 2: "Medium", 3: "High"}.get(_conf, "High")
-            _conf_color = {"No data": "#4a5568", "Low": "#f6ad55", "Medium": "#68d391", "High": "#68d391"}.get(_conf_label, "#68d391")
+            from recommendations import diagnose_mechanism
+            _mech = diagnose_mechanism(df)
 
             # Render verdict card
             _md_html(
                 f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
                 f"padding:16px 20px;margin:8px 0 12px'>"
                 f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px'>"
-                f"<span style='font-size:22px'>{_verdict_icon}</span>"
+                f"<span style='font-size:22px'>{_mech['verdict_icon']}</span>"
                 f"<div>"
-                f"<div style='font-size:14px;font-weight:700;color:{_verdict_color}'>{_verdict}</div>"
+                f"<div style='font-size:14px;font-weight:700;color:{_mech['verdict_color']}'>{_mech['verdict']}</div>"
                 f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
-                f"Confidence: <span style='color:{_conf_color};font-weight:600'>{_conf_label}</span>"
-                f" · Signals used: {', '.join(_mech_confidence_notes) if _mech_confidence_notes else 'none'}"
+                f"Confidence: <span style='color:{_mech['confidence_color']};font-weight:600'>{_mech['confidence_label']}</span>"
+                f" · Signals used: {', '.join(_mech['confidence_notes']) if _mech['confidence_notes'] else 'none'}"
                 f"</div></div></div>"
-                f"<div style='font-size:12px;color:#a0aec0;line-height:1.65'>{_verdict_body}</div>"
+                f"<div style='font-size:12px;color:#a0aec0;line-height:1.65'>{_mech['verdict_body']}</div>"
                 f"</div>"
             )
 
             # Signal breakdown metrics
+            _mech_signals = _mech["signals"]
             if _mech_signals:
                 _mc1, _mc2, _mc3 = st.columns(3)
                 with _mc1:
                     if "lli_ce_deficit" in _mech_signals:
-                        st.metric("LLI Score", f"{_lli_score}",
+                        st.metric("LLI Score", f"{_mech['lli_score']}",
                                   help="CE decline + linear fade pattern")
                 with _mc2:
                     if "lam_nonlinearity" in _mech_signals:
-                        st.metric("LAM Score", f"{_lam_score}",
+                        st.metric("LAM Score", f"{_mech['lam_score']}",
                                   help="Accelerating fade + resistance rise")
                 with _mc3:
                     if "resistance_slope" in _mech_signals:
@@ -6026,6 +5922,22 @@ def page_decision(
         f"</div>{reason_html}</div>"
     )
 
+    # ── Compact mechanism verdict (U3: merged from Health page's LLI/LAM classifier) ──
+    try:
+        from recommendations import diagnose_mechanism
+        _dec_mech = diagnose_mechanism(df)
+        st.markdown(
+            f"<div style='background:#111827;border-left:3px solid {_dec_mech['verdict_color']};"
+            f"border-radius:6px;padding:8px 14px;margin:-12px 0 20px;font-size:12px;color:#a0aec0'>"
+            f"⚗️ <strong style='color:{_dec_mech['verdict_color']}'>{_dec_mech['verdict']}</strong>"
+            f" <span style='color:#4a5568'>({_dec_mech['confidence_label']} confidence)</span>"
+            f" — {_dec_mech['verdict_body'].split('.')[0]}."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
     # ── 2. NPV Decision Table (3 options, no chart) ─────────────────────────
     st.markdown("<div class='section-header'>Financial Decision</div>", unsafe_allow_html=True)
     _npv_rate   = 0.08
@@ -6109,158 +6021,163 @@ def page_decision(
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    # ── 3. Maintenance Calendar ─────────────────────────────────────────────
-    st.markdown("<div class='section-header'>Maintenance Calendar</div>", unsafe_allow_html=True)
-    _eol_thr    = float(st.session_state.get("eol_threshold_pct", 80.0))
-    _cur_soh    = float(df["soh_pct"].iloc[-1])
-    _fp_cy      = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
-    _rul_cy     = max(0, (_cur_soh - _eol_thr) / _fp_cy) if _fp_cy > 1e-6 else None
+    # ── 📋 Supporting details (U2 density reduction): maintenance calendar, ──
+    # application fit, second-life marketplace, confidence-reason callouts ──
+    with st.expander("📋 Supporting details", expanded=False):
+        # ── 3. Maintenance Calendar ─────────────────────────────────────────
+        st.markdown("<div class='section-header'>Maintenance Calendar</div>", unsafe_allow_html=True)
+        _eol_thr    = float(st.session_state.get("eol_threshold_pct", 80.0))
+        _cur_soh    = float(df["soh_pct"].iloc[-1])
+        _fp_cy      = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
+        _rul_cy     = max(0, (_cur_soh - _eol_thr) / _fp_cy) if _fp_cy > 1e-6 else None
 
-    if "test_date" in df.columns and df["test_date"].notna().any():
-        _dates = pd.to_datetime(df["test_date"].dropna())
-        _cpd   = len(df) / max((_dates.iloc[-1] - _dates.iloc[0]).days, 1)
-    else:
-        _cpd   = 1.0
+        if "test_date" in df.columns and df["test_date"].notna().any():
+            _dates = pd.to_datetime(df["test_date"].dropna())
+            _cpd   = len(df) / max((_dates.iloc[-1] - _dates.iloc[0]).days, 1)
+        else:
+            _cpd   = 1.0
 
-    if _rul_cy is not None and _rul_cy > 0:
-        from datetime import date as _date, timedelta as _td
-        _days    = _rul_cy / _cpd
-        _rep_dt  = _date.today() + _td(days=_days)
-        _c1, _c2, _c3 = st.columns(3)
-        _c1.metric("Recommended Replacement", _rep_dt.strftime("%B %Y"))
-        _c2.metric("Cycles Remaining", f"{_rul_cy:.0f}")
-        _c3.metric("Days Remaining",   f"{_days:.0f}")
-    else:
-        _empty_state(
-            "Replacement timeline unavailable",
-            "Insufficient cycle history to compute a fade-based schedule. "
-            "At least 50 cycles with a measurable fade trend are required.",
-            "", "📅",
-        )
+        if _rul_cy is not None and _rul_cy > 0:
+            from datetime import date as _date, timedelta as _td
+            _days    = _rul_cy / _cpd
+            _rep_dt  = _date.today() + _td(days=_days)
+            _c1, _c2, _c3 = st.columns(3)
+            _c1.metric("Recommended Replacement", _rep_dt.strftime("%B %Y"))
+            _c2.metric("Cycles Remaining", f"{_rul_cy:.0f}")
+            _c3.metric("Days Remaining",   f"{_days:.0f}")
+        else:
+            _empty_state(
+                "Replacement timeline unavailable",
+                "Insufficient cycle history to compute a fade-based schedule. "
+                "At least 50 cycles with a measurable fade trend are required.",
+                "", "📅",
+            )
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-    # ── 4. Application Fit ──────────────────────────────────────────────────
-    if soh <= 90:
-        st.markdown("<div class='section-header'>Application Fit Scores</div>", unsafe_allow_html=True)
-        _af_cols = st.columns(min(len(fit_scores), 4))
-        _af_colour = {"fit": "#48bb78", "marginal": "#f6ad55", "not_fit": "#fc8181"}
-        for _i, (_app_key, _app) in enumerate(fit_scores.items()):
-            with _af_cols[_i % len(_af_cols)]:
-                st.markdown(
-                    f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                    f"padding:14px 16px'>"
-                    f"<div style='font-size:11px;color:#4a5568'>{_app['short']}</div>"
-                    f"<div style='font-size:16px;font-weight:700;color:{_af_colour[_app['fit']]};margin-top:4px'>"
-                    f"{_app['fit'].replace('_', ' ').title()}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
-    # ── 4b. Second-life marketplace ──────────────────────────────────────────
-    if action in ("second_life", "recycle") or soh <= 85:
-        st.markdown("<div class='section-header'>Second-Life Marketplace</div>", unsafe_allow_html=True)
-        _sl_eligible = soh >= 70.0
-        _sl_col = "#68d391" if _sl_eligible else "#718096"
-        _md_html(
-            f"<div style='background:#1e2a38;border:1px solid {_sl_col}44;border-radius:10px;"
-            f"padding:18px 22px;margin-bottom:12px'>"
-            f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
-            f"<div>"
-            f"<div style='font-size:14px;font-weight:700;color:{_sl_col}'>"
-            f"{'Eligible for second-life listing' if _sl_eligible else 'Below second-life floor (SOH < 70%)'}</div>"
-            f"<div style='font-size:12px;color:#8896a8;margin-top:6px;line-height:1.6'>"
-            f"Cell {selected} · SOH {soh:.1f}% · Est. residual capacity {soh * _cap_now / 100 * 1000:.0f} mAh<br>"
-            f"Suitable for: stationary storage, UPS backup, low-power IoT applications"
-            f"</div>"
-            f"</div>"
-            f"<div style='font-size:22px;color:{_sl_col};margin-left:16px'>♻</div>"
-            f"</div>"
-            f"</div>"
-        )
-        if _sl_eligible:
-            _mk_col1, _mk_col2 = st.columns(2)
-            if _mk_col1.button(
-                "List on Circunomics →", key="sl_list_circ",
-                help="Opens second-life battery exchange (demo — not a live API call)",
-                use_container_width=True,
-            ):
-                _circ_chemistry = "LFP" if selected.startswith("S-") else "LiCoO2"
-                _circ_capacity_ah = round(_cap_now * (soh / 100) * 1000 / 3.7, 2)
-                _circ_asking_usd = round(_c_npv * 0.4, 2)
-                _circ_api_key = st.session_state.get("circunomics_api_key", "")
-                _circ_result = None
-                if _circ_api_key:
-                    from circunomics_adapter import list_cell_on_circunomics
-                    _circ_result = list_cell_on_circunomics(
-                        selected, soh, _circ_chemistry, _circ_capacity_ah,
-                        _circ_asking_usd, _circ_api_key,
+        # ── 4. Application Fit ──────────────────────────────────────────────
+        if soh <= 90:
+            st.markdown("<div class='section-header'>Application Fit Scores</div>", unsafe_allow_html=True)
+            _af_cols = st.columns(min(len(fit_scores), 4))
+            _af_colour = {"fit": "#48bb78", "marginal": "#f6ad55", "not_fit": "#fc8181"}
+            for _i, (_app_key, _app) in enumerate(fit_scores.items()):
+                with _af_cols[_i % len(_af_cols)]:
+                    st.markdown(
+                        f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
+                        f"padding:14px 16px'>"
+                        f"<div style='font-size:11px;color:#4a5568'>{_app['short']}</div>"
+                        f"<div style='font-size:16px;font-weight:700;color:{_af_colour[_app['fit']]};margin-top:4px'>"
+                        f"{_app['fit'].replace('_', ' ').title()}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
                     )
-                if _circ_result is not None and "error" not in _circ_result:
-                    st.success(
-                        f"Listing submitted to Circunomics for {selected} at "
-                        f"${_circ_asking_usd:.2f}."
-                    )
-                else:
-                    _listing = {
-                        "cell_id":        selected,
-                        "soh_pct":        round(soh, 1),
-                        "chemistry":      _circ_chemistry,
-                        "capacity_ah":    _circ_capacity_ah,
-                        "asking_usd":     _circ_asking_usd,
-                        "listed_at":      datetime.datetime.now().isoformat(),
-                        "platform":       "battery-intelligence-platform",
-                        "note":           "Demo listing — not submitted to a live exchange",
-                    }
-                    if "sl_listings" not in st.session_state:
-                        st.session_state["sl_listings"] = []
-                    st.session_state["sl_listings"].append(_listing)
-                    if _circ_result is not None:
-                        st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")
-                    else:
-                        st.success(
-                            f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "
-                            f"(demo — no real API call made). Configure a Circunomics API key in "
-                            f"Settings to submit real listings."
+
+        # ── 4b. Second-life marketplace ──────────────────────────────────────
+        if action in ("second_life", "recycle") or soh <= 85:
+            st.markdown("<div class='section-header'>Second-Life Marketplace</div>", unsafe_allow_html=True)
+            _sl_eligible = soh >= 70.0
+            _sl_col = "#68d391" if _sl_eligible else "#718096"
+            _md_html(
+                f"<div style='background:#1e2a38;border:1px solid {_sl_col}44;border-radius:10px;"
+                f"padding:18px 22px;margin-bottom:12px'>"
+                f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
+                f"<div>"
+                f"<div style='font-size:14px;font-weight:700;color:{_sl_col}'>"
+                f"{'Eligible for second-life listing' if _sl_eligible else 'Below second-life floor (SOH < 70%)'}</div>"
+                f"<div style='font-size:12px;color:#8896a8;margin-top:6px;line-height:1.6'>"
+                f"Cell {selected} · SOH {soh:.1f}% · Est. residual capacity {soh * _cap_now / 100 * 1000:.0f} mAh<br>"
+                f"Suitable for: stationary storage, UPS backup, low-power IoT applications"
+                f"</div>"
+                f"</div>"
+                f"<div style='font-size:22px;color:{_sl_col};margin-left:16px'>♻</div>"
+                f"</div>"
+                f"</div>"
+            )
+            if _sl_eligible:
+                _mk_col1, _mk_col2 = st.columns(2)
+                if _mk_col1.button(
+                    "List on Circunomics →", key="sl_list_circ",
+                    help="Opens second-life battery exchange (demo — not a live API call)",
+                    use_container_width=True,
+                ):
+                    _circ_chemistry = "LFP" if selected.startswith("S-") else "LiCoO2"
+                    _circ_capacity_ah = round(_cap_now * (soh / 100) * 1000 / 3.7, 2)
+                    _circ_asking_usd = round(_c_npv * 0.4, 2)
+                    _circ_api_key = st.session_state.get("circunomics_api_key", "")
+                    _circ_result = None
+                    if _circ_api_key:
+                        from circunomics_adapter import list_cell_on_circunomics
+                        _circ_result = list_cell_on_circunomics(
+                            selected, soh, _circ_chemistry, _circ_capacity_ah,
+                            _circ_asking_usd, _circ_api_key,
                         )
-            if _mk_col2.button(
-                "List on Battery-Lifecycle.com →", key="sl_list_blc",
-                help="Second-life exchange for industrial battery packs (demo)",
-                use_container_width=True,
-            ):
-                st.info(
-                    "Battery Lifecycle Company integration requires an API key. "
-                    "In production: POST /api/v1/listings with cell ID, SOH, chemistry, "
-                    "capacity, and asking price. See Settings to configure the endpoint."
-                )
-        _sl_listings = st.session_state.get("sl_listings", [])
-        if _sl_listings:
-            with st.expander(f"Active listings ({len(_sl_listings)})"):
-                import pandas as _pd_sl
-                st.dataframe(
-                    _pd_sl.DataFrame(_sl_listings),
-                    use_container_width=True, hide_index=True,
-                )
-                st.download_button(
-                    "Export listings",
-                    data=_pd_sl.DataFrame(_sl_listings).to_csv(index=False).encode(),
-                    file_name="secondlife_listings.csv",
-                    mime="text/csv",
-                    key="sl_listings_export",
+                    if _circ_result is not None and "error" not in _circ_result:
+                        st.success(
+                            f"Listing submitted to Circunomics for {selected} at "
+                            f"${_circ_asking_usd:.2f}."
+                        )
+                    else:
+                        _listing = {
+                            "cell_id":        selected,
+                            "soh_pct":        round(soh, 1),
+                            "chemistry":      _circ_chemistry,
+                            "capacity_ah":    _circ_capacity_ah,
+                            "asking_usd":     _circ_asking_usd,
+                            "listed_at":      datetime.datetime.now().isoformat(),
+                            "platform":       "battery-intelligence-platform",
+                            "note":           "Demo listing — not submitted to a live exchange",
+                        }
+                        if "sl_listings" not in st.session_state:
+                            st.session_state["sl_listings"] = []
+                        st.session_state["sl_listings"].append(_listing)
+                        if _circ_result is not None:
+                            st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")
+                        else:
+                            st.success(
+                                f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "
+                                f"(demo — no real API call made). Configure a Circunomics API key in "
+                                f"Settings to submit real listings."
+                            )
+                if _mk_col2.button(
+                    "List on Battery-Lifecycle.com →", key="sl_list_blc",
+                    help="Second-life exchange for industrial battery packs (demo)",
+                    use_container_width=True,
+                ):
+                    st.info(
+                        "Battery Lifecycle Company integration requires an API key. "
+                        "In production: POST /api/v1/listings with cell ID, SOH, chemistry, "
+                        "capacity, and asking price. See Settings to configure the endpoint."
+                    )
+            _sl_listings = st.session_state.get("sl_listings", [])
+            if _sl_listings:
+                with st.expander(f"Active listings ({len(_sl_listings)})"):
+                    import pandas as _pd_sl
+                    st.dataframe(
+                        _pd_sl.DataFrame(_sl_listings),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.download_button(
+                        "Export listings",
+                        data=_pd_sl.DataFrame(_sl_listings).to_csv(index=False).encode(),
+                        file_name="secondlife_listings.csv",
+                        mime="text/csv",
+                        key="sl_listings_export",
+                    )
+
+        # ── Confidence-reason callouts ────────────────────────────────────────
+        if result["confidence_reasons"]:
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            for note in result["confidence_reasons"]:
+                note_colour = "#b7791f" if "fit scores" in note else "#718096"
+                st.markdown(
+                    f"<div style='background:{note_colour}11;border:1px solid {note_colour}33;"
+                    f"border-radius:8px;padding:10px 16px;margin-bottom:8px;"
+                    f"font-size:12px;color:#a0aec0'>{note}</div>",
+                    unsafe_allow_html=True,
                 )
 
     # ── 5. Log Decision ─────────────────────────────────────────────────────
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    if result["confidence_reasons"]:
-        for note in result["confidence_reasons"]:
-            note_colour = "#b7791f" if "fit scores" in note else "#718096"
-            st.markdown(
-                f"<div style='background:{note_colour}11;border:1px solid {note_colour}33;"
-                f"border-radius:8px;padding:10px 16px;margin-bottom:8px;"
-                f"font-size:12px;color:#a0aec0'>{note}</div>",
-                unsafe_allow_html=True,
-            )
-
     _log_col, _ = st.columns([1, 3])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
         import db as _db

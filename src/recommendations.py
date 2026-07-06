@@ -161,3 +161,140 @@ def classify(
         "best_app":          best_app,
         "fit_scores":        fit_scores,
     }
+
+
+# ---------------------------------------------------------------------------
+# Degradation mechanism diagnosis (LLI vs LAM)
+# ---------------------------------------------------------------------------
+
+def diagnose_mechanism(df) -> dict:
+    """
+    Classifies a cell's dominant degradation mechanism — Loss of Lithium
+    Inventory (LLI) vs Loss of Active Material (LAM) — from three signals:
+    coulombic-efficiency trend, capacity-fade curve shape, and internal-
+    resistance rise rate. Any subset of the three columns may be missing;
+    the verdict's confidence reflects how many signals were available.
+
+    df: a cell's featured DataFrame — used columns (all optional):
+        cycle_number, coulombic_efficiency, soh_pct, resistance_normalized.
+    """
+    import numpy as _np_mech
+
+    signals = {}
+    confidence_notes = []
+
+    # Signal 1: CE trend slope → LLI indicator (works for all chemistries)
+    if "coulombic_efficiency" in df.columns:
+        ce_valid = df[["cycle_number", "coulombic_efficiency"]].dropna()
+        if len(ce_valid) >= 10:
+            ce_arr = ce_valid["coulombic_efficiency"].values
+            cy_arr = ce_valid["cycle_number"].values.astype(float)
+            ce_slope = _np_mech.polyfit(cy_arr, ce_arr, 1)[0]
+            ce_deficit_pct = (1.0 - ce_arr.mean()) * 100
+            signals["lli_ce_slope"] = ce_slope
+            signals["lli_ce_deficit"] = ce_deficit_pct
+            confidence_notes.append("CE trend")
+
+    # Signal 2: Capacity fade linearity — linear fade = LLI, accelerating = LAM
+    if "soh_pct" in df.columns:
+        soh_valid = df[["cycle_number", "soh_pct"]].dropna()
+        if len(soh_valid) >= 20:
+            cy_s = soh_valid["cycle_number"].values.astype(float)
+            soh_s = soh_valid["soh_pct"].values
+            # Fit linear + quadratic — if quadratic term >> 0, accelerating (LAM)
+            cy_norm = (cy_s - cy_s.min()) / max(cy_s.max() - cy_s.min(), 1)
+            p2 = _np_mech.polyfit(cy_norm, soh_s, 2)
+            nonlinearity = float(p2[0])  # positive curvature = accelerating fade
+            fade_total = float(soh_s[0] - soh_s[-1]) if len(soh_s) > 0 else 0
+            signals["lam_nonlinearity"] = nonlinearity
+            signals["fade_total"] = fade_total
+            confidence_notes.append("fade shape")
+
+    # Signal 3: Resistance rise rate → SEI/LAM indicator
+    if "resistance_normalized" in df.columns:
+        r_valid = df[["cycle_number", "resistance_normalized"]].dropna()
+        if len(r_valid) >= 10:
+            r_slope = _np_mech.polyfit(
+                r_valid["cycle_number"].values.astype(float),
+                r_valid["resistance_normalized"].values, 1
+            )[0]
+            signals["resistance_slope"] = r_slope * 1000  # Ω/1000cy
+            confidence_notes.append("resistance")
+
+    # ── Classification logic ──
+    lli_score = 0
+    lam_score = 0
+
+    ce_slope_val = signals.get("lli_ce_slope", 0)
+    if ce_slope_val < -1e-6:   # declining CE → LLI
+        lli_score += 3
+    ce_def = signals.get("lli_ce_deficit", 0)
+    if ce_def > 0.05:          # CE deficit > 0.05% → active LLI
+        lli_score += 2
+
+    nonlin = signals.get("lam_nonlinearity", 0)
+    if nonlin < -0.5:          # accelerating fade → LAM
+        lam_score += 3
+    elif nonlin > 0.5:         # decelerating (stabilising) → LLI
+        lli_score += 1
+
+    r_slope = signals.get("resistance_slope", 0)
+    if r_slope > 0.02:         # fast resistance rise → LAM (particle contact loss)
+        lam_score += 2
+    elif 0.005 < r_slope <= 0.02:
+        lli_score += 1         # moderate rise → SEI (LLI-associated)
+
+    # Verdict
+    total = lli_score + lam_score
+    if total == 0:
+        verdict = "Insufficient data"
+        verdict_color = "#718096"
+        verdict_icon = "○"
+        verdict_body = "Not enough degradation signals to classify mechanism. Continue cycling."
+    elif lli_score > lam_score * 1.5:
+        verdict = "LLI — Loss of Lithium Inventory"
+        verdict_color = "#f6ad55"
+        verdict_icon = "◑"
+        verdict_body = (
+            "Declining coulombic efficiency and/or near-linear capacity fade indicate "
+            "that cyclable lithium is being consumed by SEI layer growth. "
+            "Root cause: calendar aging, elevated temperature, or overcharge events. "
+            "Mitigation: reduce SOC window, lower charge temperature, avoid prolonged full-charge storage."
+        )
+    elif lam_score > lli_score * 1.5:
+        verdict = "LAM — Loss of Active Material"
+        verdict_color = "#fc8181"
+        verdict_icon = "◕"
+        verdict_body = (
+            "Accelerating capacity fade and/or fast resistance rise indicate electrode "
+            "active sites are being lost. Root cause: high C-rate stress, mechanical particle "
+            "cracking, or lithium plating followed by dead lithium formation. "
+            "Mitigation: reduce peak charge/discharge rate, improve thermal management."
+        )
+    else:
+        verdict = "Mixed LLI + LAM"
+        verdict_color = "#b794f4"
+        verdict_icon = "●"
+        verdict_body = (
+            "Both LLI and LAM mechanisms are active simultaneously. "
+            "Typical of aged cells under combined calendar and cycle stress. "
+            "Prioritise temperature control (targets LLI) while also reducing peak C-rate (targets LAM)."
+        )
+
+    # Confidence from number of available signals
+    conf = len(confidence_notes)
+    conf_label = {0: "No data", 1: "Low", 2: "Medium", 3: "High"}.get(conf, "High")
+    conf_color = {"No data": "#4a5568", "Low": "#f6ad55", "Medium": "#68d391", "High": "#68d391"}.get(conf_label, "#68d391")
+
+    return {
+        "verdict":           verdict,
+        "verdict_color":     verdict_color,
+        "verdict_icon":      verdict_icon,
+        "verdict_body":      verdict_body,
+        "confidence_label":  conf_label,
+        "confidence_color":  conf_color,
+        "confidence_notes":  confidence_notes,
+        "lli_score":         lli_score,
+        "lam_score":         lam_score,
+        "signals":           signals,
+    }
