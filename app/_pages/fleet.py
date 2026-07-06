@@ -110,7 +110,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         eol_at    = int(eol_row["cycle_number"].iloc[0]) if len(eol_row) else None
         cycles_to_eol = max(0, eol_at - cycle) if eol_at else None
 
-        is_upload = not is_nasa and cell_id not in _synth_ids
+        is_severson = cell_id.startswith("S-")
+        is_upload = not is_nasa and not is_severson and cell_id not in _synth_ids
         status_label, _ = soh_status(soh)
 
         # Knee-point detection per cell
@@ -145,7 +146,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
 
         rows.append({
             "cell_id":      cell_id,
-            "source":       "NASA" if is_nasa else ("Uploaded" if is_upload else "Synthetic"),
+            "source":       "NASA" if is_nasa else ("Severson" if is_severson else ("Uploaded" if is_upload else "Synthetic")),
             "soh":          soh,
             "status":       status_label,
             "cycle":        cycle,
@@ -180,11 +181,13 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     best_soh    = rows[-1]["soh"]
     n_nasa      = sum(1 for r in rows if r["source"] == "NASA")
     n_synth     = sum(1 for r in rows if r["source"] == "Synthetic")
+    n_severson  = sum(1 for r in rows if r["source"] == "Severson")
     n_upload    = sum(1 for r in rows if r["source"] == "Uploaded")
     src_parts   = []
-    if n_synth:  src_parts.append(f"{n_synth} synthetic")
-    if n_nasa:   src_parts.append(f"{n_nasa} NASA real")
-    if n_upload: src_parts.append(f"{n_upload} uploaded")
+    if n_synth:    src_parts.append(f"{n_synth} synthetic")
+    if n_nasa:     src_parts.append(f"{n_nasa} NASA real")
+    if n_severson: src_parts.append(f"{n_severson} Severson real")
+    if n_upload:   src_parts.append(f"{n_upload} uploaded")
     src_sub = " · ".join(src_parts) or "—"
 
     # ── Executive summary bar (always visible) ──────────────────────────────
@@ -485,13 +488,18 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         key="fq_status",
     )
     _fq_source = _fq4.multiselect(
-        "Source", options=["NASA", "Synthetic", "Uploaded"],
-        default=st.session_state.get("fq_source", ["NASA"]),
+        # Default to the real-measured sources (NASA + Severson), matching this
+        # filter's original "real curves on first visit" intent — Severson was
+        # previously missing its own bucket entirely and fell through to
+        # "Uploaded", so a NASA-only default silently hid every Severson cell
+        # whenever Severson was the active data source.
+        "Source", options=["NASA", "Severson", "Synthetic", "Uploaded"],
+        default=st.session_state.get("fq_source", ["NASA", "Severson"]),
         key="fq_source",
     )
     _fq_active = (
         _fq_soh_max < 100.0 or _fq_fade_min > 0.0
-        or len(_fq_status) < 3 or len(_fq_source) < 3
+        or len(_fq_status) < 3 or len(_fq_source) < 4
     )
     _rows_before = len(rows)
     rows = [
@@ -499,7 +507,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         if r["soh"] <= _fq_soh_max
         and r["fade_30"] >= _fq_fade_min
         and r["status"] in (_fq_status or ["Healthy", "Degrading", "End of Life"])
-        and r["source"] in (_fq_source or ["NASA", "Synthetic", "Uploaded"])
+        and r["source"] in (_fq_source or ["NASA", "Severson", "Synthetic", "Uploaded"])
     ]
     if _fq_active:
         _n_filtered = _rows_before - len(rows)
@@ -557,6 +565,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {
         "NASA":      "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
+        "Severson":  "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
         "Synthetic": "background:rgba(74,85,104,0.3);color:#8896a8;border:1px solid #2d3748",
         "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }
