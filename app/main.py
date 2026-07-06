@@ -506,77 +506,43 @@ def load_everything():
 # Navigation
 # ---------------------------------------------------------------------------
 
-# Grouped nav — each entry is (group_label, [(page_label, page_key), ...])
-# Passport and Reports are merged into "Compliance" (tabbed view).
-# "Consequences" is renamed "EOL Economics" — routing key unchanged.
+# Grouped nav — each entry is (group_label, [(page_label, page_key), ...]).
+#
+# IA rule (review finding: "a new user can't predict which pattern applies
+# where" — this makes the rule explicit and applies it uniformly): a
+# top-level group/item is a distinct, addressable workflow surface.
+# Multiple lenses on the *same* underlying cell/fleet data are never split
+# across separate nav items — they live as an in-page radio or tab within
+# one item instead. This is now applied consistently everywhere in the
+# app: Fleet (Fleet Overview / Cell Grading tabs), Explore (Compare /
+# Cluster / Cohort / Pack Builder / Reference Datasets tabs), Compliance
+# (Passport / Reports / Sustainability / Regulatory Alerts tabs), and
+# Health + Decide & Ask (merged into one "Diagnose & Decide" workbench,
+# below — see app/_pages/workbench.py; this used to be two separate nav
+# items requiring two page navigations for what is really one workflow on
+# one cell, a real UX cost flagged in review).
+#
+# "EU Passport" is the one deliberate exception to "distinct workflow
+# only": it is a single-item group promoted to peer status with the
+# broader functional groups for a business reason (EU 2027 passport
+# deadline visibility for the Compliance Officer role), not an oversight.
 NAV_GROUPS = [
     ("Analyse", [
         ("Overview",   "overview"),
-        ("Health",     "health"),
         ("Explore",    "compare"),
     ]),
     ("EU Passport", [          # A6: promoted from 3rd to 2nd — 2027 deadline
         ("Compliance", "compliance"),
     ]),
     ("Operate", [
-        ("Fleet",        "fleet"),
-        ("Decide & Ask", "decision"),
-        ("Live Monitor", "live_monitor"),
+        ("Fleet",             "fleet"),
+        ("Diagnose & Decide", "decision"),
+        ("Live Monitor",      "live_monitor"),
     ]),
     ("Configure", [
         ("Configure", "configure"),
     ]),
 ]
-
-# Flat alias kept for any code that still iterates NAV_ITEMS
-NAV_ITEMS = [(label, key, True) for _, items in NAV_GROUPS for label, key in items]
-
-# Contextual action bar — 3 quick-jump suggestions per page
-# Each entry: (button_label, target_page_key, tooltip)
-PAGE_ACTIONS: dict[str, list[tuple[str, str, str]]] = {
-    "overview":        [("Health →",          "health",          "Deep-dive degradation curves"),
-                        ("Copilot →",         "copilot",         "Plain-English explanation"),
-                        ("Recommendations →", "recommendations", "Recommended action for this cell")],
-    "health":          [("Compare →",         "compare",         "Side-by-side with another cell"),
-                        ("Insights →",        "insights",        "What is driving degradation"),
-                        ("EOL Economics →",   "consequences",    "Model end-of-life economics")],
-    "compare":         [("Health →",          "health",          "Single-cell deep dive"),
-                        ("Fleet →",           "fleet",           "Full fleet ranking"),
-                        ("Insights →",        "insights",        "SHAP feature attribution")],
-    "insights":        [("Health →",          "health",          "Visualise the degradation curves"),
-                        ("Copilot →",         "copilot",         "Get a narrative explanation"),
-                        ("Recommendations →", "recommendations", "Recommended action")],
-    "copilot":         [("Overview →",        "overview",        "Back to key metrics"),
-                        ("Health →",          "health",          "Visualise curves"),
-                        ("Recommendations →", "recommendations", "See recommended action")],
-    "fleet":           [("Health →",          "health",          "Inspect selected cell"),
-                        ("Recommendations →", "recommendations", "Action for selected cell"),
-                        ("EOL Economics →",   "consequences",    "Economics for selected cell")],
-    "recommendations": [("EOL Economics →",   "consequences",    "Model the economics in detail"),
-                        ("Health →",          "health",          "Review degradation curves"),
-                        ("Compliance →",      "compliance",      "Generate EU battery passport")],
-    "consequences":    [("Recommendations →", "recommendations", "See the recommended action"),
-                        ("Compliance →",      "compliance",      "EU passport and reports"),
-                        ("Sustainability →",  "sustainability",  "Lifecycle CO₂ and materials")],
-    "sustainability":  [("Compliance →",      "compliance",      "EU battery passport"),
-                        ("EOL Economics →",   "consequences",    "End-of-life economics"),
-                        ("Fleet →",           "fleet",           "Fleet-level overview")],
-    "compliance":      [("Sustainability →",  "sustainability",  "Lifecycle CO₂ analysis"),
-                        ("EOL Economics →",   "consequences",    "End-of-life economics"),
-                        ("Overview →",        "overview",        "Back to key metrics")],
-    "grading":         [("Fleet →",           "fleet",           "Fleet ranking"),
-                        ("Health →",          "health",          "Deep-dive this cell"),
-                        ("Insights →",        "insights",        "Feature attribution")],
-    "import":          [("Overview →",        "overview",        "Analyse imported data"),
-                        ("Fleet →",           "fleet",           "Fleet ranking"),
-                        ("Settings →",        "settings",        "Configure thresholds")],
-    "settings":        [("Overview →",        "overview",        "Back to analysis"),
-                        ("Fleet →",           "fleet",           "Fleet view"),
-                        ("Import →",          "import",          "Import new data")],
-    "live_monitor":    [("Health →",          "health",          "Deep-dive selected cell"),
-                        ("Fleet →",           "fleet",           "Fleet ranking"),
-                        ("Recommendations →", "recommendations", "Action for this cell")],
-}
 
 def _upload_status_line(meta: dict) -> str:
     """One-line status string for the My Data mode row."""
@@ -1087,11 +1053,10 @@ def main():
     from _pages.import_page import page_import
     from _pages.settings import page_settings
     from _pages.overview import page_overview
-    from _pages.health import page_health
     from _pages.grading import page_grading
     from _pages.fleet import page_fleet
     from _pages.copilot import page_copilot
-    from _pages.decision import page_decision
+    from _pages.workbench import page_cell_workbench
     from _pages.compliance import page_compliance
     if not render_login():
         return   # login form rendered; stop until credentials provided
@@ -1350,13 +1315,15 @@ def main():
         page_overview(df, split_cycle, selected, rul_reliable=rul_reliable, bundle=bundle,
                       trajectory_memory=trajectory_memory)
     elif page == "health":
-        page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable)
+        page_cell_workbench("health", selected, df, split_cycle, active_fdfs, bundles,
+                             rul_reliable, bundle)
     elif page == "compare":
         page_compare(cell_ids, active_fdfs, bundles)
     elif page in ("copilot", "insights"):
         page_copilot(cell_ids, active_fdfs, bundles, selected)
     elif page in ("decision", "consequences", "recommendations"):
-        page_decision(selected, df, active_fdfs, bundles, rul_reliable)
+        page_cell_workbench("decision", selected, df, split_cycle, active_fdfs, bundles,
+                             rul_reliable, bundle)
     elif page in ("compliance", "sustainability", "passport", "reports"):
         page_compliance(selected, df, bundle, rul_reliable, active_fdfs, bundles)
     elif page in ("fleet", "exec_summary"):

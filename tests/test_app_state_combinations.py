@@ -159,3 +159,52 @@ def test_explore_compare_tab_survives_data_source_switch(isolated_db):
     )
     at.run()
     assert not at.exception, f"Explore Compare tab crashed on a stale cell selection: {at.exception}"
+
+
+# ---------------------------------------------------------------------------
+# Cell Workbench (Health + Decide & Ask merge — UX/Workflow review finding)
+# ---------------------------------------------------------------------------
+
+def test_workbench_health_page_key_defaults_to_mechanism_view(isolated_db):
+    """
+    Health and Decide & Ask used to be two separate page navigations for
+    the same cell -- now merged into one workbench (app/_pages/workbench.py)
+    with a radio between "Mechanism (Health)" and "Decision (Decide & Ask)".
+    Arriving via the "health" page-key (sidebar nav, Fleet's per-cell
+    quick-jump) must default to the Mechanism view.
+    """
+    at = _logged_in_app(role="Engineer", page="health", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Workbench crashed defaulting to Mechanism view: {at.exception}"
+    radios = [r for r in at.radio if r.key == "workbench_view_radio"]
+    assert radios, "Workbench view radio not found"
+    assert radios[0].value == "Mechanism (Health)"
+    text = _all_text(at)
+    assert "What is degrading" in text  # page_health()'s own header
+
+
+def test_workbench_decision_page_key_defaults_to_decision_view(isolated_db):
+    """Arriving via the "decision" page-key (nav, trajectory-match card's
+    "Go to Decide & Ask", the mechanism verdict button) must default to the
+    Decision view, not silently reopen Mechanism."""
+    at = _logged_in_app(role="Engineer", page="decision", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Workbench crashed defaulting to Decision view: {at.exception}"
+    radios = [r for r in at.radio if r.key == "workbench_view_radio"]
+    assert radios, "Workbench view radio not found"
+    assert radios[0].value == "Decision (Decide & Ask)"
+    text = _all_text(at)
+    assert "What should I do" in text  # page_decision()'s own header
+
+
+def test_workbench_manual_view_switch_has_no_crash(isolated_db):
+    """Switching the in-page radio (browsing between the two lenses on the
+    same cell without a fresh navigation) must render the other view with
+    no exception and no duplicate-widget-key collision between
+    page_health() and page_decision()."""
+    at = _logged_in_app(role="Engineer", page="health", data_mode="nasa")
+    at.run()
+    radio = [r for r in at.radio if r.key == "workbench_view_radio"][0]
+    radio.set_value("Decision (Decide & Ask)").run()
+    assert not at.exception, f"Manual view switch crashed: {at.exception}"
+    assert "What should I do" in _all_text(at)
