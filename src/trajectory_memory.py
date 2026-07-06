@@ -287,8 +287,21 @@ class TrajectoryMemory:
 
         matches: list[tuple[float, FailureSignature]] = []
 
+        current_source = _source_from_id(cell_id)
+
         for sig in self._signatures:
             if sig.cell_id == cell_id:
+                continue
+            # Cosine similarity on normalized slope vectors is only physically
+            # meaningful within the same chemistry — a real Severson LFP
+            # cell's degradation curve shape has no principled relationship
+            # to a synthetic LiCoO2 cell's, so cross-source "matches" were
+            # methodologically bogus (this is what was driving a majority of
+            # a real Severson fleet being flagged against synthetic failure
+            # signatures). Restrict candidates to the querying cell's own
+            # source; if that source has no EOL signatures of its own yet,
+            # the honest answer is "no match available", not a borrowed one.
+            if sig.source != current_source:
                 continue
 
             # Use only features present in both signature and current window
@@ -362,3 +375,65 @@ class TrajectoryMemory:
             if m is not None:
                 results[cell_id] = m
         return results
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation — primary RUL model vs. trajectory-match model
+# ---------------------------------------------------------------------------
+
+DISAGREEMENT_RATIO_THRESHOLD = 0.40  # relative difference above which the two
+                                      # estimates are treated as disagreeing,
+                                      # not just imprecise
+
+
+def reconcile_rul_estimates(
+    primary_cycles_remaining: "float | None",
+    match: "TrajectoryMatch | None",
+) -> dict:
+    """
+    Compare the primary RUL model's cycles-remaining estimate against the
+    trajectory-match model's estimate for the same cell, and decide whether
+    they should be shown as two independent, both-confident widgets, or as
+    one reconciled "models disagree" message.
+
+    Two models for the same cell used to be rendered as fully independent
+    call-outs (Overview's hero RUL card + the separate Trajectory Match
+    card) with no arbitration — e.g. "657 cycles remaining, reliable" next
+    to "HIGH confidence, 35-65 cycles remaining" for the same cell, an
+    8x+ disagreement presented as if both were simply facts. This function
+    is the arbitration step: when the two diverge beyond
+    DISAGREEMENT_RATIO_THRESHOLD, the caller should replace both
+    independent call-outs with a single card built from this function's
+    output, biased toward the more conservative (shorter) estimate.
+
+    Returns a dict:
+        {
+            "disagree": bool,
+            "primary_cycles": float | None,
+            "match_cycles_mid": float | None,
+            "ratio": float | None,          # relative difference, 0-1+
+            "favor": "primary" | "match" | None,  # the more conservative one
+        }
+    """
+    if match is None or primary_cycles_remaining is None:
+        return {
+            "disagree": False,
+            "primary_cycles": primary_cycles_remaining,
+            "match_cycles_mid": None,
+            "ratio": None,
+            "favor": None,
+        }
+
+    match_mid = (match.cycles_remaining_min + match.cycles_remaining_max) / 2.0
+    denom = max(primary_cycles_remaining, match_mid, 1.0)
+    ratio = abs(primary_cycles_remaining - match_mid) / denom
+    disagree = ratio > DISAGREEMENT_RATIO_THRESHOLD
+    favor = "primary" if primary_cycles_remaining <= match_mid else "match"
+
+    return {
+        "disagree": disagree,
+        "primary_cycles": primary_cycles_remaining,
+        "match_cycles_mid": match_mid,
+        "ratio": ratio,
+        "favor": favor if disagree else None,
+    }

@@ -16,6 +16,7 @@ from utils import (
 )
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from lco_eval import RUL_RELIABLE_FLOOR
+from trajectory_memory import reconcile_rul_estimates
 
 
 # ---------------------------------------------------------------------------
@@ -24,19 +25,17 @@ from lco_eval import RUL_RELIABLE_FLOOR
 
 def _render_trajectory_match_card(
     cell_id: str,
-    df: "pd.DataFrame",
-    trajectory_memory: "TrajectoryMemory | None",
+    match: "TrajectoryMatch | None",
 ) -> None:
     """
-    Run the trajectory pattern matcher and render the warning card if a match
-    is found.  Called from page_overview and (in summary form) page_fleet.
+    Render the trajectory-match warning card for an already-resolved match.
+
+    The match is computed once by the caller (page_overview), alongside
+    reconcile_rul_estimates() — not recomputed here — so this card is only
+    ever shown when it does NOT materially disagree with the primary RUL
+    model's estimate; a disagreeing match is routed to
+    _render_reconciliation_card() instead, never both.
     """
-    if trajectory_memory is None:
-        return
-    try:
-        match = trajectory_memory.match(cell_id, df)
-    except Exception:
-        return
     if match is None:
         return
 
@@ -124,6 +123,78 @@ def _render_trajectory_match_card(
         st.rerun()
 
 
+def _render_reconciliation_card(cell_id: str, reconcile: dict) -> None:
+    """
+    Render ONE unified card when the primary RUL model and the trajectory-
+    match model disagree beyond reconcile_rul_estimates()'s threshold,
+    instead of showing both as independently confident widgets.
+
+    Live-reproduced bug this replaces: the hero card said "657 cycles
+    remaining, reliable" while the Trajectory Match card said "HIGH
+    confidence, 35-65 cycles remaining" for the same cell, an 8x+
+    disagreement with no reconciliation, hierarchy, or guidance on which
+    number to act on.
+    """
+    primary = reconcile["primary_cycles"]
+    match_mid = reconcile["match_cycles_mid"]
+    ratio = reconcile["ratio"]
+    favor = reconcile["favor"]
+    favored_value = primary if favor == "primary" else match_mid
+    favored_label = "the primary model's" if favor == "primary" else "the trajectory-match model's"
+
+    _md_html(
+        f"""<div style="
+            background:#451a03;
+            border:1px solid #f59e0b;
+            border-left:4px solid #f59e0b;
+            border-radius:8px;
+            padding:14px 18px;
+            margin-bottom:16px;
+        ">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;
+                      color:#fcd34d;margin-bottom:6px">
+            ⚠ MODELS DISAGREE — TREAT WITH ELEVATED CAUTION
+          </div>
+          <div style="font-size:13px;color:#e2e8f0;line-height:1.6;margin-bottom:10px">
+            The primary RUL model and the trajectory-match model give
+            substantially different remaining-life estimates for this cell
+            ({ratio:.0%} relative difference) — showing both as independent
+            "reliable" numbers would be misleading, so here they are reconciled.
+          </div>
+          <div style="display:flex;gap:24px;margin-bottom:10px">
+            <div>
+              <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;
+                          letter-spacing:0.07em">Primary model says</div>
+              <div style="font-size:20px;font-weight:700;color:#e2e8f0">
+                {primary:.0f} cycles
+              </div>
+              <div style="font-size:11px;color:#94a3b8">
+                integrates this cell's full history
+              </div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;
+                          letter-spacing:0.07em">Trajectory match says</div>
+              <div style="font-size:20px;font-weight:700;color:#e2e8f0">
+                {match_mid:.0f} cycles
+              </div>
+              <div style="font-size:11px;color:#94a3b8">
+                based on similarity to a short-term failure pattern
+              </div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:#fcd34d;font-weight:600">
+            → Recommended: plan around {favored_value:.0f} cycles remaining
+            ({favored_label} more conservative estimate) until the two
+            estimates converge with more data.
+          </div>
+        </div>"""
+    )
+    if st.button("Go to Decide & Ask →", key=f"reconcile_to_dec_{cell_id}", use_container_width=True):
+        st.session_state.page = "decision"
+        st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # Page: Overview
 # ---------------------------------------------------------------------------
@@ -194,6 +265,20 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             + "</span>"
         )
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
+
+    # ── Reconcile the primary RUL model against the trajectory-match model ──
+    # Computed once here (not inside _render_trajectory_match_card) so the
+    # hero card's plain-English summary and the trajectory panel below it
+    # can never show two independently "confident" but contradictory
+    # cycles-remaining numbers for the same cell.
+    _traj_match = None
+    if trajectory_memory is not None:
+        try:
+            _traj_match = trajectory_memory.match(cell_id, df)
+        except Exception:
+            _traj_match = None
+    _primary_cycles_remaining = None if rul_calibrating else adj_rul
+    _reconcile = reconcile_rul_estimates(_primary_cycles_remaining, _traj_match)
 
     # Confidence inline reason (two non-engineer templates per CTO spec)
     if rul_calibrating and not rul_reliable:
@@ -312,6 +397,13 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             else "consider inspection or load reduction" if current_soh >= 80
             else "replacement or second-life evaluation recommended"
         )
+        if _reconcile["disagree"] and _reconcile["favor"] == "match":
+            # The trajectory-match model's shorter, more urgent estimate is
+            # the one being favored below — the plain-English sentence must
+            # not simultaneously say "no immediate action required" purely
+            # off this cell's current SOH while a "models disagree" card
+            # recommends planning around a much shorter remaining life.
+            _action = "see the models-disagree note below before assuming no action is needed"
         _plain_sentence = (
             f"This cell is estimated to need replacement in approximately "
             f"{months_remaining:.0f} months ({current_rul:.0f} cycles) at current usage — {_action}."
@@ -328,7 +420,13 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
 
     # ── Trajectory match warning ──────────────────────────────────────────────
-    _render_trajectory_match_card(cell_id, df, trajectory_memory)
+    # A disagreeing match is reconciled into one unified card instead of
+    # being shown alongside the hero card as a second, independently
+    # "confident" number.
+    if _reconcile["disagree"]:
+        _render_reconciliation_card(cell_id, _reconcile)
+    else:
+        _render_trajectory_match_card(cell_id, _traj_match)
 
     # ── 📊 Fleet context: benchmark comparison + pin baseline (U1 density reduction) ──
     with st.expander("📊 Fleet context", expanded=False):
