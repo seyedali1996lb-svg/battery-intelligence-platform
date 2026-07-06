@@ -17,3 +17,4 @@ pytest
 bcrypt
 mat-io
 PyJWT
+cryptography

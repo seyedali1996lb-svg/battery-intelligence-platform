@@ -13,9 +13,11 @@ public demo link keeps working with the same documented credentials.
 
 import datetime
 import json
+import os
 import pathlib
 
 import bcrypt
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import (
     create_engine, inspect, text,
     Column, Integer, String, Float, Text,
@@ -39,6 +41,33 @@ DEMO_USERS = {
     "compliance": ("eu2024",    "compliance", "Compliance Officer"),
     "admin":      ("admin",     "admin",      "Administrator"),
 }
+
+# Setting keys whose values are genuine credentials (API keys/tokens/secrets,
+# not IDs or URLs) and are therefore envelope-encrypted at rest in the
+# `settings` table — see _get_fernet()/get_setting()/set_setting() below.
+_SECRET_SETTING_KEYS = frozenset({
+    "vrm_api_token", "circunomics_api_key", "cmms_api_key",
+    "webhook_secret", "orion_bms_api_key",
+})
+
+_fernet: Fernet | None = None
+
+
+def _get_fernet() -> Fernet:
+    """Lazily build the Fernet cipher used to encrypt credential-shaped
+    Setting values. Same honest demo-grade-secret pattern as JWT_SECRET in
+    src/api.py: the fallback key below is fine for local/demo use but must
+    be overridden via a real secrets manager before any production deploy —
+    anyone with read access to this source can decrypt data encrypted with
+    the fallback key."""
+    global _fernet
+    if _fernet is None:
+        _key = os.environ.get(
+            "SETTINGS_ENCRYPTION_KEY",
+            "4S2b-Ok94fVLdI9xbEQVoIr2Aw3s7Tqo2YAcc1zYUaw=",  # dev-only, insecure
+        )
+        _fernet = Fernet(_key.encode() if isinstance(_key, str) else _key)
+    return _fernet
 
 
 # ---------------------------------------------------------------------------
@@ -322,15 +351,26 @@ def get_setting(org_id: int, key: str, default=None):
         row = s.query(Setting).filter_by(org_id=org_id, key=key).one_or_none()
         if row is None:
             return default
+        raw = row.value
+        if key in _SECRET_SETTING_KEYS and raw is not None:
+            try:
+                raw = _get_fernet().decrypt(raw.encode()).decode()
+            except InvalidToken:
+                # Row predates encryption being added (plaintext JSON) — read
+                # it as-is; the next set_setting() call re-encrypts it.
+                pass
         try:
-            return json.loads(row.value)
+            return json.loads(raw)
         except (TypeError, ValueError):
             return default
 
 
 def set_setting(org_id: int, key: str, value) -> None:
+    encoded = json.dumps(value)
+    if key in _SECRET_SETTING_KEYS:
+        encoded = _get_fernet().encrypt(encoded.encode()).decode()
     with Session() as s:
-        s.merge(Setting(org_id=org_id, key=key, value=json.dumps(value)))
+        s.merge(Setting(org_id=org_id, key=key, value=encoded))
         s.commit()
 
 

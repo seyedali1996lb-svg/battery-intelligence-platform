@@ -123,6 +123,60 @@ def test_settings_round_trip_and_default(db):
     assert db.get_setting(DEMO_ORG_ID, "webhook_events") == ["A", "B"]
 
 
+def test_secret_setting_round_trips_through_encryption(db):
+    assert "vrm_api_token" in db._SECRET_SETTING_KEYS
+    db.set_setting(DEMO_ORG_ID, "vrm_api_token", "super-secret-token-123")
+    assert db.get_setting(DEMO_ORG_ID, "vrm_api_token") == "super-secret-token-123"
+
+
+def test_secret_setting_is_not_plaintext_in_the_raw_db_row(db):
+    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "plaintext-should-not-appear")
+    with db.Session() as s:
+        row = s.query(db.Setting).filter_by(org_id=DEMO_ORG_ID, key="cmms_api_key").one()
+        assert "plaintext-should-not-appear" not in row.value
+        assert row.value != db.json.dumps("plaintext-should-not-appear")
+
+
+def test_non_secret_setting_remains_plain_json_at_rest(db):
+    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
+    with db.Session() as s:
+        row = s.query(db.Setting).filter_by(org_id=DEMO_ORG_ID, key="webhook_url").one()
+        assert row.value == db.json.dumps("https://example.com/hook")
+
+
+def test_legacy_plaintext_secret_row_is_still_readable():
+    """A row written before encryption was added (plain JSON, no Fernet
+    envelope) must still be readable — get_setting() falls back to raw
+    JSON on InvalidToken rather than losing/erroring on old data."""
+    import tempfile
+    tmp_path = pathlib.Path(tempfile.mkdtemp())
+    test_db_path = tmp_path / "legacy_test.db"
+    import sqlalchemy
+    engine = sqlalchemy.create_engine(f"sqlite:///{test_db_path}", connect_args={"check_same_thread": False})
+    Session = sqlalchemy.orm.sessionmaker(bind=engine)
+    db_module.Base.metadata.create_all(engine)
+
+    import json as _json
+    with Session() as s:
+        s.merge(db_module.Setting(org_id=1, key="circunomics_api_key", value=_json.dumps("legacy-plaintext-key")))
+        s.commit()
+
+    import pytest as _pytest
+    _monkeypatch = _pytest.MonkeyPatch()
+    _monkeypatch.setattr(db_module, "engine", engine)
+    _monkeypatch.setattr(db_module, "Session", Session)
+    try:
+        assert db_module.get_setting(1, "circunomics_api_key") == "legacy-plaintext-key"
+        # Writing again should re-encrypt it going forward.
+        db_module.set_setting(1, "circunomics_api_key", "legacy-plaintext-key")
+        with Session() as s:
+            row = s.query(db_module.Setting).filter_by(org_id=1, key="circunomics_api_key").one()
+            assert row.value != _json.dumps("legacy-plaintext-key")
+        assert db_module.get_setting(1, "circunomics_api_key") == "legacy-plaintext-key"
+    finally:
+        _monkeypatch.undo()
+
+
 def test_upload_meta_round_trip(db):
     db.save_upload_meta(DEMO_ORG_ID, {"upload_date": "2026-01-01", "n_cells": 3, "cell_ids": ["A", "B", "C"]}, "upload-abc")
     hist = db.load_upload_meta_history(DEMO_ORG_ID)
