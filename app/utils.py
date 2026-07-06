@@ -88,6 +88,53 @@ def _action_bar(page: str) -> None:
     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
+# ---------------------------------------------------------------------------
+# Shared card/tile components (UI Design review finding)
+# ---------------------------------------------------------------------------
+# The exact bordered-card wrapper string
+# ("background:#1e2a38;border:1px solid #2d3748;border-radius:...;padding:...")
+# was hand-authored independently in 9+ page files (31+ occurrences) — no
+# single enforced rendering path for "a bordered card" or "a label/value
+# metric tile" meant every author reinvented it slightly differently, and
+# drift (inconsistent colors, missing light-mode overrides, the
+# UI_GREEN/UI_YELLOW NameError found earlier this session) was inevitable.
+# These two primitives don't try to model every card's unique inner content
+# — that would just become an unmaintainable options grab-bag — they
+# replace the *wrapper* and the single most-repeated *inner* pattern
+# (label/value/sub), which is what was actually duplicated everywhere.
+
+CARD_BG     = "#1e2a38"
+CARD_BORDER = "#2d3748"
+
+
+def render_card(inner_html: str, border_color: str = CARD_BORDER,
+                 padding: str = "16px 18px", extra_style: str = "") -> None:
+    """Render one bordered card. Callers supply only their unique inner
+    HTML — the wrapper (background/border/radius/padding) is centralized
+    here instead of being hand-copied into every page file."""
+    _md_html(
+        f"<div style='background:{CARD_BG};border:1px solid {border_color};"
+        f"border-radius:10px;padding:{padding};{extra_style}'>"
+        f"{inner_html}"
+        f"</div>"
+    )
+
+
+def metric_tile_html(label: str, value: str, sub: str = "",
+                      value_color: str = "#e2e8f0", value_size: str = "20px") -> str:
+    """Return the HTML for one label/value/sub metric tile — the single
+    most-repeated inner pattern across Fleet/Overview/Decide & Ask/
+    Compliance's metric rows. Returns a string (not rendered directly) so
+    callers can compose several tiles inside one render_card() or a
+    st.columns() layout."""
+    return (
+        f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+        f"letter-spacing:0.08em;margin-bottom:4px'>{label}</div>"
+        f"<div style='font-size:{value_size};font-weight:800;color:{value_color}'>{value}</div>"
+        + (f"<div style='font-size:11px;color:#718096;margin-top:2px'>{sub}</div>" if sub else "")
+    )
+
+
 def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
     """Return df downsampled to at most max_points rows for trend charts.
 

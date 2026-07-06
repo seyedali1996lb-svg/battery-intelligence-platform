@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import pandas as pd
 
-from utils import _action_bar, _md_html, _empty_state, NASA_CELL_IDS
+from utils import _action_bar, _md_html, _empty_state, NASA_CELL_IDS, render_card, metric_tile_html
 from design_system import make_badge, ACTION_META, CONF_META
 from data_loader import CELL_STRESS_PROFILES
 
@@ -180,18 +180,13 @@ def page_decision(
         _nd_cols = st.columns(len(_alts))
         for _col, (_lbl, _npv_v, _col_v, _desc, _cost_note) in zip(_nd_cols, _alts):
             with _col:
-                _md_html(
-                    f"<div style='background:#1e2a38;border:1px solid #2d3748;"
-                    f"border-radius:10px;padding:16px 18px;height:100%'>"
-                    f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
-                    f"letter-spacing:0.08em;margin-bottom:6px'>{_lbl}"
-                    + (" · highest NPV" if _lbl == _npv_max[0] else "")
-                    + f"</div>"
-                    f"<div style='font-size:26px;font-weight:800;color:{_col_v}'>${_npv_v:,.0f}</div>"
-                    f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV</div>"
-                    f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
-                    f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>"
-                    f"</div>"
+                _tile_label = _lbl + (" · highest NPV" if _lbl == _npv_max[0] else "")
+                render_card(
+                    metric_tile_html(_tile_label, f"${_npv_v:,.0f}", "5-yr NPV",
+                                      value_color=_col_v, value_size="26px")
+                    + f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
+                    f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>",
+                    extra_style="height:100%",
                 )
 
     with st.popover("ⓘ Assumptions", use_container_width=False):
