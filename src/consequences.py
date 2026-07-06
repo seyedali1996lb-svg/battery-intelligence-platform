@@ -20,8 +20,9 @@ The only validated inputs from the pipeline are:
 # Nominal capacity and voltage for each data source.
 # Used to convert SOH% into remaining kWh for financial calculations.
 CELL_NOMINAL_KWH = {
-    "synth": 0.74 * 3.6 / 1000,   # Oxford-style 18650, 0.74 Ah — 0.00266 kWh
-    "nasa":  2.00 * 3.6 / 1000,   # NASA PCoE 18650, ~2 Ah  — 0.00720 kWh
+    "synth":    0.74 * 3.6 / 1000,   # Oxford-style 18650, 0.74 Ah — 0.00266 kWh
+    "nasa":     2.00 * 3.6 / 1000,   # NASA PCoE 18650, ~2 Ah  — 0.00720 kWh
+    "severson": 1.10 * 3.6 / 1000,   # A123 APR18650M1A LFP, 1.1 Ah (Severson et al. 2019) — 0.00396 kWh
 }
 
 # ---------------------------------------------------------------------------
@@ -337,7 +338,13 @@ def breakeven_curve(
     """
     import numpy as np
     cell_kwh = CELL_NOMINAL_KWH[source]
-    sohs     = np.arange(soh_current, soh_min - 0.1, -0.5)
+    # If the cell's current SOH is already at or below soh_min (a real case —
+    # this chart is most relevant for exactly the most-degraded cells),
+    # np.arange(soh_current, soh_min - 0.1, -0.5) produces an empty array
+    # since start < stop with a negative step. Extend the floor below
+    # soh_current so the range always has at least one point.
+    _effective_min = min(soh_min, soh_current - 0.5)
+    sohs = np.arange(soh_current, _effective_min - 0.1, -0.5)
 
     sl_nets = [
         max(0.0, cell_kwh * (s / 100.0) * sl_value_per_kwh - repack_cost)

@@ -6424,7 +6424,7 @@ def page_consequences(
     rul_pred_raw     = latest.get("rul_pred", None)
     rul_pred         = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
     is_nasa          = selected in NASA_CELL_IDS
-    source           = "nasa" if is_nasa else "synth"
+    source           = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
 
     peer_fades = [
         float(fdf.iloc[-1].get("fade_30_mah_cy", 0))
@@ -6819,12 +6819,12 @@ def page_consequences(
         def _pv_factor(r, t):
             return 1.0 / ((1 + r) ** t)
 
-        _cap_now = CELL_NOMINAL_KWH
+        _cap_now = CELL_NOMINAL_KWH.get(source, 0.0057)
         _a_annual = _cap_now * _energy_usd
         _a_npv = sum(_a_annual * _pv_factor(_npv_rate, t) for t in _years) - _repl_cost
 
         _rul_years = min((rul_pred / 200.0 / 12.0) if rul_pred else 1.5, 5.0)
-        _b_cap_degraded = CELL_NOMINAL_KWH * (soh / 100.0)
+        _b_cap_degraded = _cap_now * (soh / 100.0)
         _b_annual = _b_cap_degraded * _energy_usd
         _b_npv = (
             sum(_b_annual * _pv_factor(_npv_rate, t) for t in range(1, max(1, int(_rul_years)) + 1))
@@ -6832,7 +6832,7 @@ def page_consequences(
             - _repl_cost * _pv_factor(_npv_rate, _rul_years)
         )
 
-        _sl_annual = CELL_NOMINAL_KWH * (soh / 100.0) * 0.85 * _energy_usd * 0.6
+        _sl_annual = _cap_now * (soh / 100.0) * 0.85 * _energy_usd * 0.6
         _c_npv = sum(_sl_annual * _pv_factor(_npv_rate, t) for t in _years) - _repack_approx
 
         _strategies = [
