@@ -12,7 +12,7 @@ def _sample_passport():
         "capacity_ah": [2.0, 1.98, 1.96, 1.94], "rul_pred": [None, None, None, 600.0],
     })
     bundle = {"metrics": {"lco_soh_r2": 0.9}}
-    return build_passport("TestCell", df, bundle, rul_reliable=True, is_nasa=True)
+    return build_passport("TestCell", df, bundle, rul_reliable=True)
 
 
 def test_json_ld_has_required_top_level_keys():

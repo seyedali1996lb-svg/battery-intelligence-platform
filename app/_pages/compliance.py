@@ -43,8 +43,7 @@ def _passport_field_row(f: dict) -> str:
 def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
     from passport import build_passport
 
-    is_nasa = selected in NASA_CELL_IDS
-    p = build_passport(selected, df, bundle, rul_reliable, is_nasa)
+    p = build_passport(selected, df, bundle, rul_reliable)
     summ = p["summary"]
 
     st.markdown("# Battery Passport")
@@ -297,7 +296,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
 
     is_nasa = selected in NASA_CELL_IDS
     source  = "nasa" if is_nasa else "synth"
-    p       = build_passport(selected, df, bundle, rul_reliable, is_nasa)
+    p       = build_passport(selected, df, bundle, rul_reliable)
 
     latest  = df.iloc[-1]
     soh     = float(latest["soh_pct"])

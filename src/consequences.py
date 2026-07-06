@@ -23,6 +23,7 @@ CELL_NOMINAL_KWH = {
     "synth":    0.74 * 3.6 / 1000,   # Oxford-style 18650, 0.74 Ah — 0.00266 kWh
     "nasa":     2.00 * 3.6 / 1000,   # NASA PCoE 18650, ~2 Ah  — 0.00720 kWh
     "severson": 1.10 * 3.6 / 1000,   # A123 APR18650M1A LFP, 1.1 Ah (Severson et al. 2019) — 0.00396 kWh
+    "oxford":   3.00 * 3.6 / 1000,   # NCR18650BD NCA, 3 Ah (Raj et al. 2020) — 0.01080 kWh
 }
 
 # ---------------------------------------------------------------------------

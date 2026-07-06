@@ -18,6 +18,7 @@ so the two surfaces can never drift out of sync.
 """
 
 from consequences import CELL_NOMINAL_KWH, ASSUMPTIONS, sustainability_snapshot
+from chemistry_profiles import ChemistryProfile
 
 
 def build_passport(
@@ -25,14 +26,24 @@ def build_passport(
     df,
     bundle: dict,
     rul_reliable: bool,
-    is_nasa: bool,
 ) -> dict:
     """
     Returns a dict keyed by group name, each a list of field dicts:
       {"label": str, "value": str, "state": "available"|"estimated"|"unavailable",
        "note": str (optional source/citation)}
+
+    Chemistry, nominal capacity, data source, and usage-condition fields are
+    all resolved via ChemistryProfile.for_cell(cell_id) — the same registry
+    every other consumer (Health page, CRM fields) already uses — so a newly
+    registered chemistry can never silently fall back to a wrong label here.
     """
-    source = "nasa" if is_nasa else "synth"
+    profile = ChemistryProfile.for_cell(cell_id)
+    # sustainability_snapshot() below still needs a CELL_NOMINAL_KWH key;
+    # chemistries with no known nominal capacity (e.g. user uploads) fall
+    # back to the synthetic baseline for that internal lookup only — this
+    # does not affect any Passport identity field shown to the user, which
+    # is derived from the profile directly, never from this fallback.
+    source = profile.nominal_capacity_kwh_key or "synth"
     latest = df.iloc[-1]
     first  = df.iloc[0]
 
@@ -61,25 +72,32 @@ def build_passport(
     else:
         date_from = date_to = None
 
-    cell_kwh = CELL_NOMINAL_KWH[source]
+    chemistry = profile.passport_chemistry
+    data_src  = profile.passport_data_source
+    usage_src = profile.passport_usage
+    chemistry_known = profile.nominal_capacity_kwh_key is not None
 
-    if is_nasa:
-        chemistry = "LiCoO₂ (lithium cobalt oxide), 18650 cylindrical"
-        data_src  = "NASA PCoE Battery Aging Dataset — real measured data"
-        usage_src = "Test conditions: 24°C, 2A discharge, 100% DoD (Saha & Goebel, 2007)"
+    if chemistry_known:
+        cell_kwh = CELL_NOMINAL_KWH[profile.nominal_capacity_kwh_key]
+        capacity_value = f"{cell_kwh*1000:.2f} Wh ({cell_kwh/3.6*1000:.2f} Ah @ 3.6V nominal)"
+        capacity_state = "available"
+        capacity_note  = profile.passport_capacity_note
     else:
-        chemistry = "Synthetic Li-ion model (physics-informed, not a real cell)"
-        data_src  = "Synthetic generator — Arrhenius SEI growth + C-rate + Rainflow DoD"
-        usage_src = "Injected stress profile — see sidebar for this cell's T / C-rate / DoD"
+        # Unknown chemistry (e.g. user upload) — no nominal spec exists, so
+        # fall back to this cell's own measured cycle-1 capacity rather than
+        # guessing at a generic constant, and mark it accordingly.
+        capacity_value = f"{initial_cap_ah:.3f} Ah (measured, cycle 1)" if initial_cap_ah == initial_cap_ah else "n/a"
+        capacity_state = "estimated"
+        capacity_note  = "No chemistry-specific nominal spec available — using this cell's own measured cycle-1 capacity instead"
 
     identity = [
         {"label": "Cell ID", "value": cell_id, "state": "available"},
-        {"label": "Chemistry type", "value": chemistry, "state": "available"},
+        {"label": "Chemistry type", "value": chemistry, "state": "available" if chemistry_known else "unavailable"},
         {
             "label": "Nominal capacity",
-            "value": f"{cell_kwh*1000:.2f} Wh ({cell_kwh/3.6*1000:.2f} Ah @ 3.6V nominal)",
-            "state": "available",
-            "note": "NASA PCoE datasheet spec" if is_nasa else "Oxford-style 18650 dataset spec",
+            "value": capacity_value,
+            "state": capacity_state,
+            "note": capacity_note,
         },
         {"label": "Data source", "value": data_src, "state": "available"},
         {"label": "Manufacturer", "value": "Not available in this demonstration", "state": "unavailable"},
@@ -111,7 +129,11 @@ def build_passport(
             "state": ("available" if date_from else "unavailable"),
             "note": ("Pipeline output — from test_date column" if date_from else "No test_date column in this dataset"),
         },
-        {"label": "Usage profile / test conditions", "value": usage_src, "state": "available"},
+        {
+            "label": "Usage profile / test conditions",
+            "value": usage_src,
+            "state": "unavailable" if usage_src.startswith("Not available") else "available",
+        },
         {"label": "Repair / refurbishment history", "value": "Not available in this demonstration", "state": "unavailable", "note": "Neither dataset models repair events"},
         {"label": "Prior-owner / installation history", "value": "Not available in this demonstration", "state": "unavailable"},
     ]

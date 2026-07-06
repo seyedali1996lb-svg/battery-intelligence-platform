@@ -30,6 +30,13 @@ class ChemistryProfile:
 
     Subclass for each chemistry; override get_crm_fields() and
     get_health_sections(). All other attributes are class-level.
+
+    The passport_* attributes are the single source of truth for
+    src/passport.py's Battery Passport identity fields (chemistry type,
+    nominal capacity, data source, usage conditions) — every consumer
+    must resolve them via ChemistryProfile.for_cell(cell_id) instead of
+    re-deriving them from an is_nasa-style boolean, so a newly added
+    chemistry can never fall through to the wrong label by default.
     """
 
     display_name:     str  = "Unknown"
@@ -37,6 +44,13 @@ class ChemistryProfile:
     dqdv_applicable:  bool = False
     provenance:       str  = "synthetic"
     dataset_citation: str  = ""
+
+    # Battery Passport identity fields — override in every subclass.
+    nominal_capacity_kwh_key: str | None = None   # key into CELL_NOMINAL_KWH, or None
+    passport_chemistry:       str = "Not specified in this demonstration"
+    passport_capacity_note:   str = "Not specified in this demonstration"
+    passport_data_source:     str = "Not specified in this demonstration"
+    passport_usage:           str = "Not available in this demonstration"
 
     @classmethod
     def for_cell(cls, cell_id: str) -> "ChemistryProfile":
@@ -67,6 +81,12 @@ class LFPSeversonProfile(ChemistryProfile):
     dqdv_applicable = False
     provenance      = "measured"
     dataset_citation = "Severson et al., Nature Energy 2019"
+
+    nominal_capacity_kwh_key = "severson"
+    passport_chemistry       = "LFP (lithium iron phosphate), A123 APR18650M1A cylindrical"
+    passport_capacity_note   = "A123 APR18650M1A datasheet spec (Severson et al. 2019)"
+    passport_data_source     = "Severson et al., Nature Energy 2019 — real measured data"
+    passport_usage           = "Fast-charging protocol search, various C-rates, 30°C chamber (Severson et al. 2019)"
 
     def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
         s  = settings or {}
@@ -104,6 +124,12 @@ class LiCoO2NASAProfile(ChemistryProfile):
     dqdv_applicable = True
     provenance      = "measured"
     dataset_citation = "NASA PCoE Battery Aging Dataset, Saha & Goebel 2007"
+
+    nominal_capacity_kwh_key = "nasa"
+    passport_chemistry       = "LiCoO₂ (lithium cobalt oxide), 18650 cylindrical"
+    passport_capacity_note   = "NASA PCoE datasheet spec"
+    passport_data_source     = "NASA PCoE Battery Aging Dataset — real measured data"
+    passport_usage           = "Test conditions: 24°C, 2A discharge, 100% DoD (Saha & Goebel, 2007)"
 
     def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
         s      = settings or {}
@@ -157,6 +183,12 @@ class NCAOxfordProfile(ChemistryProfile):
     provenance      = "measured"
     dataset_citation = "Raj et al., Batteries & Supercaps 2020 (ODC-ODbL)"
 
+    nominal_capacity_kwh_key = "oxford"
+    passport_chemistry       = "NCA (lithium nickel cobalt aluminium oxide), NCR18650BD cylindrical"
+    passport_capacity_note   = "NCR18650BD datasheet spec (Raj et al. 2020)"
+    passport_data_source     = "Oxford Path-Dependent Battery Degradation Dataset 2020 — real measured data"
+    passport_usage           = "Reference Performance Test checkpoints, 24°C chamber (Raj et al. 2020) — sparse, not dense per-cycle data"
+
     def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
         s  = settings or {}
         co = s.get("crm_nca_oxford_co_pct", _CRM_DEFAULTS["nca_co_pct"])
@@ -203,6 +235,12 @@ class LiCoO2SyntheticProfile(ChemistryProfile):
     provenance      = "synthetic"
     dataset_citation = "Physics-informed synthetic model"
 
+    nominal_capacity_kwh_key = "synth"
+    passport_chemistry       = "Synthetic Li-ion model (physics-informed, not a real cell)"
+    passport_capacity_note   = "Oxford-style 18650 dataset spec (synthetic model baseline)"
+    passport_data_source     = "Synthetic generator — Arrhenius SEI growth + C-rate + Rainflow DoD"
+    passport_usage           = "Injected stress profile — see sidebar for this cell's T / C-rate / DoD"
+
     def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
         s  = settings or {}
         co = s.get("crm_synth_co_pct", _CRM_DEFAULTS["lico2_co_pct"])
@@ -237,6 +275,11 @@ class UserDefinedProfile(ChemistryProfile):
     dqdv_applicable = True
     provenance      = "measured"
     dataset_citation = "User upload"
+
+    nominal_capacity_kwh_key = None  # unknown chemistry -- passport falls back to measured capacity
+    passport_chemistry       = "Not specified — chemistry is not captured at upload in this demonstration"
+    passport_data_source     = "User upload — real measured data (uploaded via CSV/XLSX)"
+    passport_usage           = "Not available in this demonstration — upload does not currently capture test conditions"
 
     def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
         s      = settings or {}
