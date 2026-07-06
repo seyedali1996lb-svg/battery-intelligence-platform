@@ -823,6 +823,43 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.session_state["tour_step"] = 0
         st.rerun()
 
+    _section("Production Readiness Roadmap")
+    st.caption("This platform runs as a portfolio demo with intentional constraints. The table below documents the credible path to production deployment.")
+
+    roadmap_rows = [
+        ("Authentication", "Real DB-backed auth (User/Organization models, bcrypt-hashed passwords) — self-service org signup, admin-invites-teammate. Session cookies/JWT are demo-grade", "OAuth2 via Okta/LDAP for enterprise SSO; rotate the demo-grade JWT secret via a real secrets manager"),
+        ("Multi-tenancy", "Real per-org data isolation — every DB table scoped by org_id, uploaded fleets persisted per-org to disk. Shared reference-cell data is intentionally global, identical for every org", "PostgreSQL row-level security as an additional isolation layer; per-org rate limiting"),
+        ("Upload persistence", "Decision logs, cohort tags, settings, trajectory signatures, and uploaded cell data/model bundles all persist per-org (SQLite + per-org joblib bundle) across restarts", "PostgreSQL in cloud for concurrent multi-user access at scale"),
+        ("Real BMS integration", "Victron VRM and Orion Jr2 adapters target the real public/documented API shapes — untested against a live account, credential UI in Settings", "User supplies real VRM/Orion credentials to validate end-to-end"),
+        ("Second-life marketplace", "Circunomics adapter targets the generic REST shape a B2B marketplace API would expose — untested against a live partner account, credential UI in Settings", "User supplies a real Circunomics partner API key to validate end-to-end and adjust the request shape to match their actual docs"),
+        ("REST API", "8 endpoints, Swagger UI, Dockerfile, JWT bearer-token auth gating every data endpoint — demo-grade fallback secret, same honesty pattern as the Copilot API key", "Set a real JWT secret via a secrets manager in any non-local deployment; deploy via Dockerfile.api to Cloud Run / ECS"),
+        ("Credential storage", "Credential-shaped Settings (VRM/Orion/Circunomics/CMMS API keys, webhook secret) are envelope-encrypted at rest — demo-grade fallback encryption key, same honesty pattern as the JWT secret", "Set a real encryption key via a secrets manager in any non-local deployment; rotate it with a re-encryption migration if ever changed"),
+        ("Frontend deployment", "React + Vite + TypeScript frontend runs locally only, no hosting target configured, serves the shared reference-cell fleet only (not each org's own uploaded data yet)", "Deploy static build to Vercel/Netlify/Cloud Run; wire the API to org-scoped data for uploaded fleets"),
+        ("Scheduled reports", "UI configuration only (no-op in demo)", "Wire to APScheduler / Celery worker; SMTP for delivery; S3 for PDF storage"),
+        ("MQTT production", "Connects to public test.mosquitto.org broker", "Point MQTT_HOST / MQTT_PORT at BMS broker; add TLS + broker auth credentials"),
+        ("RBAC", "Role-aware navigation and onboarding (Engineer / Fleet Manager / Executive / Compliance Officer), no server-side write-action gating yet", "Enforce role-based write permissions on Decision/CMMS-ticket actions server-side, not just UI defaults"),
+        ("Audit logging", "Page views logged to local CSV", "Forward to structured log store (Datadog / CloudWatch); immutable audit trail per EU 2023/1542"),
+        ("Model retraining", "Blocking call on server start", "Background worker (Celery / APScheduler); re-train nightly on new uploads, push updated bundle"),
+        ("Scalability", "All cells loaded into RAM as full DataFrames", "Per-cell lazy load from Parquet/SQLite; summary metrics pre-computed and cached"),
+        ("Secrets management", "Anthropic API key in .streamlit/secrets.toml", "AWS Secrets Manager / GCP Secret Manager; never in source"),
+        ("CI/CD", "GitHub Actions: syntax check + pytest suite on every push", "Add Docker build → deploy to Cloud Run or ECS"),
+    ]
+
+    for gap, demo, prod in roadmap_rows:
+        st.markdown(
+            f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
+            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:6px'>{gap}</div>"
+            f"<div style='display:flex;gap:16px'>"
+            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Demo behaviour</div>"
+            f"<div style='font-size:12px;color:#8896a8;line-height:1.5'>{demo}</div></div>"
+            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Production path</div>"
+            f"<div style='font-size:12px;color:#8896a8;line-height:1.5'>{prod}</div></div>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.caption("Estimated effort to reach internal-fleet MVP: 3–4 sprints (auth + persistence + MQTT production broker + Docker deployment pipeline).")
+
     _section("About")
 
     phase_rows = [
