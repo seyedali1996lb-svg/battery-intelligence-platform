@@ -1,8 +1,8 @@
-"""Unit tests for src/passport_export.py — to_json_ld()."""
+"""Unit tests for src/passport_export.py — to_json_ld() and document_id()."""
 
 import pandas as pd
 from passport import build_passport
-from passport_export import to_json_ld
+from passport_export import to_json_ld, document_id
 
 
 def _sample_passport():
@@ -40,3 +40,25 @@ def test_json_ld_is_actually_json_serializable():
     ld = to_json_ld(_sample_passport(), "TestCell")
     serialized = json.dumps(ld)
     assert json.loads(serialized) == ld
+
+
+def test_document_id_is_deterministic_for_same_inputs():
+    p = _sample_passport()
+    d1 = document_id(p, "TestCell", "2026-01-01T00:00:00")
+    d2 = document_id(p, "TestCell", "2026-01-01T00:00:00")
+    assert d1 == d2
+    assert len(d1) == 12
+
+
+def test_document_id_differs_for_different_timestamp():
+    p = _sample_passport()
+    d1 = document_id(p, "TestCell", "2026-01-01T00:00:00")
+    d2 = document_id(p, "TestCell", "2026-01-02T00:00:00")
+    assert d1 != d2
+
+
+def test_json_ld_reuses_provided_doc_id():
+    p = _sample_passport()
+    fixed_id = document_id(p, "TestCell", "2026-01-01T00:00:00")
+    ld = to_json_ld(p, "TestCell", doc_id=fixed_id)
+    assert ld["documentId"] == fixed_id

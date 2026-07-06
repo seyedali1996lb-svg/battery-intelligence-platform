@@ -108,7 +108,7 @@ def build_report_pdf(
     passport: dict,
     second_life: dict | None,
     assumptions: dict,
-) -> bytes:
+) -> "tuple[bytes, str]":
     """
     passport: output of passport.build_passport()
     second_life: None if cell is still in primary life, else dict with
@@ -116,7 +116,13 @@ def build_report_pdf(
                  name -> dollar value) — pass the same shape used on the
                  Consequences page.
     assumptions: consequences.ASSUMPTIONS dict (for the register table)
+
+    Returns (pdf_bytes, document_id) — pass document_id to
+    passport_export.to_json_ld()'s doc_id parameter so a paired JSON-LD
+    export from the same download action carries the same traceable ID.
     """
+    from passport_export import document_id as _document_id
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -127,11 +133,14 @@ def build_report_pdf(
     ss = _styles()
     story = []
 
+    generated_at = datetime.now().isoformat(timespec="seconds")
+    doc_id = _document_id(passport, passport["cell_id"], generated_at)
+
     # ── Header ──
     story.append(Paragraph("⚡ Battery Intelligence Platform", ss["SubTitle"]))
     story.append(Paragraph(f"Demonstration Report — {passport['cell_id']}", ss["TitleBig"]))
     story.append(Paragraph(
-        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · "
+        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · Document ID {doc_id} · "
         f"Battery Passport Interface, structured around EU Battery Regulation (EU) 2023/1542 data fields",
         ss["SubTitle"],
     ))
@@ -255,10 +264,11 @@ def build_report_pdf(
     story.append(Paragraph(
         f"Field summary: {summ['n_available']} available · {summ['n_estimated']} estimated · "
         f"{summ['n_unavailable']} not available in this demonstration ({summ['n_total']} total fields). "
+        f"Document ID {doc_id} — traces this export instance, not a certification mark. "
         "Battery Intelligence Platform — portfolio project. Not affiliated with or endorsed by any "
         "regulatory authority.",
         ss["Footer"],
     ))
 
     doc.build(story)
-    return buf.getvalue()
+    return buf.getvalue(), doc_id

@@ -7292,14 +7292,31 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
     from report_pdf import build_report_pdf
-    pdf_bytes = build_report_pdf(p, second_life, ASSUMPTIONS)
-    st.download_button(
-        label="Download demonstration report (PDF)",
-        data=pdf_bytes,
-        file_name=f"battery_passport_{selected}.pdf",
-        mime="application/pdf",
-        type="primary",
-    )
+    from passport_export import to_json_ld
+    import json as _json_report
+
+    pdf_bytes, _doc_id = build_report_pdf(p, second_life, ASSUMPTIONS)
+    _jsonld = to_json_ld(p, selected, doc_id=_doc_id)
+
+    st.caption(f"Document ID: {_doc_id} — both files below share this ID, since they're the same export.")
+    _rep_col1, _rep_col2 = st.columns(2)
+    with _rep_col1:
+        st.download_button(
+            label="Download demonstration report (PDF)",
+            data=pdf_bytes,
+            file_name=f"battery_passport_{selected}_{_doc_id}.pdf",
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+        )
+    with _rep_col2:
+        st.download_button(
+            label="Download machine-readable passport (JSON-LD)",
+            data=_json_report.dumps(_jsonld, indent=2).encode(),
+            file_name=f"battery_passport_{selected}_{_doc_id}.jsonld",
+            mime="application/ld+json",
+            use_container_width=True,
+        )
 
 
 
