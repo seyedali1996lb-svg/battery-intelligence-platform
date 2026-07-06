@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
-    soh_status, NASA_CELL_IDS, render_pack_builder,
+    soh_status, NASA_CELL_IDS, render_pack_builder, render_card,
 )
 from design_system import make_badge
 from data_loader import CELL_STRESS_PROFILES
@@ -40,13 +40,11 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         from battery_copilot import build_fleet_stats, answer_fleet_query
         _af_stats = build_fleet_stats(featured_dfs, bundles)
         _af_answer = answer_fleet_query(_af_input, _af_stats)
-        _md_html(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:16px 20px;margin-bottom:16px'>"
+        render_card(
             f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{make_badge('Template', '#718096')} · Fleet</div>"
-            f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_af_answer}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_af_answer}</div>",
+            padding="16px 20px",
+            extra_style="margin-bottom:16px",
         )
 
     # ── Best-effort daily fleet digest (session/page-load-triggered, not a
