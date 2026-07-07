@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder
+from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card
 
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
@@ -235,15 +235,14 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     # ── Summary verdict ──
     _soh_winner = cell_a if _soh_a > _soh_b else cell_b
     _fade_winner = cell_a if _fade_a < _fade_b else cell_b
-    st.markdown(
-        f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-        f"padding:18px 22px;margin-top:8px'>"
+    render_card(
         f"<div style='font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:8px'>Summary Verdict</div>"
         f"<div style='font-size:13px;color:#a0aec0;line-height:1.8'>"
         f"<strong style='color:#63b3ed'>{_soh_winner}</strong> has higher current SOH. "
         f"<strong style='color:#63b3ed'>{_fade_winner}</strong> is degrading more slowly."
-        f"</div></div>",
-        unsafe_allow_html=True,
+        f"</div>",
+        padding="18px 22px",
+        extra_style="margin-top:8px",
     )
 
     # end of Compare view — Cluster and Cohort are handled via radio+return above
@@ -626,9 +625,7 @@ def _page_reference_datasets():
         _empty_state("No reference cells loaded", "Oxford checkpoint CSVs were found but could not be read.", icon="⚠")
         return
 
-    st.markdown(
-        "<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-        "padding:14px 20px;margin-bottom:16px;font-size:12px;color:#8896a8;line-height:1.7'>"
+    render_card(
         "<strong style='color:#e2e8f0'>Oxford Path-Dependent Battery Degradation Dataset (2020)</strong> "
         "&mdash; Raj et al., <em>Batteries &amp; Supercaps</em> (Wiley), ODC-ODbL license. "
         "3 Ah NCR18650BD cells, <strong style='color:#f6ad55'>NCA</strong> (nickel cobalt aluminium oxide) "
@@ -637,9 +634,9 @@ def _page_reference_datasets():
         "<strong style='color:#fc8181'>No predictive model is trained on this data.</strong> Each cell has "
         "only ~8-14 Reference Performance Test (RPT) checkpoints over its life &mdash; not dense per-cycle "
         "data like NASA/Severson &mdash; too few points across too few cells (12) to honestly leave-cell-out "
-        "validate a model. What's shown below is the real measured capacity-fade curve, nothing more."
-        "</div>",
-        unsafe_allow_html=True,
+        "validate a model. What's shown below is the real measured capacity-fade curve, nothing more.",
+        padding="14px 20px",
+        extra_style="margin-bottom:16px;font-size:12px;color:#8896a8;line-height:1.7",
     )
 
     _ox_cell = st.selectbox("Cell", options=sorted(ox_cells.keys()), key="oxford_ref_cell")

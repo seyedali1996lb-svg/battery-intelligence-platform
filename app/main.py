@@ -28,7 +28,7 @@ from features import build_features, get_model_matrix
 from model import train_models, predict
 from lco_eval import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
-from utils import NASA_CELL_IDS, _md_html
+from utils import NASA_CELL_IDS, _md_html, render_card
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
 
 
@@ -600,15 +600,13 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
         is_available = m["available"]
 
         if is_active:
-            # Active row: styled div — ● bold label + muted status
-            st.markdown(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
-                f"padding:9px 12px;margin-bottom:5px'>"
+            # Active row: styled card — ● bold label + muted status
+            render_card(
                 f"<div style='font-size:13px;font-weight:700;color:#e2e8f0'>"
                 f"● {m['label']}</div>"
-                f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{m['status']}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
+                f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{m['status']}</div>",
+                padding="9px 12px",
+                extra_style="margin-bottom:5px",
             )
         elif is_available:
             # Inactive available: button triggers mode switch

@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
     soh_status, _cell_provenance, _analysis_provenance, _resample_df,
-    PLOTLY_CONFIG, NASA_CELL_IDS, render_card,
+    PLOTLY_CONFIG, NASA_CELL_IDS, render_card, metric_tile_html,
 )
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
@@ -322,17 +322,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _mc_left, _mc_right = st.columns([3, 2])
     with _mc_left:
         render_card(
-            f"<div style='display:flex;align-items:center;gap:12px'>"
             f"<span style='font-size:22px'>{_mech['verdict_icon']}</span>"
-            f"<div>"
-            f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
-            f"letter-spacing:0.1em;margin-bottom:2px'>Degradation Mechanism</div>"
-            f"<div style='font-size:15px;font-weight:700;color:{_mech['verdict_color']}'>{_mech['verdict']}</div>"
+            f"<div>{metric_tile_html('Degradation Mechanism', _mech['verdict'], value_color=_mech['verdict_color'], value_size='15px')}"
             f"<span style='background:{_mech['confidence_color']}22;border:1px solid {_mech['confidence_color']}55;"
             f"color:{_mech['confidence_color']};font-size:10px;font-weight:700;padding:2px 8px;"
             f"border-radius:8px;display:inline-block;margin-top:4px'>{_mech['confidence_label']} confidence</span>"
-            f"</div></div>",
+            f"</div>",
             padding="14px 20px",
+            extra_style="display:flex;align-items:center;gap:12px",
         )
 
     # ── Section 3: Action (always visible) ──────────────────────────────────
@@ -485,42 +482,42 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#48bb78", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
     pc = PHASE_COLOUR.get(current_phase, "#4a5568")
 
-    _md_html(
+    render_card(
         f"""
-        <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:18px 22px;margin-bottom:16px">
-            <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
-                <div>
-                    <div style="font-size:11px;color:#4a5568;text-transform:uppercase;letter-spacing:0.07em">Current phase</div>
-                    <div style="font-size:26px;font-weight:700;color:{pc}">{current_phase}</div>
-                    <div style="font-size:11px;color:#4a5568;margin-top:2px">
-                        {"Knee at cycle " + str(knee["cycle"]) + f" ({knee['soh_at_knee']}% SOH)" if knee["detected"] else "No knee detected yet"}
-                    </div>
+        <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
+            <div>
+                <div style="font-size:11px;color:#4a5568;text-transform:uppercase;letter-spacing:0.07em">Current phase</div>
+                <div style="font-size:26px;font-weight:700;color:{pc}">{current_phase}</div>
+                <div style="font-size:11px;color:#4a5568;margin-top:2px">
+                    {"Knee at cycle " + str(knee["cycle"]) + f" ({knee['soh_at_knee']}% SOH)" if knee["detected"] else "No knee detected yet"}
                 </div>
-                <div style="border-left:1px solid #2d3748;padding-left:24px">
-                    <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
-                    <div style="font-size:12px;color:#a0aec0;line-height:2">
-                        <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
-                        <span style="color:#48bb78">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
-                        <span style="color:#fc8181">Accelerating</span> — {n_accel} cycles (post-knee, rapid fade)
-                    </div>
+            </div>
+            <div style="border-left:1px solid #2d3748;padding-left:24px">
+                <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
+                <div style="font-size:12px;color:#a0aec0;line-height:2">
+                    <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
+                    <span style="color:#48bb78">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
+                    <span style="color:#fc8181">Accelerating</span> — {n_accel} cycles (post-knee, rapid fade)
                 </div>
-                <div style="border-left:1px solid #2d3748;padding-left:24px;max-width:280px">
-                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
-                    <div style="font-size:11px;color:#8896a8;line-height:1.7">
-                        {"The cell is past its knee point — degradation has entered the rapid-fade regime. "
-                         "Remaining life estimates are shorter and less predictable than in the plateau phase. "
-                         "Prioritise replacement planning."
-                         if current_phase == "Accelerating" else
-                         "The cell is in the stable plateau phase — degradation is approximately linear "
-                         "and predictable. RUL estimates are most reliable here."
-                         if current_phase == "Plateau" else
-                         "Early cycles — rolling-window features are still stabilising. "
-                         "Fade rate estimates will become reliable from cycle 50 onward."}
-                    </div>
+            </div>
+            <div style="border-left:1px solid #2d3748;padding-left:24px;max-width:280px">
+                <div style="font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
+                <div style="font-size:11px;color:#8896a8;line-height:1.7">
+                    {"The cell is past its knee point — degradation has entered the rapid-fade regime. "
+                     "Remaining life estimates are shorter and less predictable than in the plateau phase. "
+                     "Prioritise replacement planning."
+                     if current_phase == "Accelerating" else
+                     "The cell is in the stable plateau phase — degradation is approximately linear "
+                     "and predictable. RUL estimates are most reliable here."
+                     if current_phase == "Plateau" else
+                     "Early cycles — rolling-window features are still stabilising. "
+                     "Fade rate estimates will become reliable from cycle 50 onward."}
                 </div>
             </div>
         </div>
-        """
+        """,
+        padding="18px 22px",
+        extra_style="margin-bottom:16px",
     )
 
     # ── H4: Data Lineage ─────────────────────────────────────────────────────
@@ -576,9 +573,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=False):
         try:
             # Render verdict card
-            _md_html(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                f"padding:16px 20px;margin:8px 0 12px'>"
+            render_card(
                 f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px'>"
                 f"<span style='font-size:22px'>{_mech['verdict_icon']}</span>"
                 f"<div>"
@@ -587,8 +582,9 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 f"Confidence: <span style='color:{_mech['confidence_color']};font-weight:600'>{_mech['confidence_label']}</span>"
                 f" · Signals used: {', '.join(_mech['confidence_notes']) if _mech['confidence_notes'] else 'none'}"
                 f"</div></div></div>"
-                f"<div style='font-size:12px;color:#a0aec0;line-height:1.65'>{_mech['verdict_body']}</div>"
-                f"</div>"
+                f"<div style='font-size:12px;color:#a0aec0;line-height:1.65'>{_mech['verdict_body']}</div>",
+                padding="16px 20px",
+                extra_style="margin:8px 0 12px",
             )
 
             # Signal breakdown metrics
@@ -748,14 +744,11 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                         _dom_mech = "Early stage"
                         _dom_explain = "Degradation has not yet reached a classifiable signature. Monitor after further cycling."
             _mech_col = "#f6ad55" if "LAM" in _dom_mech or "LLI" in _dom_mech else "#8896a8"
-            _md_html(
-                f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:8px;"
-                f"padding:12px 16px;margin-top:8px'>"
-                f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;letter-spacing:0.08em;"
-                f"margin-bottom:4px'>Dominant mechanism</div>"
-                f"<div style='font-size:15px;font-weight:700;color:{_mech_col};margin-bottom:6px'>{_dom_mech}</div>"
-                f"<div style='font-size:12px;color:#a0aec0;line-height:1.5'>{_dom_explain}</div>"
-                f"</div>"
+            render_card(
+                metric_tile_html("Dominant mechanism", _dom_mech, value_color=_mech_col, value_size="15px")
+                + f"<div style='font-size:12px;color:#a0aec0;line-height:1.5;margin-top:6px'>{_dom_explain}</div>",
+                padding="12px 16px",
+                extra_style="margin-top:8px",
             )
           except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")

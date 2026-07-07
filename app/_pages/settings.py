@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 
 from design_system import make_badge, section_header_html
-from utils import _md_html, _action_bar, _empty_state, NASA_CELL_IDS
+from utils import _md_html, _action_bar, _empty_state, NASA_CELL_IDS, render_card
 import db
 
 
@@ -38,9 +38,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         calib_cnt    = up_meta.get("calibrating_count", 0)
         cell_ids_up  = up_meta.get("cell_ids", list(up_fdfs.keys()))
 
-        st.markdown(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:18px 20px;margin-bottom:12px'>"
+        render_card(
             f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>My Data · this session only</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{n_up} cells</div>"
@@ -50,9 +48,9 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"{'Temperature assumed 25°C for: ' + ', '.join(temp_assumed) if temp_assumed else 'Temperature measured for all cells'}"
             f"</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            f"{', '.join(cell_ids_up)}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"{', '.join(cell_ids_up)}</div>",
+            padding="18px 20px",
+            extra_style="margin-bottom:12px",
         )
 
         if st.button("✕ Clear uploaded data", key="settings_clear", use_container_width=False):
@@ -78,9 +76,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
     src_col1, src_col2 = st.columns(2)
     with src_col1:
-        st.markdown(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:18px 20px'>"
+        render_card(
             f"<div style='font-size:12px;font-weight:600;color:#fc8181;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>Synthetic cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(synth_ids)}</div>"
@@ -89,14 +85,11 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"Rainflow DoD scaling). Resistance: 0.15–0.40 Ω internal. "
             f"<strong>Not real measured data.</strong></div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            f"{', '.join(synth_ids)}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"{', '.join(synth_ids)}</div>",
+            padding="18px 20px",
         )
     with src_col2:
-        st.markdown(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:18px 20px'>"
+        render_card(
             f"<div style='font-size:12px;font-weight:600;color:#48bb78;text-transform:uppercase;"
             f"letter-spacing:0.07em;margin-bottom:8px'>NASA PCoE real cells</div>"
             f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(nasa_ids)}</div>"
@@ -105,9 +98,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run src/nasa_loader.py'}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run src/nasa_loader.py'}</div>",
+            padding="18px 20px",
         )
 
     st.markdown(
