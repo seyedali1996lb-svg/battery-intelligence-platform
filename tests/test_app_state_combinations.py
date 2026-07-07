@@ -255,6 +255,62 @@ def test_decide_and_ask_shows_mechanism_caution_note_when_signals_disagree(isola
     assert "LAM" in text
 
 
+def _synthetic_telemetry(n: int, cell_id: str = "B0005") -> list:
+    """Synthetic telemetry readings shaped like mqtt_stream.py's real
+    publisher payload -- used to exercise Live Monitor's rendering logic
+    without needing a live MQTT broker connection."""
+    return [
+        {
+            "cell_id": cell_id, "cycle": i + 1, "seq": i, "ts": "2026-01-01T00:00:00Z",
+            "voltage_v": 3.9, "current_a": -2.0, "temperature_c": 24.0,
+            "capacity_ah": 2.0 - i * 0.002,
+            "soc_pct": 100.0 - i * 0.3,  # payload's soc_pct field actually carries soh_pct
+        }
+        for i in range(n)
+    ]
+
+
+def test_live_monitor_physics_twin_check_waits_for_minimum_readings(isolated_db):
+    """
+    Regression test (Digital Twin Quality review finding): PyBaMM previously
+    only ran once, offline, against a cell's full historical data -- never
+    against telemetry as it streams in. With fewer than 5 readings (project_
+    rul()'s own minimum for a fade-curve fit), the physics check must show
+    an honest "waiting for more data" message, not crash or fabricate a
+    result from insufficient data.
+    """
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(3), lm_anomalies=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed with 3 readings: {at.exception}"
+    captions = [c.value for c in at.caption]
+    assert any("waiting for more" in c for c in captions)
+
+
+def test_live_monitor_physics_twin_check_runs_against_streamed_telemetry(isolated_db):
+    """
+    With enough streamed readings, the physics-consistency re-check must
+    actually run PyBaMM against only the telemetry received so far (not
+    the cell's full historical dataset) and render a real RUL estimate,
+    chemistry label, and an honest caveat that this still uses a fixed
+    parameter set -- not a live-synced digital twin.
+    """
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(20), lm_anomalies=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed with 20 readings: {at.exception}"
+    metrics = {m.label: m.value for m in at.metric}
+    assert "Physics RUL estimate" in metrics
+    assert metrics["Physics RUL estimate"] != "—"
+    assert "NCA" in metrics.get("Chemistry model", "")
+    captions = [c.value for c in at.caption]
+    assert any("not a live-synced digital twin" in c for c in captions)
+
+
 def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db):
     """
     Regression test (Engineering Usability review finding): the mechanism

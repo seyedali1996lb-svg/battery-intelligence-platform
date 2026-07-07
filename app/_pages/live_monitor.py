@@ -69,6 +69,10 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _sub_connected = is_subscriber_connected()
     _pub_active    = publisher_running()
 
+    def _clear_pybamm_cache(cell_id: str) -> None:
+        st.session_state.pop(f"lm_pybamm_result_{cell_id}", None)
+        st.session_state.pop(f"lm_pybamm_computed_at_{cell_id}", None)
+
     if _btn_col1.button(
         "▶ Start" if not (_sub_connected and _pub_active) else "⏹ Stop",
         key="lm_toggle",
@@ -80,11 +84,13 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             stop_subscriber()
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
+            _clear_pybamm_cache(_replay_cell)
             st.rerun()
         else:
             # Clear old buffers
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
+            _clear_pybamm_cache(_replay_cell)
             # Start subscriber first, then publisher
             _data_mode = st.session_state.get("data_mode", "synthetic")
             _chem_map  = {cid: ("LFP" if cid.startswith("S-") else "LiCoO2")
@@ -109,6 +115,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     if _btn_col2.button("🗑 Clear", key="lm_clear", use_container_width=True):
         st.session_state["lm_telemetry"] = []
         st.session_state["lm_anomalies"] = []
+        _clear_pybamm_cache(_replay_cell)
         st.rerun()
 
     # ── Status strip ─────────────────────────────────────────────────────────
@@ -197,6 +204,62 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _lm3.metric("Temperature", f"{_latest_row.get('temperature_c', '—'):.1f} °C" if _latest_row.get('temperature_c') is not None else "—")
     _lm4.metric("SOC",         f"{_latest_row.get('soc_pct', '—'):.1f} %"       if _latest_row.get('soc_pct')       is not None else "—")
     _lm5.metric("Readings",    f"{len(_telem):,}")
+
+    # ── Physics Twin Check (PyBaMM re-fit against streamed telemetry) ────────
+    # Digital Twin Quality review finding: PyBaMM previously only ran once,
+    # offline, against a cell's full historical data (Health page's Model
+    # Comparison) — never against telemetry as it arrives. This re-fits the
+    # same SEI-fade physics model (src/pybamm_rul.py) against only the
+    # cycles received via the live stream so far, re-run periodically as
+    # more data arrives. This is NOT the "continuously re-parameterized
+    # per-cell physics twin" a real Siemens/ABB-grade twin would be — the
+    # PyBaMM parameter set itself is still fixed per chemistry, not fitted
+    # from telemetry — so it's labelled accordingly rather than oversold.
+    st.markdown("<div class='section-header'>⚛ Physics Twin Check (PyBaMM)</div>", unsafe_allow_html=True)
+    _PB_RECOMPUTE_EVERY = 15  # readings — a full SPM run takes ~2-3s; too slow to redo every 1s rerun
+    _cycle_vals = [t.get("cycle") for t in _telem if t.get("cycle") is not None]
+    _soh_vals   = [t.get("soc_pct") for t in _telem if t.get("soc_pct") is not None]  # payload's soc_pct field actually carries this cell's soh_pct value
+    _cap_vals   = [t.get("capacity_ah") for t in _telem]
+    _n_usable   = min(len(_cycle_vals), len(_soh_vals))
+
+    if _n_usable < 5:
+        st.caption(f"⚛ Physics twin check needs ≥5 telemetry readings with cycle/SOH data (have {_n_usable}) — waiting for more of the stream.")
+    else:
+        _pb_cache_key      = f"lm_pybamm_result_{_replay_cell}"
+        _pb_computed_at_key = f"lm_pybamm_computed_at_{_replay_cell}"
+        _last_computed_at  = st.session_state.get(_pb_computed_at_key, 0)
+        _should_recompute  = (
+            _pb_cache_key not in st.session_state
+            or (_n_usable - _last_computed_at) >= _PB_RECOMPUTE_EVERY
+        )
+        if _should_recompute:
+            import pandas as _pd_pb
+            _telem_df = _pd_pb.DataFrame({
+                "cycle_number": _cycle_vals[:_n_usable],
+                "soh_pct":      _soh_vals[:_n_usable],
+                "capacity_ah":  _cap_vals[:_n_usable],
+            })
+            _lm_data_mode = st.session_state.get("data_mode", "synthetic")
+            with st.spinner("Re-fitting physics model against streamed telemetry…"):
+                from pybamm_rul import project_rul
+                st.session_state[_pb_cache_key] = project_rul(_replay_cell, _telem_df, _lm_data_mode)
+                st.session_state[_pb_computed_at_key] = _n_usable
+
+        _pb_result = st.session_state.get(_pb_cache_key, {})
+        if _pb_result.get("error"):
+            st.caption(f"⚛ Physics twin check unavailable: {_pb_result['error']}")
+        else:
+            _pb1, _pb2, _pb3 = st.columns(3)
+            _pb1.metric("Physics RUL estimate", f"{_pb_result.get('rul_physics', '—')} cy" if _pb_result.get("rul_physics") is not None else "—")
+            _pb2.metric("Chemistry model", _pb_result.get("chem_label", "—"))
+            _pb3.metric("Fit from telemetry", f"{st.session_state.get(_pb_computed_at_key, _n_usable)} cycles")
+            st.caption(
+                f"Re-fit against {st.session_state.get(_pb_computed_at_key, _n_usable)} cycles received via this "
+                f"live stream so far (recomputed every {_PB_RECOMPUTE_EVERY} new readings, not on every tick — "
+                f"a full physics simulation takes a few seconds). Still uses a fixed PyBaMM parameter set per "
+                f"chemistry, not one re-parameterized from telemetry — this is a physics-consistency re-check "
+                f"against streaming data, not a live-synced digital twin."
+            )
 
     # ── Real-time charts ──────────────────────────────────────────────────────
     st.markdown("<div class='section-header'>Telemetry Stream</div>", unsafe_allow_html=True)
