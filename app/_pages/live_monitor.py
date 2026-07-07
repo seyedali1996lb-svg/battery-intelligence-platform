@@ -202,7 +202,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _lm1.metric("Voltage",     f"{_latest_row.get('voltage_v', '—'):.3f} V"     if _latest_row.get('voltage_v')     is not None else "—")
     _lm2.metric("Current",     f"{_latest_row.get('current_a', '—'):.2f} A"     if _latest_row.get('current_a')     is not None else "—")
     _lm3.metric("Temperature", f"{_latest_row.get('temperature_c', '—'):.1f} °C" if _latest_row.get('temperature_c') is not None else "—")
-    _lm4.metric("SOC",         f"{_latest_row.get('soc_pct', '—'):.1f} %"       if _latest_row.get('soc_pct')       is not None else "—")
+    _lm4.metric("SOH",         f"{_latest_row.get('soh_pct', '—'):.1f} %"       if _latest_row.get('soh_pct')       is not None else "—")
     _lm5.metric("Readings",    f"{len(_telem):,}")
 
     # ── Physics Twin Check (PyBaMM re-fit against streamed telemetry) ────────
@@ -218,7 +218,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     st.markdown("<div class='section-header'>⚛ Physics Twin Check (PyBaMM)</div>", unsafe_allow_html=True)
     _PB_RECOMPUTE_EVERY = 15  # readings — a full SPM run takes ~2-3s; too slow to redo every 1s rerun
     _cycle_vals = [t.get("cycle") for t in _telem if t.get("cycle") is not None]
-    _soh_vals   = [t.get("soc_pct") for t in _telem if t.get("soc_pct") is not None]  # payload's soc_pct field actually carries this cell's soh_pct value
+    _soh_vals   = [t.get("soh_pct") for t in _telem if t.get("soh_pct") is not None]
     _cap_vals   = [t.get("capacity_ah") for t in _telem]
     _n_usable   = min(len(_cycle_vals), len(_soh_vals))
 
@@ -270,7 +270,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         ("voltage_v",      "Voltage (V)",       "#63b3ed"),
         ("current_a",      "Current (A)",        "#f6ad55"),
         ("temperature_c",  "Temperature (°C)",   "#fc8181"),
-        ("soc_pct",        "SOC (%)",            "#68d391"),
+        ("soh_pct",        "SOH (%)",            "#68d391"),
     ]
     _available = [(col, lbl, clr) for col, lbl, clr in _chart_pairs if col in _df_telem.columns and _df_telem[col].notna().any()]
 
@@ -335,7 +335,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             )
         if "CAPACITY_PLUNGE" in k:
             return (
-                "SOC dropped sharply in one reading. Most likely a BMS communication glitch "
+                "SOH dropped sharply in one reading. Most likely a BMS communication glitch "
                 "or measurement artifact — single-cycle drops rarely reflect true capacity loss. "
                 "Check if the drop persists next cycle before escalating."
             )
