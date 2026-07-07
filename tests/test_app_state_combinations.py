@@ -264,7 +264,7 @@ def _synthetic_telemetry(n: int, cell_id: str = "B0005") -> list:
             "cell_id": cell_id, "cycle": i + 1, "seq": i, "ts": "2026-01-01T00:00:00Z",
             "voltage_v": 3.9, "current_a": -2.0, "temperature_c": 24.0,
             "capacity_ah": 2.0 - i * 0.002,
-            "soc_pct": 100.0 - i * 0.3,  # payload's soc_pct field actually carries soh_pct
+            "soh_pct": 100.0 - i * 0.3,
         }
         for i in range(n)
     ]

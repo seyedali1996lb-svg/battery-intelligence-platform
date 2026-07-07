@@ -18,7 +18,7 @@ Telemetry message format (JSON):
     "current_a":     -2.000,
     "temperature_c": 24.3,
     "capacity_ah":   1.823,
-    "soc_pct":       74.8
+    "soh_pct":       74.8
   }
 
 Anomaly detection runs on every received message:
@@ -137,17 +137,17 @@ class AnomalyDetector:
             self._t_hist.append(t)
 
         # Capacity plunge — IEC 62619 §8.2 sudden loss event
-        soc = msg.get("soc_pct")
-        if soc is not None and len(self._v_hist) >= 2:
-            _prev_soc = getattr(self, "_last_soc", None)
-            if _prev_soc is not None:
-                _drop = (_prev_soc - soc) / 100.0
+        soh = msg.get("soh_pct")
+        if soh is not None and len(self._v_hist) >= 2:
+            _prev_soh = getattr(self, "_last_soh", None)
+            if _prev_soh is not None:
+                _drop = (_prev_soh - soh) / 100.0
                 if _drop > _CAPACITY_PLUNGE:
                     flags.append(_flag("CAPACITY_PLUNGE",
-                        f"SOC dropped {_drop*100:.1f}% in one reading — possible lithium plating event "
+                        f"SOH dropped {_drop*100:.1f}% in one reading — possible lithium plating event "
                         f"(IEC 62619 §8.2 sudden capacity loss threshold: {_CAPACITY_PLUNGE*100:.0f}%)",
                         "critical"))
-            self._last_soc = soc
+            self._last_soh = soh
 
         if i is not None:
             self._i_hist.append(i)
@@ -341,7 +341,7 @@ def _publisher_worker(
                 "current_a":     round(current, 4) if current is not None else None,
                 "temperature_c": round(temp, 2)    if temp    is not None else None,
                 "capacity_ah":   round(cap, 4)     if cap     is not None else None,
-                "soc_pct":       round(soh, 2)     if soh     is not None else None,
+                "soh_pct":       round(soh, 2)     if soh     is not None else None,
             }
             client.publish(topic, json.dumps(payload), qos=0)
             time.sleep(max(0.05, 1.0 / speed))
