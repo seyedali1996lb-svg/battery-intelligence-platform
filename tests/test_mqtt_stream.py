@@ -10,8 +10,10 @@ flag text) to soh_pct/SOH throughout, matching what the data actually is.
 
 import inspect
 
+import numpy as np
+
 import mqtt_stream
-from mqtt_stream import AnomalyDetector
+from mqtt_stream import AnomalyDetector, _ZSCORE_WINDOW
 
 
 def test_no_soc_pct_key_anywhere_in_module():
@@ -51,3 +53,81 @@ def test_soc_pct_key_no_longer_triggers_plunge():
     flags = detector.check({"voltage_v": 3.7, "soc_pct": 10.0})
 
     assert all(f["kind"] != "CAPACITY_PLUNGE" for f in flags)
+
+
+# ---------------------------------------------------------------------------
+# MULTI_SIGNAL_ANOMALY -- AI Integration review finding: the review's
+# recommendation was to invest real anomaly-detection effort beyond static
+# thresholds, not just rephrase the same threshold checks with an LLM. The
+# rolling per-channel Z-score already existed; this adds a genuine
+# multivariate step -- a combined (Euclidean-norm) score across channels
+# that can flag a real anomaly even when no single channel alone crosses
+# its own threshold, since correlated moderate drift across multiple
+# sensors is a materially stronger fault signal than one channel alone.
+# ---------------------------------------------------------------------------
+
+def _seed_baseline(detector, voltages, temps):
+    for v, t in zip(voltages, temps):
+        detector.check({"voltage_v": float(v), "temperature_c": float(t)})
+
+
+def _baseline_series():
+    rng = np.random.default_rng(42)
+    voltages = 3.70 + rng.normal(0, 0.01, _ZSCORE_WINDOW)
+    temps    = 24.0 + rng.normal(0, 0.2, _ZSCORE_WINDOW)
+    return voltages, temps
+
+
+def test_multi_signal_anomaly_fires_when_no_single_channel_would():
+    """
+    Two channels each drifting only moderately (individually below the
+    single-channel Z-score alert threshold) at the same time must still
+    raise MULTI_SIGNAL_ANOMALY -- this is exactly the case a per-channel-
+    only check structurally cannot see, and the reason this feature exists.
+    """
+    voltages, temps = _baseline_series()
+    v_mu, v_sigma = voltages.mean(), voltages.std()
+    t_mu, t_sigma = temps.mean(), temps.std()
+
+    detector = AnomalyDetector("B0005", "default")
+    _seed_baseline(detector, voltages, temps)
+
+    zfactor = 3.2  # empirically: below single-channel threshold, above combined
+    v_test = v_mu - zfactor * v_sigma
+    t_test = t_mu + zfactor * t_sigma
+    flags = detector.check({"voltage_v": float(v_test), "temperature_c": float(t_test)})
+    kinds = [f["kind"] for f in flags]
+
+    assert "MULTI_SIGNAL_ANOMALY" in kinds
+    assert "ZSCORE_VOLTAGE" not in kinds
+    assert "ZSCORE_TEMPERATURE" not in kinds
+
+
+def test_multi_signal_anomaly_does_not_fire_from_one_channel_alone():
+    """A large deviation confined to a single channel is a single-channel
+    story (ZSCORE_* / OVER-/UNDERVOLTAGE), not a correlated multi-signal
+    one -- MULTI_SIGNAL_ANOMALY requires 2+ channels elevated together."""
+    voltages, temps = _baseline_series()
+    v_mu, v_sigma = voltages.mean(), voltages.std()
+
+    detector = AnomalyDetector("B0005", "default")
+    _seed_baseline(detector, voltages, temps)
+
+    v_test = v_mu - 3.2 * v_sigma
+    t_test = float(temps[-1])  # temperature stays at baseline -- only voltage moves
+    flags = detector.check({"voltage_v": float(v_test), "temperature_c": t_test})
+    kinds = [f["kind"] for f in flags]
+
+    assert "MULTI_SIGNAL_ANOMALY" not in kinds
+
+
+def test_multi_signal_anomaly_does_not_fire_on_quiet_baseline():
+    """No perturbation at all -- must not false-positive on stable data."""
+    voltages, temps = _baseline_series()
+    detector = AnomalyDetector("B0005", "default")
+    _seed_baseline(detector, voltages, temps)
+
+    flags = detector.check({"voltage_v": float(voltages[-1]), "temperature_c": float(temps[-1])})
+    kinds = [f["kind"] for f in flags]
+
+    assert "MULTI_SIGNAL_ANOMALY" not in kinds

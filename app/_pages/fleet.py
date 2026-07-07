@@ -36,6 +36,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         "'What will replacement cost over the next 12 months?'",
         key="fleet_ask_input",
     )
+    st.caption("Routes to grounded fleet-level answers — not open-ended reasoning. If your question doesn't match a known topic, it says so rather than guessing.")
     if _af_input:
         from battery_copilot import build_fleet_stats, answer_fleet_query
         _af_stats = build_fleet_stats(featured_dfs, bundles)

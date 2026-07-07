@@ -25,6 +25,9 @@ Anomaly detection runs on every received message:
   - Voltage out of bounds (chemistry-specific limits)
   - Temperature spike (absolute + rate-of-rise)
   - Rolling Z-score (window=20) on voltage, current, temperature
+  - Multi-signal correlated anomaly — combined Z-score across 2+ channels,
+    catching simultaneous moderate drift that no single-channel threshold
+    can see on its own (see AnomalyDetector.check())
 """
 
 from __future__ import annotations
@@ -63,6 +66,8 @@ _TEMP_RATE_CRITICAL= 5.0     # °C per reading — IEC 62619 §8.2 critical rate
 _CAPACITY_PLUNGE   = 0.05    # SOH drop > 5% in one cycle → plating event signal
 _ZSCORE_WINDOW     = 20      # rolling window for Z-score
 _ZSCORE_THRESH     = 2.5     # flag threshold
+_MULTI_SIGNAL_ELEVATED   = 1.5   # per-channel Z-score to count as "contributing" to a combined anomaly
+_MULTI_SIGNAL_COMBINED   = 3.5   # combined (Euclidean-norm) Z-score threshold across channels
 
 # ── Thread-safe message store ─────────────────────────────────────────────────
 # Module-level so publisher and subscriber share one namespace across Streamlit reruns.
@@ -153,6 +158,7 @@ class AnomalyDetector:
             self._i_hist.append(i)
 
         # Rolling Z-score on each channel
+        _zscores: dict[str, float] = {}
         for label, hist in [("voltage", self._v_hist),
                              ("current", self._i_hist),
                              ("temperature", self._t_hist)]:
@@ -161,11 +167,31 @@ class AnomalyDetector:
                 mu, sigma = arr.mean(), arr.std()
                 if sigma > 1e-6:
                     z = abs((arr[-1] - mu) / sigma)
+                    _zscores[label] = z
                     if z > _ZSCORE_THRESH:
                         flags.append(_flag(f"ZSCORE_{label.upper()}",
                             f"{label} Z-score {z:.2f} (>{_ZSCORE_THRESH}) — "
                             f"value {arr[-1]:.3f}, rolling μ={mu:.3f} σ={sigma:.3f}",
                             "warning"))
+
+        # Multi-signal correlated anomaly — a real step beyond independent
+        # per-channel thresholds, not just a rephrased threshold check. This
+        # combines the same Z-scores already computed above via their
+        # Euclidean norm, so it can flag a real anomaly even when no single
+        # channel alone crosses its own threshold: simultaneous, moderate
+        # deviation across 2+ channels (e.g. voltage sag + temperature rise
+        # together) is a materially stronger fault signal than any one
+        # channel drifting alone, which is exactly the case a per-channel-
+        # only check structurally cannot see.
+        _elevated = [c for c, z in _zscores.items() if z > _MULTI_SIGNAL_ELEVATED]
+        if len(_zscores) >= 2 and len(_elevated) >= 2:
+            _combined = float(np.sqrt(sum(z * z for z in _zscores.values())))
+            if _combined > _MULTI_SIGNAL_COMBINED:
+                flags.append(_flag("MULTI_SIGNAL_ANOMALY",
+                    f"Correlated deviation across {', '.join(sorted(_elevated))} "
+                    f"(combined Z={_combined:.2f}, threshold {_MULTI_SIGNAL_COMBINED}) — "
+                    f"simultaneous multi-channel drift, a stronger fault signal than any single reading alone",
+                    "critical"))
 
         return flags
 

@@ -339,6 +339,14 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 "or measurement artifact — single-cycle drops rarely reflect true capacity loss. "
                 "Check if the drop persists next cycle before escalating."
             )
+        if "MULTI_SIGNAL" in k:
+            return (
+                "Multiple sensor channels are drifting together — individually moderate, but "
+                "correlated across channels, which is a stronger fault signal than any one reading "
+                "alone (e.g. voltage sag with a temperature rise together is far more diagnostic of "
+                "an internal short than either alone). Treat as higher-confidence than a single-"
+                "channel Z-score flag; correlate against the Telemetry Stream charts below."
+            )
         if "VOLTAGE_HIGH" in k:
             return (
                 "Voltage above upper limit. Overcharge condition — stop charging immediately. "

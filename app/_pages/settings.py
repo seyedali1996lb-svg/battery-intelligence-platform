@@ -788,10 +788,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
     _section("AI Copilot — Language Model")
     _md_html(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
-        "When an Anthropic API key is set, the Copilot answers in natural language using "
-        "<strong style='color:#e2e8f0'>Claude Haiku</strong> — strictly constrained to the "
-        "values in this platform's model bundle (no hallucination of numbers). "
-        "Without a key, template answers are used as fallback."
+        "<strong style='color:#e2e8f0'>The Copilot explains decisions in plain language — it does not make "
+        "decisions.</strong> The recommendation itself always comes from the deterministic model pipeline "
+        "(leave-cell-out validated GBRT + the recommendation engine); the Copilot only narrates that output. "
+        "When an Anthropic API key is set, narration uses <strong style='color:#e2e8f0'>Claude Haiku</strong> "
+        "— strictly constrained to rephrasing values already in this platform's model bundle, instructed to "
+        "never add a fact or number the template doesn't already contain. Without a key, the underlying "
+        "template text is shown as-is."
         "</div>"
     )
     _llm_key = st.text_input(

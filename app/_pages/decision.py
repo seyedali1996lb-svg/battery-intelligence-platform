@@ -504,6 +504,7 @@ def page_decision(
 
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
     st.markdown("<div class='section-header'>Ask about this cell</div>", unsafe_allow_html=True)
+    st.caption("Explains the recommendation above in plain language — grounded only on values already computed by the model pipeline. It does not make the decision; the recommendation engine above does.")
     if selected in NASA_CELL_IDS:
         _dc_bundle = bundles.get("nasa")
     elif selected.startswith("S-"):
