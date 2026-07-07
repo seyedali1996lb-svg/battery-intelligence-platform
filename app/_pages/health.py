@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
     soh_status, _cell_provenance, _analysis_provenance, _resample_df,
-    PLOTLY_CONFIG, NASA_CELL_IDS,
+    PLOTLY_CONFIG, NASA_CELL_IDS, render_card,
 )
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
@@ -197,41 +197,24 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # ── Section 2: Mechanism (always visible) ───────────────────────────────
     _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
+    # Single call to the shared classifier — this used to be an inline
+    # re-implementation of diagnose_mechanism()'s scoring logic that had
+    # already drifted from it (missing the CE-deficit signal), meaning this
+    # always-visible card and the deep "Degradation Mechanism Classifier"
+    # expander further down could silently disagree on the same cell's
+    # verdict — exactly the "independent widget, not a synthesized verdict"
+    # bug class this whole review is about. Computed once here and reused
+    # by the deep expander below, so there is exactly one source of truth
+    # for this cell's mechanism verdict on this page.
+    _mech = {
+        "verdict": "Insufficient data", "verdict_color": "#718096", "verdict_icon": "○",
+        "verdict_body": "Not enough degradation signals to classify mechanism. Continue cycling.",
+        "confidence_label": "No data", "confidence_color": "#4a5568",
+        "confidence_notes": [], "lli_score": 0, "lam_score": 0, "signals": {},
+    }
     try:
-        import numpy as _np_ms
-        _ms = {}
-        if "coulombic_efficiency" in df.columns:
-            _ce_v2 = df[["cycle_number", "coulombic_efficiency"]].dropna()
-            if len(_ce_v2) >= 10:
-                _ms["ce_slope"] = float(_np_ms.polyfit(
-                    _ce_v2["cycle_number"].values.astype(float),
-                    _ce_v2["coulombic_efficiency"].values, 1)[0])
-        if "soh_pct" in df.columns:
-            _sv2 = df[["cycle_number", "soh_pct"]].dropna()
-            if len(_sv2) >= 20:
-                _cy2 = _sv2["cycle_number"].values.astype(float)
-                _cy2n = (_cy2 - _cy2.min()) / max(_cy2.max() - _cy2.min(), 1)
-                _ms["nonlin"] = float(_np_ms.polyfit(_cy2n, _sv2["soh_pct"].values, 2)[0])
-        if "resistance_normalized" in df.columns:
-            _rv2 = df[["cycle_number", "resistance_normalized"]].dropna()
-            if len(_rv2) >= 10:
-                _ms["r_slope"] = float(_np_ms.polyfit(
-                    _rv2["cycle_number"].values.astype(float),
-                    _rv2["resistance_normalized"].values, 1)[0]) * 1000
-        _lli2, _lam2 = 0, 0
-        if _ms.get("ce_slope", 0) < -1e-6: _lli2 += 3
-        if _ms.get("nonlin", 0) < -0.5: _lam2 += 3
-        elif _ms.get("nonlin", 0) > 0.5: _lli2 += 1
-        if _ms.get("r_slope", 0) > 0.02: _lam2 += 2
-        elif 0.005 < _ms.get("r_slope", 0) <= 0.02: _lli2 += 1
-        if _lli2 + _lam2 == 0:
-            _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
-        elif _lli2 > _lam2 * 1.5:
-            _mech_v, _mech_c, _mech_icon = "LLI — Loss of Lithium Inventory", "#f6ad55", "◑"
-        elif _lam2 > _lli2 * 1.5:
-            _mech_v, _mech_c, _mech_icon = "LAM — Loss of Active Material", "#fc8181", "◕"
-        else:
-            _mech_v, _mech_c, _mech_icon = "Mixed LLI + LAM", "#b794f4", "●"
+        from recommendations import diagnose_mechanism
+        _mech = diagnose_mechanism(df)
     except Exception:
         pass
 
@@ -328,17 +311,28 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
     _md_html(f"<div style='font-size:12px;color:#a0aec0;padding:4px 0 16px;line-height:1.6'>{_e1_txt}</div>")
 
+    # Always visible to every role (Engineering Usability review finding:
+    # this used to only appear once "Engineering details" was checked,
+    # which defaults off for every role except Engineer -- meaning Fleet
+    # Manager/Executive/Compliance Officer, the roles most needing to trust
+    # *why* a decision was made, never saw mechanism reasoning at all. The
+    # full signal-by-signal breakdown stays collapsed behind the checkbox
+    # below for non-Engineers; only this one-line verdict + confidence is
+    # promoted to always-visible.
     _mc_left, _mc_right = st.columns([3, 2])
     with _mc_left:
-        _md_html(
-            f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-            f"padding:14px 20px;display:flex;align-items:center;gap:12px'>"
-            f"<span style='font-size:22px'>{_mech_icon}</span>"
+        render_card(
+            f"<div style='display:flex;align-items:center;gap:12px'>"
+            f"<span style='font-size:22px'>{_mech['verdict_icon']}</span>"
             f"<div>"
             f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
             f"letter-spacing:0.1em;margin-bottom:2px'>Degradation Mechanism</div>"
-            f"<div style='font-size:15px;font-weight:700;color:{_mech_c}'>{_mech_v}</div>"
-            f"</div></div>"
+            f"<div style='font-size:15px;font-weight:700;color:{_mech['verdict_color']}'>{_mech['verdict']}</div>"
+            f"<span style='background:{_mech['confidence_color']}22;border:1px solid {_mech['confidence_color']}55;"
+            f"color:{_mech['confidence_color']};font-size:10px;font-weight:700;padding:2px 8px;"
+            f"border-radius:8px;display:inline-block;margin-top:4px'>{_mech['confidence_label']} confidence</span>"
+            f"</div></div>",
+            padding="14px 20px",
         )
 
     # ── Section 3: Action (always visible) ──────────────────────────────────
@@ -574,11 +568,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
 
     # ── T4: Degradation Mechanism Classifier (LLI vs LAM) ──────────────────
+    # _mech was already computed once, near the top of this function, from
+    # the always-visible compact card above -- reused here rather than
+    # recomputed, so there is exactly one call to diagnose_mechanism() per
+    # page render, not two independent ones that could theoretically drift
+    # if this expander were ever edited without touching the card above.
     with st.expander("⚗️ Degradation Mechanism Classifier — LLI vs LAM", expanded=False):
         try:
-            from recommendations import diagnose_mechanism
-            _mech = diagnose_mechanism(df)
-
             # Render verdict card
             _md_html(
                 f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"

@@ -208,3 +208,28 @@ def test_workbench_manual_view_switch_has_no_crash(isolated_db):
     radio.set_value("Decision (Decide & Ask)").run()
     assert not at.exception, f"Manual view switch crashed: {at.exception}"
     assert "What should I do" in _all_text(at)
+
+
+def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db):
+    """
+    Regression test (Engineering Usability review finding): the mechanism
+    verdict card used to only render once the "Engineering details"
+    checkbox was ticked, which defaults on only for the Engineer role --
+    Fleet Manager/Executive/Compliance Officer never saw *why* a decision
+    was made unless they knew to look for a checkbox. The compact verdict
+    (icon/label/confidence) must now render for every role regardless of
+    that checkbox; only the deep signal-by-signal breakdown stays gated.
+    """
+    at = _logged_in_app(
+        role="Fleet Manager", page="health", data_mode="nasa",
+        selected_cell="B0006",
+    )
+    at.run()
+    assert not at.exception, f"Health page crashed for Fleet Manager: {at.exception}"
+    text = _all_text(at)
+    assert "Degradation Mechanism" in text
+    assert "confidence</span>" in text
+    checkboxes = [c for c in at.checkbox if "Engineering details" in (c.label or "")]
+    assert checkboxes and checkboxes[0].value is False, (
+        "Engineering details should still default off for non-Engineer roles"
+    )
