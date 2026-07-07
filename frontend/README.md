@@ -1,32 +1,41 @@
-# React + TypeScript + Vite
+# Battery Intelligence Platform — API Proof-of-Concept Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+**This is not the primary UI.** The Streamlit app (`streamlit run app/main.py`
+from the repo root) is the full, 7-page product — Overview, Health, Explore,
+Compliance, Fleet, Diagnose & Decide, Live Monitor. This `frontend/` directory
+is a small, deliberately incomplete React + TypeScript client demonstrating
+that `src/api.py`'s FastAPI REST layer is a real, usable, JWT-authenticated,
+org-scoped integration surface — not just an internal implementation detail.
 
-Currently, two official plugins are available:
+## Scope decision (design review, 2026-07-06)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+A cross-functional review flagged this frontend as a "215-line, 3-component
+skeleton next to a full 7-page product" and asked for an explicit decision:
+commit to React as the long-term primary surface, or stop letting it grow
+as an ambiguous parallel effort. **Decision: Streamlit stays primary.** This
+frontend is frozen as a proof-of-concept, not developed toward feature
+parity. If a real API-first frontend rebuild is ever undertaken, it would be
+a deliberate, resourced initiative — not an organic continuation of these
+three views.
 
-## React Compiler
+## What's here
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `src/api.ts` — typed fetch client for `src/api.py`'s REST endpoints
+- `src/components/Login.tsx` — calls `POST /auth/login`, stores the JWT
+- `src/components/FleetSummaryView.tsx` — calls `/fleet/summary` + `/fleet/alerts`
+- `src/components/CellDetailView.tsx` — cell picker + SOH/RUL history chart
 
-## Expanding the Oxlint configuration
+No routing, no state management library, no deployment target configured —
+intentionally minimal, matching its actual purpose (prove the API works end
+to end), not simulating a bigger app that isn't being built.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Run locally
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Requires `src/api.py` running separately (`uvicorn src.api:app --reload
+--port 8000` from the repo root) — see the main README's "Run locally"
+section for full instructions, including demo credentials.
