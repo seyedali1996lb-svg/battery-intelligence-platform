@@ -561,6 +561,11 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         )
 
     st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
+    st.caption(
+        "Est. RUL comes from leave-cell-out cross-validation on each cell's data source "
+        "(NASA n=4, Severson n=12, synthetic n=8) — a thin population for any fleet-scale "
+        "reliability claim. Treat as directional; see Overview for per-cell confidence."
+    )
 
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {

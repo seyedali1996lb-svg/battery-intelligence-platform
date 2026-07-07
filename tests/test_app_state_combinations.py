@@ -210,6 +210,29 @@ def test_workbench_manual_view_switch_has_no_crash(isolated_db):
     assert "What should I do" in _all_text(at)
 
 
+@pytest.mark.parametrize("data_mode,cell,expected_n", [
+    ("nasa", "B0005", "n=4"),
+    ("severson", "S-b1c2", "n=12"),
+])
+def test_overview_hero_card_shows_lco_sample_size(isolated_db, data_mode, cell, expected_n):
+    """
+    Regression test (Battery Engineering Accuracy review finding): n=4
+    (NASA) / n=12 (Severson) leave-cell-out validation is a thin population
+    for any fleet-scale reliability claim -- this used to only be
+    discoverable in a settings-page footnote. The confidence badge next to
+    every RUL number on Overview must now carry the actual cell count.
+    """
+    at = _logged_in_app(
+        role="Engineer", page="overview", data_mode=data_mode,
+        selected_cell=cell,
+    )
+    at.run()
+    assert not at.exception, f"Overview crashed for {cell} in {data_mode} mode: {at.exception}"
+    text = _all_text(at)
+    assert expected_n in text
+    assert "thin population" in text
+
+
 def test_decide_and_ask_shows_mechanism_caution_note_when_signals_disagree(isolated_db):
     """
     Regression test (Decision Support review finding): classify() picks the

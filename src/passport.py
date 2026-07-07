@@ -53,6 +53,11 @@ def build_passport(
     fade_30          = float(latest.get("fade_rate_30cy", float("nan")))
     rul_pred         = latest.get("rul_pred", None)
     lco_soh_r2       = bundle["metrics"].get("lco_soh_r2", float("nan"))
+    # Sample-size honesty (Battery Engineering Accuracy review finding):
+    # leave-cell-out validation on n=4 (NASA) or n=12 (Severson) cells is a
+    # thin population for any fleet-scale reliability claim — surfaced on
+    # every RUL/model-accuracy field, not just a settings-page footnote.
+    n_lco_cells = len(bundle["metrics"].get("lco_per_cell", {})) or None
 
     # Pipeline-derived capacity fields (available, not validated)
     initial_cap_ah   = float(first.get("capacity_ah", float("nan")))
@@ -117,8 +122,20 @@ def build_passport(
         {"label": "Total energy throughput (sum of discharge capacity)", "value": f"{total_throughput:.1f} Ah" if total_throughput == total_throughput else "n/a", "state": "available", "note": "Pipeline output — cumulative Ah across all cycles"},
         {"label": "Internal resistance", "value": f"{resistance:.4f} Ω" if resistance == resistance else "n/a", "state": "available"},
         {"label": "Fade rate (30-cycle window)", "value": f"{fade_30*1000:.2f} mAh/cy" if fade_30 == fade_30 else "n/a", "state": "available", "note": "Pipeline output"},
-        {"label": "Remaining Useful Life (RUL)", "value": rul_value, "state": "available"},
-        {"label": "SOH model accuracy (leave-cell-out R²)", "value": f"{lco_soh_r2:.3f}" if lco_soh_r2 == lco_soh_r2 else "n/a", "state": "available"},
+        {
+            "label": "Remaining Useful Life (RUL)", "value": rul_value, "state": "available",
+            "note": (
+                f"Leave-cell-out validated on {n_lco_cells} cells — a thin population; "
+                f"treat as directional, not a fleet-scale reliability guarantee."
+                if n_lco_cells else None
+            ),
+        },
+        {
+            "label": "SOH model accuracy (leave-cell-out R²)",
+            "value": f"{lco_soh_r2:.3f}" if lco_soh_r2 == lco_soh_r2 else "n/a",
+            "state": "available",
+            "note": f"n={n_lco_cells} cells in this leave-cell-out validation" if n_lco_cells else None,
+        },
     ]
 
     lifecycle = [

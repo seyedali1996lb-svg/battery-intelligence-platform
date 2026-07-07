@@ -79,3 +79,35 @@ def test_build_passport_rul_withheld_when_not_reliable():
     rul_field = next(f for f in p["soh"] if "Remaining Useful Life" in f["label"])
     assert "Not calibrated" in rul_field["value"]
     assert "600" not in rul_field["value"]
+
+
+def test_build_passport_surfaces_lco_sample_size_on_rul_and_accuracy_fields():
+    """
+    Regression test (Battery Engineering Accuracy review finding): n=4
+    (NASA) / n=12 (Severson) leave-cell-out validation is a thin population
+    for any fleet-scale reliability claim -- this used to only be
+    discoverable in a settings-page footnote. The RUL field and the model-
+    accuracy field must both carry the actual cell count used, not just the
+    bare R² number.
+    """
+    bundle = {
+        "metrics": {
+            "lco_soh_r2": 0.9,
+            "lco_per_cell": {"B0005": {}, "B0006": {}, "B0007": {}, "B0018": {}},
+        },
+    }
+    p = build_passport("B0005", _sample_df(), bundle, rul_reliable=True)
+
+    rul_field = next(f for f in p["soh"] if "Remaining Useful Life" in f["label"])
+    accuracy_field = next(f for f in p["soh"] if "model accuracy" in f["label"])
+    assert "4" in rul_field["note"]
+    assert "n=4" in accuracy_field["note"]
+
+
+def test_build_passport_omits_sample_size_note_when_lco_data_absent():
+    """No lco_per_cell in the bundle (e.g. a not-yet-trained source) must
+    not crash or render a bogus "n=None" note."""
+    bundle = {"metrics": {"lco_soh_r2": 0.9}}
+    p = build_passport("TestCell", _sample_df(), bundle, rul_reliable=True)
+    rul_field = next(f for f in p["soh"] if "Remaining Useful Life" in f["label"])
+    assert rul_field.get("note") is None

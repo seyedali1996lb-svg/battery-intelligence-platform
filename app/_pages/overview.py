@@ -223,9 +223,18 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # Per-cell fold R² — drives confidence inline reason
     fold_r2 = None
+    _n_lco_cells = None
     if bundle is not None:
-        cell_fold = bundle["metrics"].get("lco_per_cell", {}).get(cell_id, {})
+        _lco_per_cell = bundle["metrics"].get("lco_per_cell", {})
+        cell_fold = _lco_per_cell.get(cell_id, {})
         fold_r2   = cell_fold.get("rul_r2", None)
+        # Sample-size honesty (Battery Engineering Accuracy review finding):
+        # leave-cell-out validation on n=4 (NASA) or n=12 (Severson) cells is
+        # a thin population for any fleet-level reliability claim -- this
+        # used to only appear in a settings-page footnote. Now shown
+        # directly on the badge next to every RUL number, not just on request.
+        if cell_id in _lco_per_cell:
+            _n_lco_cells = len(_lco_per_cell)
 
     # RUL display: suppress when model doesn't generalise (LCO R² < floor)
     # or when early-cycle features haven't stabilised yet.
@@ -260,7 +269,9 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             conf_html = "<span class='tag-calibrating'>Calibrating</span>"
     else:
         conf_html = (
-            f"<span class='tag-model'>MODEL"
+            f"<span class='tag-model' title='Leave-cell-out cross-validation on {_n_lco_cells} cells "
+            f"— a small population; treat as directional, not a fleet-scale reliability guarantee.'>MODEL"
+            + (f" · n={_n_lco_cells}" if _n_lco_cells else "")
             + (f" · R²={fold_r2:.2f}" if fold_r2 is not None else "")
             + "</span>"
         )
@@ -294,7 +305,9 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     elif not rul_calibrating and fold_r2 is not None:
         conf_reason = (
             f"RUL predictions were tested against data this cell never trained on "
-            f"(leave-cell-out validation) — fold R²={fold_r2:.2f} (reliable above 0.30 floor)"
+            f"(leave-cell-out validation on {_n_lco_cells} cells) — fold R²={fold_r2:.2f} "
+            f"(reliable above 0.30 floor). {_n_lco_cells} cells is a thin population — "
+            f"treat as directional, not a fleet-scale reliability guarantee."
         )
     else:
         conf_reason = None
