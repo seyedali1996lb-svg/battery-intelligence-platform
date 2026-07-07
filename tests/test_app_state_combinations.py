@@ -125,6 +125,62 @@ def test_decide_and_ask_no_crash_for_degraded_cell(isolated_db):
     assert not at.exception, f"Decide & Ask crashed for a degraded cell: {at.exception}"
 
 
+def test_overview_hero_severson_cell_not_mislabeled_synthetic(isolated_db):
+    """
+    Regression test: page_overview()'s hero card built its source tag from
+    an is_nasa boolean with no Severson/Oxford/uploaded branch -- every
+    non-NASA cell fell into the else branch and was tagged "Synthetic ·
+    Stress Nx baseline", even a real measured Severson cell. Live-reproduced
+    before the fix: the Overview hero for S-b1c2 (Severson mode) read
+    "Synthetic · Stress 1.00x baseline". Source tag is now resolved via
+    ChemistryProfile.for_cell(), the same registry used by src/passport.py's
+    equivalent fix.
+    """
+    at = _logged_in_app(
+        role="Engineer", page="overview", data_mode="severson",
+        selected_cell="S-b1c2",
+    )
+    at.run()
+    assert not at.exception, f"Overview crashed for a Severson cell: {at.exception}"
+    text = _all_text(at)
+    assert "Synthetic" not in text, (
+        "A real measured Severson cell's Overview hero card must never show "
+        "a Synthetic source tag"
+    )
+
+
+def test_decide_and_ask_npv_uses_severson_capacity_not_synth(isolated_db, monkeypatch):
+    """
+    Regression test: page_decision()'s Financial Decision NPV table resolved
+    `source` as "nasa" if is_nasa else "synth" -- a 2-way branch with no
+    Severson case -- so a real Severson cell's NPV figures were silently
+    computed from the synthetic fleet's nominal capacity constant
+    (CELL_NOMINAL_KWH["synth"]) instead of Severson's own
+    (CELL_NOMINAL_KWH["severson"]). Force the two constants far apart so
+    the wrong branch would be unmistakable in the rendered $ figure: the
+    "Replace Now" 5-yr NPV is a pure function of nominal capacity (does not
+    depend on the cell's actual SOH/RUL), so with severson=500.0 the correct
+    value renders as "$159,558" -- a value the buggy "synth" branch (with
+    synth forced to 0.001) could never produce.
+    """
+    import consequences
+    monkeypatch.setitem(consequences.CELL_NOMINAL_KWH, "severson", 500.0)
+    monkeypatch.setitem(consequences.CELL_NOMINAL_KWH, "synth", 0.001)
+
+    at = _logged_in_app(
+        role="Engineer", page="decision", data_mode="severson",
+        selected_cell="S-b1c2",
+    )
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed for a Severson cell: {at.exception}"
+    text = _all_text(at)
+    assert "159,558" in text, (
+        "Decide & Ask's NPV table must use CELL_NOMINAL_KWH['severson'] for a "
+        "Severson cell, not ['synth'] -- expected the forced-huge severson "
+        "capacity to show up as $159,558 somewhere in the rendered NPV figures"
+    )
+
+
 def test_decide_and_ask_no_crash_for_severson_cell(isolated_db):
     """
     Regression test for two masked bugs found while fixing the above: (1)
