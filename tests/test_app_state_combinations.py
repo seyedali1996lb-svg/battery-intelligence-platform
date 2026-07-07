@@ -210,6 +210,28 @@ def test_workbench_manual_view_switch_has_no_crash(isolated_db):
     assert "What should I do" in _all_text(at)
 
 
+def test_decide_and_ask_shows_mechanism_caution_note_when_signals_disagree(isolated_db):
+    """
+    Regression test (Decision Support review finding): classify() picks the
+    recommended action from SOH/fade/RUL/fit-scores alone -- it never sees
+    the mechanism classifier's LLI/LAM verdict, so a cell recommended a
+    lower-urgency action ("continue"/"inspect") could still show an
+    accelerating (LAM) degradation pattern with zero cross-referencing
+    between the two surfaces. S-b1c2 (Severson) is a real cell where this
+    disagreement actually occurs: LAM mechanism at Medium confidence,
+    "continue" action -- the caution note must render on the hero card.
+    """
+    at = _logged_in_app(
+        role="Engineer", page="decision", data_mode="severson",
+        selected_cell="S-b1c2",
+    )
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed: {at.exception}"
+    text = _all_text(at)
+    assert "elevated caution" in text
+    assert "LAM" in text
+
+
 def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db):
     """
     Regression test (Engineering Usability review finding): the mechanism

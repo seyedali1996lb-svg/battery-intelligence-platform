@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from recommendations import diagnose_mechanism
+from recommendations import diagnose_mechanism, mechanism_corroboration_note
 
 
 def _make_cell_df(n=100, ce_slope=0.0, ce_base=0.999, nonlinearity=0.0,
@@ -74,3 +74,49 @@ def test_returned_dict_has_all_expected_keys():
                 "confidence_label", "confidence_color", "confidence_notes",
                 "lli_score", "lam_score", "signals"):
         assert key in result
+
+
+# ---------------------------------------------------------------------------
+# mechanism_corroboration_note() -- Decision Support review finding:
+# classify() never sees the mechanism classifier's verdict, so a
+# lower-urgency action ("continue"/"inspect") could be recommended for a
+# cell whose mechanism verdict shows an accelerating, higher-risk pattern
+# (LAM) with no arbitration between the two surfaces. This is the additive
+# caution-note fix the user chose over deeper (and riskier) changes to
+# classify() itself.
+# ---------------------------------------------------------------------------
+
+def _mech(verdict, confidence_label):
+    return {"verdict": verdict, "confidence_label": confidence_label}
+
+
+def test_no_note_when_mechanism_agrees_with_continue():
+    note = mechanism_corroboration_note("continue", _mech("LLI — Loss of Lithium Inventory", "High"))
+    assert note is None
+
+
+def test_caution_note_when_lam_detected_with_continue_action():
+    note = mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "High"))
+    assert note is not None
+    assert "LAM" in note
+    assert "elevated caution" in note
+
+
+def test_caution_note_when_mixed_mechanism_with_inspect_action():
+    note = mechanism_corroboration_note("inspect", _mech("Mixed LLI + LAM", "Medium"))
+    assert note is not None
+
+
+def test_no_note_when_action_already_urgent():
+    """Second-life/recycle already reflect an urgent posture -- no need to
+    caution the user that degradation is accelerating when the
+    recommendation already treats the cell as needing action."""
+    assert mechanism_corroboration_note("second_life", _mech("LAM — Loss of Active Material", "High")) is None
+    assert mechanism_corroboration_note("recycle", _mech("LAM — Loss of Active Material", "High")) is None
+
+
+def test_no_note_when_mechanism_confidence_too_low():
+    """A Low/No-data mechanism verdict isn't reliable enough to second-guess
+    the recommendation over."""
+    assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "Low")) is None
+    assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "No data")) is None

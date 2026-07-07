@@ -69,11 +69,28 @@ def page_decision(
 
     st.markdown(f"# What should I do with {selected}?")
 
+    # Mechanism verdict computed before the hero card so a real disagreement
+    # (Decision Support review finding: classify() never sees this signal)
+    # can be surfaced as a caution line inside the recommendation itself,
+    # not just displayed adjacent to it as unrelated context.
+    try:
+        from recommendations import diagnose_mechanism, mechanism_corroboration_note
+        _dec_mech = diagnose_mechanism(df)
+        _corroboration_note = mechanism_corroboration_note(action, _dec_mech)
+    except Exception:
+        _dec_mech = None
+        _corroboration_note = None
+
     # ── 1. Hero recommendation ──────────────────────────────────────────────
     reason_html = "".join(
         f"<div style='margin-top:6px;font-size:13px;color:{action_colour}cc'>· {r}</div>"
         for r in result["action_reasons"]
     )
+    if _corroboration_note:
+        reason_html += (
+            f"<div style='margin-top:8px;font-size:13px;color:#f6ad55;"
+            f"border-top:1px solid {action_colour}33;padding-top:8px'>⚠ {_corroboration_note}</div>"
+        )
     _md_html(
         f"<div style='background:{action_bg};border:2px solid {action_colour}55;"
         f"border-radius:14px;padding:24px 28px;margin-bottom:20px'>"
@@ -87,9 +104,7 @@ def page_decision(
     )
 
     # ── Compact mechanism verdict (U3: merged from Health page's LLI/LAM classifier) ──
-    try:
-        from recommendations import diagnose_mechanism
-        _dec_mech = diagnose_mechanism(df)
+    if _dec_mech is not None:
         st.markdown(
             f"<div style='background:#111827;border-left:3px solid {_dec_mech['verdict_color']};"
             f"border-radius:6px;padding:8px 14px;margin:-12px 0 20px;font-size:12px;color:#a0aec0'>"
@@ -99,8 +114,6 @@ def page_decision(
             f"</div>",
             unsafe_allow_html=True,
         )
-    except Exception:
-        pass
 
     # ── 2. NPV Decision Table (3 options, no chart) ─────────────────────────
     st.markdown("<div class='section-header'>Financial Decision</div>", unsafe_allow_html=True)

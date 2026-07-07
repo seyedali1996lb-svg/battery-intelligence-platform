@@ -298,3 +298,35 @@ def diagnose_mechanism(df) -> dict:
         "lam_score":         lam_score,
         "signals":           signals,
     }
+
+
+def mechanism_corroboration_note(action: str, mechanism: dict) -> "str | None":
+    """
+    Cross-check the recommended action's implied urgency against the
+    mechanism classifier's verdict (Decision Support review finding:
+    classify() picks the action from SOH/fade/RUL/fit-scores alone -- it
+    never sees diagnose_mechanism()'s output, so the two are independent
+    analytical surfaces that could point in different directions with no
+    arbitration between them). This does not change the recommended
+    action or its confidence badge -- it only makes a real disagreement
+    visible where it was previously silent, the same additive, low-risk
+    pattern already used for the trajectory-match and financial-NPV
+    reconciliations elsewhere on this page.
+
+    Returns a caution string when a lower-urgency action ("continue" or
+    "inspect") coincides with a mechanism verdict that indicates
+    accelerating, higher-risk degradation (LAM present), at Medium+
+    confidence. Returns None for the common case where nothing disagrees
+    (including whenever the mechanism classifier itself has too little
+    signal to be worth second-guessing the recommendation over).
+    """
+    if mechanism.get("confidence_label") in ("No data", "Low"):
+        return None
+    verdict = mechanism.get("verdict", "")
+    if action in ("continue", "inspect") and "LAM" in verdict:
+        return (
+            f"Mechanism classifier detects {verdict} ({mechanism['confidence_label']} confidence) "
+            f"— an accelerating-fade pattern inconsistent with the smooth trend this recommendation "
+            f"assumes. Treat with elevated caution."
+        )
+    return None
