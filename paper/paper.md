@@ -13,7 +13,7 @@ authors:
     orcid: 0009-0000-9005-363X
     affiliation: 1
 affiliations:
-  - name: TODO(human author) — independent researcher / institutional affiliation
+  - name: Politecnico di Torino
     index: 1
 date: 13 July 2026
 bibliography: paper.bib
@@ -21,23 +21,34 @@ bibliography: paper.bib
 
 <!--
 TODO(human author) before submitting to JOSS:
-  - ORCID filled in (0009-0000-9005-363X, verified resolving to "Seyed Ali Hosseini" —
-    note the registered given-name is "Seyed Ali", not just "Ali"; the author name
-    above still reads "Ali Hosseini" — decide whether to match the ORCID's full
-    registered name for consistency, or keep "Ali Hosseini" as your publishing name).
-  - Affiliation still a placeholder below — fill in.
-  - Confirm the AI-usage disclosure section below accurately describes how this
-    paper and the underlying software were produced, and adjust it if it doesn't.
-  - Confirm "State of the field" claims about beep/PyBaMM against their latest
-    documentation before submission — this was written from the author's/
-    assistant's knowledge, not a fresh read of their current source.
+  - ORCID filled in (0009-0000-9005-363X, verified resolving). Publishing name
+    here is "Ali Hosseini" (deliberate choice, confirmed). You said you'd
+    changed the ORCID record's own published name to match, but a re-check of
+    the public ORCID API (2026-07-13) still returned "Seyed Ali Hosseini" with
+    no published/credit name set — likely just propagation lag, but worth a
+    final look at orcid.org yourself before submission to confirm it saved.
+  - Affiliation filled in ("Politecnico di Torino") — add a department/degree
+    program if you want more specificity than just the institution name.
+  - AI-usage disclosure section below still needs your explicit sign-off on
+    the redrafted version (offered separately, not yet applied) — the current
+    text in the file is the original, more generic draft.
+  - "State of the field" claims about beep/PyBaMM re-checked against their
+    current README/homepage (2026-07-13): both hold up, no changes needed.
+    beep's README confirms multi-vendor structuring (Arbin/Maccor/BioLogic/
+    Novonix/Neware) and a structured_summary concept; its own name and TRI
+    d3batt program reference support the "has some early-prediction layer"
+    claim. PyBaMM's homepage confirms pure-simulation scope, no experimental
+    data handling or built-in ML training. Not exhaustively verified (a
+    README/homepage skim, not a full docs read) — re-check if either
+    project's scope has visibly changed by actual submission time.
   - Add a real research-impact statement once batlab has external usage to cite
     (downloads, dependent papers, or adoption) — the current draft is honest
     that there isn't one yet, which JOSS reviewers should see rather than a
     fabricated one, but check whether that's still true at submission time.
-  - Decide whether to keep the AI-authorship acknowledgement in Acknowledgements
-    or move it into the disclosure section only — either is defensible, pick one
-    and be consistent.
+  - Acknowledgements filled in ("No external funding") — AI-authorship stays
+    only in the disclosure section, not duplicated here (implicit decision
+    from that being the only mention now — flag if you'd rather it appear
+    in both places).
   - Archive DOI is live: 10.5281/zenodo.21346275 (v0.1.1, github.com/seyedali1996lb-svg
     /battery-intelligence-platform, verified resolving). This is a version-specific
     DOI, not a concept DOI (one that stays constant across future releases) — check
@@ -152,7 +163,6 @@ split should be described more specifically per JOSS's current AI-disclosure pol
 
 # Acknowledgements
 
-TODO(human author): acknowledge any funding, institutional support, or individual contributors
-here.
+No external funding was received for this work.
 
 # References
