@@ -13,11 +13,10 @@ import plotly.graph_objects as go
 
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
-    soh_status, NASA_CELL_IDS, render_pack_builder, render_card,
+    soh_status, NASA_CELL_IDS, render_pack_builder, render_card, cached_detect_knee,
 )
 from design_system import make_badge
 from data_loader import CELL_STRESS_PROFILES
-from batlab.features.knee_detection import detect_knee
 
 from _pages.grading import page_grading
 
@@ -113,8 +112,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         is_upload = not is_nasa and not is_severson and cell_id not in _synth_ids
         status_label, _ = soh_status(soh)
 
-        # Knee-point detection per cell
-        knee_result = detect_knee(df["soh_pct"], df["cycle_number"])
+        # Knee-point detection per cell (cached — see utils.cached_detect_knee)
+        knee_result = cached_detect_knee(df["soh_pct"], df["cycle_number"])
 
         # Degradation trend: compare current 30-cy fade rate vs 30 cycles earlier
         trend = "Stable"

@@ -14,7 +14,7 @@ import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "app"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
-from utils import metric_tile_html, load_tenant_bundle_cached
+from utils import metric_tile_html, load_tenant_bundle_cached, cached_detect_knee
 
 
 def test_metric_tile_html_includes_label_and_value():
@@ -97,3 +97,55 @@ def test_load_tenant_bundle_cached_keys_by_org_id(monkeypatch):
 
     assert load_tenant_bundle_cached(1) == (1, 1, 1)
     assert load_tenant_bundle_cached(2) == (2, 2, 2)  # different org -> not the org-1 cached value
+
+
+# ---------------------------------------------------------------------------
+# cached_detect_knee() — regression coverage for the Fleet page recomputing
+# knee detection for every cell on every single rerun. st.cache_data has
+# built-in pandas Series hashing, so this needs no manual cache-key
+# construction like load_tenant_bundle_cached()/PDF caching did.
+# ---------------------------------------------------------------------------
+
+def _knee_series():
+    import numpy as np
+    import pandas as pd
+    n, knee_at = 300, 220
+    cyc = np.arange(1, n + 1)
+    soh = np.where(cyc < knee_at, 100 - (cyc / knee_at) * 5, 95 - (cyc - knee_at) * 0.15)
+    return pd.Series(soh), pd.Series(cyc)
+
+
+def test_cached_detect_knee_matches_uncached_result():
+    cached_detect_knee.clear()
+    from batlab.features.knee_detection import detect_knee
+
+    soh, cyc = _knee_series()
+    assert cached_detect_knee(soh, cyc) == detect_knee(soh, cyc)
+
+
+def test_cached_detect_knee_only_computes_once_for_identical_series(monkeypatch):
+    cached_detect_knee.clear()
+    import utils
+    from batlab.features import knee_detection as kd_module
+
+    calls = []
+    real_detect_knee = kd_module.detect_knee
+
+    def _spy(*args, **kwargs):
+        calls.append(1)
+        return real_detect_knee(*args, **kwargs)
+
+    monkeypatch.setattr(utils, "_detect_knee", _spy)
+
+    soh, cyc = _knee_series()
+    r1 = cached_detect_knee(soh, cyc)
+    r2 = cached_detect_knee(soh.copy(), cyc.copy())  # equal content, different objects
+    assert r1 == r2
+    assert calls == [1], f"expected exactly 1 real computation across 2 identical-content calls, got {len(calls)}"
+
+
+def test_cached_detect_knee_recomputes_for_different_series():
+    cached_detect_knee.clear()
+    soh, cyc = _knee_series()
+    soh_other = soh * 0.5  # genuinely different SOH curve
+    assert cached_detect_knee(soh, cyc) != cached_detect_knee(soh_other, cyc)

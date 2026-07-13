@@ -18,6 +18,36 @@ from design_system import (
 )
 
 
+@st.cache_data(show_spinner=False)
+def _cached_build_report_pdf(cache_key: str, _passport: dict, _second_life: dict | None, _assumptions: dict):
+    """Cached wrapper around report_pdf.build_report_pdf().
+
+    Without this, every widget interaction anywhere on the Reports page
+    (a tab switch, a checkbox elsewhere on the page) rebuilt the full
+    ReportLab document from scratch — multiple Table/Paragraph objects,
+    styles, full layout — even when the selected cell and its data hadn't
+    changed at all.
+
+    cache_key is a content hash of (passport, second_life, assumptions)
+    computed by the caller (see page_reports()). The leading-underscore
+    params are excluded from Streamlit's own argument hashing (its
+    documented convention) since these are plain dicts that don't need
+    Streamlit's generic hasher when we already have a purpose-built key.
+
+    This also fixes a real correctness bug, not just a performance one:
+    document_id() (src/passport_export.py) embeds datetime.now() in the
+    hash it returns, so the "Document ID" shown to the user — and the
+    "Generated {time}" text inside the PDF body — changed on every rerun
+    even for byte-identical passport data, contradicting document_id()'s
+    own documented purpose ("a deterministic hash pairing a PDF export and
+    its JSON-LD companion from the same export action"). Caching freezes
+    both to the first-generation time for a given content hash, which is
+    the behavior document_id() was already supposed to have.
+    """
+    from report_pdf import build_report_pdf
+    return build_report_pdf(_passport, _second_life, _assumptions)
+
+
 def _passport_field_row(f: dict) -> str:
     muted = f["state"] == "unavailable"
     value_colour = "#4a5568" if muted else "#e2e8f0"
@@ -344,11 +374,17 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
 
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
 
-    from report_pdf import build_report_pdf
     from passport_export import to_json_ld
+    import hashlib
     import json as _json_report
 
-    pdf_bytes, _doc_id = build_report_pdf(p, second_life, ASSUMPTIONS)
+    _pdf_cache_key = hashlib.sha256(
+        _json_report.dumps(
+            {"passport": p, "second_life": second_life, "assumptions": ASSUMPTIONS},
+            sort_keys=True, default=str,
+        ).encode()
+    ).hexdigest()[:20]
+    pdf_bytes, _doc_id = _cached_build_report_pdf(_pdf_cache_key, p, second_life, ASSUMPTIONS)
     _jsonld = to_json_ld(p, selected, doc_id=_doc_id)
 
     st.caption(f"Document ID: {_doc_id} — both files below share this ID, since they're the same export.")

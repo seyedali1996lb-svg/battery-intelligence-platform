@@ -13,11 +13,11 @@ import plotly.graph_objects as go
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
     soh_status, _cell_provenance, _analysis_provenance, _resample_df,
-    PLOTLY_CONFIG, NASA_CELL_IDS, render_card, metric_tile_html,
+    PLOTLY_CONFIG, NASA_CELL_IDS, render_card, metric_tile_html, cached_detect_knee,
 )
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
-from batlab.features.knee_detection import detect_knee, degradation_phases
+from batlab.features.knee_detection import degradation_phases
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     status_label, status_colour = soh_status(current_soh)
 
     # Knee-point detection
-    knee = detect_knee(df["soh_pct"], df["cycle_number"])
+    knee = cached_detect_knee(df["soh_pct"], df["cycle_number"])
     sop_pct = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
 
     knee_note = ""

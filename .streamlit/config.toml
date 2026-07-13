@@ -7,4 +7,8 @@ textColor = "#e2e8f0"
 
 [server]
 headless = true
+# Serves app/static/*.css via a real HTTP GET (browser-cached, one fetch per
+# session) instead of inlining the base theme's CSS into every single
+# st.markdown-driven rerun. See app/static/theme.css's header comment.
+enableStaticServing = true
 

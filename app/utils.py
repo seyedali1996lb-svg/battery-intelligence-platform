@@ -13,6 +13,21 @@ import pandas as pd
 import numpy as np
 
 from design_system import provenance_banner, BADGE_MEASURED, BADGE_SIMULATED, BADGE_SYNTHETIC
+from batlab.features.knee_detection import detect_knee as _detect_knee
+
+
+@st.cache_data(show_spinner=False)
+def cached_detect_knee(soh_series: "pd.Series", cycle_series: "pd.Series") -> dict:
+    """Cached wrapper around batlab.features.knee_detection.detect_knee().
+
+    Fleet page calls this once per cell in a loop, uncached — any widget
+    interaction anywhere on the Fleet page (any single cell's data
+    unchanged) recomputed knee detection for the WHOLE fleet on every
+    single rerun. st.cache_data has built-in support for hashing pandas
+    Series by content, so this is correctly cached per (cell's SOH
+    series, cycle series) pair with no extra key-construction needed.
+    """
+    return _detect_knee(soh_series, cycle_series)
 
 # ---------------------------------------------------------------------------
 # Constants

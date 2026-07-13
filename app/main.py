@@ -49,144 +49,15 @@ st.set_page_config(
 # Global styles
 # ---------------------------------------------------------------------------
 
+# Base dark-theme CSS is a static asset (app/static/theme.css), fetched once
+# by the browser's normal HTTP cache instead of being re-sent as part of the
+# app's element stream on every single rerun (any widget interaction
+# anywhere in the app) — see that file's own header comment for why, and
+# .streamlit/config.toml for the required server.enableStaticServing=true.
+# The conditional light-mode override block below stays inline (unchanged)
+# since it's only sent on the sessions that actually toggle it on.
 st.markdown(
-    """
-    <style>
-    section[data-testid="stSidebar"] button[kind="secondary"] {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        color: #a0aec0 !important;
-        text-align: left !important;
-        justify-content: flex-start !important;
-        padding: 7px 12px !important;
-        font-size: 14px !important;
-        font-weight: 500 !important;
-        border-radius: 6px !important;
-    }
-    section[data-testid="stSidebar"] button[kind="secondary"]:hover {
-        background: rgba(255,255,255,0.07) !important;
-        color: #e2e8f0 !important;
-    }
-    section[data-testid="stSidebar"] button[kind="primary"] {
-        background: rgba(99,179,237,0.15) !important;
-        border: none !important;
-        box-shadow: none !important;
-        color: #63b3ed !important;
-        text-align: left !important;
-        justify-content: flex-start !important;
-        padding: 7px 12px !important;
-        font-size: 14px !important;
-        font-weight: 600 !important;
-        border-radius: 6px !important;
-    }
-    section[data-testid="stSidebar"] button[kind="primary"]:hover {
-        background: rgba(99,179,237,0.22) !important;
-    }
-    .hero-card {
-        background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
-        border: 1px solid #2d3748;
-        border-radius: 12px;
-        padding: 28px 32px;
-        margin-bottom: 24px;
-    }
-    .hero-label  { font-size: 12px; color: #8896a8; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
-    .hero-value  { font-size: 72px; font-weight: 700; line-height: 1.0; margin-bottom: 8px; }
-    .hero-sub    { font-size: 14px; color: #a0aec0; }
-    .hero-green  { color: #48bb78; }
-    .hero-yellow { color: #f6e05e; }
-    .hero-red    { color: #fc8181; }
-    .hero-blue   { color: #63b3ed; }
-    .metric-row  { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-    .metric-chip {
-        background: #1a202c;
-        border: 1px solid #2d3748;
-        border-radius: 10px;
-        padding: 16px 20px;
-        min-width: 150px;
-        flex: 1;
-    }
-    .metric-chip-label { font-size: 11px; color: #8896a8; text-transform: uppercase; letter-spacing: 0.06em; }
-    .metric-chip-value { font-size: 26px; font-weight: 700; color: #e2e8f0; margin-top: 4px; }
-    .metric-chip-sub   { font-size: 12px; color: #8896a8; margin-top: 2px; }
-    div[data-testid="stMetricValue"] {
-        font-size: 18px;
-        white-space: normal;
-        overflow-wrap: break-word;
-        line-height: 1.3;
-    }
-    .section-header {
-        font-size: 12px; font-weight: 600; color: #4a5568;
-        text-transform: uppercase; letter-spacing: 0.1em;
-        margin: 28px 0 12px; padding-bottom: 8px;
-        border-bottom: 1px solid #2d3748;
-    }
-    .tag-calibrating {
-        display: inline-block; background: rgba(246,224,94,0.12);
-        color: #f6e05e; font-size: 11px; font-weight: 600;
-        padding: 2px 8px; border-radius: 4px; letter-spacing: 0.06em;
-        border: 1px solid rgba(246,224,94,0.25);
-    }
-    .tag-model {
-        display: inline-block; background: rgba(104,211,145,0.12);
-        color: #48bb78; font-size: 11px; font-weight: 600;
-        padding: 2px 8px; border-radius: 4px; letter-spacing: 0.06em;
-        border: 1px solid rgba(104,211,145,0.25);
-    }
-    /* ── Spacing tokens (4-step scale) ── */
-    :root {
-        --sp-1: 4px;  --sp-2: 8px;  --sp-3: 16px;  --sp-4: 24px;
-        --r-chip: 4px;  --r-card: 8px;  --r-section: 12px;
-        --c-border: #2d3748;  --c-surface: #1e2a38;  --c-muted: #8896a8;
-    }
-    /* ── Type ramp (C1) ── */
-    .block-container { padding-top: 56px !important; }
-    h1 { font-size: 28px !important; font-weight: 800 !important; color: #e2e8f0 !important; margin-bottom: 4px !important; }
-    h2 { font-size: 22px !important; font-weight: 700 !important; color: #e2e8f0 !important; margin-bottom: 2px !important; }
-    h3 { font-size: 16px !important; font-weight: 600 !important; color: #cbd5e0 !important; }
-    h4 { font-size: 13px !important; font-weight: 600 !important; color: #a0aec0 !important; }
-    /* section-header sits clearly below h3 in the hierarchy */
-    .section-header {
-        font-size: 11px !important; font-weight: 700 !important; color: #4a5568 !important;
-        text-transform: uppercase !important; letter-spacing: 0.12em !important;
-        margin: 28px 0 12px !important; padding-bottom: 6px !important;
-        border-bottom: 1px solid #2d3748 !important;
-    }
-    /* ── Accessibility: contrast fix — #8896a8 on #1a202c = 5.2:1 (WCAG AA pass) ── */
-    .metric-chip-sub, .hero-sub { color: #8896a8 !important; }
-    /* ── Accessibility: focus styles — WCAG 2.4.7 (L3) ── */
-    button:focus-visible, [role="button"]:focus-visible,
-    input:focus-visible, select:focus-visible, a:focus-visible,
-    [data-testid="stExpander"]:focus-visible {
-        outline: 2px solid #63b3ed !important;
-        outline-offset: 3px !important;
-        border-radius: 4px !important;
-    }
-    section[data-testid="stSidebar"] button:focus-visible {
-        outline: 2px solid #63b3ed !important;
-        outline-offset: 2px !important;
-        border-radius: 6px !important;
-    }
-    /* ── Accessibility: status badge text supplement (color + shape + text) ── */
-    .status-good::before    { content: "✓ "; }
-    .status-warning::before { content: "⚠ "; }
-    .status-critical::before{ content: "✕ "; }
-    /* ── Empty state (C3) ── */
-    .empty-state {
-        text-align: center; padding: 48px 32px; border: 1px dashed #2d3748;
-        border-radius: var(--r-card); margin: 16px 0;
-    }
-    .empty-state-icon  { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
-    .empty-state-title { font-size: 16px; font-weight: 600; color: #a0aec0; margin-bottom: 6px; }
-    .empty-state-body  { font-size: 13px; color: #4a5568; line-height: 1.6; max-width: 420px; margin: 0 auto; }
-    .empty-state-action{ margin-top: 16px; font-size: 12px; color: #63b3ed; }
-    /* ── Type utility classes (B1) ── */
-    .t-metric  { font-size: 32px; font-weight: 700; color: #e2e8f0; line-height: 1.1; }
-    .t-heading { font-size: 16px; font-weight: 600; color: #e2e8f0; }
-    .t-body    { font-size: 13px; font-weight: 400; color: #a0aec0; line-height: 1.5; }
-    .t-caption { font-size: 11px; font-weight: 400; color: #8896a8; }
-    </style>
-    """,
+    '<link rel="stylesheet" href="app/static/theme.css">',
     unsafe_allow_html=True,
 )
 
