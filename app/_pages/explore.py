@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card
+from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card, _resample_df
 
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
@@ -72,6 +72,8 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
     df_a = active_fdfs[cell_a]
     df_b = active_fdfs[cell_b]
+    _rdf_a = _resample_df(df_a)   # downsampled for charts; df_a/df_b still used for latest-row metrics
+    _rdf_b = _resample_df(df_b)
 
     # ── Summary metrics comparison ──
     st.markdown("<div class='section-header'>Key Metrics</div>", unsafe_allow_html=True)
@@ -106,12 +108,12 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
 
     _fig_soh = go.Figure()
     _fig_soh.add_trace(go.Scatter(
-        x=df_a["cycle_number"], y=df_a[_soh_col_a],
+        x=_rdf_a["cycle_number"], y=_rdf_a[_soh_col_a],
         name=cell_a, line=dict(color="#63b3ed", width=2),
         hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}}%<extra></extra>",
     ))
     _fig_soh.add_trace(go.Scatter(
-        x=df_b["cycle_number"], y=df_b[_soh_col_b],
+        x=_rdf_b["cycle_number"], y=_rdf_b[_soh_col_b],
         name=cell_b, line=dict(color="#fc8181", width=2),
         hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}}%<extra></extra>",
     ))
@@ -130,12 +132,12 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     if "resistance_ohm" in df_a.columns and "resistance_ohm" in df_b.columns:
         _fig_res = go.Figure()
         _fig_res.add_trace(go.Scatter(
-            x=df_a["cycle_number"], y=df_a["resistance_ohm"] * 1000,
+            x=_rdf_a["cycle_number"], y=_rdf_a["resistance_ohm"] * 1000,
             name=cell_a, line=dict(color="#63b3ed", width=2),
             hovertemplate=f"<b>{cell_a}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
         ))
         _fig_res.add_trace(go.Scatter(
-            x=df_b["cycle_number"], y=df_b["resistance_ohm"] * 1000,
+            x=_rdf_b["cycle_number"], y=_rdf_b["resistance_ohm"] * 1000,
             name=cell_b, line=dict(color="#fc8181", width=2),
             hovertemplate=f"<b>{cell_b}</b> cy %{{x}}: %{{y:.1f}} mΩ<extra></extra>",
         ))

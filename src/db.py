@@ -365,6 +365,43 @@ def get_setting(org_id: int, key: str, default=None):
             return default
 
 
+def get_settings(org_id: int, keys: "list[str] | None" = None) -> dict:
+    """
+    Batched version of get_setting() -- fetches every setting row for
+    org_id (optionally filtered to `keys`) in a single query, instead of
+    one round-trip per key. Used where a caller needs several settings at
+    once (e.g. app/main.py's session hydration on login, which previously
+    made 6 separate get_setting() calls).
+
+    Unlike get_setting(), missing/undecodable keys are simply absent from
+    the returned dict rather than filled with a per-call default -- callers
+    should do `settings.get(key)` (optionally `is not None` to match
+    get_setting()'s exact semantics for a stored JSON null) rather than
+    assume every requested key is present.
+    """
+    with Session() as s:
+        q = s.query(Setting).filter_by(org_id=org_id)
+        if keys is not None:
+            q = q.filter(Setting.key.in_(keys))
+        rows = q.all()
+
+    result = {}
+    for row in rows:
+        raw = row.value
+        if row.key in _SECRET_SETTING_KEYS and raw is not None:
+            try:
+                raw = _get_fernet().decrypt(raw.encode()).decode()
+            except InvalidToken:
+                # Row predates encryption being added (plaintext JSON) — read
+                # it as-is; the next set_setting() call re-encrypts it.
+                pass
+        try:
+            result[row.key] = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def set_setting(org_id: int, key: str, value) -> None:
     encoded = json.dumps(value)
     if key in _SECRET_SETTING_KEYS:

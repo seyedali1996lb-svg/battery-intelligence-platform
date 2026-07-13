@@ -403,23 +403,6 @@ def _train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
 
 
 @st.cache_resource(show_spinner=False)
-def _get_shap_values(bundle_id: str, bundle: dict):
-    """Cache SHAP TreeExplainer results keyed by bundle_id (avoids rebuilding on every render)."""
-    try:
-        import shap as _shap
-        import numpy as _np_shap
-        scaler = bundle["scaler"]
-        X_test_sc = scaler.transform(bundle["test_data"]["X_test"])
-        expl_soh = _shap.TreeExplainer(bundle["soh_model"])
-        expl_rul = _shap.TreeExplainer(bundle["rul_model"])
-        shap_soh = _np_shap.abs(expl_soh.shap_values(X_test_sc)).mean(axis=0)
-        shap_rul = _np_shap.abs(expl_rul.shap_values(X_test_sc)).mean(axis=0)
-        return shap_soh, shap_rul
-    except Exception:
-        return None, None
-
-
-@st.cache_resource(show_spinner=False)
 def load_everything():
     """
     Load synthetic, NASA, and Severson cells in parallel (independent pipelines).
@@ -1118,19 +1101,25 @@ def main():
     _db_main.init_db()
     if "decision_log" not in st.session_state:
         st.session_state["decision_log"] = _db_main.load_decisions(st.session_state["auth_org_id"])
+    # Batched: one query for all 6 settings instead of one round-trip each.
+    _settings = _db_main.get_settings(
+        st.session_state["auth_org_id"],
+        keys=["pinned_cell", "app_profile", "cost_of_delay_mult",
+              "webhook_url", "webhook_secret", "webhook_events", "eol_threshold_pct"],
+    )
     if "pinned_cell" not in st.session_state:
-        st.session_state["pinned_cell"] = _db_main.get_setting(st.session_state["auth_org_id"], "pinned_cell")
+        st.session_state["pinned_cell"] = _settings.get("pinned_cell")
     if "app_profile" not in st.session_state:
-        _persisted_profile = _db_main.get_setting(st.session_state["auth_org_id"], "app_profile")
+        _persisted_profile = _settings.get("app_profile")
         if _persisted_profile is not None:
             st.session_state["app_profile"] = _persisted_profile
     if "cost_of_delay_mult" not in st.session_state:
-        _persisted_cod = _db_main.get_setting(st.session_state["auth_org_id"], "cost_of_delay_mult")
+        _persisted_cod = _settings.get("cost_of_delay_mult")
         if _persisted_cod is not None:
             st.session_state["cost_of_delay_mult"] = _persisted_cod
     for _wh_key in ("webhook_url", "webhook_secret", "webhook_events"):
         if _wh_key not in st.session_state:
-            _persisted_wh = _db_main.get_setting(st.session_state["auth_org_id"], _wh_key)
+            _persisted_wh = _settings.get(_wh_key)
             if _persisted_wh is not None:
                 st.session_state[_wh_key] = _persisted_wh
 
@@ -1138,7 +1127,8 @@ def main():
     # Changing this does NOT retrain the model; it rescales the displayed RUL
     # using the current fade rate to project to the user-defined threshold.
     if "eol_threshold_pct" not in st.session_state:
-        st.session_state["eol_threshold_pct"] = _db_main.get_setting(st.session_state["auth_org_id"], "eol_threshold_pct", 80.0)
+        _persisted_eol = _settings.get("eol_threshold_pct")
+        st.session_state["eol_threshold_pct"] = _persisted_eol if _persisted_eol is not None else 80.0
 
     # ── Resolve active data from current mode ─────────────────────────────────
     mode      = st.session_state["data_mode"]

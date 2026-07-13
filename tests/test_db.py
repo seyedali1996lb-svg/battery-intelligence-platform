@@ -129,6 +129,42 @@ def test_secret_setting_round_trips_through_encryption(db):
     assert db.get_setting(DEMO_ORG_ID, "vrm_api_token") == "super-secret-token-123"
 
 
+def test_get_settings_batches_multiple_keys_matching_get_setting(db):
+    """get_settings() must return exactly what N calls to get_setting() would,
+    for both plain and encrypted keys, in one query instead of N."""
+    db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0005")
+    db.set_setting(DEMO_ORG_ID, "webhook_secret", "shh-its-a-secret")
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 85.0)
+
+    batched = db.get_settings(
+        DEMO_ORG_ID, keys=["pinned_cell", "webhook_secret", "eol_threshold_pct", "never_set_key"]
+    )
+    assert batched["pinned_cell"] == db.get_setting(DEMO_ORG_ID, "pinned_cell")
+    assert batched["webhook_secret"] == db.get_setting(DEMO_ORG_ID, "webhook_secret") == "shh-its-a-secret"
+    assert batched["eol_threshold_pct"] == db.get_setting(DEMO_ORG_ID, "eol_threshold_pct")
+    assert "never_set_key" not in batched  # absent, not filled with a default
+
+
+def test_get_settings_respects_org_isolation(db):
+    org_a = db.create_organization_with_admin("Org A", "a_admin", "passwordA")["org_id"]
+    org_b = db.create_organization_with_admin("Org B", "b_admin", "passwordB")["org_id"]
+    db.set_setting(org_a, "pinned_cell", "CELL-A")
+    db.set_setting(org_b, "pinned_cell", "CELL-B")
+
+    result_a = db.get_settings(org_a)
+    result_b = db.get_settings(org_b)
+    assert result_a["pinned_cell"] == "CELL-A"
+    assert result_b["pinned_cell"] == "CELL-B"
+
+
+def test_get_settings_unfiltered_returns_all_keys_for_org(db):
+    db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0005")
+    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
+    result = db.get_settings(DEMO_ORG_ID)
+    assert result["pinned_cell"] == "B0005"
+    assert result["webhook_url"] == "https://example.com/hook"
+
+
 def test_secret_setting_is_not_plaintext_in_the_raw_db_row(db):
     db.set_setting(DEMO_ORG_ID, "cmms_api_key", "plaintext-should-not-appear")
     with db.Session() as s:
