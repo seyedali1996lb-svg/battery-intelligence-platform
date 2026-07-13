@@ -48,3 +48,20 @@ def test_clear_cache_features_only_preserves_bundle(isolated_cache):
     isolated_cache.clear_cache("nasa", features_only=True)
     assert isolated_cache.load_cached("nasa", battery) is not None
     assert isolated_cache.load_features_cached("nasa", battery) is None
+
+
+def test_load_cached_unchecked_returns_none_when_absent(isolated_cache):
+    assert isolated_cache.load_cached_unchecked("nasa") is None
+
+
+def test_load_cached_unchecked_ignores_signature_mismatch(isolated_cache):
+    """The whole point of load_cached_unchecked(): a caller with no live
+    battery_dict (src/api.py's standalone-process fallback) still gets the
+    cached triple back, unlike load_cached() which would reject it."""
+    battery_v1 = {"CellA": {"cycles": list(range(100))}}
+    triple = ({"metrics": {"soh_r2": 0.9}}, {"CellA": "df_placeholder"}, {"CellA": 80})
+    isolated_cache.save_cached("nasa", battery_v1, triple)
+
+    battery_v2 = {"CellA": {"cycles": list(range(150))}}  # would invalidate load_cached()
+    assert isolated_cache.load_cached("nasa", battery_v2) is None
+    assert isolated_cache.load_cached_unchecked("nasa") == triple

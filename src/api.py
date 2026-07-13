@@ -177,12 +177,45 @@ def _get_bundle() -> dict:
         # Import the Streamlit app's loader — works from CLI too
         from main import load_everything  # type: ignore
         _bundle_cache = load_everything()
-        return _bundle_cache
     except ImportError:
-        # Fallback: try loading bundles directly
-        from src.bundle_cache import load_bundle  # type: ignore
-        _bundle_cache = {"severson": load_bundle("severson"), "nasa": load_bundle("nasa")}
-        return _bundle_cache
+        _bundle_cache = _load_bundle_from_disk_cache()
+    return _bundle_cache
+
+
+def _load_bundle_from_disk_cache() -> dict:
+    """
+    Fallback for _get_bundle() when `main` (the Streamlit app) can't be
+    imported — e.g. running as a bare `uvicorn src.api:app` process with no
+    Streamlit context. There's no live battery_dict available here to
+    rebuild a cache signature against, so this reads whatever's already on
+    disk in the app's own bundle cache via bundle_cache.load_cached_unchecked()
+    (no signature check — see that function's docstring for why), rather than
+    the nonexistent `load_bundle()` this previously called (a bare ImportError
+    from the missing name, uncaught, since it fired from inside an
+    `except ImportError:` block that had already stopped trying to catch it).
+
+    Returns the same {"featured_dfs": ..., "bundles": ...} shape
+    _get_featured_dfs()/_get_bundles() already expect from a non-tuple
+    _get_bundle() result — previously this returned {"severson": ...,
+    "nasa": ...}, which doesn't have either key, so even a successful
+    fallback would have silently served zero cells to every endpoint.
+    """
+    try:
+        from src.bundle_cache import load_cached_unchecked  # type: ignore
+    except ImportError:
+        from bundle_cache import load_cached_unchecked  # type: ignore
+
+    featured_dfs: dict = {}
+    bundles: dict = {}
+    for key in ("nasa", "severson", "synth"):
+        cached = load_cached_unchecked(key)
+        if cached is None:
+            continue
+        bundle, fdfs, _split_cycles = cached
+        bundles[key] = bundle
+        featured_dfs.update(fdfs)
+
+    return {"featured_dfs": featured_dfs, "bundles": bundles}
 
 
 def _get_org_bundle(org_id: "int | None"):

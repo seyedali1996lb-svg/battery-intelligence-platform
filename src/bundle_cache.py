@@ -58,6 +58,27 @@ def load_cached(key: str, battery_dict: dict):
         return None
 
 
+def load_cached_unchecked(key: str):
+    """
+    Load a cached (bundle, featured_dfs, split_cycles) triple with NO
+    signature check — for callers that have no live battery_dict to check
+    a signature against in the first place (e.g. src/api.py running as a
+    bare process, with no Streamlit app import available to rebuild the
+    battery_dict). Returns None if no cache file exists for this key, or
+    if the cached file fails to load.
+
+    Prefer load_cached() over this whenever a battery_dict is available —
+    this skips the staleness check load_cached() exists to provide.
+    """
+    bundle_path = CACHE_DIR / f"{key}.joblib"
+    if not bundle_path.exists():
+        return None
+    try:
+        return joblib.load(bundle_path)
+    except Exception:
+        return None
+
+
 def save_cached(key: str, battery_dict: dict, triple: tuple):
     """
     Persist a (bundle, featured_dfs, split_cycles) triple to disk.

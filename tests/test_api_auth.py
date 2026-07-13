@@ -187,3 +187,81 @@ def test_cells_endpoint_returns_merged_cells_for_org_with_upload(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["cell_id"] == "DEMO-ORG-UPLOAD"
     assert resp.json()["rul_reliable"] is True
+
+
+# ---------------------------------------------------------------------------
+# _load_bundle_from_disk_cache() — _get_bundle()'s fallback when `main` (the
+# Streamlit app) can't be imported, e.g. a bare `uvicorn src.api:app` process.
+# Regression test: this fallback used to call a nonexistent load_bundle()
+# (an uncaught ImportError) and, separately, would have produced a dict
+# shape ({"severson": ..., "nasa": ...}) that _get_featured_dfs()/
+# _get_bundles() don't actually read from (they look for "featured_dfs"/
+# "bundles" keys) — so even a working fallback would have silently served
+# zero cells. Both fixed; both covered here.
+#
+# _load_bundle_from_disk_cache() does its `load_cached_unchecked` import
+# locally (inside the function, both `from src.bundle_cache import ...` and
+# a bare `from bundle_cache import ...` fallback), so these tests patch the
+# attribute on whichever of those two already-imported module objects is
+# reachable, rather than guessing which import path the function will take.
+# ---------------------------------------------------------------------------
+
+def _patch_load_cached_unchecked(monkeypatch, fake_fn):
+    import bundle_cache as bc_module
+    monkeypatch.setattr(bc_module, "load_cached_unchecked", fake_fn)
+    try:
+        import src.bundle_cache as src_bc_module
+        monkeypatch.setattr(src_bc_module, "load_cached_unchecked", fake_fn)
+    except ImportError:
+        pass
+
+
+def test_load_bundle_from_disk_cache_shapes_dict_from_per_source_triples(monkeypatch):
+    import api as api_module
+
+    fake_cache = {
+        "nasa": ({"metrics": {"soh_r2": 0.9}}, {"B0005": "nasa_df"}, {"B0005": 80}),
+        "severson": ({"metrics": {"soh_r2": 0.8}}, {"S-b1c2": "severson_df"}, {"S-b1c2": 400}),
+    }
+    _patch_load_cached_unchecked(monkeypatch, fake_cache.get)
+
+    result = api_module._load_bundle_from_disk_cache()
+
+    assert set(result.keys()) == {"featured_dfs", "bundles"}
+    assert result["featured_dfs"] == {"B0005": "nasa_df", "S-b1c2": "severson_df"}
+    assert set(result["bundles"]) == {"nasa", "severson"}
+    assert result["bundles"]["nasa"]["metrics"]["soh_r2"] == 0.9
+
+
+def test_load_bundle_from_disk_cache_returns_empty_shape_when_nothing_cached(monkeypatch):
+    import api as api_module
+
+    _patch_load_cached_unchecked(monkeypatch, lambda key: None)
+
+    result = api_module._load_bundle_from_disk_cache()
+
+    assert result == {"featured_dfs": {}, "bundles": {}}
+
+
+def test_get_bundle_falls_back_without_crashing_when_main_unimportable(monkeypatch):
+    """The actual regression: _get_bundle() must not raise ImportError from
+    inside its own except-ImportError branch."""
+    import api as api_module
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "main":
+            raise ImportError("simulated: no Streamlit app in this process")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(api_module, "_bundle_cache", None)
+    monkeypatch.setattr(
+        api_module, "_load_bundle_from_disk_cache",
+        lambda: {"featured_dfs": {}, "bundles": {}},
+    )
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    result = api_module._get_bundle()  # must not raise
+    assert result == {"featured_dfs": {}, "bundles": {}}
