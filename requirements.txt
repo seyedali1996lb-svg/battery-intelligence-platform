@@ -1,3 +1,8 @@
+# The batlab package itself (app/main.py and most app/_pages/*.py now import
+# from it) — Streamlit Community Cloud only installs from this file, not
+# pyproject.toml, so this line is required for the deployed app to start.
+-e .
+
 pandas
 scikit-learn
 scipy

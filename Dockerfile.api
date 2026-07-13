@@ -1,7 +1,13 @@
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY requirements.txt .
+
+# requirements.txt now installs batlab itself via `-e .`, which needs
+# pyproject.toml + batlab/ present before pip runs — copy those (and
+# nothing else yet, to keep dependency-layer caching for everything else)
+# ahead of the install step.
+COPY requirements.txt pyproject.toml .
+COPY batlab/ ./batlab/
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
