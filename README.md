@@ -10,7 +10,7 @@ format, so a reported R² can be checked, not just cited.
 
 [![CI](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/actions/workflows/ci.yml)
 
-**[Full documentation →](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/tree/master/docs)** (or build locally: `mkdocs serve` after `pip install -e ".[docs]"`)
+**[Full documentation →](https://seyedali1996lb-svg.github.io/battery-intelligence-platform/)** (or build locally: `mkdocs serve` after `pip install -e ".[docs]"`)
 
 ---
 

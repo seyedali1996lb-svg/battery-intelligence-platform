@@ -1,5 +1,6 @@
 site_name: batlab
 site_description: A citable, honest research library for battery degradation analysis.
+site_url: https://seyedali1996lb-svg.github.io/battery-intelligence-platform/
 repo_url: https://github.com/seyedali1996lb-svg/battery-intelligence-platform
 repo_name: battery-intelligence-platform
 docs_dir: docs
