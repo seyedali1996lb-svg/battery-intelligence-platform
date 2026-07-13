@@ -28,15 +28,18 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # ────────────────────────────────────────────────────────────────────────
     # Section 0: Uploaded data (shown only when uploaded data is in session)
     # ────────────────────────────────────────────────────────────────────────
-    up_fdfs = st.session_state.get("uploaded_featured_dfs", {})
-    if up_fdfs:
+    # Gated on the lightweight metadata dict, not the full uploaded
+    # DataFrames/bundle — those are never stored in session_state at all
+    # (see utils.load_tenant_bundle_cached()), so "is there an upload"
+    # only needs this small dict, not the heavy data itself.
+    up_meta     = st.session_state.get("uploaded_mode_meta")
+    cell_ids_up = up_meta.get("cell_ids", []) if up_meta else []
+    if up_meta:
         _section("My Data")
-        up_meta      = st.session_state.get("uploaded_mode_meta") or {}
-        n_up         = up_meta.get("n_cells", len(up_fdfs))
+        n_up         = up_meta.get("n_cells", 0)
         lco_lim      = up_meta.get("lco_limited", False)
         temp_assumed = up_meta.get("temperature_assumed_cells", [])
         calib_cnt    = up_meta.get("calibrating_count", 0)
-        cell_ids_up  = up_meta.get("cell_ids", list(up_fdfs.keys()))
 
         render_card(
             f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
@@ -59,9 +62,10 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
         st.markdown(
             "<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            "Uploaded data is stored in your browser session only — it never touches the "
-            "filesystem and never persists between sessions or across users. "
-            "Clearing uploaded data switches you back to NASA Research Mode."
+            "Uploaded data is persisted per organization and survives a refresh or a new "
+            "login — it is never visible to other organizations. "
+            "Clearing uploaded data switches you back to NASA Research Mode for this session; "
+            "re-selecting My Data mode later restores it, since it's still saved on disk."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -71,8 +75,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # ────────────────────────────────────────────────────────────────────────
     _section("Data Sources")
 
-    synth_ids = [c for c in featured_dfs if c not in NASA_CELL_IDS and c not in up_fdfs]
-    nasa_ids  = [c for c in featured_dfs if c in NASA_CELL_IDS and c not in up_fdfs]
+    synth_ids = [c for c in featured_dfs if c not in NASA_CELL_IDS and c not in cell_ids_up]
+    nasa_ids  = [c for c in featured_dfs if c in NASA_CELL_IDS and c not in cell_ids_up]
 
     src_col1, src_col2 = st.columns(2)
     with src_col1:
@@ -904,7 +908,11 @@ def page_settings(featured_dfs: dict, bundles: dict):
 
 
 def _clear_uploaded_data():
-    """Remove all uploaded data from session state and revert to NASA mode."""
-    for k in ["uploaded_featured_dfs", "uploaded_bundle", "uploaded_split_cycles", "uploaded_mode_meta"]:
-        st.session_state.pop(k, None)
+    """Revert this session to NASA mode. Does NOT delete the org's persisted
+    upload from disk (bundle_cache.save_tenant_bundle) — re-selecting My Data
+    mode later restores it, same as before this only ever cleared session
+    state. "uploaded_featured_dfs"/"uploaded_bundle"/"uploaded_split_cycles"
+    are no longer session_state keys at all (see utils.load_tenant_bundle_cached()),
+    so there's nothing to pop for those — only the lightweight metadata dict."""
+    st.session_state.pop("uploaded_mode_meta", None)
     st.session_state["data_mode"] = "nasa"

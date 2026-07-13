@@ -135,6 +135,31 @@ def metric_tile_html(label: str, value: str, sub: str = "",
     )
 
 
+@st.cache_resource(show_spinner=False)
+def load_tenant_bundle_cached(org_id: int):
+    """Streamlit-resource-cached wrapper around bundle_cache.load_tenant_bundle().
+
+    An org's uploaded ("My Data") featured_dfs/bundle/split_cycles triple was
+    previously kept in st.session_state AND persisted to disk simultaneously
+    — meaning every logged-in session held its own duplicate copy of the full
+    DataFrames + trained model bundle in server RAM, on top of the disk copy,
+    for the lifetime of that session. st.cache_resource is process-wide (one
+    shared copy across every session of the same org on this server), not
+    per-session, so routing every read through this function instead of raw
+    session_state removes that duplication.
+
+    Call load_tenant_bundle_cached.clear() after writing a NEW upload (see
+    app/_pages/import_page.py) so the next call re-reads from disk instead of
+    serving a stale cached triple — this function has no way to know the
+    underlying disk file changed otherwise. Reads that only need to see the
+    org's *existing* data (e.g. clearing/reverting to NASA mode) don't need
+    to clear this cache — the disk data hasn't changed, so the cached triple
+    is still correct.
+    """
+    from bundle_cache import load_tenant_bundle
+    return load_tenant_bundle(org_id)
+
+
 def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
     """Return df downsampled to at most max_points rows for trend charts.
 

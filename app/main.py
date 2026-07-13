@@ -29,7 +29,7 @@ from batlab.features.engineering import build_features, get_model_matrix
 from batlab.models.gbrt import train_models, predict
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
-from utils import NASA_CELL_IDS, _md_html, render_card
+from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cached
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
 
 
@@ -1131,24 +1131,20 @@ def main():
         st.session_state["eol_threshold_pct"] = _persisted_eol if _persisted_eol is not None else 80.0
 
     # ── Resolve active data from current mode ─────────────────────────────────
-    mode      = st.session_state["data_mode"]
-    up_fdfs   = st.session_state.get("uploaded_featured_dfs", {})
-    up_sc     = st.session_state.get("uploaded_split_cycles", {})
-    up_bundle = st.session_state.get("uploaded_bundle")
-    up_meta   = st.session_state["uploaded_mode_meta"]
+    mode    = st.session_state["data_mode"]
+    up_meta = st.session_state["uploaded_mode_meta"]
 
-    # If "My Data" mode is selected but this session hasn't uploaded anything
-    # yet (e.g. a returning user in a fresh browser session), try to reload
-    # this org's previously-uploaded bundle from disk before falling back to
-    # the empty state below — an org's uploaded fleet now survives a refresh.
-    if mode == "uploaded" and (not up_fdfs or up_bundle is None):
-        from bundle_cache import load_tenant_bundle
-        _persisted_tenant = load_tenant_bundle(st.session_state["auth_org_id"])
-        if _persisted_tenant is not None:
-            up_fdfs, up_bundle, up_sc = _persisted_tenant
-            st.session_state["uploaded_featured_dfs"] = up_fdfs
-            st.session_state["uploaded_bundle"]       = up_bundle
-            st.session_state["uploaded_split_cycles"] = up_sc
+    # An org's uploaded ("My Data") fleet is never stored in session_state —
+    # load_tenant_bundle_cached() (app/utils.py) is a process-wide
+    # st.cache_resource, shared across every session of this org rather than
+    # duplicated per-session, and transparently reloads from disk on a cache
+    # miss (first access after a server restart, or after a fresh upload
+    # cleared the cache — see app/_pages/import_page.py).
+    _tenant = load_tenant_bundle_cached(st.session_state["auth_org_id"])
+    if _tenant is not None:
+        up_fdfs, up_bundle, up_sc = _tenant
+    else:
+        up_fdfs, up_sc, up_bundle = {}, {}, None
 
     # Guard: if mode is "uploaded" but the bundle was cleared (e.g. after reset),
     # fall back silently to NASA mode.

@@ -12,12 +12,12 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from design_system import section_header_html
-from utils import _action_bar, base_layout, LEGEND_H, render_card
+from utils import _action_bar, base_layout, LEGEND_H, render_card, load_tenant_bundle_cached
 from import_adapter import adapt_upload_to_pipeline
 from batlab.features.engineering import build_features, get_model_matrix
 from batlab.models.gbrt import train_models, predict
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
-from bundle_cache import load_features_cached, save_features_cached, save_tenant_bundle
+from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
 
 
@@ -65,91 +65,112 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
             total_cy = sum(len(c["cycles"]) for c in battery["cells"].values())
             _step("parse", "✓", f"Parsed — {n_up} cells, {total_cy:,} cycles")
 
-            # 2 — Features (skip recompute if this exact upload was seen before this session)
-            _step("features", "⏳", "Engineering features…")
             import hashlib
             _upload_key = "upload-" + hashlib.sha256(
                 pd.util.hash_pandas_object(df_raw, index=True).values.tobytes()
             ).hexdigest()[:20]
-            _cached = load_features_cached(_upload_key, battery["cells"])
-            all_X, all_y_soh, all_y_rul = [], [], []
-            cell_featured = {}
-            if _cached is not None:
-                raw_fdfs, model_inputs = _cached
-                for cid, (X, y_soh, y_rul) in model_inputs.items():
-                    all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
-                    cell_featured[cid] = (raw_fdfs[cid], X)
+
+            # Bundle-level cache: if this exact upload (by content hash) was
+            # already fully analysed before — this session or a prior one,
+            # since this is the same disk cache the main NASA/Severson/synth
+            # pipeline uses — skip straight to the finished result instead of
+            # retraining + re-validating from scratch on every "Analyse" click.
+            _bundle_cached = load_cached(_upload_key, battery["cells"])
+            if _bundle_cached is not None:
+                up_bndl, up_fdfs, up_sc = _bundle_cached
+                calibrating_cnt = sum(
+                    1 for ok in up_bndl["metrics"]["per_cell_rul_reliable"].values() if not ok
+                )
+                lco_limited = up_bndl["metrics"]["lco_limited"]
+                for key, label in step_labels[1:]:
+                    _step(key, "✓", f"{label} (cached — identical upload analysed previously)")
             else:
-                raw_fdfs, model_inputs = {}, {}
-                for cid, cell in battery["cells"].items():
-                    df_feat = build_features(cell["cycles"])
-                    X, y_soh, y_rul = get_model_matrix(df_feat)
-                    all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
-                    cell_featured[cid] = (df_feat, X)
-                    raw_fdfs[cid] = df_feat
-                    model_inputs[cid] = (X, y_soh, y_rul)
-                save_features_cached(_upload_key, battery["cells"], raw_fdfs, model_inputs)
-            X_all     = pd.concat(all_X)
-            y_soh_all = pd.concat(all_y_soh)
-            y_rul_all = pd.concat(all_y_rul)
-            _step("features", "✓", f"Features built — {len(X_all):,} rows"
-                  + (" (cached)" if _cached is not None else ""))
+                # 2 — Features (skip recompute if this exact upload was seen before this session)
+                _step("features", "⏳", "Engineering features…")
+                _cached = load_features_cached(_upload_key, battery["cells"])
+                all_X, all_y_soh, all_y_rul = [], [], []
+                cell_featured = {}
+                if _cached is not None:
+                    raw_fdfs, model_inputs = _cached
+                    for cid, (X, y_soh, y_rul) in model_inputs.items():
+                        all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+                        cell_featured[cid] = (raw_fdfs[cid], X)
+                else:
+                    raw_fdfs, model_inputs = {}, {}
+                    for cid, cell in battery["cells"].items():
+                        df_feat = build_features(cell["cycles"])
+                        X, y_soh, y_rul = get_model_matrix(df_feat)
+                        all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
+                        cell_featured[cid] = (df_feat, X)
+                        raw_fdfs[cid] = df_feat
+                        model_inputs[cid] = (X, y_soh, y_rul)
+                    save_features_cached(_upload_key, battery["cells"], raw_fdfs, model_inputs)
+                X_all     = pd.concat(all_X)
+                y_soh_all = pd.concat(all_y_soh)
+                y_rul_all = pd.concat(all_y_rul)
+                _step("features", "✓", f"Features built — {len(X_all):,} rows"
+                      + (" (cached)" if _cached is not None else ""))
 
-            # 3+4 — Train (train_models trains both SOH and RUL in one call)
-            _step("soh", "⏳", "Training SOH model…")
-            _step("rul", "⏳", "Training RUL model…")
-            up_bndl = train_models(X_all, y_soh_all, y_rul_all)
-            up_bndl["metrics"]["n_cells"] = n_up
-            up_bndl["metrics"]["n_rows"]  = len(X_all)
-            _step("soh", "✓", "SOH model trained")
-            _step("rul", "✓", "RUL model trained")
+                # 3+4 — Train (train_models trains both SOH and RUL in one call)
+                _step("soh", "⏳", "Training SOH model…")
+                _step("rul", "⏳", "Training RUL model…")
+                up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+                up_bndl["metrics"]["n_cells"] = n_up
+                up_bndl["metrics"]["n_rows"]  = len(X_all)
+                _step("soh", "✓", "SOH model trained")
+                _step("rul", "✓", "RUL model trained")
 
-            # 5 — LCO
-            _step("lco", "⏳", "Running leave-cell-out validation…")
-            cell_cycles = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
-            lco = run_lco(cell_cycles)
-            up_bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
-            up_bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
-            up_bndl["metrics"]["rul_reliable"]  = lco["rul_reliable"]
-            up_bndl["metrics"]["lco_per_cell"]  = lco["per_cell"]
-            _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
+                # 5 — LCO
+                _step("lco", "⏳", "Running leave-cell-out validation…")
+                cell_cycles = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
+                lco = run_lco(cell_cycles)
+                up_bndl["metrics"]["lco_soh_r2"]   = lco["soh_r2"]
+                up_bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
+                up_bndl["metrics"]["rul_reliable"]  = lco["rul_reliable"]
+                up_bndl["metrics"]["lco_per_cell"]  = lco["per_cell"]
+                _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
 
-            # 6 — Per-cell reliability
-            _step("reliability", "⏳", "Computing per-cell reliability…")
-            per_cell_ok = {
-                cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
-                for cid, fold in lco["per_cell"].items()
-            }
-            up_bndl["metrics"]["per_cell_rul_reliable"] = per_cell_ok
-            lco_limited     = n_up < 3
-            calibrating_cnt = sum(1 for ok in per_cell_ok.values() if not ok)
-            up_bndl["metrics"]["lco_limited"] = lco_limited
-            _step("reliability", "✓", "Per-cell reliability computed"
-                  + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
+                # 6 — Per-cell reliability
+                _step("reliability", "⏳", "Computing per-cell reliability…")
+                per_cell_ok = {
+                    cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
+                    for cid, fold in lco["per_cell"].items()
+                }
+                up_bndl["metrics"]["per_cell_rul_reliable"] = per_cell_ok
+                lco_limited     = n_up < 3
+                calibrating_cnt = sum(1 for ok in per_cell_ok.values() if not ok)
+                up_bndl["metrics"]["lco_limited"] = lco_limited
+                _step("reliability", "✓", "Per-cell reliability computed"
+                      + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
 
-            # 7 — Build featured_dfs / split_cycles
-            _step("load", "⏳", "Loading results into dashboard…")
-            up_fdfs, up_sc = {}, {}
-            for cid, (df_feat, X) in cell_featured.items():
-                preds = predict(up_bndl, X)
-                df_out = df_feat.loc[X.index].copy()
-                df_out["soh_pred"]       = preds["soh_pred"]
-                df_out["rul_pred"]       = preds["rul_pred"]
-                df_out["confidence_tag"] = preds["confidence_tag"]
-                up_fdfs[cid] = df_out
-                split_idx    = int(len(X) * 0.8)
-                up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
+                # 7 — Build featured_dfs / split_cycles
+                _step("load", "⏳", "Loading results into dashboard…")
+                up_fdfs, up_sc = {}, {}
+                for cid, (df_feat, X) in cell_featured.items():
+                    preds = predict(up_bndl, X)
+                    df_out = df_feat.loc[X.index].copy()
+                    df_out["soh_pred"]       = preds["soh_pred"]
+                    df_out["rul_pred"]       = preds["rul_pred"]
+                    df_out["confidence_tag"] = preds["confidence_tag"]
+                    up_fdfs[cid] = df_out
+                    split_idx    = int(len(X) * 0.8)
+                    up_sc[cid]   = int(X["cycle_number"].iloc[split_idx])
 
-            # ── Store in session_state + persist per-org ─────────────────────
-            # The full DataFrames/model bundle are kept in session_state for
-            # this session's rendering, and also persisted to disk keyed by
+                save_cached(_upload_key, battery["cells"], (up_bndl, up_fdfs, up_sc))
+
+            # ── Persist per-org (not duplicated into session_state) ───────────
+            # The full DataFrames/model bundle are persisted to disk keyed by
             # org_id (src/bundle_cache.py's save_tenant_bundle) so this org's
-            # uploaded fleet survives a refresh or a new login — not just a
-            # metadata row like before.
-            st.session_state["uploaded_featured_dfs"] = up_fdfs
-            st.session_state["uploaded_bundle"]       = up_bndl
-            st.session_state["uploaded_split_cycles"] = up_sc
+            # uploaded fleet survives a refresh or a new login. They are
+            # deliberately NOT also stored in st.session_state — every reader
+            # (this page's own summary below, app/main.py's mode resolution,
+            # Settings) goes through utils.load_tenant_bundle_cached() instead,
+            # a process-wide cache shared across sessions rather than one
+            # duplicate copy per session. Clearing it here is what makes the
+            # upcoming st.rerun() pick up this new data instead of serving a
+            # stale cached triple (or None, on this org's first-ever upload).
             save_tenant_bundle(st.session_state["auth_org_id"], (up_fdfs, up_bndl, up_sc))
+            load_tenant_bundle_cached.clear()
             _upload_meta = {
                 "n_cells":                  n_up,
                 "cell_ids":                 list(up_fdfs.keys()),
@@ -177,7 +198,8 @@ def _show_upload_summary():
     meta = st.session_state["uploaded_mode_meta"]
     n    = meta["n_cells"]
     k    = meta["calibrating_count"]
-    lco  = st.session_state["uploaded_bundle"]["metrics"]
+    _up_fdfs, _up_bndl, _up_sc = load_tenant_bundle_cached(st.session_state["auth_org_id"])
+    lco  = _up_bndl["metrics"]
 
     lco_lim_note = (
         "\n⚠ LCO run on fewer than 3 cells — reliability estimates are less stable than usual."
@@ -570,7 +592,7 @@ def page_import():
     )
 
     # Show completion summary if upload has already been processed this session
-    if st.session_state.get("uploaded_featured_dfs") and st.session_state.get("uploaded_mode_meta"):
+    if st.session_state.get("uploaded_mode_meta"):
         _show_upload_summary()
     else:
         _run_analysis_button(df_raw, summary)
