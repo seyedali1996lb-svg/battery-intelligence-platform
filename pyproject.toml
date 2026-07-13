@@ -35,7 +35,7 @@ dependencies = [
 severson = ["h5py"]
 oxford = ["mat-io"]
 calce = ["openpyxl"]
-notebooks = ["jupyter", "matplotlib", "papermill"]
+notebooks = ["jupyter", "matplotlib", "papermill", "nbconvert", "ipykernel"]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
 dev = ["pytest", "batlab[severson,oxford,calce,notebooks,docs]"]
 
