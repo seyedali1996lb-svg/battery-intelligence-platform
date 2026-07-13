@@ -20,41 +20,27 @@ bibliography: paper.bib
 ---
 
 <!--
-TODO(human author) before submitting to JOSS:
-  - ORCID filled in (0009-0000-9005-363X, verified resolving). Publishing name
-    here is "Ali Hosseini" (deliberate choice, confirmed). You said you'd
-    changed the ORCID record's own published name to match, but a re-check of
-    the public ORCID API (2026-07-13) still returned "Seyed Ali Hosseini" with
-    no published/credit name set — likely just propagation lag, but worth a
-    final look at orcid.org yourself before submission to confirm it saved.
-  - Affiliation filled in ("Politecnico di Torino") — add a department/degree
-    program if you want more specificity than just the institution name.
-  - AI-usage disclosure section below still needs your explicit sign-off on
-    the redrafted version (offered separately, not yet applied) — the current
-    text in the file is the original, more generic draft.
-  - "State of the field" claims about beep/PyBaMM re-checked against their
-    current README/homepage (2026-07-13): both hold up, no changes needed.
-    beep's README confirms multi-vendor structuring (Arbin/Maccor/BioLogic/
-    Novonix/Neware) and a structured_summary concept; its own name and TRI
-    d3batt program reference support the "has some early-prediction layer"
-    claim. PyBaMM's homepage confirms pure-simulation scope, no experimental
-    data handling or built-in ML training. Not exhaustively verified (a
-    README/homepage skim, not a full docs read) — re-check if either
-    project's scope has visibly changed by actual submission time.
-  - Add a real research-impact statement once batlab has external usage to cite
-    (downloads, dependent papers, or adoption) — the current draft is honest
-    that there isn't one yet, which JOSS reviewers should see rather than a
-    fabricated one, but check whether that's still true at submission time.
-  - Acknowledgements filled in ("No external funding") — AI-authorship stays
-    only in the disclosure section, not duplicated here (implicit decision
-    from that being the only mention now — flag if you'd rather it appear
-    in both places).
-  - Archive DOI is live: 10.5281/zenodo.21346275 (v0.1.1, github.com/seyedali1996lb-svg
-    /battery-intelligence-platform, verified resolving). This is a version-specific
-    DOI, not a concept DOI (one that stays constant across future releases) — check
-    your Zenodo GitHub settings page for the concept DOI if you'd rather cite that.
-    JOSS's submission form asks for this as a separate "archive DOI" field, not
-    something written into this file's body.
+Resolved (as of 2026-07-13):
+  - ORCID: 0009-0000-9005-363X, verified resolving, published name confirmed
+    as "Ali Hosseini" (matches this paper's author name throughout).
+  - Affiliation: "Politecnico di Torino".
+  - Acknowledgements: "No external funding was received for this work."
+  - AI-usage disclosure: applied, with explicit author sign-off.
+  - "State of the field" (beep/PyBaMM) claims re-checked against current
+    README/homepage — both hold up. Not an exhaustive docs read; worth a
+    final skim if either project's scope has visibly changed by actual
+    submission time.
+  - Archive DOI: 10.5281/zenodo.21346275 (v0.1.1). This is a version-specific
+    DOI, not a concept DOI (one that stays constant across future releases) —
+    check your Zenodo GitHub settings page for the concept DOI if you'd
+    rather cite that instead. JOSS's submission form asks for this as a
+    separate "archive DOI" field, not something written into this file's body.
+
+Still open — TODO(human author) before submitting to JOSS:
+  - Research impact statement (below) is honestly "no external users yet" —
+    replace once there's something real to report (adoption, downloads,
+    citations, a dependent package). Don't inflate it, don't delete it
+    while the honest answer is still "not yet".
 -->
 
 # Summary
@@ -152,14 +138,18 @@ citing papers); do not inflate it, and do not delete it if the honest answer is 
 
 # AI usage disclosure
 
-Significant portions of this software's implementation, tests, notebooks, and this paper's prose
-were drafted with the assistance of an AI coding assistant (Claude, Anthropic), directed and
-reviewed by the human author. Citation details (BibTeX entries in `paper.bib` and
-`batlab/cite.py`) were independently verified against publisher/DOI records during development
-rather than generated from the assistant's unverified recall, specifically because a citable
-research library's core value proposition depends on that accuracy. TODO(human author): confirm
-this description remains accurate at submission time, and expand it if any section's authorship
-split should be described more specifically per JOSS's current AI-disclosure policy.
+This software and paper were produced through an AI-assisted development process: essentially all
+code (the `batlab` package, its test suite, the four worked notebooks, and this documentation
+site) was implemented by an AI coding assistant (Claude, Anthropic), operating from a detailed
+specification and interactive direction from the human author across an extended session. The
+human author set the sprint's scope and constraints, made every product decision the assistant
+surfaced as a choice (e.g. what platform functionality to defer removing, whether to auto-download
+a new dataset by default), and reviewed the assistant's work at each stage rather than writing the
+implementation directly. Citation details (every BibTeX entry in `paper.bib` and `batlab/cite.py`)
+and several factual claims in this paper (dataset licenses, the beep/PyBaMM comparison, the
+Zenodo DOI, the ORCID) were independently verified against primary sources — publisher DOI
+records, project documentation, or live resolution checks — during development, specifically
+because a citable research library's value proposition depends on that holding up under scrutiny.
 
 # Acknowledgements
 
