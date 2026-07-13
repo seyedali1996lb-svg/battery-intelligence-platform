@@ -34,9 +34,10 @@ dependencies = [
 # install batlab itself, only to actually download+parse that one dataset.
 severson = ["h5py"]
 oxford = ["mat-io"]
+calce = ["openpyxl"]
 notebooks = ["jupyter", "matplotlib", "papermill"]
 docs = ["mkdocs-material", "mkdocstrings[python]"]
-dev = ["pytest", "batlab[severson,oxford,notebooks,docs]"]
+dev = ["pytest", "batlab[severson,oxford,calce,notebooks,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"

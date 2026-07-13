@@ -63,6 +63,18 @@ _DATASETS: dict[str, dict[str, str]] = {
                     "https://opendatacommons.org/licenses/odbl/1-0/. Redistribution and adaptation are "
                     "permitted provided attribution and share-alike terms are honored.",
     },
+    "calce": {
+        "bibtex": """@misc{calce_battery_data,
+  title        = {CALCE Battery Data},
+  author       = {{Center for Advanced Life Cycle Engineering (CALCE), University of Maryland}},
+  howpublished = {\\url{https://calce.umd.edu/battery-data}},
+  doi          = {10.21227/w9rg-7173}
+}""",
+        "license": "Open access via calce.umd.edu/battery-data. CALCE requests that any publication "
+                    "using this data cite the CALCE article(s) describing the experiments that "
+                    "generated it, in addition to the dataset itself — see the source page for the "
+                    "specific paper per cell series.",
+    },
 }
 
 
