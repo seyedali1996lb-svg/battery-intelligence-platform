@@ -5,6 +5,7 @@ type: software
 authors:
   - family-names: Hosseini
     given-names: Ali
+    orcid: "https://orcid.org/0009-0000-9005-363X"
 repository-code: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
 version: 0.1.1
 date-released: 2026-07-13
@@ -36,6 +37,7 @@ preferred-citation:
   authors:
     - family-names: Hosseini
       given-names: Ali
+      orcid: "https://orcid.org/0009-0000-9005-363X"
   year: 2026
   url: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
   doi: "10.5281/zenodo.21346275"

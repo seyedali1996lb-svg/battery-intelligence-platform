@@ -10,7 +10,7 @@ tags:
   - reproducibility
 authors:
   - name: Ali Hosseini
-    orcid: 0000-0000-0000-0000  # TODO(human author): fill in real ORCID before submission
+    orcid: 0009-0000-9005-363X
     affiliation: 1
 affiliations:
   - name: TODO(human author) — independent researcher / institutional affiliation
@@ -21,7 +21,11 @@ bibliography: paper.bib
 
 <!--
 TODO(human author) before submitting to JOSS:
-  - Fill in the real ORCID and affiliation above.
+  - ORCID filled in (0009-0000-9005-363X, verified resolving to "Seyed Ali Hosseini" —
+    note the registered given-name is "Seyed Ali", not just "Ali"; the author name
+    above still reads "Ali Hosseini" — decide whether to match the ORCID's full
+    registered name for consistency, or keep "Ali Hosseini" as your publishing name).
+  - Affiliation still a placeholder below — fill in.
   - Confirm the AI-usage disclosure section below accurately describes how this
     paper and the underlying software were produced, and adjust it if it doesn't.
   - Confirm "State of the field" claims about beep/PyBaMM against their latest
