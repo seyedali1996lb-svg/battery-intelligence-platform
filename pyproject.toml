@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batlab"
-version = "0.1.0"
+version = "0.1.1"
 description = "A citable, honest research library for battery degradation analysis: standardized dataset loaders, leave-cell-out-validated SOH/RUL models, and reproducible benchmark manifests."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -42,6 +42,8 @@ dev = ["pytest", "batlab[severson,oxford,calce,notebooks,docs]"]
 [project.urls]
 Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
 Repository = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
+Documentation = "https://seyedali1996lb-svg.github.io/battery-intelligence-platform/"
+DOI = "https://doi.org/10.5281/zenodo.21346275"
 
 [tool.setuptools.packages.find]
 include = ["batlab*"]

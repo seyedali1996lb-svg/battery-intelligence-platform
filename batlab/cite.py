@@ -18,6 +18,7 @@ _BATLAB_BIBTEX = """@software{batlab,
   author = {Hosseini, Ali},
   year   = {2026},
   url    = {https://github.com/seyedali1996lb-svg/battery-intelligence-platform},
+  doi    = {10.5281/zenodo.21346275},
   note   = {Standardized dataset loaders, leave-cell-out-validated SOH/RUL models, and reproducible benchmark manifests.}
 }"""
 

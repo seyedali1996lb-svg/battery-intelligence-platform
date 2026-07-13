@@ -34,6 +34,12 @@ TODO(human author) before submitting to JOSS:
   - Decide whether to keep the AI-authorship acknowledgement in Acknowledgements
     or move it into the disclosure section only — either is defensible, pick one
     and be consistent.
+  - Archive DOI is live: 10.5281/zenodo.21346275 (v0.1.1, github.com/seyedali1996lb-svg
+    /battery-intelligence-platform, verified resolving). This is a version-specific
+    DOI, not a concept DOI (one that stays constant across future releases) — check
+    your Zenodo GitHub settings page for the concept DOI if you'd rather cite that.
+    JOSS's submission form asks for this as a separate "archive DOI" field, not
+    something written into this file's body.
 -->
 
 # Summary

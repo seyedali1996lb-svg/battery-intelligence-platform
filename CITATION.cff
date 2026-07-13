@@ -6,8 +6,12 @@ authors:
   - family-names: Hosseini
     given-names: Ali
 repository-code: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
-version: 0.1.0
+version: 0.1.1
 date-released: 2026-07-13
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.21346275"
+    description: "Archived release v0.1.1 on Zenodo. Update this (and `version`/`date-released` above) on each future tagged release archived to Zenodo."
 license: MIT
 keywords:
   - battery
@@ -34,3 +38,4 @@ preferred-citation:
       given-names: Ali
   year: 2026
   url: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
+  doi: "10.5281/zenodo.21346275"
