@@ -34,6 +34,10 @@ data/tenant_bundles/
 # Jupyter
 .ipynb_checkpoints/
 
+# mkdocs build output + the notebooks/ copy docs/hooks.py generates at build time
+site/
+docs/notebooks/
+
 # OS
 .DS_Store
 Thumbs.db

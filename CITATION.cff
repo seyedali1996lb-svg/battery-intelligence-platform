@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use batlab in your research, please cite it using the metadata below."
+title: "batlab: a citable, honest research library for battery degradation analysis"
+type: software
+authors:
+  - family-names: Hosseini
+    given-names: Ali
+repository-code: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
+version: 0.1.0
+date-released: 2026-07-13
+license: MIT
+keywords:
+  - battery
+  - lithium-ion
+  - state-of-health
+  - remaining-useful-life
+  - degradation
+  - machine-learning
+  - reproducibility
+abstract: >-
+  batlab is a Python research library for lithium-ion battery degradation
+  analysis: standardized dataset loaders (NASA PCoE, Severson 2019, Oxford
+  Path-Dependent 2020, CALCE CS2), literature-cited feature engineering,
+  leave-cell-out-validated GBRT SOH/RUL models, and reproducible benchmark
+  manifests. Built around the position that a battery-ML result is only
+  useful if it is validated honestly (leave-cell-out, not a row-level
+  split) and reported with its actual sample size and reliability, not
+  just a headline R-squared.
+preferred-citation:
+  type: software
+  title: "batlab: a citable, honest research library for battery degradation analysis"
+  authors:
+    - family-names: Hosseini
+      given-names: Ali
+  year: 2026
+  url: "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"

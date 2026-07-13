@@ -36,7 +36,7 @@ severson = ["h5py"]
 oxford = ["mat-io"]
 calce = ["openpyxl"]
 notebooks = ["jupyter", "matplotlib", "papermill", "nbconvert", "ipykernel"]
-docs = ["mkdocs-material", "mkdocstrings[python]"]
+docs = ["mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
 dev = ["pytest", "batlab[severson,oxford,calce,notebooks,docs]"]
 
 [project.urls]

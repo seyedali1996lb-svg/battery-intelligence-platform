@@ -1,0 +1,63 @@
+site_name: batlab
+site_description: A citable, honest research library for battery degradation analysis.
+repo_url: https://github.com/seyedali1996lb-svg/battery-intelligence-platform
+repo_name: battery-intelligence-platform
+docs_dir: docs
+hooks:
+  - docs/hooks.py
+exclude_docs: |
+  # Pre-existing app-facing asset, read directly by app/_pages/import_page.py —
+  # not part of this documentation site's own nav.
+  import_format_guide.md
+  hooks.py
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Datasets: datasets/index.md
+  - API reference:
+      - datasets: api/datasets.md
+      - features: api/features.md
+      - models: api/models.md
+      - validation: api/validation.md
+      - cite: api/cite.md
+  - Notebooks:
+      - Quickstart: notebooks/01_quickstart.ipynb
+      - Data leakage: notebooks/02_data_leakage.ipynb
+      - Knee detection: notebooks/03_knee_detection.ipynb
+      - Bring your own data: notebooks/04_bring_your_own_data.ipynb
+  - Project history: history.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_bases: false
+            heading_level: 2
+  - mkdocs-jupyter:
+      include_source: true
+      execute: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables

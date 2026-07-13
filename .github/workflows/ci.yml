@@ -100,3 +100,20 @@ jobs:
         # tagged cells before execution in this project's nbconvert version —
         # see the script's own docstring for how that was confirmed.
         run: python notebooks/_run_ci.py
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install batlab with docs extras
+        run: pip install --upgrade pip && pip install -e ".[docs]"
+
+      - name: Build docs (strict — broken links/nav fail the build)
+        run: mkdocs build --strict
