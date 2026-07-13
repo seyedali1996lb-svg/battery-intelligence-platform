@@ -111,7 +111,16 @@ ALL_KNOWN_COLUMNS = {**REQUIRED_CYCLE_COLUMNS, **REQUIRED_CHECKPOINT_COLUMNS, **
 # DataFrame-level metadata every loader must set via df.attrs (not columns —
 # these are per-cell/per-source facts, not per-row measurements, so
 # duplicating them into every row would be wasteful and easy to typo out of
-# sync). See Cell/cite.py for how these get consumed.
+# sync). See batlab/cite.py for how these get consumed.
+#
+# WARNING — pandas does NOT propagate .attrs through pd.concat():
+#     pd.concat([df1, df2]).attrs  ==  {}   (verified; not a version quirk)
+# The moment you combine more than one cell's DataFrame — which is the
+# normal thing to do before calling get_model_matrix()/train_models() on a
+# multi-cell population — every one of these attrs silently vanishes with
+# no warning. Use concat_cells() below instead of a bare pd.concat() on a
+# {cell_id: DataFrame} dict when you need cell_id/source/chemistry to
+# survive the merge as real columns.
 REQUIRED_ATTRS = {
     "cell_id":    "str — this cell's identifier within its source dataset",
     "source":     "str — short dataset key, e.g. 'nasa', 'severson2019', 'oxford2020', 'calce'",
@@ -197,6 +206,35 @@ def validate_schema(df: pd.DataFrame, kind: str = "cycle") -> None:
             f"Required attrs: {list(REQUIRED_ATTRS)}. A loader must set these on "
             f"every DataFrame it returns, e.g. df.attrs['source'] = 'nasa'."
         )
+
+
+def concat_cells(cells: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Concatenate a {cell_id: DataFrame} dict into one DataFrame WITHOUT
+    losing per-row provenance to pandas silently dropping .attrs on
+    concat (see the warning above REQUIRED_ATTRS). Adds cell_id (and
+    source/chemistry, when present) as real columns before concatenating,
+    so you can still tell which row came from which cell — and cite it —
+    after the merge.
+
+    Use this instead of pd.concat(list(cells.values())) whenever you need
+    provenance to survive combining more than one cell. If you only need
+    a merged feature matrix for training (e.g. feeding
+    batlab.models.train_models()) and don't care which row came from
+    which cell, a bare pd.concat() on the per-cell feature matrices is
+    fine — cell identity doesn't affect what the model learns from a
+    features+targets table.
+    """
+    parts = []
+    for cell_id, df in cells.items():
+        part = df.copy()
+        part["cell_id"] = df.attrs.get("cell_id", cell_id)
+        if "source" in df.attrs:
+            part["source"] = df.attrs["source"]
+        if "chemistry" in df.attrs:
+            part["chemistry"] = df.attrs["chemistry"]
+        parts.append(part)
+    return pd.concat(parts, ignore_index=True)
 
 
 def compute_soh_pct(capacity_ah: pd.Series) -> pd.Series:

@@ -119,6 +119,16 @@ Oxford), or — when no such URL exists, as for CALCE — raises a specific, ins
 naming exactly where to obtain the data and where to place it, rather than presenting a fake or
 silently-broken automated download.
 
+# Research impact statement
+
+`batlab` was extracted from an existing, actively developed battery fleet-management
+application (this repository's `app/`) into a standalone library in this release; it has no
+external users, citations, or dependent projects yet. TODO(human author): replace this paragraph
+once there is real evidence to report — adoption by a specific research group, a dependent
+package, download counts, or citations in other work. A JOSS reviewer will check this section
+against what's actually verifiable (e.g. PyPI download stats, GitHub stars/forks/dependents,
+citing papers); do not inflate it, and do not delete it if the honest answer is still "not yet."
+
 # AI usage disclosure
 
 Significant portions of this software's implementation, tests, notebooks, and this paper's prose

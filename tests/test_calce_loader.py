@@ -38,6 +38,34 @@ def test_cycle_summary_from_raw_reduces_to_one_row_per_cycle():
     assert 0.9 < out["coulombic_efficiency"].iloc[0] < 1.0
 
 
+def test_cycle_summary_from_raw_handles_cumulative_across_cycles():
+    """Regression test for a real bug: Discharge_Capacity(Ah)/Charge_Capacity(Ah)
+    accumulate across the WHOLE workbook in real CALCE files and never reset to
+    0 at a cycle boundary — confirmed against a real downloaded CS2_35 file,
+    where cycle 2 continued climbing from cycle 1's ending value (e.g. [1.10,
+    2.19]) instead of restarting at 0. The original implementation used
+    per-cycle .max() directly, which on real data produced capacity_ah values
+    that grew unboundedly across cycles (SOH climbing past 5000%) rather than
+    each cycle's own true discharge capacity — caught by running the loader
+    against real data, not by the (accidentally reset-per-cycle-shaped)
+    synthetic fixture above."""
+    df = pd.DataFrame({
+        "Cycle_Index": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+        # Cumulative across the whole file: cycle 1 goes 0 -> 1.10, cycle 2
+        # continues 1.10 -> 2.19 (swing 1.09), cycle 3 continues 2.19 -> 3.28
+        # (swing 1.09) — never resets.
+        "Discharge_Capacity(Ah)": [0.0, 0.55, 1.10, 1.10, 1.645, 2.19, 2.19, 2.735, 3.28],
+    })
+    out = _cycle_summary_from_raw(df)
+    assert list(out["cycle_number"]) == [1, 2, 3]
+    assert out["capacity_ah"].iloc[0] == pytest.approx(1.10)
+    assert out["capacity_ah"].iloc[1] == pytest.approx(1.09)
+    assert out["capacity_ah"].iloc[2] == pytest.approx(1.09)
+    # The bug this guards against: capacity_ah must NOT grow unboundedly
+    # across cycles the way raw .max() per cycle would (1.10, 2.19, 3.28).
+    assert out["capacity_ah"].max() < 1.2
+
+
 def test_cycle_summary_from_raw_picks_up_temperature_by_hint():
     df = pd.DataFrame({
         "Cycle_Index": [1, 1],

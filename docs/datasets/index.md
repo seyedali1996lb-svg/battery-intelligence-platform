@@ -40,7 +40,7 @@ cells = load_oxford_cells()
 
 ## CALCE CS2
 
-University of Maryland CALCE — 1.1 Ah prismatic LiCoO2 cells, one of the most-cited public li-ion cycling datasets. **No auto-download**: CALCE's download page has no stable per-file URL to script against, so `load_calce_cells()` raises `CalceDataNotFoundError` with exact instructions when nothing is found locally. Requires the `calce` extra (`openpyxl`).
+University of Maryland CALCE — 1.1 Ah prismatic LiCoO2 cells, one of the most-cited public li-ion cycling datasets. Verified against a real downloaded file (CS2_35): parses to physically plausible values (~1.0-1.1 Ah capacity, ~0.99 coulombic efficiency) and passes `validate_schema()` — see `batlab/datasets/calce.py`'s module docstring for exactly what was and wasn't checked (one cell verified, not all of them). **No auto-download**: direct per-cell URLs do exist and are reachable, but unlike Severson's single shared batch file, CALCE is one download per cell with no obviously-right default for "download everything," so `load_calce_cells()` raises `CalceDataNotFoundError` with exact instructions when nothing is found locally, rather than guessing a default. Requires the `calce` extra (`openpyxl`).
 
 ```python
 from batlab.datasets import load_calce_cells, CalceDataNotFoundError

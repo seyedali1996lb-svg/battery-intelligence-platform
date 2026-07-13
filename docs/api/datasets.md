@@ -11,6 +11,7 @@
         - SchemaError
         - validate_schema
         - compute_soh_pct
+        - concat_cells
 
 ::: batlab.datasets.nasa
     options:

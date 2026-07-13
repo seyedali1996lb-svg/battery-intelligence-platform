@@ -12,15 +12,31 @@ not a revival of that one).
 
 Citation/license: see batlab.cite.cite(dataset="calce").
 
+Verification status
+--------------------
+This loader's column names and parsing logic (including the
+cumulative-across-cycles capacity quirk documented below) were verified
+against a real downloaded file — CS2_35 from
+https://web.calce.umd.edu/batteries/data/CS2_35.zip — which parses to
+physically plausible values (capacity ~1.0-1.1 Ah against the cell's
+~1.1 Ah nominal rating, coulombic efficiency ~0.99-1.0, resistance
+~0.09 Ohm) and passes validate_schema(). Only that one cell/file was
+checked; other CS2 cells' workbooks were not individually verified, so
+treat this as "verified on a real sample, not exhaustively" rather than
+"guaranteed correct for every CS2 cell CALCE has published."
+
 Manual download required
 -------------------------
-Unlike the NASA/Severson/Oxford loaders, this loader does NOT auto-download.
-CALCE's battery-data page (https://calce.umd.edu/battery-data) serves the
-CS2 files as per-cell zip archives (CS2_33.zip, CS2_34.zip, ...) without an
-account/registration gate, but does not publish a stable, individually-
-addressable per-file URL this library could script against without
-breaking on any site restructure — and, same as every other batlab loader,
-this project does not commit third-party raw data to the repo. Call
+This loader does NOT auto-download, unlike NASA/Severson/Oxford. During
+verification, direct per-cell URLs were in fact found and confirmed
+reachable (https://web.calce.umd.edu/batteries/data/CS2_<N>.zip, no
+registration gate) — so an auto-downloader is technically feasible here
+after all, contrary to what an earlier version of this docstring assumed.
+It was deliberately not added in this pass: unlike Severson's one ~115 MB
+shared batch file, CALCE is one ~30-40 MB zip *per cell*, so "auto-download
+by default" doesn't have an obviously-right default the way the other
+three loaders' do (download everything? nothing? which cells?) without a
+product decision this loader shouldn't make unilaterally. Call
 load_calce_cells() with cells already downloaded and placed locally (see
 its docstring); if nothing is found, it raises CalceDataNotFoundError with
 exact instructions on where to get the files and where to place them.
@@ -29,26 +45,25 @@ File format
 -----------
 CALCE cells were cycled on Arbin BT2000 testers; each test session is
 published as one Excel workbook per cell (filename dated, e.g.
-"CS2_35_1_9_11.xlsx"), containing a per-datapoint sheet ("Channel_*") and
-often a per-cycle summary sheet ("Statistics_*"). This loader reads
-whichever sheet is present and reduces it to one row per Cycle_Index via
-groupby (taking the max of the cumulative-within-cycle Discharge_Capacity/
-Charge_Capacity columns — the same convention every other loader in this
-project uses for cycle-level capacity). Column names follow the standard
-Arbin BT2000 export schema shared across the wider public battery-ML
-literature (CALCE, HNEI, and other CALCE-adjacent datasets distribute
-Arbin-derived files with this same schema) — this loader's exact column
-names were NOT verified against a live downloaded CALCE file in the
-environment that wrote it (no network access to CALCE's per-file URLs was
-available); if a cell's real column names differ from what
-_cycle_summary_from_raw() below looks for, please open an issue or send
-a fixture file.
+"CS2_35_8_18_10.xlsx" = Aug 18 2010), containing an "Info" sheet and a
+per-datapoint "Channel_*" sheet (the one real file checked during
+verification had no separate "Statistics_*" summary sheet — this loader
+still looks for one first, since other CALCE cells' files may include one,
+but falls back to the per-datapoint Channel sheet either way). This loader
+reduces the sheet to one row per Cycle_Index via groupby.
+
+Confirmed quirk: Discharge_Capacity(Ah) and Charge_Capacity(Ah) accumulate
+across the WHOLE workbook, not reset to 0 at each cycle boundary — cycle
+2's rows continue climbing from cycle 1's ending value. Each cycle's own
+capacity is therefore the swing (max - min) within that cycle's rows, the
+same convention batlab.datasets.oxford._capacity_ah_from_table() already
+uses for its own max-Amphr-swing extraction rule.
 
 Cycle_Index resets to 1 in every new test-session file for the same cell
-(a documented Arbin/CALCE quirk) — load_calce_cells() renumbers cycles
-cumulatively across a cell's files, sorted by filename, so cycle_number
-is monotonically increasing across the cell's full life, matching every
-other batlab loader's convention.
+(a separate, also-confirmed Arbin/CALCE quirk) — load_calce_cells()
+renumbers cycles cumulatively across a cell's files, sorted by filename,
+so cycle_number is monotonically increasing across the cell's full life,
+matching every other batlab loader's convention.
 """
 
 from __future__ import annotations
@@ -107,32 +122,47 @@ def _cycle_summary_from_raw(df: pd.DataFrame) -> pd.DataFrame:
     if "Cycle_Index" not in df.columns:
         raise CalceDataNotFoundError(
             f"Expected a 'Cycle_Index' column in a CALCE raw sheet, got: {list(df.columns)}. "
-            "See batlab.datasets.calce's module docstring — column names were not verified "
-            "against a live CALCE download."
+            "This exact column layout was confirmed against a real CS2_35 file — see "
+            "batlab.datasets.calce's module docstring — so a mismatch here likely means "
+            "a different CALCE cell series uses a different export format."
         )
     if "Discharge_Capacity(Ah)" not in df.columns:
         raise CalceDataNotFoundError(
             f"Expected a 'Discharge_Capacity(Ah)' column in a CALCE raw sheet, got: {list(df.columns)}."
         )
 
-    grouped = df.groupby("Cycle_Index", as_index=False)
-    out = grouped["Discharge_Capacity(Ah)"].max().rename(
-        columns={"Cycle_Index": "cycle_number", "Discharge_Capacity(Ah)": "capacity_ah"}
-    )
+    # Discharge_Capacity(Ah) (and Charge_Capacity(Ah)) accumulate across the
+    # WHOLE workbook, not reset to 0 at the start of each cycle — verified
+    # against a real downloaded CALCE file (CS2_35), where cycle 2's rows
+    # continued climbing from cycle 1's ending value (e.g. [1.10, 2.19] for
+    # cycle 2 immediately after cycle 1 ended at 1.10), not restarting at 0.
+    # Each cycle's own discharge capacity is therefore the swing (max - min)
+    # within that cycle's rows — the same convention
+    # batlab.datasets.oxford._capacity_ah_from_table() already uses for its
+    # own max-Amphr-swing extraction rule, for the same underlying reason.
+    grouped = df.groupby("Cycle_Index")
+    dc = grouped["Discharge_Capacity(Ah)"]
+    capacity_ah = dc.max() - dc.min()
+
+    out = pd.DataFrame({
+        "cycle_number": capacity_ah.index,
+        "capacity_ah": capacity_ah.to_numpy(),
+    }).reset_index(drop=True)
 
     if "Charge_Capacity(Ah)" in df.columns:
-        charge = grouped["Charge_Capacity(Ah)"].max()["Charge_Capacity(Ah)"]
+        cc = grouped["Charge_Capacity(Ah)"]
+        charge_ah = (cc.max() - cc.min()).to_numpy()
         with np.errstate(divide="ignore", invalid="ignore"):
-            ce = out["capacity_ah"].to_numpy() / charge.replace(0, np.nan).to_numpy()
+            ce = capacity_ah.to_numpy() / np.where(charge_ah == 0, np.nan, charge_ah)
         out["coulombic_efficiency"] = ce
 
     temp_col = _find_column(list(df.columns), _TEMPERATURE_COL_HINTS)
     if temp_col:
-        out["temperature_c"] = grouped[temp_col].mean()[temp_col].to_numpy()
+        out["temperature_c"] = grouped[temp_col].mean().to_numpy()
 
     resistance_col = _find_column(list(df.columns), _RESISTANCE_COL_HINTS)
     if resistance_col:
-        out["resistance_ohm"] = grouped[resistance_col].mean()[resistance_col].to_numpy()
+        out["resistance_ohm"] = grouped[resistance_col].mean().to_numpy()
 
     return out.sort_values("cycle_number").reset_index(drop=True)
 
