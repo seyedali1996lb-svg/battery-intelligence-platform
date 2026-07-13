@@ -1,4 +1,4 @@
-"""Unit tests for src/oxford_loader.py — pure-logic pieces only.
+"""Unit tests for batlab.datasets.oxford — pure-logic pieces only.
 
 No network calls or real .mat parsing here (that needs the ~3.1 GB source
 zips across all 4 groups, downloaded once locally per the module docstring)
@@ -9,7 +9,7 @@ computation, and the group-aware zip filename matching.
 
 import numpy as np
 import pandas as pd
-from oxford_loader import (
+from batlab.datasets.oxford import (
     _capacity_ah_from_table, _add_soh_column, _find_zip_entry,
     _CELL_GROUP, _PROCEDURE_LABELS, OXFORD_CELL_IDS,
 )

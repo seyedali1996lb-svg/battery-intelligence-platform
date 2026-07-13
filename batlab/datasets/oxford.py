@@ -4,28 +4,26 @@ Oxford "Path Dependent Battery Degradation Dataset" loader (2020).
 Reference: Raj, T. et al., "Investigation of Path Dependent Degradation in
 Lithium-Ion Batteries", Batteries & Supercaps (Wiley, 2020).
 Data: https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e
-License: ODC Open Database License (ODC-ODbL).
+Citation/license: see batlab.cite.cite(dataset="oxford2020") — ODC-ODbL.
 
 Cells are 3 Ah NCR18650BD cylindrical cells with NCA (nickel cobalt
-aluminium oxide) positive electrodes — genuinely new chemistry for this
-app versus NASA's LiCoO2 and Severson's LFP. All 4 groups are used (12
-cells total, ~3.1 GB compressed): Group 1 (cells 9/15/20, 1-day cycling
-@ C/2), Group 2 (cells 3/4/8, 1-day cycling @ C/4), Group 3 (cells
-10/11/14, 2-day cycling @ C/2), Group 4 (cells 12/18/19, 2-day cycling
-@ C/4) — all 5 days calendar rest @ 90% SoC (10 days for Groups 3/4).
-Each group is its own zip, downloaded and cached independently.
+aluminium oxide) positive electrodes. All 4 groups are used (12 cells
+total, ~3.1 GB compressed): Group 1 (cells 9/15/20, 1-day cycling @ C/2),
+Group 2 (cells 3/4/8, 1-day cycling @ C/4), Group 3 (cells 10/11/14,
+2-day cycling @ C/2), Group 4 (cells 12/18/19, 2-day cycling @ C/4) —
+all 5 days calendar rest @ 90% SoC (10 days for Groups 3/4). Each group
+is its own zip, downloaded and cached independently.
 
 Unlike NASA/Severson, this dataset is NOT dense per-cycle data. Each cell
 only has ~14 Reference Performance Test (RPT) checkpoints across its life
 (2 "beginning of life" runs plus RPT1-RPT12), interspersed with daily
 ARTEMIS drive-cycle "Profile" stress segments that this loader does not
-parse. Because of that, this loader returns a sparse per-cell CHECKPOINT
-curve (real measured capacity fade, ~14 points/cell) — not a per-cycle
-DataFrame — and deliberately does NOT feed a GBRT+LCO model the way NASA/
-Severson/synthetic data does: 14 points across 3 cells is too little to
-honestly leave-cell-out-validate a predictive model. See app/_pages/
-explore.py's "Reference Datasets" view, which shows this as a real
-measured reference curve rather than a prediction.
+parse. Because of that, load_oxford_cells() returns the batlab standardized
+schema's kind="checkpoint" shape (checkpoint_index, not cycle_number) —
+real measured capacity fade, ~14 points/cell — not dense per-cycle data,
+and deliberately not run through the GBRT+LCO pipeline: 14 points across
+3 cells per group is too little to honestly leave-cell-out-validate a
+predictive model.
 
 Parsing note: the source .mat files are MATLAB `table` objects (MCOS
 serialization), which scipy.io.loadmat cannot read at all. The `mat-io`
@@ -40,7 +38,6 @@ files from Group 1.
 
 from __future__ import annotations
 
-import io
 import pathlib
 import re
 import zipfile
@@ -56,7 +53,10 @@ _GROUP_URLS: dict[int, str] = {
     4: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/d41687h50f",
 }
 
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "raw" / "oxford"
+# batlab/datasets/oxford.py -> repo root is three levels up.
+_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "oxford"
+
+CHEMISTRY = "NCA"
 
 
 def _zip_path(group: int) -> pathlib.Path:
@@ -198,7 +198,7 @@ def _capacity_ah_from_table(df: pd.DataFrame) -> float:
 def _add_soh_column(df: pd.DataFrame) -> pd.DataFrame:
     """SOH% relative to this cell's own first checkpoint (checkpoint_index 0,
     its beginning-of-life reference discharge) — each cell is its own baseline,
-    same convention as every other loader in this app."""
+    same convention as every other batlab loader."""
     q0 = float(df["capacity_ah"].iloc[0]) or 1.0
     df["soh_pct"] = df["capacity_ah"] / q0 * 100.0
     return df
@@ -309,19 +309,20 @@ def _download_and_cache(status_fn=None, groups: "list[int] | None" = None) -> No
         _extract_group(group, status_fn=status_fn)
 
 
-def _load_cached(cell: int) -> "dict | None":
+def _load_cached(cell: int) -> pd.DataFrame | None:
     path = _csv_path(cell)
     if not path.exists():
         return None
     df = pd.read_csv(path)
     if len(df) < 3:
         return None
-    return {
-        "cell_id": f"OX-{cell}",
-        "source": "oxford_pathdep_2020",
-        "chemistry": "NCA",
-        "checkpoints": df,
-    }
+    cell_id = f"OX-{cell}"
+    df.attrs["cell_id"] = cell_id
+    df.attrs["source"] = "oxford_pathdep_2020"
+    df.attrs["chemistry"] = CHEMISTRY
+    df.attrs["citation"] = "oxford2020"
+    df.attrs["license"] = "Open Data Commons Open Database License (ODC-ODbL) v1.0"
+    return df
 
 
 def download_and_prepare(status_fn=None, groups: "list[int] | None" = None) -> bool:
@@ -337,19 +338,22 @@ def download_and_prepare(status_fn=None, groups: "list[int] | None" = None) -> b
         return False
 
 
-def load_oxford_cells() -> dict[str, dict]:
+def load_oxford_cells() -> dict[str, pd.DataFrame]:
     """
     Load from cached CSVs only — deliberately does NOT auto-download the
-    822 MB source zip (unlike severson_loader.load_severson_cells(), which
-    auto-downloads its much smaller 115 MB file). Returns {} if nothing is
-    cached yet; run `python src/oxford_loader.py` locally once to populate
-    data/raw/oxford/.
+    822 MB+ source zips (unlike batlab.datasets.severson.load_severson_cells(),
+    which auto-downloads its much smaller 115 MB file). Returns {} if nothing
+    is cached yet; run `python -m batlab.datasets.oxford` locally once to
+    populate data/raw/oxford/.
+
+    Returns {cell_id: DataFrame} satisfying batlab.datasets.schema's
+    kind="checkpoint" contract, with df.attrs set.
     """
     cells = {}
     for cell in _PROCEDURE_LABELS:
-        c = _load_cached(cell)
-        if c:
-            cells[c["cell_id"]] = c
+        df = _load_cached(cell)
+        if df is not None:
+            cells[df.attrs["cell_id"]] = df
     return cells
 
 

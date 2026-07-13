@@ -8,8 +8,9 @@ Data:
   - 4 NASA cells (B0005-B0018): real LiCoO2 18650 measurements from NASA PCoE
     Battery Aging dataset (Saha & Goebel, 2007, ~2 Ah, 24 C, 2A discharge).
 
-Model trained on all 12 cells combined. NASA loader (src/nasa_loader.py) must
-be run once to populate data/raw/ before the app starts.
+Model trained on all 12 cells combined. NASA loader (batlab.datasets.nasa,
+`python -m batlab.datasets.nasa`) must be run once to populate data/raw/
+before the app starts.
 """
 
 import sys
@@ -24,9 +25,9 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from data_loader import build_battery, CELL_STRESS_PROFILES, _stress_factor
-from features import build_features, get_model_matrix
-from model import train_models, predict
-from lco_eval import run_lco, RUL_RELIABLE_FLOOR
+from batlab.features.engineering import build_features, get_model_matrix
+from batlab.models.gbrt import train_models, predict
+from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
 from utils import NASA_CELL_IDS, _md_html, render_card
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
@@ -464,11 +465,11 @@ def load_everything():
 
         sev_cell_dicts = {}
         try:
-            from severson_loader import load_severson_cells, any_cached as _sev_any_cached
+            from batlab.datasets.severson import load_severson_cells, any_cached as _sev_any_cached
             if _sev_any_cached():
                 sev_cells = load_severson_cells(status_fn=lambda msg: None)
                 if sev_cells:
-                    sev_cell_dicts = {cid: {"cycles": c["cycles"]} for cid, c in sev_cells.items()}
+                    sev_cell_dicts = {cid: {"cycles": df} for cid, df in sev_cells.items()}
         except Exception:
             pass
 

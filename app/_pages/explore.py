@@ -608,12 +608,12 @@ def _page_reference_datasets():
         "</div>"
     )
 
-    from oxford_loader import load_oxford_cells, any_cached as _ox_any_cached
+    from batlab.datasets.oxford import load_oxford_cells, any_cached as _ox_any_cached
 
     if not _ox_any_cached():
         _empty_state(
             "Oxford NCA reference data not available locally",
-            "Run `python src/oxford_loader.py` once locally to download and extract the Oxford "
+            "Run `python -m batlab.datasets.oxford` once locally to download and extract the Oxford "
             "Path-Dependent Battery Degradation Dataset (all 4 groups), then commit the resulting "
             "CSVs in data/raw/oxford/.",
             icon="🔬",
@@ -640,7 +640,7 @@ def _page_reference_datasets():
     )
 
     _ox_cell = st.selectbox("Cell", options=sorted(ox_cells.keys()), key="oxford_ref_cell")
-    _cp = ox_cells[_ox_cell]["checkpoints"]
+    _cp = ox_cells[_ox_cell]
 
     _mc1, _mc2, _mc3 = st.columns(3)
     _mc1.metric("Beginning-of-life capacity", f"{_cp['capacity_ah'].iloc[0]:.2f} Ah")

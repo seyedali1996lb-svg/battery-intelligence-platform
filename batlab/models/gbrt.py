@@ -1,19 +1,19 @@
 """
-SOH / RUL prediction model — Phase 1.
+SOH / RUL prediction model.
 
 Uses a Gradient Boosting Regressor from scikit-learn.
 Gradient boosting was chosen over random forest because it produces slightly
 better accuracy on small-to-medium tabular datasets like this one, and its
 feature importances are equally interpretable.
 
-Two models are trained:
+Two point-estimate models are trained:
   - soh_model : predicts State of Health % (continuous, 80–100%)
   - rul_model : predicts Remaining Useful Life in cycles (continuous, 0–N)
+Plus two quantile models (Q10/Q90) forming an 80% RUL prediction interval.
 
 Explainability:
   Both models expose feature_importances_ — how much each feature
-  contributed to reducing prediction error. We surface these in the
-  dashboard's Insights page.
+  contributed to reducing prediction error.
 """
 
 import numpy as np
@@ -71,7 +71,7 @@ def train_models(
     evaluation misleadingly optimistic. Chronological split is honest.
 
     Args:
-        X:         Feature matrix from features.get_model_matrix()
+        X:         Feature matrix from batlab.features.get_model_matrix()
         y_soh:     SOH target Series
         y_rul:     RUL target Series
         test_size: Fraction of cycles held out for evaluation (default 20%)
@@ -101,31 +101,26 @@ def train_models(
     X_test_scaled = scaler.transform(X_test)
 
     # --- SOH model ---
-    print("Training SOH model...")
     soh_model = GradientBoostingRegressor(**GBRT_PARAMS)
     soh_model.fit(X_train_scaled, y_soh_train)
 
     soh_pred_test = soh_model.predict(X_test_scaled)
     soh_mae = mean_absolute_error(y_soh_test, soh_pred_test)
     soh_r2 = r2_score(y_soh_test, soh_pred_test)
-    print(f"  SOH  MAE: {soh_mae:.3f}%  |  R2: {soh_r2:.4f}")
 
     # --- RUL model (point estimate) ---
-    print("Training RUL model...")
     rul_model = GradientBoostingRegressor(**GBRT_PARAMS)
     rul_model.fit(X_train_scaled, y_rul_train)
 
     rul_pred_test = rul_model.predict(X_test_scaled)
     rul_mae = mean_absolute_error(y_rul_test, rul_pred_test)
     rul_r2 = r2_score(y_rul_test, rul_pred_test)
-    print(f"  RUL  MAE: {rul_mae:.1f} cycles  |  R2: {rul_r2:.4f}")
 
     # --- RUL quantile models: 80% prediction interval (Q10 / Q90) ---
     # Quantile loss trains the model to predict the α-th percentile rather
     # than the mean. Q10+Q90 form an 80% interval — wide enough to be honest
     # about uncertainty without being uselessly vague. These use fewer trees
     # because quantile loss converges faster than squared error.
-    print("Training RUL interval models (Q10/Q90)...")
     rul_q10_model = GradientBoostingRegressor(
         loss="quantile", alpha=0.10, **GBRT_QUANTILE_PARAMS
     )
@@ -140,7 +135,6 @@ def train_models(
     interval_coverage = float(np.mean(
         (y_rul_test.values >= rul_q10_test) & (y_rul_test.values <= rul_q90_test)
     ))
-    print(f"  RUL interval coverage (80% target): {interval_coverage*100:.1f}%")
 
     feature_names = list(X.columns)
 
@@ -233,7 +227,7 @@ def feature_importance_df(model_bundle: dict, model: str = "soh") -> pd.DataFram
 
     Feature importance in gradient boosting = how much each feature reduced
     the loss function (prediction error) across all trees. Higher = more
-    influential. These numbers are the backbone of the Insights page.
+    influential.
 
     Args:
         model_bundle: Dict returned by train_models().
@@ -259,41 +253,3 @@ def top_drivers(model_bundle: dict, model: str = "soh", top_n: int = 5) -> list[
     """
     df = feature_importance_df(model_bundle, model=model)
     return df.head(top_n).to_dict(orient="records")
-
-
-# ---------------------------------------------------------------------------
-# Smoke test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(__file__))
-
-    from data_loader import build_battery, get_cell_df
-    from features import build_features, get_model_matrix
-
-    print("=== Phase 1 — Model Training ===\n")
-
-    battery = build_battery(battery_id="Oxford_B1", cell_ids=["Cell1"])
-    df = get_cell_df(battery, "Cell1")
-    featured_df = build_features(df)
-    X, y_soh, y_rul = get_model_matrix(featured_df)
-
-    model_bundle = train_models(X, y_soh, y_rul)
-
-    print("\n--- Feature Importance (SOH model) ---")
-    print(feature_importance_df(model_bundle, model="soh").to_string(index=False))
-
-    print("\n--- Top 5 Drivers ---")
-    for d in top_drivers(model_bundle):
-        print(f"  {d['feature']:35s} {d['importance_pct']:.1f}%")
-
-    print("\n--- Sample Prediction (last 3 cycles) ---")
-    X_last = X.tail(3)
-    preds = predict(model_bundle, X_last)
-    for i, (soh, rul, tag) in enumerate(
-        zip(preds["soh_pred"], preds["rul_pred"], preds["confidence_tag"])
-    ):
-        print(f"  Cycle {X_last['cycle_number'].iloc[i]:4.0f}: "
-              f"SOH={soh:.1f}%  RUL={rul:.0f} cycles  [{tag}]")

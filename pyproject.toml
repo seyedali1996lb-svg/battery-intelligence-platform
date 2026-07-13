@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batlab"
+version = "0.1.0"
+description = "A citable, honest research library for battery degradation analysis: standardized dataset loaders, leave-cell-out-validated SOH/RUL models, and reproducible benchmark manifests."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Ali Hosseini" },
+]
+keywords = ["battery", "lithium-ion", "state-of-health", "remaining-useful-life", "degradation", "machine-learning", "reproducibility"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "scipy",
+    "requests",
+]
+
+[project.optional-dependencies]
+# Extra parsers only needed by specific dataset loaders -- not required to
+# install batlab itself, only to actually download+parse that one dataset.
+severson = ["h5py"]
+oxford = ["mat-io"]
+notebooks = ["jupyter", "matplotlib", "papermill"]
+docs = ["mkdocs-material", "mkdocstrings[python]"]
+dev = ["pytest", "batlab[severson,oxford,notebooks,docs]"]
+
+[project.urls]
+Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
+Repository = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
+
+[tool.setuptools.packages.find]
+include = ["batlab*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

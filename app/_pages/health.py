@@ -17,7 +17,7 @@ from utils import (
 )
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
-from knee_detection import detect_knee, degradation_phases
+from batlab.features.knee_detection import detect_knee, degradation_phases
 
 
 # ---------------------------------------------------------------------------
@@ -629,7 +629,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             )
         else:
           try:
-            from dqdv import simulate_vq_curve
+            from batlab.features.dqdv import simulate_vq_curve
             _prov_dqdv = _analysis_provenance(cell_id, "derived")
             _md_html(provenance_banner(_prov_dqdv,
                 "<strong>Simulated proxy — not measured data.</strong> "

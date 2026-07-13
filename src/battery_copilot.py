@@ -35,7 +35,7 @@ from __future__ import annotations
 import math
 import numpy as np
 
-from lco_eval import RUL_RELIABLE_FLOOR
+from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from copilot_templates import TEMPLATES as _T
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def build_cell_context(
     Answer functions may only use what this dict contains.
     """
     from data_loader import CELL_STRESS_PROFILES, _stress_factor
-    from model import feature_importance_df
+    from batlab.models.gbrt import feature_importance_df
 
     is_nasa   = cell_id in NASA_CELL_IDS
     is_synth  = (not is_nasa) and (cell_id in CELL_STRESS_PROFILES)

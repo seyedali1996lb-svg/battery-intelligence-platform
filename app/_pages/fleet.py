@@ -17,7 +17,7 @@ from utils import (
 )
 from design_system import make_badge
 from data_loader import CELL_STRESS_PROFILES
-from knee_detection import detect_knee
+from batlab.features.knee_detection import detect_knee
 
 from _pages.grading import page_grading
 

@@ -1,7 +1,7 @@
-"""Unit tests for src/lco_eval.py — run_lco()."""
+"""Unit tests for batlab.validation.lco — run_lco()."""
 
 from conftest import make_cycles_df
-from lco_eval import run_lco, RUL_RELIABLE_FLOOR
+from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 
 
 def test_run_lco_returns_nan_for_single_cell():

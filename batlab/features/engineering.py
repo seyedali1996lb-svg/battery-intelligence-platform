@@ -1,8 +1,29 @@
 """
-Feature engineering — Phase 1.
+Feature engineering for battery cycle-degradation data.
 
-Takes an enriched cycles DataFrame and produces a feature matrix (X) and
-targets (y_soh, y_rul) for scikit-learn.
+Takes a cycle-level DataFrame (batlab.datasets.schema kind="cycle") and
+produces a feature matrix (X) and targets (y_soh, y_rul) for scikit-learn.
+
+References
+----------
+Fade-rate windows, resistance trend, and general capacity-fade diagnostics:
+    Birkl, C.R., Roberts, M.R., McTurk, E., Bruce, P.G., Howey, D.A.
+    "Degradation diagnostics for lithium ion cells." Journal of Power
+    Sources, 341, 373-386 (2017).
+dQ/dV differential-capacity peak features (delegated to batlab.features.dqdv):
+    Dubarry, M., Liaw, B.Y. "Identify capacity fading mechanism in a
+    commercial LiFePO4 cell." Journal of Power Sources, 194(1), 541-549 (2009).
+Coulombic Efficiency as a degradation-tracking signal:
+    Smith, A.J., Burns, J.C., Dahn, J.R. "A High Precision Study of the
+    Coulombic Efficiency of Li-Ion Batteries." Electrochemical and
+    Solid-State Letters, 13(12), A177 (2010).
+Stress index (Arrhenius(T) x C-rate^0.7 composite aging driver): see the
+    inline derivation note above the `stress_index` block below — sub-linear
+    C-rate exponent follows porous-electrode current-distribution behavior
+    (Doyle-Fuller-Newman model); Arrhenius term uses Ea/R for a typical
+    LiCoO2 SEI growth activation energy.
+Knee detection is a separate function — see batlab.features.knee_detection
+    for its own citation.
 
 With multi-cell training, features like fade_rate and resistance_normalized
 become meaningful predictors of cross-cell variation — two cells at cycle 500
@@ -12,7 +33,8 @@ must use these signals to distinguish them.
 
 import numpy as np
 import pandas as pd
-from dqdv import add_dqdv_features
+
+from batlab.features.dqdv import add_dqdv_features
 
 
 # ---------------------------------------------------------------------------
@@ -22,9 +44,7 @@ from dqdv import add_dqdv_features
 def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.DataFrame:
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 
-    # ── Capacity fade — ensure present for all data sources ──
-    # data_loader.build_battery() adds this for synthetic/NASA; Severson/uploaded
-    # cells arrive without it, so we compute it here as a fallback.
+    # ── Capacity fade — ensure present regardless of source ──
     if "capacity_fade_ah" not in df.columns:
         initial_cap = float(df["capacity_ah"].iloc[0])
         df["capacity_fade_ah"] = (initial_cap - df["capacity_ah"]).clip(lower=0)
@@ -32,8 +52,6 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
     if "soh_rolling_avg" not in df.columns:
         df["soh_rolling_avg"] = df["soh_pct"].rolling(10, min_periods=1).mean()
 
-    # is_eol and cumulative_days are added by data_loader for synthetic/NASA;
-    # compute fallbacks here for Severson/uploaded cells.
     if "is_eol" not in df.columns:
         df["is_eol"] = df["soh_pct"] < eol_threshold_pct
 
@@ -146,7 +164,7 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
 
     # ── C-rate features ──
     # c_rate is written by the synthetic generator for all Cell1-8.
-    # NASA cells get it injected by nasa_loader (protocol-known: 1.0C discharge).
+    # NASA cells get it injected by nasa loader (protocol-known: 1.0C discharge).
     # Severson/uploaded cells get NaN — gracefully dropped from FEATURE_COLUMNS
     # by get_model_matrix() since it filters to notna() columns only.
     if "c_rate" in df.columns and df["c_rate"].notna().any():
@@ -158,7 +176,6 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
             df["c_rate"].rolling(10, min_periods=1).mean()
         )
         # Stress index: combines C-rate and temperature into a single aging driver.
-        # Derivation mirrors _stress_factor() in data_loader.py:
         #   C-rate term: (C / 1C)^0.7  — sub-linear because current distribution
         #     in a porous electrode is not uniform (Doyle-Fuller-Newman model).
         #   Temperature term: Arrhenius with Ea/R ≈ 6920 K (typical LiCoO2 SEI).
@@ -221,7 +238,7 @@ FEATURE_COLUMNS = [
     # Coulombic Efficiency — tracks SEI lithium consumption
     "ce_rolling_30cy",
     "ce_drop_rate",
-    # C-rate and composite stress features (T3 — highest-leverage model gap)
+    # C-rate and composite stress features.
     # c_rate_rolling_10cy: smoothed charge/discharge rate. Fast charging (>1C)
     #   accelerates SEI growth and lithium plating, compressing RUL non-linearly.
     # stress_index: Arrhenius(T) × C-rate^0.7 — the composite aging driver used
@@ -239,7 +256,6 @@ TARGET_RUL = "rul"
 
 
 def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-    import numpy as np
     # Only use columns that exist AND are not entirely NaN/inf (e.g. NASA cells
     # lack temperature_c, coulombic_efficiency — those columns are all-NaN)
     available = [
@@ -259,22 +275,3 @@ def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Seri
 def feature_summary(df: pd.DataFrame) -> pd.DataFrame:
     available = [c for c in FEATURE_COLUMNS if c in df.columns]
     return df[available].describe().round(4)
-
-
-# ---------------------------------------------------------------------------
-# Smoke test
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import sys, os
-    sys.path.insert(0, os.path.dirname(__file__))
-    from data_loader import build_battery, get_cell_df, CELL_STRESS_PROFILES
-
-    battery = build_battery("Oxford_B1", list(CELL_STRESS_PROFILES.keys()))
-
-    for cell_id in list(CELL_STRESS_PROFILES.keys())[:3]:
-        df = get_cell_df(battery, cell_id)
-        feat = build_features(df)
-        X, y_soh, y_rul = get_model_matrix(feat)
-        print(f"{cell_id}: {X.shape[0]} rows | SOH {y_soh.min():.1f}–{y_soh.max():.1f}% | "
-              f"RUL {y_rul.min():.0f}–{y_rul.max():.0f} cy")

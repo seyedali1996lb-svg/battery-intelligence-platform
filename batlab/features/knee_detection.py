@@ -15,7 +15,9 @@ Algorithm (maximum-curvature / L-method):
 Why not the second-derivative peak?
   The second derivative is sensitive to noise even after smoothing, and
   produces false positives on cells with multi-phase degradation. The
-  L-method (Satopää et al. 2011, adapted) is more robust on small datasets.
+  L-method (Satopää et al., "Finding a 'Kneedle' in a Haystack: Detecting
+  Knee Points in System Behavior", ICDCSW 2011, adapted) is more robust
+  on small datasets.
 """
 
 import numpy as np
@@ -105,8 +107,6 @@ def degradation_phases(
 ) -> pd.Series:
     """
     Label every cycle with its degradation phase: Early / Plateau / Accelerating.
-
-    Used for the per-cycle phase colouring on the Health page.
     """
     result = detect_knee(soh_series, cycle_series, smooth_window)
     knee = result["cycle"]

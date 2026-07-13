@@ -1,8 +1,8 @@
-"""Unit tests for src/dqdv.py — dQ/dV curve simulation and feature extraction."""
+"""Unit tests for batlab.features.dqdv — dQ/dV curve simulation and feature extraction."""
 
 import numpy as np
 import pandas as pd
-from dqdv import simulate_vq_curve, extract_dqdv_features, add_dqdv_features
+from batlab.features.dqdv import simulate_vq_curve, extract_dqdv_features, add_dqdv_features
 
 
 def test_simulate_vq_curve_shapes_and_bounds():

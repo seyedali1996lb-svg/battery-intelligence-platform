@@ -1,9 +1,9 @@
-"""Unit tests for src/model.py — train_models() / predict() / feature importance."""
+"""Unit tests for batlab.models.gbrt — train_models() / predict() / feature importance."""
 
 import pytest
 from conftest import make_cycles_df
-from features import build_features, get_model_matrix
-from model import train_models, predict, feature_importance_df, top_drivers
+from batlab.features.engineering import build_features, get_model_matrix
+from batlab.models.gbrt import train_models, predict, feature_importance_df, top_drivers
 
 
 @pytest.fixture(scope="module")

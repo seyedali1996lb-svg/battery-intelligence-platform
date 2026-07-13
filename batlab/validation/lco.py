@@ -2,7 +2,6 @@
 Leave-cell-out cross-validation.
 
 Exported function: run_lco(cell_data) -> dict of LCO metrics.
-Can also be run directly as a CLI script for the synthetic cells.
 
 Why LCO instead of a row-level holdout split?
   A chronological split on the concatenated multi-cell dataset puts the tail
@@ -12,17 +11,13 @@ Why LCO instead of a row-level holdout split?
   "does this model generalise to a cell it has never seen?"
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(__file__))
-
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score
 
-from features import build_features, get_model_matrix
+from batlab.features.engineering import build_features, get_model_matrix
 
 GBRT_PARAMS = dict(
     n_estimators=200, max_depth=4, learning_rate=0.05,
@@ -32,14 +27,18 @@ GBRT_PARAMS = dict(
 RUL_RELIABLE_FLOOR = 0.3   # LCO R2 below this -> show "Not calibrated" in UI
 
 
-def run_lco(cell_data: dict) -> dict:
+def run_lco(cell_data: dict, seed: int = 42) -> dict:
     """
     Run leave-cell-out cross-validation on a dict of cell DataFrames.
 
     Args:
         cell_data: {cell_id: DataFrame} where each DataFrame is the raw
-                   enriched cycles DataFrame (output of enrich_cycles()).
+                   cycle-level DataFrame (batlab.datasets.schema kind="cycle").
                    Features are built internally per cell.
+        seed:      Random seed for every fold's GradientBoostingRegressor —
+                   parameterized (rather than hardcoded) so a split manifest
+                   (see batlab.validation.manifest) can reproduce an exact
+                   prior run.
 
     Returns:
         {
@@ -51,14 +50,12 @@ def run_lco(cell_data: dict) -> dict:
           "per_cell":    dict,    # per-fold breakdown
         }
     """
+    params = {**GBRT_PARAMS, "random_state": seed}
+
     # Build feature matrices per cell
     featured = {}
     for cell_id, df in cell_data.items():
-        if "soh_pct" not in df.columns:
-            # Already enriched; build features only
-            df_feat = build_features(df)
-        else:
-            df_feat = build_features(df)
+        df_feat = build_features(df)
         X, y_soh, y_rul = get_model_matrix(df_feat)
         featured[cell_id] = (X, y_soh, y_rul)
 
@@ -85,8 +82,8 @@ def run_lco(cell_data: dict) -> dict:
         Xtr_sc = scaler.fit_transform(X_train)
         Xte_sc = scaler.transform(X_test)
 
-        soh_m = GradientBoostingRegressor(**GBRT_PARAMS).fit(Xtr_sc, y_soh_train)
-        rul_m = GradientBoostingRegressor(**GBRT_PARAMS).fit(Xtr_sc, y_rul_train)
+        soh_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_soh_train)
+        rul_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_rul_train)
 
         soh_pred = soh_m.predict(Xte_sc)
         rul_pred = rul_m.predict(Xte_sc)
@@ -110,32 +107,3 @@ def run_lco(cell_data: dict) -> dict:
         "rul_reliable": mean_rul_r2 >= RUL_RELIABLE_FLOOR,
         "per_cell":     per_cell,
     }
-
-
-# ---------------------------------------------------------------------------
-# CLI: validate synthetic cells
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    from data_loader import build_battery, CELL_STRESS_PROFILES
-
-    battery = build_battery("Oxford_B1", list(CELL_STRESS_PROFILES.keys()))
-    cell_data = {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
-
-    print("Leave-Cell-Out Cross-Validation -- Synthetic cells")
-    print("=" * 60)
-    print(f"  {'Test cell':<10}  {'SOH MAE':>8}  {'SOH R2':>8}  {'RUL MAE':>9}  {'RUL R2':>8}")
-    print("-" * 60)
-
-    result = run_lco(cell_data)
-
-    for cid, m in result["per_cell"].items():
-        print(f"  {cid:<10}  {m['soh_mae']:>7.3f}%  {m['soh_r2']:>8.4f}  "
-              f"{m['rul_mae']:>8.1f}cy  {m['rul_r2']:>8.4f}")
-
-    print("-" * 60)
-    print(f"  {'MEAN':<10}  {result['soh_mae']:>7.3f}%  {result['soh_r2']:>8.4f}  "
-          f"{result['rul_mae']:>8.1f}cy  {result['rul_r2']:>8.4f}")
-    print()
-    print(f"SOH generalises: {'yes' if result['soh_r2'] > 0.5 else 'no'} (R2={result['soh_r2']:.3f})")
-    print(f"RUL reliable:    {'yes' if result['rul_reliable'] else 'no -- show Calibrating'} (R2={result['rul_r2']:.3f})")

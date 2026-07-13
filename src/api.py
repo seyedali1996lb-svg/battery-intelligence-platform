@@ -605,12 +605,9 @@ def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=503, detail="No cells loaded.")
 
     try:
-        from src.knee_detection import detect_knee  # type: ignore
+        from batlab.features.knee_detection import detect_knee
     except ImportError:
-        try:
-            from knee_detection import detect_knee  # type: ignore
-        except ImportError:
-            detect_knee = None
+        detect_knee = None
 
     alerts: list[AlertItem] = []
 

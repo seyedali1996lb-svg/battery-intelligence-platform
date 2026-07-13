@@ -16,7 +16,7 @@ import db
 
 def page_settings(featured_dfs: dict, bundles: dict):
     _action_bar("settings")
-    from lco_eval import RUL_RELIABLE_FLOOR
+    from batlab.validation.lco import RUL_RELIABLE_FLOOR
     from design_system import C_GREEN, C_AMBER, C_MUTED, C_ORANGE
 
     def _section(title: str):
@@ -98,7 +98,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
-            f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run src/nasa_loader.py'}</div>",
+            f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run python -m batlab.datasets.nasa'}</div>",
             padding="18px 20px",
         )
 

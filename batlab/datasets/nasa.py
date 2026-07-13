@@ -2,21 +2,22 @@
 NASA PCoE Battery Aging Dataset loader.
 
 Downloads and parses MATLAB .mat files for cells B0005, B0006, B0007, B0018
-into the existing Battery -> Cells -> Cycles schema:
-    DataFrame columns: cycle_number, capacity_ah, resistance_ohm, temperature_c
+and returns the standardized batlab cycle schema (see batlab.datasets.schema):
+one row per discharge cycle, with cycle_number, capacity_ah, soh_pct required
+and resistance_ohm/temperature_c/c_rate as optional columns.
 
-Run this script once to pull real data into data/raw/.  After that,
-build_battery() picks up the CSVs automatically via load_or_generate_cell().
+Run `python -m batlab.datasets.nasa` once to pull real data into data/raw/ —
+after that, load_nasa_cells() reads the cached CSVs directly.
 
 Dataset: NASA Prognostics Center of Excellence Battery Data Set
 Source:  https://data.nasa.gov (ti.arc.nasa.gov/tech/dash/groups/pcoe/
          prognostic-data-repository/ — Battery Data Set #5)
-License: Public domain / US government work
+Citation/license: see batlab.cite.cite(dataset="nasa")
 
 Cell operating conditions:
   B0005–B0007: charged 1.5A CC/CV to 4.2V, discharged 2A to 2.7V at 24°C
   B0018:        discharged to 2.5V (different EOL criterion)
-  All: 18650-format LiCoO₂, ~2 Ah nominal
+  All: 18650-format LiCoO2, ~2 Ah nominal
 """
 
 import io
@@ -28,18 +29,22 @@ import pandas as pd
 import requests
 import scipy.io
 
+from batlab.datasets.schema import compute_soh_pct
+
 # ---------------------------------------------------------------------------
 # Download configuration
 # ---------------------------------------------------------------------------
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
+# batlab/datasets/nasa.py -> repo root is two levels up.
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
 
 # NASA PCoE S3 mirror — Battery Data Set #5
 # Source: nasa.gov/intelligent-systems-division/.../pcoe-data-set-repository/
-# Citation: B. Saha and K. Goebel (2007), NASA Ames Research Center
 NASA_ZIP_URL = "https://phm-datasets.s3.amazonaws.com/NASA/5.+Battery+Data+Set.zip"
 
 CELL_IDS = ["B0005", "B0006", "B0007", "B0018"]
+
+CHEMISTRY = "LiCoO2"
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +279,7 @@ def parse_mat_file(mat_path: str, cell_id: str) -> pd.DataFrame:
     discharge_df = discharge_df[["cycle_number", "capacity_ah", "resistance_ohm", "temperature_c"]]
     discharge_df = discharge_df.round({"capacity_ah": 5, "resistance_ohm": 5, "temperature_c": 2})
 
-    # ── Protocol-known C-rate (T3 fix) ──────────────────────────────────────
+    # ── Protocol-known C-rate ────────────────────────────────────────────
     # B0005–B0018: discharged at 2A CC to cutoff voltage. Nominal capacity is
     # ~2 Ah (initial measured value), giving a discharge C-rate of 2/2 = 1.0C.
     # Charge was at 1.5A CC/CV, i.e. 0.75C — we use the discharge C-rate as it
@@ -297,13 +302,12 @@ def load_nasa_cells(
     force_download: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """
-    Download (if needed) and parse NASA cells into DataFrames.
+    Download (if needed) and parse NASA cells into standardized DataFrames.
 
-    Returns {cell_id: DataFrame} with columns:
-        cycle_number, capacity_ah, resistance_ohm, temperature_c
-
-    These CSVs are then written to data/raw/ so build_battery() finds them
-    without any schema changes.
+    Returns {cell_id: DataFrame} satisfying batlab.datasets.schema's
+    kind="cycle" contract (cycle_number, capacity_ah, soh_pct required;
+    resistance_ohm, temperature_c, c_rate optional), with df.attrs set
+    per batlab.datasets.schema.REQUIRED_ATTRS.
     """
     if cell_ids is None:
         cell_ids = CELL_IDS
@@ -324,35 +328,43 @@ def load_nasa_cells(
                 continue
         missing.append(cell_id)
 
-    if not missing:
-        return results
+    if missing:
+        # Need to download/parse
+        zip_path = download_nasa_zip(data_dir)
+        mat_paths = extract_mat_files(zip_path, data_dir)
 
-    # Need to download/parse
-    zip_path = download_nasa_zip(data_dir)
-    mat_paths = extract_mat_files(zip_path, data_dir)
+        mat_map = {os.path.basename(p).replace(".mat", ""): p for p in mat_paths}
 
-    mat_map = {os.path.basename(p).replace(".mat", ""): p for p in mat_paths}
-
-    for cell_id in missing:
-        mat_path = mat_map.get(cell_id)
-        if mat_path is None:
-            # Try individual download as fallback
-            mat_path = _try_direct_download(cell_id, data_dir)
+        for cell_id in missing:
+            mat_path = mat_map.get(cell_id)
             if mat_path is None:
-                print(f"  [skip] {cell_id} — .mat file not available")
-                continue
+                # Try individual download as fallback
+                mat_path = _try_direct_download(cell_id, data_dir)
+                if mat_path is None:
+                    print(f"  [skip] {cell_id} — .mat file not available")
+                    continue
 
-        print(f"\nParsing {cell_id}...")
-        try:
-            df = parse_mat_file(mat_path, cell_id)
-            csv_path = os.path.join(data_dir, f"{cell_id}_summary.csv")
-            df.to_csv(csv_path, index=False)
-            print(f"  [ok] {len(df)} discharge cycles | "
-                  f"capacity {df['capacity_ah'].iloc[0]:.3f}->{df['capacity_ah'].iloc[-1]:.3f} Ah | "
-                  f"temp {df['temperature_c'].mean():.1f}°C mean")
-            results[cell_id] = df
-        except Exception as exc:
-            print(f"  [error] {cell_id}: {exc}")
+            print(f"\nParsing {cell_id}...")
+            try:
+                df = parse_mat_file(mat_path, cell_id)
+                csv_path = os.path.join(data_dir, f"{cell_id}_summary.csv")
+                df.to_csv(csv_path, index=False)
+                print(f"  [ok] {len(df)} discharge cycles | "
+                      f"capacity {df['capacity_ah'].iloc[0]:.3f}->{df['capacity_ah'].iloc[-1]:.3f} Ah | "
+                      f"temp {df['temperature_c'].mean():.1f}°C mean")
+                results[cell_id] = df
+            except Exception as exc:
+                print(f"  [error] {cell_id}: {exc}")
+
+    # ── Standardize to the batlab schema contract ──────────────────────────
+    for cell_id, df in results.items():
+        if "soh_pct" not in df.columns:
+            df["soh_pct"] = compute_soh_pct(df["capacity_ah"])
+        df.attrs["cell_id"] = cell_id
+        df.attrs["source"] = "nasa"
+        df.attrs["chemistry"] = CHEMISTRY
+        df.attrs["citation"] = "nasa"
+        df.attrs["license"] = "Public domain / US government work"
 
     return results
 
@@ -362,8 +374,6 @@ def _try_direct_download(cell_id: str, data_dir: str) -> str | None:
     Try to download a single .mat file directly (fallback if ZIP extraction fails).
     Returns local path on success, None on failure.
     """
-    # Alternative: CALCE dataset mirror or direct file URL
-    # These are public mirrors sometimes used in academic repos
     candidate_urls = [
         f"https://data.nasa.gov/api/views/uj5r-zjdb/files/{cell_id}.mat",
     ]
@@ -387,7 +397,7 @@ def _try_direct_download(cell_id: str, data_dir: str) -> str | None:
 if __name__ == "__main__":
     print("=== NASA Battery Dataset Loader ===\n")
     print("This will download the NASA PCoE Battery Aging dataset (~22 MB)")
-    print("and convert it into the Battery Intelligence Platform schema.\n")
+    print("and convert it into batlab's standardized cycle schema.\n")
 
     force = "--force" in sys.argv
 
@@ -410,6 +420,3 @@ if __name__ == "__main__":
               f"final SOH {soh_end:.1f}% | EOL at {eol_at}")
 
     print("\n[DONE] CSVs written to data/raw/.")
-    print("Restart the Streamlit app — it will load real data automatically.")
-    print("Add B0005/B0006/B0007/B0018 to the cell selector in app/main.py")
-    print("(or let it auto-detect by scanning data/raw/ for *_summary.csv files).")

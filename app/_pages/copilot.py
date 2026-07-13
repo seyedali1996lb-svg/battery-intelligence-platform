@@ -10,7 +10,7 @@ import streamlit as st
 import plotly.graph_objects as go
 
 from utils import _action_bar, _md_html, PLOTLY_CONFIG, NASA_CELL_IDS, friendly
-from model import top_drivers, feature_importance_df
+from batlab.models.gbrt import top_drivers, feature_importance_df
 from design_system import make_badge
 
 

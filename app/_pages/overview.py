@@ -15,7 +15,7 @@ from utils import (
     _cell_provenance, _resample_df, NASA_CELL_IDS, LEGEND_H,
 )
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
-from lco_eval import RUL_RELIABLE_FLOOR
+from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from trajectory_memory import reconcile_rul_estimates
 from chemistry_profiles import ChemistryProfile
 

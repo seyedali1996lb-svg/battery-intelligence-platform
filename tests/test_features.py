@@ -1,8 +1,8 @@
-"""Unit tests for src/features.py — build_features() / get_model_matrix()."""
+"""Unit tests for batlab.features.engineering — build_features() / get_model_matrix()."""
 
 import numpy as np
 from conftest import make_cycles_df
-from features import build_features, get_model_matrix, FEATURE_COLUMNS
+from batlab.features.engineering import build_features, get_model_matrix, FEATURE_COLUMNS
 
 
 def test_build_features_adds_expected_columns():

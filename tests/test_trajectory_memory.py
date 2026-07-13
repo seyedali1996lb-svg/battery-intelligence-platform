@@ -2,7 +2,7 @@
 
 import numpy as np
 from conftest import make_cycles_df
-from features import build_features
+from batlab.features.engineering import build_features
 from trajectory_memory import TrajectoryMemory, FailureSignature, TrajectoryMatch, reconcile_rul_estimates
 
 

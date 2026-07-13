@@ -3,6 +3,19 @@ Differential capacity (dQ/dV) feature extraction.
 
 Simulates a voltage-capacity discharge curve using a LiCoO2 OCV model and
 extracts physically-meaningful peak features that track electrode degradation.
+
+Reference: dQ/dV (differential capacity) peak position, amplitude, and
+width shifts are an established non-destructive signature of electrode-level
+degradation mechanisms (loss of active material / loss of lithium
+inventory) — see Dubarry, M., Liaw, B.Y. "Identify capacity fading
+mechanism in a commercial LiFePO4 cell." Journal of Power Sources, 194(1),
+541-549 (2009). This module simulates the underlying V(Q) curve from a
+parametric OCV model rather than measuring it directly (no raw
+voltage/current time series is available in the cycle-summary datasets
+this library loads), so treat its features as a physically-motivated
+proxy, not a direct measurement — the same caveat the app UI already
+surfaces for LFP cells, whose flat OCV plateau makes this LiCoO2-shaped
+model inapplicable.
 """
 
 import numpy as np

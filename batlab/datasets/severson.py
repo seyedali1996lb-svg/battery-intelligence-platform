@@ -4,10 +4,12 @@ Severson 2019 LFP dataset loader.
 Reference: Severson et al., "Data-driven prediction of battery cycle life
 before capacity degradation", Nature Energy 2019.
 Data: https://data.matr.io/1/  (research use)
+Citation/license: see batlab.cite.cite(dataset="severson2019")
 
 Downloads Batch 1 of the MATLAB file on first call, extracts per-cycle
 discharge capacity, resistance, and temperature for 12 representative cells,
-and caches them as CSVs in data/raw/severson/.
+and caches them as CSVs in data/raw/severson/. Returns the standardized
+batlab cycle schema (see batlab.datasets.schema).
 
 Cell selection spans 4 cycle-life bands:
   Short  (<500 cy):   b1c2, b1c3, b1c4
@@ -22,6 +24,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from batlab.datasets.schema import compute_soh_pct
+
 _BATCH1_URL = "https://data.matr.io/1/api/v1/file/5c86c0b5fa2ede00015ddf66/download"
 
 _CELL_KEYS = [
@@ -33,8 +37,11 @@ _CELL_KEYS = [
 # 0-based index of each cell in the batch HDF5 struct array (b1cN → index N-1)
 _CELL_INDICES = {k: int(k[3:]) - 1 for k in _CELL_KEYS}
 
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "raw" / "severson"
+# batlab/datasets/severson.py -> repo root is three levels up.
+_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "severson"
 SEVERSON_CELL_IDS: list[str] = [f"S-{k}" for k in _CELL_KEYS]
+
+CHEMISTRY = "LFP"
 
 
 def _csv_path(k: str) -> pathlib.Path:
@@ -54,7 +61,9 @@ def _download_and_cache(status_fn=None) -> None:
     try:
         import h5py
     except ImportError:
-        raise ImportError("h5py required to parse Severson dataset: pip install h5py")
+        raise ImportError(
+            "h5py required to parse the Severson dataset: pip install 'batlab[severson]'"
+        )
 
     _RAW_DIR.mkdir(parents=True, exist_ok=True)
     mat_path = _RAW_DIR / "batch1.mat"
@@ -78,13 +87,6 @@ def _download_and_cache(status_fn=None) -> None:
         for key, idx in _CELL_INDICES.items():
             try:
                 summ = f[summ_ds[idx, 0]]   # per-cell summary Group
-
-                def _col(name, fallback=None, _s=summ):
-                    if name in _s:
-                        arr = np.array(_s[name]).flatten().astype(float)
-                        # skip cycle 0 (pre-charge artefact)
-                        return arr[arr > 0] if name == "QDischarge" else arr
-                    return fallback
 
                 qd = np.array(summ["QDischarge"]).flatten().astype(float)
                 # Remove cycle-0 pre-charge row if present
@@ -116,14 +118,20 @@ def _download_and_cache(status_fn=None) -> None:
                 continue
 
 
-def _load_cached(key: str) -> dict | None:
+def _load_cached(key: str) -> pd.DataFrame | None:
     path = _csv_path(key)
     if not path.exists():
         return None
     df = pd.read_csv(path)
     if len(df) < 5:
         return None
-    return {"cell_id": f"S-{key}", "source": "severson2019", "chemistry": "LFP", "cycles": df}
+    cell_id = f"S-{key}"
+    df.attrs["cell_id"] = cell_id
+    df.attrs["source"] = "severson2019"
+    df.attrs["chemistry"] = CHEMISTRY
+    df.attrs["citation"] = "severson2019"
+    df.attrs["license"] = "Research use per data.matr.io terms"
+    return df
 
 
 def download_and_prepare(status_fn=None) -> bool:
@@ -138,8 +146,13 @@ def download_and_prepare(status_fn=None) -> bool:
         return False
 
 
-def load_severson_cells(status_fn=None) -> dict[str, dict]:
-    """Download-and-cache on first call, then load from CSV. Returns {} on failure."""
+def load_severson_cells(status_fn=None) -> dict[str, pd.DataFrame]:
+    """
+    Download-and-cache on first call, then load from CSV.
+
+    Returns {cell_id: DataFrame} satisfying batlab.datasets.schema's
+    kind="cycle" contract, with df.attrs set. Returns {} on failure.
+    """
     if not _all_cached():
         try:
             _download_and_cache(status_fn=status_fn)
@@ -148,9 +161,9 @@ def load_severson_cells(status_fn=None) -> dict[str, dict]:
             return {}
     cells = {}
     for key in _CELL_KEYS:
-        c = _load_cached(key)
-        if c:
-            cells[c["cell_id"]] = c
+        df = _load_cached(key)
+        if df is not None:
+            cells[df.attrs["cell_id"]] = df
     return cells
 
 

@@ -1,8 +1,8 @@
-"""Unit tests for src/knee_detection.py — detect_knee() / degradation_phases()."""
+"""Unit tests for batlab.features.knee_detection — detect_knee() / degradation_phases()."""
 
 import numpy as np
 import pandas as pd
-from knee_detection import detect_knee, degradation_phases
+from batlab.features.knee_detection import detect_knee, degradation_phases
 
 
 def test_too_short_series_not_detected():

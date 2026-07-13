@@ -20,8 +20,8 @@ def make_cycles_df(
 ) -> pd.DataFrame:
     """A synthetic, monotonically-fading cycles DataFrame with soh_pct already
     computed (matching enrich_cycles()'s output shape), reused across tests
-    for src/features.py, src/model.py, src/lco_eval.py, src/knee_detection.py,
-    src/trajectory_memory.py.
+    for batlab.features.engineering, batlab.models.gbrt, batlab.validation.lco,
+    batlab.features.knee_detection, src/trajectory_memory.py.
     """
     cycles = np.arange(1, n_cycles + 1)
     capacity = initial_capacity_ah - fade_per_cycle * cycles

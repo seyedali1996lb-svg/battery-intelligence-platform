@@ -14,9 +14,9 @@ import plotly.graph_objects as go
 from design_system import section_header_html
 from utils import _action_bar, base_layout, LEGEND_H, render_card
 from import_adapter import adapt_upload_to_pipeline
-from features import build_features, get_model_matrix
-from model import train_models, predict
-from lco_eval import run_lco, RUL_RELIABLE_FLOOR
+from batlab.features.engineering import build_features, get_model_matrix
+from batlab.models.gbrt import train_models, predict
+from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from bundle_cache import load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
 
@@ -267,7 +267,7 @@ def page_import():
     # ── Section 1b: External Benchmark Datasets ─────────────────────────────
     with st.expander("📦 External Benchmark Datasets", expanded=False):
         st.markdown(
-            "Use the loaders in `src/severson_loader.py` and `src/calce_loader.py` "
+            "Use the loaders in `batlab.datasets.severson` and `batlab.datasets.calce` "
             "to integrate published benchmark datasets into the pipeline."
         )
         st.markdown("**Severson 2019 (Nature Energy)**")
