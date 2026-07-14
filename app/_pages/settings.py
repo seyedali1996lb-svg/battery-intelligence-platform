@@ -518,15 +518,31 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "Live Monitor. Use this to trigger Slack alerts, PagerDuty incidents, or CMMS tickets."
         "</div>"
     )
+    # Streamlit warns ("...was created with a default value but also had its
+    # value set via the Session State API") if a widget's key is pre-seeded
+    # in session_state (as these are, by main.py's hydration block) AND the
+    # widget also gets a value=/default= kwarg — it can't tell that both
+    # sides agree. Fix is the pattern Streamlit itself recommends: seed
+    # session_state once here (only relevant the very first time an org
+    # configures webhooks, before hydration has anything to load), then let
+    # each widget read/write purely through its key= binding.
+    if "webhook_url" not in st.session_state:
+        st.session_state["webhook_url"] = ""
+    if "webhook_secret" not in st.session_state:
+        st.session_state["webhook_secret"] = ""
+    if "webhook_events" not in st.session_state:
+        st.session_state["webhook_events"] = [
+            "THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH",
+        ]
+
     _wh_col1, _wh_col2 = st.columns([3, 1])
     _wh_url = _wh_col1.text_input(
-        "Webhook URL", value=st.session_state.get("webhook_url", ""),
+        "Webhook URL",
         placeholder="https://hooks.slack.com/services/...",
         key="webhook_url",
     )
     _wh_secret = _wh_col2.text_input(
-        "HMAC secret (optional)", value=st.session_state.get("webhook_secret", ""),
-        type="password", key="webhook_secret",
+        "HMAC secret (optional)", type="password", key="webhook_secret",
         help="If set, each request includes X-Signature-256: hmac-sha256 of the body.",
     )
     _wh_events = st.multiselect(
@@ -534,8 +550,6 @@ def page_settings(featured_dfs: dict, bundles: dict):
         options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
                  "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY",
                  "FLEET_DIGEST", "TRAJECTORY_MATCH", "PASSPORT_GAP"],
-        default=st.session_state.get("webhook_events",
-            ["THERMAL_RUNAWAY_PRECURSOR", "CAPACITY_PLUNGE", "VOLTAGE_HIGH"]),
         help="Only event types checked here will trigger a webhook POST. FLEET_DIGEST/"
              "TRAJECTORY_MATCH/PASSPORT_GAP are session/page-load-triggered best-effort "
              "alerts, not a real background cron.",

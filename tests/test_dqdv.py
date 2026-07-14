@@ -16,11 +16,11 @@ def test_simulate_vq_curve_shapes_and_bounds():
 
 def test_extract_dqdv_features_keys_and_types():
     feats = extract_dqdv_features(capacity_ah=2.0, resistance_ohm=0.05)
-    for key in ["dqdv_peak_value", "dqdv_peak_soc", "dqdv_area", "dqdv_fwhm"]:
+    for key in ["dqdv_sim_peak_value", "dqdv_sim_peak_soc", "dqdv_sim_area", "dqdv_sim_fwhm"]:
         assert key in feats
         assert isinstance(feats[key], float)
-    assert 0.0 <= feats["dqdv_peak_soc"] <= 1.0
-    assert feats["dqdv_fwhm"] >= 0.0
+    assert 0.0 <= feats["dqdv_sim_peak_soc"] <= 1.0
+    assert feats["dqdv_sim_fwhm"] >= 0.0
 
 
 def test_add_dqdv_features_matches_per_row_extraction():
@@ -36,14 +36,14 @@ def test_add_dqdv_features_matches_per_row_extraction():
 
     for i in range(len(df)):
         single = extract_dqdv_features(df["capacity_ah"].iloc[i], df["resistance_ohm"].iloc[i])
-        assert abs(vectorized["dqdv_peak_value"].iloc[i] - single["dqdv_peak_value"]) < 1e-6
-        assert abs(vectorized["dqdv_area"].iloc[i] - single["dqdv_area"]) < 1e-6
-        assert abs(vectorized["dqdv_fwhm"].iloc[i] - single["dqdv_fwhm"]) < 1e-6
+        assert abs(vectorized["dqdv_sim_peak_value"].iloc[i] - single["dqdv_sim_peak_value"]) < 1e-6
+        assert abs(vectorized["dqdv_sim_area"].iloc[i] - single["dqdv_sim_area"]) < 1e-6
+        assert abs(vectorized["dqdv_sim_fwhm"].iloc[i] - single["dqdv_sim_fwhm"]) < 1e-6
 
 
 def test_add_dqdv_features_adds_all_columns():
     df = pd.DataFrame({"capacity_ah": [2.0, 1.9], "resistance_ohm": [0.05, 0.06]})
     out = add_dqdv_features(df)
-    for col in ["dqdv_peak_value", "dqdv_peak_soc", "dqdv_area", "dqdv_fwhm"]:
+    for col in ["dqdv_sim_peak_value", "dqdv_sim_peak_soc", "dqdv_sim_area", "dqdv_sim_fwhm"]:
         assert col in out.columns
         assert out[col].notna().all()

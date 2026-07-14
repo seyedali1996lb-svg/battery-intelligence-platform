@@ -5,7 +5,7 @@ Four notebooks, each runnable top-to-bottom on a fresh clone after `pip install 
 | Notebook | What it shows |
 |---|---|
 | `01_quickstart.ipynb` | Load NASA cells, engineer features, leave-cell-out validate, train, predict SOH/RUL, plot — the ten-minute evaluation. |
-| `02_data_leakage.ipynb` | Reproduces the row-level-split R² illusion (~0.998) vs. the honest leave-cell-out number (~0.81) on the same 4 NASA cells, and explains why. |
+| `02_data_leakage.ipynb` | Reproduces the row-level-split R² illusion (~0.998) vs. the honest leave-cell-out number (~0.81) on the same 4 NASA cells, and explains why — then checks how much of that honest number a trivial linear-fit baseline (cycle_number → SOH, no feature engineering) already explains on its own. |
 | `03_knee_detection.ipynb` | Knee detection on a real Severson curve, plus an honest negative result on Oxford's sparse checkpoint data (too few points to trust a knee call). |
 | `04_bring_your_own_data.ipynb` | Maps a CSV with realistic, non-matching column names into batlab's schema, validates it, runs the full pipeline. |
 

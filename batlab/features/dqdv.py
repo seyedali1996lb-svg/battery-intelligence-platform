@@ -81,11 +81,14 @@ def extract_dqdv_features(capacity_ah: float, resistance_ohm: float) -> dict:
 
     Returns
     -------
-    dict with keys:
-        dqdv_peak_value  — amplitude of the main dQ/dV peak
-        dqdv_peak_soc    — SOC position of the main peak
-        dqdv_area        — trapz integral of dQ/dV over Q (total area)
-        dqdv_fwhm        — full-width at half-maximum of the peak (Ah)
+    dict with keys (all prefixed "dqdv_sim_" — see module docstring for why
+    "sim": the V(Q) curve these are computed from is simulated from a
+    parametric OCV model, not measured, so the flag needs to survive into
+    any raw column-name listing, not just this docstring):
+        dqdv_sim_peak_value  — amplitude of the main dQ/dV peak
+        dqdv_sim_peak_soc    — SOC position of the main peak
+        dqdv_sim_area        — trapz integral of dQ/dV over Q (total area)
+        dqdv_sim_fwhm        — full-width at half-maximum of the peak (Ah)
     """
     Q, V = simulate_vq_curve(capacity_ah, resistance_ohm)
 
@@ -98,29 +101,29 @@ def extract_dqdv_features(capacity_ah: float, resistance_ohm: float) -> dict:
 
     # Peak value and its position
     peak_idx = int(np.argmax(dq_dv))
-    dqdv_peak_value = float(dq_dv[peak_idx])
+    dqdv_sim_peak_value = float(dq_dv[peak_idx])
 
     soc_array = 1.0 - Q / max(capacity_ah, 1e-9)
-    dqdv_peak_soc = float(soc_array[peak_idx])
+    dqdv_sim_peak_soc = float(soc_array[peak_idx])
 
     # Area under dQ/dV curve (trapz over Q)
     # np.trapezoid is NumPy 2.0+; np.trapz removed in NumPy 2.0
     _trapz = getattr(np, "trapezoid", None) or getattr(np, "trapz")
-    dqdv_area = float(_trapz(dq_dv, Q))
+    dqdv_sim_area = float(_trapz(dq_dv, Q))
 
     # FWHM: find indices where dQ/dV > peak / 2
-    half_max = dqdv_peak_value / 2.0
+    half_max = dqdv_sim_peak_value / 2.0
     above = np.where(dq_dv > half_max)[0]
     if len(above) >= 2:
-        dqdv_fwhm = float(Q[above[-1]] - Q[above[0]])
+        dqdv_sim_fwhm = float(Q[above[-1]] - Q[above[0]])
     else:
-        dqdv_fwhm = 0.0
+        dqdv_sim_fwhm = 0.0
 
     return {
-        "dqdv_peak_value": dqdv_peak_value,
-        "dqdv_peak_soc":   dqdv_peak_soc,
-        "dqdv_area":       dqdv_area,
-        "dqdv_fwhm":       dqdv_fwhm,
+        "dqdv_sim_peak_value": dqdv_sim_peak_value,
+        "dqdv_sim_peak_soc":   dqdv_sim_peak_soc,
+        "dqdv_sim_area":       dqdv_sim_area,
+        "dqdv_sim_fwhm":       dqdv_sim_fwhm,
     }
 
 
@@ -162,31 +165,37 @@ def add_dqdv_features(df: pd.DataFrame) -> pd.DataFrame:
     Q = caps[:, np.newaxis] * t[np.newaxis, :]
 
     # ── Peak value + SOC position ──
-    peak_idx        = np.argmax(dqdv, axis=1)
-    dqdv_peak_value = dqdv[np.arange(n), peak_idx]
-    dqdv_peak_soc   = soc[peak_idx]
+    peak_idx            = np.argmax(dqdv, axis=1)
+    dqdv_sim_peak_value = dqdv[np.arange(n), peak_idx]
+    dqdv_sim_peak_soc   = soc[peak_idx]
 
     # ── Area: trapz over Q (uniform spacing per row) ──
-    dq        = caps / (N - 1)
-    dqdv_area = np.sum(
+    dq            = caps / (N - 1)
+    dqdv_sim_area = np.sum(
         (dqdv[:, 1:] + dqdv[:, :-1]) * 0.5 * dq[:, np.newaxis], axis=1
     )
 
     # ── FWHM ──
-    half_max  = dqdv_peak_value / 2.0
+    half_max  = dqdv_sim_peak_value / 2.0
     above     = dqdv > half_max[:, np.newaxis]           # (n, N) bool
     has_any   = above.any(axis=1)
     first_idx = np.argmax(above, axis=1)
     last_idx  = N - 1 - np.argmax(above[:, ::-1], axis=1)
-    dqdv_fwhm = np.where(
+    dqdv_sim_fwhm = np.where(
         has_any,
         Q[np.arange(n), last_idx] - Q[np.arange(n), first_idx],
         0.0,
     )
 
-    df["dqdv_peak_value"] = dqdv_peak_value
-    df["dqdv_peak_soc"]   = dqdv_peak_soc
-    df["dqdv_area"]       = dqdv_area
-    df["dqdv_fwhm"]       = dqdv_fwhm
+    # "dqdv_sim_" prefix (not just "dqdv_") -- these are simulated from a
+    # parametric OCV model, not measured from real V(t) telemetry (no raw
+    # voltage/current time series exists in the cycle-summary datasets this
+    # library loads). The prefix needs to survive into FEATURE_COLUMNS and
+    # any SHAP-style importance table, not just live in this module's
+    # docstring where a reader skimming a column list would never see it.
+    df["dqdv_sim_peak_value"] = dqdv_sim_peak_value
+    df["dqdv_sim_peak_soc"]   = dqdv_sim_peak_soc
+    df["dqdv_sim_area"]       = dqdv_sim_area
+    df["dqdv_sim_fwhm"]       = dqdv_sim_fwhm
 
     return df

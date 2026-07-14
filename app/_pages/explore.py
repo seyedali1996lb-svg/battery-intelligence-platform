@@ -170,7 +170,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
         _radar_axes = [
             ("SOH_Q",        "soh_pct",              False, 100.0, 60.0),
             ("CE (η_CE)",    "ce_rolling_30cy",       False, 1.0,   0.97),
-            ("ICA Peak",     "dqdv_peak_value",       False, None,  0.0),
+            ("ICA Peak (sim)", "dqdv_sim_peak_value", False, None,  0.0),
             ("Q̇_fade",      "fade_rate_30cy",        True,  0.005, 0.0),
             ("R_internal",   "resistance_normalized", True,  1.8,   1.0),
             ("E_throughput", "cumulative_kwh",        False, None,  0.0),

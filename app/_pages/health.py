@@ -531,7 +531,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             "resistance_normalized":("Resistance (norm.)",    "R(n) / R(1) — normalised internal resistance",      "Derived from voltage step at cycle start"),
             "rul_pred":             ("RUL Prediction",        "GBRT model output (leave-cell-out validated)",       "ML model: GradientBoostingRegressor"),
             "ce_rolling_30cy":      ("CE Rolling (30cy)",     "30-cycle rolling mean of coulombic_efficiency",      "Derived: pandas rolling().mean()"),
-            "dqdv_peak_value":      ("dQ/dV Peak Value",      "simulated via LiCoO₂ OCV polynomial model",         "Simulated: simulate_vq_curve()"),
+            "dqdv_sim_peak_value":  ("dQ/dV Peak Value (sim)", "simulated via LiCoO₂ OCV polynomial model",        "Simulated: simulate_vq_curve()"),
             "sop_pct":              ("SOP %",                 "State of Power — rate capability proxy",            "Derived from R_normalized"),
             "c_rate_rolling_10cy":  ("C-rate (10cy avg)",     "charge/discharge rate (A / nominal Ah), 10-cy mean", "Protocol constant (NASA) or synthetic profile"),
             "stress_index":         ("Stress Index",          "Arrhenius(T) × C-rate^0.7 — composite aging driver", "Derived: features.build_features()"),
@@ -672,16 +672,16 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             st.plotly_chart(fig_vq, use_container_width=True)
 
             # ── B) dQ/dV Peak Trend ──
-            dqdv_cols = ["dqdv_peak_soc", "dqdv_peak_value"]
+            dqdv_cols = ["dqdv_sim_peak_soc", "dqdv_sim_peak_value"]
             if all(c in df.columns for c in dqdv_cols):
                 fig_peak = go.Figure()
                 fig_peak.add_trace(go.Scatter(
-                    x=_rdf["cycle_number"], y=_rdf["dqdv_peak_soc"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_sim_peak_soc"],
                     name="Peak SOC Position", line=dict(color="#63b3ed", width=2),
                     hovertemplate="Cycle %{x}: %{y:.3f}<extra>Peak SOC</extra>",
                 ))
                 fig_peak.add_trace(go.Scatter(
-                    x=_rdf["cycle_number"], y=_rdf["dqdv_peak_value"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_sim_peak_value"],
                     name="Peak Amplitude (Ah/V)", line=dict(color="#f6ad55", width=2),
                     yaxis="y2",
                     hovertemplate="Cycle %{x}: %{y:.2f} Ah/V<extra>Peak Amplitude</extra>",
@@ -700,10 +700,10 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 st.caption("Peak SOC shifts left and amplitude drops as active material is lost — a direct electrochemical signature of degradation.")
 
             # ── C) FWHM Trend ──
-            if "dqdv_fwhm" in df.columns:
+            if "dqdv_sim_fwhm" in df.columns:
                 fig_fwhm = go.Figure()
                 fig_fwhm.add_trace(go.Scatter(
-                    x=_rdf["cycle_number"], y=_rdf["dqdv_fwhm"],
+                    x=_rdf["cycle_number"], y=_rdf["dqdv_sim_fwhm"],
                     line=dict(color="#48bb78", width=2),
                     hovertemplate="Cycle %{x}: %{y:.4f} Ah<extra>FWHM</extra>",
                     showlegend=False,
@@ -720,14 +720,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
             # ── ⚗️ Degradation Mechanism — single classification card ──
             _dom_mech, _dom_explain = "Inconclusive", "Insufficient dQ/dV data for classification."
-            if all(c in df.columns for c in ["dqdv_peak_soc", "dqdv_peak_value", "dqdv_fwhm"]):
+            if all(c in df.columns for c in ["dqdv_sim_peak_soc", "dqdv_sim_peak_value", "dqdv_sim_fwhm"]):
                 import numpy as _np2
                 _em = df[df.cycle_number <= df.cycle_number.quantile(0.10)]
                 _lm = df[df.cycle_number >= df.cycle_number.quantile(0.90)]
-                if len(_em) > 0 and len(_lm) > 0 and _em.dqdv_peak_value.mean() > 1e-9 and _em.dqdv_fwhm.mean() > 1e-9:
-                    _ps  = _em.dqdv_peak_soc.mean() - _lm.dqdv_peak_soc.mean()
-                    _ad  = (_em.dqdv_peak_value.mean() - _lm.dqdv_peak_value.mean()) / _em.dqdv_peak_value.mean() * 100
-                    _fw  = (_lm.dqdv_fwhm.mean() - _em.dqdv_fwhm.mean()) / _em.dqdv_fwhm.mean() * 100
+                if len(_em) > 0 and len(_lm) > 0 and _em.dqdv_sim_peak_value.mean() > 1e-9 and _em.dqdv_sim_fwhm.mean() > 1e-9:
+                    _ps  = _em.dqdv_sim_peak_soc.mean() - _lm.dqdv_sim_peak_soc.mean()
+                    _ad  = (_em.dqdv_sim_peak_value.mean() - _lm.dqdv_sim_peak_value.mean()) / _em.dqdv_sim_peak_value.mean() * 100
+                    _fw  = (_lm.dqdv_sim_fwhm.mean() - _em.dqdv_sim_fwhm.mean()) / _em.dqdv_sim_fwhm.mean() * 100
                     if _ps > 0.05 and _ad > 10:
                         _dom_mech = "LLI + LAM"
                         _dom_explain = "Both SEI lithium loss and electrode material loss are active. Typical of combined calendar + high-rate cycling stress."

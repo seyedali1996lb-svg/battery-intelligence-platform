@@ -10,7 +10,7 @@ def test_build_features_adds_expected_columns():
     for col in ["fade_rate_10cy", "fade_rate_30cy", "fade_rate_50cy",
                 "fade_acceleration", "soh_velocity_50cy", "resistance_normalized",
                 "resistance_trend_30cy", "temp_rolling_30cy", "rul",
-                "dqdv_peak_value", "dqdv_area", "dqdv_fwhm", "cumulative_ah"]:
+                "dqdv_sim_peak_value", "dqdv_sim_area", "dqdv_sim_fwhm", "cumulative_ah"]:
         assert col in df.columns, f"missing column: {col}"
 
 

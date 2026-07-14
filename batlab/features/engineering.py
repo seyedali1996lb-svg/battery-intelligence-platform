@@ -6,6 +6,20 @@ produces a feature matrix (X) and targets (y_soh, y_rul) for scikit-learn.
 
 References
 ----------
+These are background/context citations, establishing that the general
+*category* of signal each feature block tracks (fade-rate windows,
+dQ/dV peak shifts, Coulombic Efficiency trends, Arrhenius/rate-dependent
+aging stress) is an established degradation diagnostic in the literature —
+not a claim that this code implements a specific numbered equation from any
+cited paper. None of build_features()'s formulas are transcribed line-for-
+line from a source; the cited papers motivate *why* a feature is worth
+computing, not *how* this code computes it. Only the stress_index block's
+functional form (sub-linear C-rate exponent, Arrhenius temperature term) is
+inspired by a specific physical model (Doyle-Fuller-Newman porous-electrode
+theory) rather than being a general literature-motivated proxy like the
+rest — see its own inline derivation note for exactly what's a physical
+approximation there.
+
 Fade-rate windows, resistance trend, and general capacity-fade diagnostics:
     Birkl, C.R., Roberts, M.R., McTurk, E., Bruce, P.G., Howey, D.A.
     "Degradation diagnostics for lithium ion cells." Journal of Power
@@ -246,11 +260,13 @@ FEATURE_COLUMNS = [
     # conditions from cycle-to-cycle noise. Only meaningful across cells
     # with different temperature profiles (multi-cell training).
     "temp_rolling_30cy",
-    # dQ/dV differential capacity features
-    "dqdv_peak_value",
-    "dqdv_peak_soc",
-    "dqdv_area",
-    "dqdv_fwhm",
+    # dQ/dV differential capacity features -- "sim" in the column name
+    # itself (not just this comment) because these are simulated from a
+    # parametric OCV model, not measured. See batlab.features.dqdv.
+    "dqdv_sim_peak_value",
+    "dqdv_sim_peak_soc",
+    "dqdv_sim_area",
+    "dqdv_sim_fwhm",
     # Coulombic Efficiency — tracks SEI lithium consumption
     "ce_rolling_30cy",
     "ce_drop_rate",

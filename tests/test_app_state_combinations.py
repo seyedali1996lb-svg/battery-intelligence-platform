@@ -390,3 +390,35 @@ def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db
     assert checkboxes and checkboxes[0].value is False, (
         "Engineering details should still default off for non-Engineer roles"
     )
+
+
+def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warning(isolated_db, monkeypatch):
+    """
+    Regression test: settings.py's webhook_url/webhook_secret/webhook_events
+    widgets used to pass both key= (pre-seeded by main.py's hydration block,
+    which reads persisted values from the DB into session_state before the
+    Settings page ever renders) AND a value=/default= kwarg re-reading the
+    same session_state key -- the exact anti-pattern Streamlit warns about
+    via streamlit.elements.lib.policies.check_session_state_rules(). Only
+    reproduces once the DB actually has persisted values for these keys
+    (hydration is a no-op otherwise), matching how it originally surfaced.
+
+    Streamlit only logs this warning once per process
+    (_shown_default_value_warning is a module-level flag), so an earlier
+    test tripping it would hide a regression here -- reset it first.
+    """
+    import streamlit.elements.lib.policies as _policies
+    monkeypatch.setattr(_policies, "_shown_default_value_warning", False)
+    calls = []
+    monkeypatch.setattr(_policies._LOGGER, "warning", lambda *a, **k: calls.append(a))
+
+    isolated_db.set_setting(1, "webhook_url", "https://example.com/hook")
+    isolated_db.set_setting(1, "webhook_secret", "s3cr3t")
+    isolated_db.set_setting(1, "webhook_events", ["CAPACITY_PLUNGE"])
+
+    at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic")
+    at.run()
+
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    duplication_warnings = [c for c in calls if "default value" in str(c[0])]
+    assert duplication_warnings == [], f"session-state duplication warning fired: {duplication_warnings}"

@@ -552,7 +552,7 @@ def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -
         "rul_q10":               ("RUL Q10",                "10th percentile quantile regression",               "ML model quantile regressor"),
         "rul_q90":               ("RUL Q90",                "90th percentile quantile regression",               "ML model quantile regressor"),
         "ce_rolling_30cy":       ("CE Rolling (30cy)",      "30-cycle rolling mean of coulombic_efficiency",     "pandas rolling().mean()"),
-        "dqdv_peak_value":       ("dQ/dV Peak",             "simulated via LiCoO₂ OCV polynomial model",         "simulate_vq_curve() — physics simulation"),
+        "dqdv_sim_peak_value":   ("dQ/dV Peak (sim)",       "simulated via LiCoO₂ OCV polynomial model",         "simulate_vq_curve() — physics simulation"),
         "sop_pct":               ("SOP %",                  "State of Power — rate capability proxy",            "Derived from resistance_normalized"),
     }
 
