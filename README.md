@@ -51,6 +51,8 @@ The full ten-minute tour is [`notebooks/01_quickstart.ipynb`](notebooks/01_quick
 
 [`notebooks/02_data_leakage.ipynb`](notebooks/02_data_leakage.ipynb) reproduces, on real data, why this library validates the way it does: a naive row-level train/test split on the same 4 NASA cells reports **SOH R² = 0.998**. Leave-cell-out — holding out an entire cell, never seen during training — reports **R² = 0.806** on the identical data and model. Both numbers are real; only one of them answers "does this generalize to a cell the model has never seen?" Every model `batlab.models` trains is validated the second way by default.
 
+That honest 0.806 still doesn't say how much of it the model is *earning* — SOH-vs-cycle curves are smooth, so a trivial linear fit (cycle_number → SOH, no feature engineering) might already explain most of the variance. Same notebook checks it under the identical leave-cell-out fold structure: **R² = 0.603**. GBRT's engineered features are worth a real +0.203 over that baseline, not the full 0.806.
+
 ## Datasets
 
 | Dataset | Chemistry | Cells | Auto-download |
@@ -59,6 +61,8 @@ The full ten-minute tour is [`notebooks/01_quickstart.ipynb`](notebooks/01_quick
 | Severson 2019 (*Nature Energy*) | LFP | 12 | Yes (needs `h5py`) |
 | Oxford Path-Dependent 2020 | NCA | 12 (sparse checkpoints) | Yes (needs `mat-io`) |
 | CALCE CS2 (Univ. of Maryland) | LiCoO2 | any, manually placed | No — instructive error tells you where |
+
+Every auto-downloaded archive is SHA-256 checksum-verified against a pinned hash before parsing (`batlab.datasets._integrity`) — a corrupted transfer or a substituted file is rejected, not silently parsed into a schema-valid-looking DataFrame.
 
 See [`docs/datasets/`](docs/datasets/index.md) for schema, citations, and licenses, and [`batlab/datasets/CONTRIBUTING.md`](batlab/datasets/CONTRIBUTING.md) for adding a fifth loader.
 
