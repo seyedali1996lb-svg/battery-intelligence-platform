@@ -2,7 +2,6 @@
 
 import sys
 import os
-import time
 import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
@@ -119,13 +118,20 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         st.rerun()
 
     # ── Status strip + streaming telemetry ────────────────────────────────────
-    # Wrapped in a fragment so the poll loop (below) only re-renders this
-    # region instead of rerunning the whole page (buttons, broker settings,
-    # cell selector) on every 0.5-1s tick. st.rerun() defaults to
-    # scope="app" (a full rerun) even called from inside a fragment, so the
-    # two polling sites below must pass scope="fragment" explicitly to get
-    # the partial-rerun behaviour.
-    @st.fragment
+    # Wrapped in a fragment so periodic refresh only re-renders this region
+    # instead of rerunning the whole page (buttons, broker settings, cell
+    # selector). Auto-refresh uses @st.fragment(run_every=...) rather than a
+    # manual time.sleep()+st.rerun(scope="fragment") loop: that pattern
+    # raises StreamlitAPIException the very first time the fragment executes
+    # as part of a full script run, because scope="fragment" is only valid
+    # from inside an already-in-progress fragment rerun -- which the first
+    # execution never is (confirmed against Streamlit's source, and against
+    # a real deployment where it broke exactly this way). run_every is
+    # Streamlit's own timer-driven fragment-rerun mechanism and has no such
+    # restriction -- no manual sleep/rerun needed at all.
+    _lm_run_every = 0.5 if is_subscriber_connected() else None
+
+    @st.fragment(run_every=_lm_run_every)
     def _telemetry_fragment():
         _sub_connected = is_subscriber_connected()
         _pub_active    = publisher_running()
@@ -193,9 +199,6 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 "→ Press ▶ Start above to begin the replay stream.",
                 "📡",
             )
-            if _sub_connected:
-                time.sleep(0.5)
-                st.rerun(scope="fragment")
             return
 
         # ── Convert to DataFrame ────────────────────────────────────────────────
@@ -406,10 +409,5 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 "<div style='color:#4a5568;font-size:13px;padding:12px 0'>No anomalies detected.</div>",
                 unsafe_allow_html=True,
             )
-
-        # ── Auto-refresh while streaming ────────────────────────────────────────
-        if _sub_connected and _pub_active:
-            time.sleep(1.0)
-            st.rerun(scope="fragment")
 
     _telemetry_fragment()

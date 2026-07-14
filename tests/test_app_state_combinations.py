@@ -422,3 +422,35 @@ def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warni
     assert not at.exception, f"Settings page crashed: {at.exception}"
     duplication_warnings = [c for c in calls if "default value" in str(c[0])]
     assert duplication_warnings == [], f"session-state duplication warning fired: {duplication_warnings}"
+
+
+def test_live_monitor_fragment_does_not_crash_with_an_active_connection(isolated_db, monkeypatch):
+    """
+    Regression test for a production crash on Streamlit Cloud: Live
+    Monitor's telemetry fragment used to call
+    time.sleep(...); st.rerun(scope="fragment") manually inside its two
+    polling sites. st.rerun(scope="fragment") raises StreamlitAPIException
+    the very first time the fragment executes as part of a full script run
+    -- scope="fragment" is only valid from inside an already-in-progress
+    fragment rerun, which the first execution never is. This never
+    reproduced locally: every other Live Monitor test sets lm_telemetry
+    directly in session_state without ever starting a real subscriber, so
+    is_subscriber_connected() was always False and the guarded rerun call
+    never actually ran. It broke the first time a real deployment had an
+    active connection. Fixed by switching to @st.fragment(run_every=...),
+    which needs no manual rerun call -- this test simulates the exact
+    connected state that crashed in production to catch a regression.
+    """
+    import mqtt_stream
+    monkeypatch.setattr(mqtt_stream, "is_subscriber_connected", lambda: True)
+    monkeypatch.setattr(mqtt_stream, "publisher_running", lambda: True)
+    monkeypatch.setattr(mqtt_stream, "drain_telemetry", lambda max_msgs=200: [])
+    monkeypatch.setattr(mqtt_stream, "drain_anomalies", lambda max_msgs=100: [])
+
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005",
+    )
+    at.run()
+
+    assert not at.exception, f"Live Monitor crashed with an active connection: {at.exception}"
