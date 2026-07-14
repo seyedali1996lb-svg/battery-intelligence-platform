@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
     soh_status, NASA_CELL_IDS, render_pack_builder, render_card, cached_detect_knee,
+    cached_match_fleet,
 )
 from design_system import make_badge
 from data_loader import CELL_STRESS_PROFILES
@@ -336,7 +337,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     _traj_matches: dict = {}
     if trajectory_memory is not None:
         try:
-            _traj_matches = trajectory_memory.match_fleet(featured_dfs)
+            _traj_matches = cached_match_fleet(trajectory_memory, featured_dfs)
         except Exception:
             _traj_matches = {}
 
@@ -531,7 +532,10 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     _e6_eol_cnt  = sum(1 for r in rows if r["status"] == "End of Life")
     _e6_deg_cnt  = sum(1 for r in rows if r["status"] == "Degrading")
     _e6_accel    = sum(1 for r in rows if r["trend"] == "Accelerating")
-    _e6_traj_cnt = sum(1 for r in rows if trajectory_memory and trajectory_memory.match(r["cell_id"], featured_dfs.get(r["cell_id"], pd.DataFrame())) is not None) if trajectory_memory else 0
+    # Reuses _traj_matches (built above via cached_match_fleet()) instead of a
+    # third per-row trajectory_memory.match() call — same scoping as the
+    # original (only counts cells present in `rows`), just not recomputed.
+    _e6_traj_cnt = sum(1 for r in rows if r["cell_id"] in _traj_matches)
     _REPL_USD    = 150
     _DELAY_30D   = 30  # days
     _CPD         = float(st.session_state.get("cycles_per_day", 1.0))

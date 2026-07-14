@@ -14,7 +14,7 @@ import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "app"))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
-from utils import metric_tile_html, load_tenant_bundle_cached, cached_detect_knee
+from utils import metric_tile_html, load_tenant_bundle_cached, cached_detect_knee, cached_match_fleet
 
 
 def test_metric_tile_html_includes_label_and_value():
@@ -149,3 +149,64 @@ def test_cached_detect_knee_recomputes_for_different_series():
     soh, cyc = _knee_series()
     soh_other = soh * 0.5  # genuinely different SOH curve
     assert cached_detect_knee(soh, cyc) != cached_detect_knee(soh_other, cyc)
+
+
+# ---------------------------------------------------------------------------
+# cached_match_fleet() — regression coverage for TrajectoryMemory.match_fleet()
+# being recomputed up to 3x per Fleet-page render, plus once on EVERY page in
+# the app (main.py calls it unconditionally before page routing just to size
+# a sidebar badge). This was the highest-impact finding of the whole perf
+# review since it taxed every single interaction anywhere, not just Fleet.
+# ---------------------------------------------------------------------------
+
+class _FakeTrajectoryMemory:
+    """Minimal stand-in with the one method cached_match_fleet() calls --
+    doesn't need real TrajectoryMemory's cosine-similarity machinery, just
+    something whose call count is observable."""
+    def __init__(self):
+        self.calls = 0
+
+    def match_fleet(self, all_featured_dfs):
+        self.calls += 1
+        return {cid: f"match-for-{cid}" for cid in all_featured_dfs}
+
+
+def _fleet_dfs():
+    import pandas as pd
+    return {
+        "CellA": pd.DataFrame({"soh_pct": [100.0, 95.0], "cycle_number": [1, 2]}),
+        "CellB": pd.DataFrame({"soh_pct": [100.0, 90.0], "cycle_number": [1, 2]}),
+    }
+
+
+def test_cached_match_fleet_matches_uncached_result():
+    cached_match_fleet.clear()
+    tm = _FakeTrajectoryMemory()
+    dfs = _fleet_dfs()
+    assert cached_match_fleet(tm, dfs) == tm.match_fleet(dfs)
+
+
+def test_cached_match_fleet_only_computes_once_across_repeated_calls():
+    """The actual regression: main.py's sidebar-badge call and Fleet page's
+    own call, on the same featured_dfs content, must hit match_fleet() once
+    combined, not twice -- simulating exactly that scenario here."""
+    cached_match_fleet.clear()
+    tm = _FakeTrajectoryMemory()
+    dfs = _fleet_dfs()
+
+    sidebar_badge_result = cached_match_fleet(tm, dfs)       # main.py's call
+    fleet_page_result = cached_match_fleet(tm, dfs.copy())   # fleet.py's call, same content
+
+    assert sidebar_badge_result == fleet_page_result
+    assert tm.calls == 1, f"expected exactly 1 real match_fleet() call across both call sites, got {tm.calls}"
+
+
+def test_cached_match_fleet_recomputes_for_different_fleet_content():
+    cached_match_fleet.clear()
+    tm = _FakeTrajectoryMemory()
+    dfs = _fleet_dfs()
+    dfs_smaller = {"CellA": dfs["CellA"]}
+
+    cached_match_fleet(tm, dfs)
+    cached_match_fleet(tm, dfs_smaller)
+    assert tm.calls == 2, f"different fleet content must trigger a real recompute, got {tm.calls} calls"

@@ -29,6 +29,31 @@ def cached_detect_knee(soh_series: "pd.Series", cycle_series: "pd.Series") -> di
     """
     return _detect_knee(soh_series, cycle_series)
 
+
+@st.cache_data(show_spinner=False)
+def cached_match_fleet(_trajectory_memory, all_featured_dfs: dict) -> dict:
+    """Cached wrapper around TrajectoryMemory.match_fleet().
+
+    This was being computed up to 3x per Fleet-page render, and once on
+    EVERY page in the app (not just Fleet) — app/main.py calls
+    match_fleet() unconditionally before page routing just to size the
+    sidebar trajectory-match badge, so every single widget interaction
+    anywhere paid this cost, not only on Fleet.
+
+    _trajectory_memory (leading underscore -> excluded from Streamlit's
+    own argument hashing, its documented convention) is a TrajectoryMemory
+    instance built once per session and never mutated afterward (see
+    app/main.py's "built once per session" block) — safe to exclude from
+    the cache key since it can't silently go stale mid-session the way a
+    per-request object could. all_featured_dfs (the actual cache key) is
+    a dict[str, DataFrame] — st.cache_data has built-in support for
+    hashing dicts of DataFrames by content, verified before relying on it
+    here, so no manual key construction is needed the way the PDF caching
+    fix needed one (TrajectoryMemory's signatures aren't reliably
+    JSON-serializable the way a passport dict is).
+    """
+    return _trajectory_memory.match_fleet(all_featured_dfs)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

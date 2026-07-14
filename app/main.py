@@ -29,7 +29,7 @@ from batlab.features.engineering import build_features, get_model_matrix
 from batlab.models.gbrt import train_models, predict
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
-from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cached
+from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cached, cached_match_fleet
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
 
 
@@ -1122,9 +1122,12 @@ def main():
             st.rerun()
         st.stop()
 
-    # A4: count flagged cells for trajectory chip in sidebar
+    # A4: count flagged cells for trajectory chip in sidebar (cached — see
+    # utils.cached_match_fleet; on the Fleet page itself this is the same
+    # active_fdfs Fleet's own match_fleet() call uses, so it's a cache hit
+    # there too, not a second computation)
     try:
-        _traj_flag = len(trajectory_memory.match_fleet(active_fdfs))
+        _traj_flag = len(cached_match_fleet(trajectory_memory, active_fdfs))
     except Exception:
         _traj_flag = 0
 
