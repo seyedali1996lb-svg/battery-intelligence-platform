@@ -41,6 +41,22 @@ from batlab.features.dqdv import add_dqdv_features
 # Feature engineering
 # ---------------------------------------------------------------------------
 
+# Single source of truth for "which version of build_features()/
+# get_model_matrix() produced this feature DataFrame". Bump whenever either
+# function changes in a way that changes the resulting feature values.
+#
+# Two other modules need to know when this changes and previously both kept
+# their own separately-maintained copy of the string, in sync only by a
+# non-blocking CI warning (a human had to remember to bump both):
+#   - src/bundle_cache.py combines this with its own MODEL_VERSION (for
+#     batlab/models/gbrt.py changes) into the app's disk-cache signature.
+#   - batlab/validation/manifest.py re-exports this directly as its
+#     FEATURE_VERSION, since a benchmark manifest's reproducibility depends
+#     only on feature values, not on model training code.
+# Both now import it from here instead, so it is structurally impossible
+# for them to disagree with each other or with this module.
+FEATURE_VERSION = "v9-crate-stress-index-dod-proxy"
+
 def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.DataFrame:
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 

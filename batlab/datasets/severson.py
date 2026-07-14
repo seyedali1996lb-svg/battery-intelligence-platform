@@ -6,10 +6,10 @@ before capacity degradation", Nature Energy 2019.
 Data: https://data.matr.io/1/  (research use)
 Citation/license: see batlab.cite.cite(dataset="severson2019")
 
-Downloads Batch 1 of the MATLAB file on first call, extracts per-cycle
-discharge capacity, resistance, and temperature for 12 representative cells,
-and caches them as CSVs in data/raw/severson/. Returns the standardized
-batlab cycle schema (see batlab.datasets.schema).
+Downloads Batch 1 of the MATLAB file (~2.9 GB) on first call, extracts
+per-cycle discharge capacity, resistance, and temperature for 12
+representative cells, and caches them as CSVs in data/raw/severson/. Returns
+the standardized batlab cycle schema (see batlab.datasets.schema).
 
 Cell selection spans 4 cycle-life bands:
   Short  (<500 cy):   b1c2, b1c3, b1c4
@@ -24,9 +24,17 @@ import numpy as np
 import pandas as pd
 import requests
 
+from batlab.datasets._integrity import verify_sha256
 from batlab.datasets.schema import compute_soh_pct
 
 _BATCH1_URL = "https://data.matr.io/1/api/v1/file/5c86c0b5fa2ede00015ddf66/download"
+
+# SHA-256 of the file _BATCH1_URL served when last verified against a real
+# download (2026-07 — see batlab/datasets/_integrity.py for why this is
+# checked). Batch 1's full HDF5 .mat is ~2.9 GB (all cells in the batch,
+# not just the 12 this loader extracts), not the "~115 MB" this module's
+# docstring used to claim.
+_EXPECTED_SHA256 = "9d928ab978f0e3c70b31cb833a749fedd35094d01af76475d69b40aa3497f5ba"
 
 _CELL_KEYS = [
     "b1c2",  "b1c3",  "b1c4",
@@ -70,12 +78,16 @@ def _download_and_cache(status_fn=None) -> None:
 
     if not mat_path.exists():
         if status_fn:
-            status_fn("Downloading Severson 2019 Batch 1 (~115 MB, one-time)…")
+            status_fn("Downloading Severson 2019 Batch 1 (~2.9 GB, one-time)…")
         resp = requests.get(_BATCH1_URL, stream=True, timeout=300)
         resp.raise_for_status()
         with open(mat_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=1 << 20):
                 f.write(chunk)
+
+    if status_fn:
+        status_fn("Verifying download integrity…")
+    verify_sha256(mat_path, _EXPECTED_SHA256, "Severson 2019 Batch 1 .mat")
 
     if status_fn:
         status_fn("Parsing Severson cell summaries…")

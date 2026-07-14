@@ -29,6 +29,7 @@ import pandas as pd
 import requests
 import scipy.io
 
+from batlab.datasets._integrity import verify_sha256
 from batlab.datasets.schema import compute_soh_pct
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,12 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
 # Source: nasa.gov/intelligent-systems-division/.../pcoe-data-set-repository/
 NASA_ZIP_URL = "https://phm-datasets.s3.amazonaws.com/NASA/5.+Battery+Data+Set.zip"
 
+# SHA-256 of the file NASA_ZIP_URL served when last verified against a real
+# download (2026-07 — see batlab/datasets/_integrity.py for why this is
+# checked). This zip is the S3 mirror's full "5. Battery Data Set" (all PCoE
+# battery experiments, ~200 MB), not just the four cells this loader uses.
+EXPECTED_SHA256 = "82302a7db4fc1b34e0b6676326610438d43b816bdf11a69d1d012a464ef2f92e"
+
 CELL_IDS = ["B0005", "B0006", "B0007", "B0018"]
 
 CHEMISTRY = "LiCoO2"
@@ -54,37 +61,40 @@ CHEMISTRY = "LiCoO2"
 def download_nasa_zip(dest_dir: str) -> str:
     """
     Download the NASA battery ZIP to dest_dir and return the local path.
-    Skips download if the file already exists.
+    Skips download if the file already exists. Either way, verifies the
+    file's SHA-256 against EXPECTED_SHA256 before returning it — a corrupted
+    transfer or a tampered/substituted file must not be silently parsed.
     """
     os.makedirs(dest_dir, exist_ok=True)
     zip_path = os.path.join(dest_dir, "nasa_battery.zip")
 
     if os.path.exists(zip_path):
         print(f"[cache] ZIP already present at {zip_path}")
-        return zip_path
+    else:
+        print("Downloading NASA Battery Dataset (~200 MB)...")
+        print(f"  URL: {NASA_ZIP_URL}")
+        try:
+            r = requests.get(NASA_ZIP_URL, stream=True, timeout=120)
+            r.raise_for_status()
+            total = int(r.headers.get("content-length", 0))
+            downloaded = 0
+            with open(zip_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = 100 * downloaded / total
+                        print(f"\r  {pct:.0f}%  ({downloaded // 1024} KB)", end="", flush=True)
+            print()
+            print(f"[ok] Saved to {zip_path}")
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                f"Download failed: {exc}\n"
+                "Please manually download the NASA Battery Aging dataset and\n"
+                "place B0005.mat, B0006.mat, B0007.mat, B0018.mat in data/raw/"
+            ) from exc
 
-    print("Downloading NASA Battery Dataset (~22 MB)...")
-    print(f"  URL: {NASA_ZIP_URL}")
-    try:
-        r = requests.get(NASA_ZIP_URL, stream=True, timeout=120)
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        downloaded = 0
-        with open(zip_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total:
-                    pct = 100 * downloaded / total
-                    print(f"\r  {pct:.0f}%  ({downloaded // 1024} KB)", end="", flush=True)
-        print()
-        print(f"[ok] Saved to {zip_path}")
-    except requests.RequestException as exc:
-        raise RuntimeError(
-            f"Download failed: {exc}\n"
-            "Please manually download the NASA Battery Aging dataset and\n"
-            "place B0005.mat, B0006.mat, B0007.mat, B0018.mat in data/raw/"
-        ) from exc
+    verify_sha256(zip_path, EXPECTED_SHA256, "NASA Battery Dataset ZIP")
     return zip_path
 
 
@@ -396,7 +406,7 @@ def _try_direct_download(cell_id: str, data_dir: str) -> str | None:
 
 if __name__ == "__main__":
     print("=== NASA Battery Dataset Loader ===\n")
-    print("This will download the NASA PCoE Battery Aging dataset (~22 MB)")
+    print("This will download the NASA PCoE Battery Aging dataset (~200 MB)")
     print("and convert it into batlab's standardized cycle schema.\n")
 
     force = "--force" in sys.argv

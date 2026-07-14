@@ -15,22 +15,29 @@ import pathlib
 
 import joblib
 
+from batlab.features.engineering import FEATURE_VERSION
+
 CACHE_DIR = pathlib.Path(__file__).parent.parent / ".cache" / "bundles"
 
-# Bump this string whenever feature engineering or model code changes in a way
-# that makes cached featured_dfs or bundles incompatible with the current code.
-# The version is mixed into the cache signature so old caches are automatically
-# invalidated and rebuilt on the next app start.
-FEATURE_VERSION = "v9-crate-stress-index-dod-proxy"
+# FEATURE_VERSION (imported above) is the single source of truth for
+# batlab.features.engineering.build_features() changes — see that module.
+# MODEL_VERSION covers the other thing this cache stores: trained model
+# bundles. Bump it when batlab/models/gbrt.py changes in a way that makes a
+# cached bundle stale WITHOUT the features themselves changing (e.g. new
+# hyperparameters, a new model class) — nothing else tracks that, so it
+# can't be centralized the way FEATURE_VERSION was.
+MODEL_VERSION = "v1-gbrt-quantile"
+
+CACHE_VERSION = f"{FEATURE_VERSION}+{MODEL_VERSION}"
 
 
 def _signature(battery_dict: dict) -> str:
     """
-    Cache signature: cell IDs + cycle counts + feature version.
-    Changing FEATURE_VERSION above busts the cache across all cells.
+    Cache signature: cell IDs + cycle counts + cache version.
+    Changing CACHE_VERSION above busts the cache across all cells.
     """
     sig = {cid: len(cell["cycles"]) for cid, cell in sorted(battery_dict.items())}
-    sig["__feature_version__"] = FEATURE_VERSION
+    sig["__cache_version__"] = CACHE_VERSION
     return hashlib.sha256(json.dumps(sig).encode()).hexdigest()[:20]
 
 

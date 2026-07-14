@@ -46,11 +46,23 @@ import numpy as np
 import pandas as pd
 import requests
 
+from batlab.datasets._integrity import verify_sha256
+
 _GROUP_URLS: dict[int, str] = {
     1: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dwh246s15b",
     2: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dt148fh185",
     3: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dff365528c",
     4: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/d41687h50f",
+}
+
+# SHA-256 of each group's zip as served by the URLs above, last verified
+# against a real download (2026-07 — see batlab/datasets/_integrity.py for
+# why this is checked).
+_EXPECTED_SHA256: dict[int, str] = {
+    1: "72425bb5bb4c205161bd6d688219cdb8db54bc069249aedee1bd06ae4d771c1d",
+    2: "4641d6cfc8bc9535c8ec8fe69ed45d02447b2e3420816c0b66785f56687a61a6",
+    3: "f4ee448f0e35ee41ee249382fb3cd6f7c0a2abb1b5774a32146a7c5f5d7e0159",
+    4: "57b2ebeb6775525aa2275905c8e1406c2be8c63f49ba0c5ef28019f18e8cf736",
 }
 
 # batlab/datasets/oxford.py -> repo root is three levels up.
@@ -252,17 +264,22 @@ def _find_zip_entry(names: list[str], group: int, cell: int, tpg_index: int) -> 
 
 
 def _download_group_zip(group: int, status_fn=None) -> None:
+    """Download (if needed) Group `group`'s zip, then verify its SHA-256
+    against _EXPECTED_SHA256 before returning — covers both a fresh download
+    and reuse of an already-cached zip, so a corrupted transfer or a
+    tampered/substituted file is never silently parsed."""
     zip_path = _zip_path(group)
     _RAW_DIR.mkdir(parents=True, exist_ok=True)
-    if zip_path.exists():
-        return
-    if status_fn:
-        status_fn(f"Downloading Oxford Path-Dependent Group {group} (one-time)…")
-    resp = requests.get(_GROUP_URLS[group], stream=True, timeout=600)
-    resp.raise_for_status()
-    with open(zip_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=1 << 20):
-            f.write(chunk)
+    if not zip_path.exists():
+        if status_fn:
+            status_fn(f"Downloading Oxford Path-Dependent Group {group} (one-time)…")
+        resp = requests.get(_GROUP_URLS[group], stream=True, timeout=600)
+        resp.raise_for_status()
+        with open(zip_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=1 << 20):
+                f.write(chunk)
+
+    verify_sha256(zip_path, _EXPECTED_SHA256.get(group), f"Oxford Group {group} zip")
 
 
 def _extract_group(group: int, status_fn=None) -> None:
