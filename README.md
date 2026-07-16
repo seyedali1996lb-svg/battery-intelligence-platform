@@ -12,6 +12,8 @@ format, so a reported R² can be checked, not just cited.
 
 **[Full documentation →](https://seyedali1996lb-svg.github.io/battery-intelligence-platform/)** (or build locally: `mkdocs serve` after `pip install -e ".[docs]"`)
 
+**[Methodology →](METHODOLOGY.md)** — the actual formula behind every index and calculation in the platform (SOH, RUL, stress index, dQ/dV, knee detection, GBRT/quantile models, LCO validation, trajectory memory, PyBaMM physics projection, anomaly thresholds, second-life economics), with what's measured vs. derived vs. machine-learned vs. simulated vs. an illustrative assumption stated explicitly for each one.
+
 ---
 
 ## Install
