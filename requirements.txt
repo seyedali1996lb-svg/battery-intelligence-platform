@@ -4,6 +4,7 @@
 -e .
 
 pandas
+openpyxl
 scikit-learn
 scipy
 plotly
