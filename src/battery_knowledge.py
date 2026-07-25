@@ -208,4 +208,126 @@ DOCUMENTS: list[dict] = [
             "a simple linear extrapolation from before the knee would suggest."
         ),
     },
+
+    # -----------------------------------------------------------------------
+    # IEA industry-context entries (added for the Solar + Storage Sizing
+    # feature's "Industry context" callout). Same 2-field schema as above —
+    # citations embedded inline in the prose, not a separate field. Grounded
+    # in real figures pulled from the actual IEA report pages (WebFetch +
+    # WebSearch against iea.org while writing these, not from memory) —
+    # see src/deployment_sizing.py's module docstring for why citation
+    # accuracy matters here as much as anywhere else in this app.
+    # -----------------------------------------------------------------------
+    {
+        "id": "iea-ev-battery-deployment-2026",
+        "text": (
+            "Global EV battery deployment reached about 1.2 TWh in 2025, roughly "
+            "30% higher than 2024, and the IEA projects this climbing toward "
+            "3 TWh by 2030 and 4-5 TWh by 2035 (higher still, near 9 TWh, under "
+            "its Net Zero pathway). That scale matters for second-life planning: "
+            "the much larger fleet of batteries entering service now becomes the "
+            "much larger pool of batteries reaching end-of-life a decade or so "
+            "later, which is the pipeline second-life and recycling capacity has "
+            "to be sized against. (Source: IEA, Global EV Outlook 2026.)"
+        ),
+    },
+    {
+        "id": "iea-lfp-chemistry-shift-2026",
+        "text": (
+            "Lithium iron phosphate (LFP) now accounts for more than 55% of EV "
+            "batteries deployed globally, up from around 50% in 2024 — but the "
+            "shift is regionally lopsided. LFP powers roughly two-thirds of "
+            "electric car sales in China and other emerging markets, while EU "
+            "adoption is above 10% and US LFP share actually fell sharply "
+            "(nearly halved) in 2025. Since LFP's flatter degradation curve and "
+            "lower fire risk are exactly the traits that make a cell attractive "
+            "for stationary second-life reuse, this regional split shapes where "
+            "second-life-suitable chemistry is actually concentrated. (Source: "
+            "IEA, Global EV Outlook 2026.)"
+        ),
+    },
+    {
+        "id": "iea-battery-cost-trends-2026",
+        "text": (
+            "Average EV battery prices fell about 8% in 2025, with LFP packs "
+            "running over 40% cheaper per kWh than NMC on average — and "
+            "regional manufacturing costs diverged further, with Chinese "
+            "battery prices roughly 30% below North America's and 35% below "
+            "Europe's. Falling new-cell prices are a double-edged sword for "
+            "second-life economics: they lower the cost of a fresh replacement "
+            "cell, which is exactly the competing option a second-life reuse "
+            "decision has to beat on price. (Source: IEA, Global EV Outlook 2026.)"
+        ),
+    },
+    {
+        "id": "iea-stationary-storage-secondlife-2026",
+        "text": (
+            "Stationary battery storage is now a major share of total battery "
+            "deployment in its own right — about one-third of all battery "
+            "deployment in the United States in 2025 was stationary storage, "
+            "not EVs. At the same time, the IEA describes second-life reuse of "
+            "retired EV batteries as still 'challenging' in practice: safety "
+            "requalification requirements and the falling price of new cells "
+            "both cut into the economic case for repurposing a used pack rather "
+            "than buying new. The expanding second-hand EV market is, in the "
+            "meantime, extending batteries' first-life service before they "
+            "reach that reuse-or-recycle decision at all. (Source: IEA, Global "
+            "EV Outlook 2026.)"
+        ),
+    },
+    {
+        "id": "iea-battery-patent-dominance-2026",
+        "text": (
+            "Battery technology reached an unprecedented 40% share of all "
+            "energy-technology patents in 2023, a concentration the IEA says no "
+            "other single energy technology has ever achieved — reflecting how "
+            "central batteries have become to energy security and industrial "
+            "policy, not just to clean-energy deployment. China, Korea, and "
+            "Japan remain the leading sources of lithium-ion patents, though "
+            "their relative shares have shifted substantially: Japan's share of "
+            "cathode-material patents fell from about 50% in 2010 to under 10% "
+            "by 2022, while China's rose from roughly 4% to nearly 40% over the "
+            "same period. (Source: IEA, The State of Energy Innovation 2026.)"
+        ),
+    },
+    {
+        "id": "iea-battery-circularity-growth-2026",
+        "text": (
+            "Patent filings covering battery circularity — recycling, in-vehicle "
+            "reuse, and repurposing for new applications such as stationary "
+            "storage — grew at roughly 42% per year from 2017 to 2023, far "
+            "outpacing both battery manufacturing patents (about 16%/yr) and "
+            "patenting generally (about 2%/yr) over the same period. The scale "
+            "driving that growth is real: the IEA projects around 1.2 million "
+            "EV batteries reaching end-of-life by 2030, rising to roughly 14 "
+            "million by 2040. Asian companies held about 63% of these patent "
+            "families in 2023, with China's share rising from about 5% (2013) "
+            "to 29% (2023); European companies held roughly 20%, concentrated "
+            "in collection and material-recovery technology rather than reuse. "
+            "(Source: IEA, battery recycling innovation coverage accompanying "
+            "The State of Energy Innovation 2026.)"
+        ),
+    },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Direct id lookup — for callers that need one specific, guaranteed-topical
+# snippet (e.g. the Solar + Storage Sizing "Industry context" callout) rather
+# than TF-IDF-ranked retrieval. copilot_retrieval.retrieve()'s min_score
+# threshold is tuned for open-ended Copilot Q&A and offers no guarantee a
+# short, specific query returns one of these particular documents — a direct
+# id lookup has no such ambiguity.
+# ---------------------------------------------------------------------------
+
+_DOCUMENTS_BY_ID = {d["id"]: d["text"] for d in DOCUMENTS}
+
+# Shown next to the Solar + Storage Sizing calculator's result — the most
+# directly on-topic entry for "sizing a second-life battery for stationary
+# storage use".
+INDUSTRY_CONTEXT_DOC_IDS = ["iea-stationary-storage-secondlife-2026"]
+
+
+def get_document(doc_id: str) -> "str | None":
+    """Return one corpus entry's text by id, or None if the id doesn't exist."""
+    return _DOCUMENTS_BY_ID.get(doc_id)
