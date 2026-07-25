@@ -499,7 +499,12 @@ def page_decision(
             )
 
     # ── Full Economics (expander) ────────────────────────────────────────────
-    with st.expander("Full economics & breakeven analysis", expanded=False):
+    # mode_landing_ess: set (and cleared) by the "Plan a storage deployment"
+    # use-case landing in app/main.py — read here (not popped) so this outer
+    # expander also opens on that one arrival rerun; page_consequences() pops
+    # the same flag for its own nested Solar + Storage Sizing expander.
+    _ess_landing = st.session_state.get("mode_landing_ess", False)
+    with st.expander("Full economics & breakeven analysis", expanded=_ess_landing):
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
 
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────

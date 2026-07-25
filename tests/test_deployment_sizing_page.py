@@ -44,6 +44,7 @@ def _logged_in_app(role: str, page: str, data_mode: str, **extra_state) -> AppTe
     at.session_state["auth_role"] = "admin"
     at.session_state["auth_name"] = "Administrator"
     at.session_state["role_chosen"] = True
+    at.session_state["mode_chosen"] = True
     at.session_state["tour_seen"] = True
     at.session_state["user_role"] = role
     at.session_state["page"] = page

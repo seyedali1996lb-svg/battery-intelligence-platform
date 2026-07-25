@@ -676,7 +676,15 @@ def page_consequences(
         )
 
     # ── H1b: Solar + Storage Sizing ─────────────────────────────────────────
-    with st.expander("☀️ Solar + Storage Sizing", expanded=False):
+    # mode_landing_ess: set by the "Plan a storage deployment" use-case landing
+    # in app/main.py — popped (not just read) here since page_consequences()
+    # is the single common function every route to this page funnels through
+    # (main.py's router sends "decision"/"consequences"/"recommendations" all
+    # through decision.py's wrapper, which already read this same flag for
+    # its own outer expander before calling this function), so this is the
+    # one safe place to clear it for good.
+    _ess_landing = st.session_state.pop("mode_landing_ess", False)
+    with st.expander("☀️ Solar + Storage Sizing", expanded=_ess_landing):
         from deployment_sizing import SIZING_ASSUMPTIONS, size_deployment, night_window_hours
 
         _md_html(

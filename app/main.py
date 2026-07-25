@@ -571,7 +571,7 @@ _TOUR_STEPS = [
 # collision, since adding one here is the only thing a new overlay needs to
 # do to be sequenced correctly (no need to hand-write an "and the other one
 # is already done" condition again, the way the tour's fix originally did).
-_FIRST_RUN_OVERLAYS = ["role_chosen", "tour_seen"]  # session_state "done" flags, in show-order
+_FIRST_RUN_OVERLAYS = ["role_chosen", "mode_chosen", "tour_seen"]  # session_state "done" flags, in show-order
 
 
 def _active_first_run_overlay() -> "str | None":
@@ -716,6 +716,11 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                          help="Switch role (Engineer / Fleet Manager / Executive)"):
                 st.session_state["role_chosen"] = False
                 st.rerun()
+
+        if st.button("↺ Change focus", key="change_mode_btn", use_container_width=True,
+                     help="Re-pick Diagnose / Monitor / Plan — doesn't change your role"):
+            st.session_state["mode_chosen"] = False
+            st.rerun()
 
         # ── Nav (grouped) ──
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -1119,6 +1124,72 @@ def main():
                     st.session_state.page = "compliance"
                 else:
                     st.session_state.page = "overview"
+            st.rerun()
+        st.stop()
+
+    # Use-case landing interstitial — shown once per session, right after the
+    # role picker. Deliberately outcome-oriented labels ("Diagnose"/"Monitor"/
+    # "Plan"), not "BMS"/"ESS" mode names: this app has no real hardware
+    # connection today (src/bms_connectors.py's adapters are documented-shape-
+    # only, never validated against a live account; Live Monitor's MQTT feed
+    # is an honestly-labelled simulation), so badging this as a live
+    # management mode would oversell what's real. This only decides where you
+    # land and which already-existing expanders start open — no new
+    # persistent state that changes how any page renders afterward.
+    if _active_first_run_overlay() == "mode_chosen":
+        st.markdown(
+            "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
+            "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
+            "What are you here to do?</div>"
+            "<div style='font-size:14px;color:#718096;margin-bottom:32px'>"
+            "This just picks where you land — everything stays reachable from the sidebar either way.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        _m1, _m2, _m3 = st.columns(3)
+        _mode_picked = None
+        with _m1:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>🔋</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Diagnose a battery</div>"
+                "<div style='font-size:12px;color:#718096'>SOH/RUL, degradation mechanism, recommendations</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select", key="onboard_mode_diagnose", use_container_width=True):
+                _mode_picked = "diagnose"
+        with _m2:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>📡</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Monitor live telemetry</div>"
+                "<div style='font-size:12px;color:#718096'>Streaming SOH/anomaly view (demo mode simulates the feed)</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select", key="onboard_mode_monitor", use_container_width=True):
+                _mode_picked = "monitor"
+        with _m3:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                "<div style='font-size:28px;margin-bottom:8px'>☀️</div>"
+                "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Plan a storage deployment</div>"
+                "<div style='font-size:12px;color:#718096'>Size a second-life battery + solar, payback/NPV</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select", key="onboard_mode_plan", use_container_width=True):
+                _mode_picked = "plan"
+        if _mode_picked:
+            st.session_state["mode_chosen"] = True
+            if _mode_picked == "monitor":
+                st.session_state.page = "live_monitor"
+            elif _mode_picked == "plan":
+                st.session_state.page = "decision"
+                st.session_state["mode_landing_ess"] = True
+            else:
+                st.session_state.page = "overview"
             st.rerun()
         st.stop()
 

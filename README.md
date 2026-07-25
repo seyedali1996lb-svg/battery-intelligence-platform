@@ -81,6 +81,12 @@ pip install -r requirements.txt
 streamlit run app/main.py
 ```
 
+### Vision: with real hardware and data
+
+Everything the app does today is **post-hoc**: it diagnoses a battery from cycling data that already happened — real measured data for NASA/Severson/Oxford/CALCE, or an honestly-labelled synthetic fleet, but never a live device. Two pieces already exist in a "real API shape, never proven against a live account" state — `src/bms_connectors.py`'s Victron VRM and Orion Jr2 adapters, and the MQTT-based Live Monitor (`src/mqtt_stream.py`, `src/live_feed.py`), which currently streams a *simulated* telemetry feed rather than a real one.
+
+Given real hardware or a live data feed, the honest next step isn't a bigger diagnostic model — it's closing that loop: validating the existing adapters against an actual Victron/Orion account instead of leaving them "documented but untested," and pointing Live Monitor's stream at real telemetry instead of a simulation. Only once that's real would it make sense to talk about genuine **BMS** (live SOH/SOC tracking, protection thresholds, real-time anomaly alerts against actual sensor noise) or **ESS** (real dispatch and tariff-arbitrage execution, not just the sizing/payback planning `app/_pages/consequences.py`'s Solar + Storage Sizing calculator already does) modes — as their own first-class entry points alongside today's per-cell diagnostic view, not as a rebrand of the same simulated data under a more impressive-sounding name.
+
 ## Development
 
 ```bash

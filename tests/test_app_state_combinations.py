@@ -58,6 +58,7 @@ def _logged_in_app(role: str, page: str, data_mode: str, **extra_state) -> AppTe
     at.session_state["auth_role"] = "admin"
     at.session_state["auth_name"] = "Administrator"
     at.session_state["role_chosen"] = True
+    at.session_state["mode_chosen"] = True
     at.session_state["tour_seen"] = True
     at.session_state["user_role"] = role
     at.session_state["page"] = page
@@ -454,3 +455,79 @@ def test_live_monitor_fragment_does_not_crash_with_an_active_connection(isolated
     at.run()
 
     assert not at.exception, f"Live Monitor crashed with an active connection: {at.exception}"
+
+
+# ---------------------------------------------------------------------------
+# Use-case landing picker (Diagnose / Monitor / Plan)
+# ---------------------------------------------------------------------------
+
+def test_use_case_picker_renders_when_mode_not_yet_chosen(isolated_db):
+    """role_chosen=True but mode_chosen unset must show the new interstitial
+    (not fall through to a page, not crash) -- the sequencing this whole
+    feature depends on (_FIRST_RUN_OVERLAYS in app/main.py)."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", mode_chosen=False)
+    at.run()
+    assert not at.exception, f"Use-case picker crashed: {at.exception}"
+    text = _all_text(at)
+    assert "What are you here to do?" in text
+    assert "Diagnose a battery" in text
+    assert "Monitor live telemetry" in text
+    assert "Plan a storage deployment" in text
+
+
+def test_use_case_picker_diagnose_lands_on_overview(isolated_db):
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", mode_chosen=False)
+    at.run()
+    at.button(key="onboard_mode_diagnose").click().run()
+    assert not at.exception
+    assert at.session_state["page"] == "overview"
+    assert at.session_state["mode_chosen"] is True
+
+
+def test_use_case_picker_monitor_lands_on_live_monitor(isolated_db):
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", mode_chosen=False)
+    at.run()
+    at.button(key="onboard_mode_monitor").click().run()
+    assert not at.exception
+    assert at.session_state["page"] == "live_monitor"
+
+
+def test_use_case_picker_plan_lands_on_decision_with_expanders_open(isolated_db):
+    """The one case with a side effect beyond page routing: both nested
+    expanders (decision.py's outer one, consequences.py's inner
+    Solar + Storage Sizing one) must open on this arrival, and the
+    mode_landing_ess flag must be gone afterward -- proving the
+    read-then-pop sequencing works and won't force them open again on a
+    later, unrelated visit."""
+    at = _logged_in_app(
+        role="Engineer", page="overview", data_mode="nasa", mode_chosen=False,
+        selected_cell="B0006",  # NASA cell at ~58% SOH -- past the second-life gate, so the
+                                 # inner expander actually renders (not the "Still in Primary Life" stub)
+    )
+    at.run()
+    at.button(key="onboard_mode_plan").click().run()
+    assert not at.exception, f"Plan landing crashed: {at.exception}"
+    assert at.session_state["page"] == "decision"
+    assert "mode_landing_ess" not in at.session_state
+
+    expander_labels = [e.label for e in at.expander]
+    assert any("Full economics" in label for label in expander_labels), expander_labels
+    assert any("Solar" in label for label in expander_labels), expander_labels
+    for e in at.expander:
+        if "Full economics" in e.label or "Solar" in e.label:
+            assert e.proto.expanded, f"Expander '{e.label}' should be open on the Plan landing"
+
+
+def test_use_case_picker_does_not_reopen_expanders_on_a_later_unrelated_visit(isolated_db):
+    """Regression guard for the pop-once behavior: visiting the Decision page
+    normally (mode_landing_ess never set) must NOT force either expander open."""
+    at = _logged_in_app(
+        role="Engineer", page="decision", data_mode="nasa",
+        selected_cell="B0006",
+    )
+    at.run()
+    assert not at.exception
+    for e in at.expander:
+        if "Full economics" in e.label or "Solar" in e.label:
+            assert not e.proto.expanded, f"Expander '{e.label}' should stay collapsed on a normal visit"
+
