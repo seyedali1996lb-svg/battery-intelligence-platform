@@ -356,6 +356,7 @@ def test_size_deployment_calls_pv_yield_fn_at_most_once_per_kwp_step():
         max_payoff_years=15, max_investment_eur=50_000,
         n_cells_range=range(1, 11),
         pv_yield_fn=fake, pv_yield_annual_fn=annual_fn,
+        pv_weather_source="single_year",
     )
     # 6 pv_kwp steps (0..max), but pv_kwp==0 is synthesized without a call,
     # so at most 5 real calls regardless of how many n_cells are explored
@@ -377,6 +378,7 @@ def test_size_deployment_returns_feasible_winner_when_affordable():
         low_tariff_hours=night_window_hours(23, 7),
         max_payoff_years=25, max_investment_eur=200_000,
         pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+        pv_weather_source="single_year",
     )
     assert result["feasible"] is True
     assert result["winner"] is not None
@@ -393,6 +395,7 @@ def test_size_deployment_near_miss_when_nothing_feasible():
         max_payoff_years=0.01,  # impossible constraint
         max_investment_eur=1_000_000,
         pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+        pv_weather_source="single_year",
     )
     assert result["feasible"] is False
     assert result["winner"] is not None  # honest near-miss, not a blank result
@@ -413,6 +416,7 @@ def test_size_deployment_degrades_gracefully_on_pv_errors():
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=15, max_investment_eur=50_000,
         pv_yield_fn=failing_pv_yield, pv_yield_annual_fn=failing_annual,
+        pv_weather_source="single_year",
     )
     # pv_kwp=0 step is synthesized locally (no PVGIS call needed), so a
     # battery-only result should still come back rather than an empty result.
@@ -435,6 +439,7 @@ def test_size_deployment_refine_pass_improves_or_matches_coarse_precision():
         max_payoff_years=25, max_investment_eur=150_000,
         n_cells_range=range(1, 21), n_cells_coarse_steps=6,
         pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+        pv_weather_source="single_year",
     )
     # Some candidate other than an exact coarse-step n_cells value should
     # exist (proof the refine pass actually ran and added candidates).
@@ -452,6 +457,7 @@ def test_size_deployment_candidate_count_is_bounded():
         max_payoff_years=25, max_investment_eur=150_000,
         n_cells_range=range(1, 21),
         pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+        pv_weather_source="single_year",
     )
     assert len(result["candidates"]) <= 60
 
@@ -507,6 +513,7 @@ def test_size_deployment_multiyear_scaling_changes_result_vs_unscaled():
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=25, max_investment_eur=200_000,
         n_cells_range=range(1, 6),
+        pv_weather_source="single_year",
     )
     unscaled = size_deployment(pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake), **kwargs)
     scaled = size_deployment(pv_yield_fn=fake, pv_yield_annual_fn=annual_2x, **kwargs)
@@ -532,6 +539,7 @@ def test_size_deployment_scaling_note_recorded_on_annual_fetch_failure():
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=25, max_investment_eur=200_000,
         pv_yield_fn=fake, pv_yield_annual_fn=failing_annual,
+        pv_weather_source="single_year",
     )
     # Never fatal — candidates still produced despite the annual-averaging failure.
     assert result["candidates"]
@@ -558,6 +566,7 @@ def test_size_deployment_utc_offset_override_is_honored():
             n_cells_range=range(1, 2),
             pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
             utc_offset_override=offset,
+            pv_weather_source="single_year",
         )
 
     result_0 = _run(0)
@@ -582,6 +591,7 @@ def test_size_deployment_load_hourly_kwh_override_bypasses_monthly_shape():
         n_cells_range=range(1, 2),
         pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
         load_hourly_kwh_override=custom_hourly_load,
+        pv_weather_source="single_year",
     )
     # With the absurd monthly total actually used, grid_import would dwarf
     # everything; assert the small custom-load total was used instead by
@@ -604,6 +614,7 @@ def test_size_deployment_load_hourly_kwh_override_wrong_length_raises():
             max_payoff_years=25, max_investment_eur=200_000,
             pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
             load_hourly_kwh_override=[1.0] * 100,  # wrong length
+            pv_weather_source="single_year",
         )
 
 

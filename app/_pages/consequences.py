@@ -48,6 +48,13 @@ _COMPASS_DIRECTIONS = {
     "S": 180, "SW": 225, "W": 270, "NW": 315,
 }
 
+# All cost/tariff presets below are point-in-time research snapshots, not
+# live-updated data — surfaced explicitly in the UI so a user doesn't mistake
+# a cited figure for a currently-guaranteed rate. Germany's feed-in tariff in
+# particular is on a scheduled downward path (EEG degression), so this date
+# matters more than it might for a genuinely stable figure.
+COST_PRESETS_RESEARCHED_AS_OF = "July 2026"
+
 # Only Germany/France get a feed-in-tariff preset — researched live across
 # 6 EU markets (Italy, Spain, Netherlands, Poland, Austria, Portugal), none
 # of which have a comparably simple, currently-stable flat per-kWh export
@@ -59,8 +66,8 @@ _COMPASS_DIRECTIONS = {
 # forcing a misleading single-number preset — "Custom" covers all of them.
 FEED_IN_TARIFF_PRESETS = {
     "None (self-consumption only)": (0.0, None),
-    "Germany (~€0.079/kWh, EEG Aug 2025)": (0.079, "EEG feed-in tariff for surplus-feed systems ≤10kW, effective Aug 2025 (pv-magazine reporting). 20-year guaranteed rate at commissioning, so a new installation's rate may differ."),
-    "France (~€0.235/kWh, <3kWp)": (0.235, "French residential feed-in tariff for systems <3kWp, revised quarterly — this is a snapshot, verify the current published rate before relying on it."),
+    "Germany (~€0.079/kWh, EEG Aug 2025)": (0.079, f"EEG feed-in tariff for surplus-feed systems ≤10kW, effective Aug 2025 (pv-magazine reporting) — researched {COST_PRESETS_RESEARCHED_AS_OF}, a point-in-time snapshot. 20-year guaranteed rate at commissioning, so a new installation's rate may differ; EEG rates are also on a scheduled downward path (degression), so verify the current published rate."),
+    "France (~€0.235/kWh, <3kWp)": (0.235, f"French residential feed-in tariff for systems <3kWp, revised quarterly — researched {COST_PRESETS_RESEARCHED_AS_OF}, a snapshot, verify the current published rate before relying on it."),
     "Custom": (None, None),
 }
 
@@ -121,23 +128,42 @@ def _cached_tmy_ghi(lat: float, lon: float) -> dict:
     return fetch_tmy_ghi(lat=lat, lon=lon)
 
 
+def _parse_two_column_timestamp_csv(raw: "pd.DataFrame") -> "list | None":
+    """Shared logic for _parse_hourly_consumption_csv()'s two-column path —
+    parses column 0 as a timestamp, column 1 as a numeric value, sorts
+    chronologically, and resamples to hourly (summed, so sub-hourly
+    interval reads aggregate correctly). Returns list[8760] only if that
+    produces exactly one full year of hourly rows, else None."""
+    try:
+        ts = pd.to_datetime(raw.iloc[:, 0], errors="coerce")
+        vals = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
+        combined = pd.DataFrame({"ts": ts, "val": vals}).dropna()
+        if len(combined) == 0:
+            return None
+        hourly = combined.set_index("ts").sort_index()["val"].resample("h").sum()
+        if len(hourly) == 8760:
+            return hourly.tolist()
+    except Exception:
+        pass
+    return None
+
+
 def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
     """Parses a user-uploaded consumption CSV in either of two formats:
 
-    (a) two columns (timestamp, kWh), header row expected — a real
-    smart-meter-style export. The timestamp column is parsed, data sorted
-    chronologically and resampled to hourly (summed, so sub-hourly
-    interval reads aggregate correctly), and must produce exactly 8760
-    hourly rows (one full year) after resampling — tried first if the file
-    has 2+ columns.
+    (a) two columns (timestamp, kWh) — a real smart-meter-style export.
+    Tried first if the file has 2+ columns, with a header row (the common
+    convention), then again treating row 0 as data (a genuinely
+    header-less export) if the header-row attempt didn't produce exactly
+    8760 hourly rows after resampling.
 
     (b) one numeric column, 8760 rows, an optional header row
     (auto-detected — if the first cell isn't numeric, it's treated as a
     header and dropped) — used as-is, already assumed hourly and in order.
     Tried if (a) isn't applicable or doesn't produce exactly 8760 rows.
 
-    Returns a list[8760] on success, or None if neither format parses to
-    exactly 8760 numeric values."""
+    Returns a list[8760] on success, or None if none of these formats
+    parse to exactly 8760 numeric values."""
     try:
         uploaded_file.seek(0)
     except Exception:
@@ -146,13 +172,23 @@ def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
     try:
         raw = pd.read_csv(uploaded_file)
         if raw.shape[1] >= 2:
-            ts = pd.to_datetime(raw.iloc[:, 0], errors="coerce")
-            vals = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
-            combined = pd.DataFrame({"ts": ts, "val": vals}).dropna()
-            if len(combined) > 0:
-                hourly = combined.set_index("ts").sort_index()["val"].resample("h").sum()
-                if len(hourly) == 8760:
-                    return hourly.tolist()
+            result = _parse_two_column_timestamp_csv(raw)
+            if result is not None:
+                return result
+    except Exception:
+        pass
+
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    try:
+        raw_no_header = pd.read_csv(uploaded_file, header=None)
+        if raw_no_header.shape[1] >= 2:
+            result = _parse_two_column_timestamp_csv(raw_no_header)
+            if result is not None:
+                return result
     except Exception:
         pass
 
@@ -784,8 +820,10 @@ def page_consequences(
                      "per-country BESS cost breakdown was found in research for this "
                      "tool, so battery cost stays at the EU-wide default regardless.",
             )
+            if siz_site_region != "EU average (default)":
+                st.caption(f"Cost snapshot researched {COST_PRESETS_RESEARCHED_AS_OF} — verify current pricing before relying on it.")
             siz_weather_source_label = st.selectbox(
-                "PV weather data", ["Single reference year (2019)", "Typical year (TMY shape)"],
+                "PV weather data", ["Typical year (TMY shape)", "Single reference year (2013)"],
                 key="siz_weather_source",
                 help="Typical year uses PVGIS's TMY (statistically representative "
                      "months from a multi-year dataset) to shape hour-to-hour PV "
@@ -953,6 +991,36 @@ def page_consequences(
                     "Every PV x battery combination evaluated (coarse + refine passes) — "
                     "the winner above is the highest-NPV row satisfying your payoff/investment limits."
                 )
+
+                _plottable = [c for c in result["candidates"] if c["payback_years"] is not None]
+                if _plottable:
+                    _cand_fig = go.Figure()
+                    for _label, _feasible_flag, _color in (
+                        ("Feasible", True, "#48bb78"), ("Not feasible", False, "#718096"),
+                    ):
+                        _pts = [c for c in _plottable if c["feasible"] == _feasible_flag]
+                        if _pts:
+                            _cand_fig.add_trace(go.Scatter(
+                                x=[c["payback_years"] for c in _pts],
+                                y=[c["npv_eur"] for c in _pts],
+                                mode="markers", name=_label,
+                                marker=dict(color=_color, size=9),
+                                text=[f"{c['pv_kwp']:.2f} kWp, {c['n_cells']} cells" for c in _pts],
+                                hovertemplate="%{text}<br>Payback: %{x:.1f} yr<br>NPV: €%{y:,.0f}<extra></extra>",
+                            ))
+                    _cand_fig.add_trace(go.Scatter(
+                        x=[winner["payback_years"]], y=[winner["npv_eur"]],
+                        mode="markers", name="Winner",
+                        marker=dict(color="#f6ad55", size=15, symbol="star", line=dict(color="#1e2a38", width=1)),
+                        text=[f"{winner['pv_kwp']:.2f} kWp, {winner['n_cells']} cells"],
+                        hovertemplate="%{text}<br>Payback: %{x:.1f} yr<br>NPV: €%{y:,.0f}<extra></extra>",
+                    ))
+                    _cand_fig.update_layout(base_layout(
+                        xaxis=dict(title="Payback (years)", zeroline=False),
+                        yaxis=dict(title="NPV (€)", zeroline=False),
+                    ))
+                    st.plotly_chart(_cand_fig, use_container_width=True)
+
                 _cand_df = pd.DataFrame([
                     {
                         "PV (kWp)": round(c["pv_kwp"], 2),

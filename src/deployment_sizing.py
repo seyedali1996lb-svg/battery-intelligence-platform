@@ -166,12 +166,13 @@ SIZING_ASSUMPTIONS = {
         "label": "Cited estimate",
         "source": (
             "Controls only the DISCHARGE floor at -20°C in "
-            "temperature_derate_factor() — the -20°C discharge / 0°C charge "
-            "floor boundaries and ~60-65°C high-temperature ceilings are "
-            "grounded in general commercial Li-ion BESS operating-range "
-            "guidance (e.g. a 280Ah LFP cell's derating documentation, "
-            "surveyed via EVreporter, 2023); charging below 0°C risking "
-            "lithium plating is the same mechanism cited in "
+            "temperature_derate_factor() — the -20°C/60°C discharge range and "
+            "5-45°C charge fast-charge window / 0°C no-charge floor / 50°C "
+            "charge ceiling are grounded in Battery University / Cadex's "
+            "'BU-410: Charging at High and Low Temperatures' (a widely-cited "
+            "industry reference), corroborated by a 280Ah LFP cell's "
+            "derating documentation surveyed via EVreporter (2023); charging "
+            "below 0°C risking lithium plating is the same mechanism cited in "
             "battery_knowledge.py's 'iec62619-undertemperature' entry, per "
             "IEC 62619:2022. The exact ramp SHAPE between the full-power band "
             "and each floor (not just the boundary temperatures) remains "
@@ -386,23 +387,26 @@ def temperature_derate_factor(
 
     - "discharge": full power down to 0°C, linearly reduced to floor_factor
       (default 0.3, SIZING_ASSUMPTIONS["temp_derate_floor_factor"]) at
-      -20°C, and toward the same floor above 65°C. Li-ion cells can
-      typically discharge down to roughly -20°C, just at reduced power.
-    - "charge": full power down to 5°C, dropping steeply to a near-zero
-      floor (0.05, not user-adjustable) at 0°C, and toward the same floor
-      above 60°C. Most Li-ion chemistries effectively cannot accept charge
-      below 0°C without risking lithium plating (see IEC 62619:2022 and
-      this app's own battery_knowledge.py "iec62619-undertemperature"
-      entry for the mechanism) — charge gets a much steeper/lower floor
-      than discharge, a real qualitative difference, not the same curve
-      applied symmetrically to both directions.
+      -20°C, and toward the same floor above 60°C. Li-ion cells' permissible
+      discharge range is commonly cited as -20°C to 60°C.
+    - "charge": full power in a 5-45°C fast-charge window, dropping steeply
+      to a near-zero floor (0.05, not user-adjustable) at 0°C ("no charge
+      permitted below freezing" — most Li-ion chemistries risk lithium
+      plating charging below 0°C, see IEC 62619:2022 and this app's own
+      battery_knowledge.py "iec62619-undertemperature" entry for the
+      mechanism), and toward the same floor above 50°C (charging above
+      50°C is often chargers'-prohibited). Charge gets a much steeper/lower
+      floor than discharge, a real qualitative difference, not the same
+      curve applied symmetrically to both directions.
 
-    Source for the -20°C discharge floor / 0°C charge floor / ~60-65°C
-    high-temperature ceilings: general commercial Li-ion BESS operating-range
-    guidance (e.g. a 280Ah LFP cell's derating documentation, surveyed via
-    EVreporter, 2023). The exact SHAPE of each ramp (not just the boundary
-    temperatures) is still engineering judgment, not a specific datasheet
-    curve for any one cell/BMS.
+    Source for the specific boundary temperatures (5°C/45°C fast-charge
+    window, 0°C no-charge floor, 50°C charge ceiling, -20°C/60°C discharge
+    range): Battery University / Cadex, "BU-410: Charging at High and Low
+    Temperatures" — a widely-cited industry reference — corroborated by a
+    280Ah LFP cell's derating documentation (surveyed via EVreporter, 2023).
+    The exact SHAPE of each ramp BETWEEN the full-power band and each floor
+    (not just the boundary temperatures themselves) is still engineering
+    judgment, not a specific datasheet curve for any one cell/BMS.
 
     Full power (1.0) within [min_full_power_c, max_full_power_c], linearly
     reduced outside that band down to floor_factor at floor_temp_c (cold) /
@@ -414,7 +418,7 @@ def temperature_derate_factor(
         if floor_temp_c is None:
             floor_temp_c = 0.0
         if high_floor_temp_c is None:
-            high_floor_temp_c = 60.0
+            high_floor_temp_c = 50.0
         if floor_factor is None:
             floor_factor = 0.05
     else:
@@ -423,7 +427,7 @@ def temperature_derate_factor(
         if floor_temp_c is None:
             floor_temp_c = -20.0
         if high_floor_temp_c is None:
-            high_floor_temp_c = 65.0
+            high_floor_temp_c = 60.0
         if floor_factor is None:
             floor_factor = 0.3
 
@@ -763,7 +767,7 @@ def size_deployment(
     assumptions: Optional[dict] = None,
     reference_year: Optional[int] = None,
     load_hourly_kwh_override: Optional[list] = None,
-    pv_weather_source: str = "single_year",
+    pv_weather_source: str = "typical_year",
     tmy_ghi_fn: Optional[Callable] = None,
 ) -> dict:
     """
@@ -788,29 +792,32 @@ def size_deployment(
     longitude-based approximation — pass a real known civil UTC offset for
     the site when available.
 
-    PV yield depends only on pv_kwp, not on n_cells — pv_yield_fn (defaults
+    pv_weather_source="typical_year" (the DEFAULT — chosen because it's both
+    more accurate and lighter per unique pv_kwp step than single_year, see
+    below) uses TMY global-horizontal-irradiance data (tmy_ghi_fn, defaults
+    to pvgis_client.fetch_tmy_ghi — fetched ONCE for the whole site, not per
+    pv_kwp, since TMY is a weather dataset independent of PV system
+    geometry) to redistribute each pv_kwp's real PVcalc monthly kWh totals
+    (pv_yield_annual_fn, defaults to pvgis_client.fetch_pv_yield) across
+    hours via build_typical_year_pv_shape() — a more representative shape
+    AND correct magnitude in one step. If TMY or the monthly PVcalc fetch
+    fails, this mode falls back to pv_weather_source="single_year" below
+    (logged in "scaling_notes", never fatal).
+
+    pv_weather_source="single_year" (the pre-TMY approach, still fully
+    supported and used as the above mode's fallback): pv_yield_fn (defaults
     to pvgis_client.fetch_pv_yield_hourly, resolved inside the function body
     so tests can inject a fake without patching a module attribute) is
     called AT MOST ONCE PER UNIQUE pv_kwp step. Its single-reference-year
     result is then scaled to PVGIS's multi-year climate average via
-    pv_yield_annual_fn (defaults to pvgis_client.fetch_pv_yield, the PVcalc
-    endpoint — one more call per unique pv_kwp step, same dedup) and
-    scale_hourly_to_multiyear_average() — if that second call fails, the
-    candidate still proceeds on the unscaled single-year data (logged in
-    "scaling_notes", never fatal). The result (PV + ambient temperature,
-    both shifted to local time via shift_to_local_hours()) is cached and
-    reused across every n_cells candidate at that pv_kwp.
+    pv_yield_annual_fn and scale_hourly_to_multiyear_average() — if that
+    second call fails, the candidate still proceeds on the unscaled
+    single-year data (logged in "scaling_notes", never fatal). The result
+    (PV + ambient temperature, both shifted to local time via
+    shift_to_local_hours()) is cached and reused across every n_cells
+    candidate at that pv_kwp.
 
-    pv_weather_source="typical_year" (default "single_year") tries a better
-    shape instead: TMY global-horizontal-irradiance data (tmy_ghi_fn,
-    defaults to pvgis_client.fetch_tmy_ghi — fetched ONCE for the whole
-    site, not per pv_kwp, since TMY is a weather dataset independent of PV
-    system geometry) redistributes each pv_kwp's real PVcalc monthly kWh
-    totals across hours via build_typical_year_pv_shape(), giving both a
-    more representative shape AND correct magnitude in one step (no
-    separate scale_hourly_to_multiyear_average() call needed in this mode).
-    If TMY or the monthly PVcalc fetch fails, this mode falls back to the
-    exact same single_year path above (logged in "scaling_notes", never fatal).
+    Either way, PV yield depends only on pv_kwp, not on n_cells.
 
     Sizing precision: a coarse pass (n_pv_steps x n_cells_coarse_steps,
     <=36 candidates) finds an approximate winner, then a refine pass fixes

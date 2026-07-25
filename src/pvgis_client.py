@@ -61,11 +61,18 @@ PVGIS_PVCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_2/PVcalc"
 PVGIS_SERIESCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_2/seriescalc"
 PVGIS_TMY_URL = "https://re.jrc.ec.europa.eu/api/v5_2/tmy"
 
-# 2019 verified non-leap (365 days -> exactly 8760 hourly records) and within
-# PVGIS-SARAH2's valid year range for European sites. Used as the single
-# fixed reference year for the hourly dispatch simulation — NOT a claim that
-# 2019's weather was a "typical" year; see fetch_pv_yield_hourly()'s docstring.
-HOURLY_REFERENCE_YEAR = 2019
+# 2013 verified non-leap (365 days -> exactly 8760 hourly records) AND
+# verified live to return valid data across all 3 of PVGIS's regional
+# radiation databases: PVGIS-SARAH2 (Europe/Africa), PVGIS-NSRDB (the
+# Americas — whose valid seriescalc year range is only 2005-2015, so the
+# previous default of 2019 would have failed there entirely, confirmed
+# live via a Los Angeles test that returned "Please enter an integer
+# between 2005 and 2015"), and PVGIS-ERA5 (elsewhere, e.g. Asia). Used as
+# the single fixed reference year for the hourly dispatch simulation — NOT
+# a claim that 2013's weather was a "typical" year; see
+# fetch_pv_yield_hourly()'s docstring, and build_typical_year_pv_shape()
+# in deployment_sizing.py for a better-shaped alternative.
+HOURLY_REFERENCE_YEAR = 2013
 
 
 def compass_to_pvgis_azimuth(compass_deg: float) -> float:

@@ -76,13 +76,19 @@ def test_solar_storage_sizing_expander_renders_without_exception(isolated_db):
 
 def test_solar_storage_sizing_degrades_gracefully_when_pvgis_unavailable(isolated_db, monkeypatch):
     """Clicking Calculate when PVGIS is unreachable must show an honest
-    empty state / warning, never an uncaught stack trace."""
+    empty state / warning, never an uncaught stack trace. The default
+    weather source is "typical_year" (TMY), which itself falls back to the
+    single-year path on failure -- so both fetch_tmy_ghi() and
+    fetch_pv_yield_hourly() must be simulated as down to exercise the
+    fully-unavailable scenario end to end."""
     import pvgis_client
 
     def _always_fails(**kwargs):
         return {"error": "simulated PVGIS outage"}
 
+    monkeypatch.setattr(pvgis_client, "fetch_tmy_ghi", _always_fails)
     monkeypatch.setattr(pvgis_client, "fetch_pv_yield_hourly", _always_fails)
+    monkeypatch.setattr(pvgis_client, "fetch_pv_yield", _always_fails)
 
     at = _logged_in_app(
         role="Engineer", page="consequences", data_mode="nasa",
@@ -122,8 +128,14 @@ def test_solar_storage_sizing_calculate_flow_completes_promptly(isolated_db, mon
     def _fast_annual(**kwargs):
         return {"annual_kwh": 8760.0, "monthly_kwh": [730.0] * 12, "months": list(range(1, 13))}
 
+    def _fast_tmy(**kwargs):
+        return {"ghi_wm2": [100.0 if (h % 24) in range(8, 17) else 0.0 for h in range(8760)], "temp_c": [15.0] * 8760}
+
+    # Default weather source is "typical_year" — mock all three so the flow
+    # never touches the real network regardless of which path it takes.
     monkeypatch.setattr(pvgis_client, "fetch_pv_yield_hourly", _fast_hourly)
     monkeypatch.setattr(pvgis_client, "fetch_pv_yield", _fast_annual)
+    monkeypatch.setattr(pvgis_client, "fetch_tmy_ghi", _fast_tmy)
 
     at = _logged_in_app(
         role="Engineer", page="consequences", data_mode="nasa",
@@ -218,6 +230,22 @@ def test_parse_hourly_consumption_csv_two_column_sub_hourly_resamples():
     assert parsed is not None
     assert len(parsed) == 8760
     assert all(v == pytest.approx(2.0) for v in parsed)  # 4 x 0.5 kWh per hour
+
+
+def test_parse_hourly_consumption_csv_two_column_header_less():
+    """A genuinely header-less timestamp+kWh export (data starts on row 1,
+    no 'timestamp,kWh' row) must still parse via the header-less retry."""
+    import io
+    import pandas as pd
+    from _pages.consequences import _parse_hourly_consumption_csv
+
+    idx = pd.date_range("2023-01-01", periods=8760, freq="h")
+    lines = [f"{ts.isoformat()},3.25" for ts in idx]  # no header row at all
+    buf = io.StringIO("\n".join(lines))
+    parsed = _parse_hourly_consumption_csv(buf)
+    assert parsed is not None
+    assert len(parsed) == 8760
+    assert all(v == pytest.approx(3.25) for v in parsed)
 
 
 def test_solar_storage_sizing_typical_year_and_region_preset_render_candidate_table(isolated_db, monkeypatch):
