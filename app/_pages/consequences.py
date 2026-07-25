@@ -48,11 +48,15 @@ _COMPASS_DIRECTIONS = {
     "S": 180, "SW": 225, "W": 270, "NW": 315,
 }
 
-# Only Germany/France get a feed-in-tariff preset — researched live (this
-# session): Italy incentivizes via a tax-credit mechanism (not a flat
-# per-kWh export rate) and Spain compensates at a daily marginal price (no
-# single stable number) — neither can be cited honestly as one figure, so
-# they're deliberately omitted rather than forcing a misleading preset.
+# Only Germany/France get a feed-in-tariff preset — researched live across
+# 6 EU markets (Italy, Spain, Netherlands, Poland, Austria, Portugal), none
+# of which have a comparably simple, currently-stable flat per-kWh export
+# rate to cite honestly: Italy uses a tax-credit mechanism, Spain and
+# Poland compensate at a variable spot/marginal price, the Netherlands runs
+# 1:1 net metering (not a separate export tariff, and being phased out by
+# 2027), Austria's rate varies with market price for larger systems, and no
+# current Portugal figure was found. Deliberately omitted rather than
+# forcing a misleading single-number preset — "Custom" covers all of them.
 FEED_IN_TARIFF_PRESETS = {
     "None (self-consumption only)": (0.0, None),
     "Germany (~€0.079/kWh, EEG Aug 2025)": (0.079, "EEG feed-in tariff for surplus-feed systems ≤10kW, effective Aug 2025 (pv-magazine reporting). 20-year guaranteed rate at commissioning, so a new installation's rate may differ."),
@@ -65,8 +69,8 @@ FEED_IN_TARIFF_PRESETS = {
 def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float, year: int) -> dict:
     """Cached wrapper around pvgis_client.fetch_pv_yield_hourly() — PVGIS's
     historical-year hourly output doesn't change hour to hour, and this is
-    the only calculation on this page that hits a network API, so results
-    are cached for a day per input combo. Passed to
+    one of only two calculations on this page that hit a network API, so
+    results are cached for a day per input combo. Passed to
     deployment_sizing.size_deployment() as its pv_yield_fn — azimuth_deg
     here is already in PVGIS convention (size_deployment converts once from
     the user's compass bearing before calling this for each pv_kwp step)."""
@@ -75,6 +79,39 @@ def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_d
         lat=lat, lon=lon, peakpower_kwp=peakpower_kwp, tilt_deg=tilt_deg,
         azimuth_deg=azimuth_deg, year=year,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def _cached_pv_yield_annual(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float) -> dict:
+    """Cached wrapper around pvgis_client.fetch_pv_yield() (PVcalc, multi-year
+    climate average) — passed to size_deployment() as pv_yield_annual_fn,
+    used to scale the single-reference-year hourly shape to a long-term
+    average total (deployment_sizing.scale_hourly_to_multiyear_average())."""
+    from pvgis_client import fetch_pv_yield
+    return fetch_pv_yield(
+        lat=lat, lon=lon, peakpower_kwp=peakpower_kwp, tilt_deg=tilt_deg, azimuth_deg=azimuth_deg,
+    )
+
+
+def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
+    """Parses a user-uploaded hourly consumption CSV: one numeric column,
+    8760 rows, an optional header row (auto-detected — if the first cell
+    isn't numeric, it's treated as a header and dropped). Returns a
+    list[8760] on success, or None if the file doesn't parse to exactly
+    8760 numeric values."""
+    try:
+        raw = pd.read_csv(uploaded_file, header=None)
+        col = raw.iloc[:, 0]
+        try:
+            float(col.iloc[0])
+        except (TypeError, ValueError):
+            col = col.iloc[1:]
+        values = pd.to_numeric(col, errors="coerce").dropna().tolist()
+    except Exception:
+        return None
+    if len(values) != 8760:
+        return None
+    return values
 
 
 # ---------------------------------------------------------------------------
@@ -555,22 +592,37 @@ def page_consequences(
             </div>
             <div style="font-size:11px;color:#4a5568;margin-bottom:16px;line-height:1.6">
                 Runs a real hour-by-hour (8760 hours/year) dispatch simulation — not a
-                monthly approximation. Still a documented heuristic, not a forecast-aware
-                optimizer, and uses one fixed historical year of PVGIS weather data —
-                see the "Solar + Storage Sizing" row in Settings → Configure's roadmap
-                table for the full list of simplifications.
+                monthly approximation. PV magnitude is scaled to PVGIS's multi-year
+                climate average (the hour-to-hour shape is still one reference year's
+                real weather), and the battery's power cap derates with ambient
+                temperature. Still a documented heuristic, not a forecast-aware
+                optimizer — a full LP/MILP replacement was considered and explicitly
+                declined, see the "Solar + Storage Sizing" row in Settings → Configure's
+                roadmap table for the full list of simplifications.
             </div>
             """
         )
 
         siz_c1, siz_c2, siz_c3 = st.columns(3)
         siz_custom_df = None
+        siz_hourly_upload = None
         with siz_c1:
             st.markdown("**Consumption**")
             siz_shape = st.selectbox(
-                "Profile", list(SEASONAL_SHAPES.keys()) + ["Custom"], key="siz_shape",
+                "Profile", list(SEASONAL_SHAPES.keys()) + ["Custom", "Upload hourly CSV"], key="siz_shape",
             )
-            if siz_shape == "Custom":
+            if siz_shape == "Upload hourly CSV":
+                st.caption(
+                    "One numeric column, 8760 rows (Jan 1 00:00 → Dec 31 23:00, local "
+                    "time), optional header — e.g. exported from a smart meter. This is "
+                    "the most accurate consumption input this tool supports."
+                )
+                _uploaded = st.file_uploader("Hourly kWh CSV", type=["csv"], key="siz_hourly_csv")
+                if _uploaded is not None:
+                    siz_hourly_upload = _parse_hourly_consumption_csv(_uploaded)
+                    if siz_hourly_upload is None:
+                        st.error("Couldn't parse this file into exactly 8760 numeric hourly values.")
+            elif siz_shape == "Custom":
                 st.caption("Enter your own monthly kWh (e.g. from utility bills).")
                 _default_custom = pd.DataFrame({
                     "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
@@ -586,9 +638,17 @@ def page_consequences(
                     "Annual consumption (kWh)", min_value=0.0, value=4000.0, step=100.0,
                     key="siz_annual_kwh",
                 )
-            siz_daily_shape = st.selectbox(
-                "Daily shape", list(DAILY_LOAD_SHAPES.keys()), key="siz_daily_shape",
-            )
+            siz_weekend_shape_label = "Flat"
+            if siz_shape != "Upload hourly CSV":
+                siz_daily_shape = st.selectbox(
+                    "Daily shape", list(DAILY_LOAD_SHAPES.keys()), key="siz_daily_shape",
+                )
+                siz_use_weekend_shape = st.checkbox("Different shape on weekends", key="siz_use_weekend_shape")
+                if siz_use_weekend_shape:
+                    siz_weekend_shape_label = st.selectbox(
+                        "Weekend daily shape", list(DAILY_LOAD_SHAPES.keys()),
+                        index=0, key="siz_weekend_daily_shape",
+                    )
         with siz_c2:
             st.markdown("**Tariff**")
             siz_tariff_model_label = st.selectbox(
@@ -643,6 +703,18 @@ def page_consequences(
                 "Available area (m²)", min_value=0.0, value=30.0, step=1.0,
                 key="siz_area",
             )
+            siz_tz_mode = st.selectbox(
+                "Timezone", ["Auto (from longitude)", "Custom UTC offset"], key="siz_tz_mode",
+                help="PVGIS's hourly data is UTC-timestamped; the longitude estimate can "
+                     "be off by ~1h near timezone boundaries or during DST — override it "
+                     "here if you know the site's real civil offset.",
+            )
+            siz_utc_offset_override = None
+            if siz_tz_mode == "Custom UTC offset":
+                siz_utc_offset_override = st.number_input(
+                    "UTC offset (hours)", min_value=-12, max_value=14, value=1, step=1,
+                    key="siz_utc_offset",
+                )
 
         fin_c1, fin_c2 = st.columns(2)
         with fin_c1:
@@ -675,32 +747,47 @@ def page_consequences(
                     st.caption(_preset_note)
 
         if st.button("Calculate", key="siz_calculate_btn"):
-            if siz_shape == "Custom" and siz_custom_df is not None:
-                monthly_consumption = [float(v) for v in siz_custom_df["kWh"]]
+            if siz_shape == "Upload hourly CSV" and siz_hourly_upload is None:
+                st.error("Upload a valid 8760-row hourly CSV before calculating.")
             else:
-                monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]
-            daily_shape = DAILY_LOAD_SHAPES[siz_daily_shape]
-            azimuth_compass = _COMPASS_DIRECTIONS[siz_orientation]
-            tariff_model = {
-                "Single rate": "single_rate", "Day/Night": "day_night", "Custom hours": "custom",
-            }[siz_tariff_model_label]
+                load_hourly_override = None
+                if siz_shape == "Upload hourly CSV":
+                    load_hourly_override = siz_hourly_upload
+                    monthly_consumption = [0.0] * 12  # ignored — load_hourly_kwh_override takes over
+                    daily_shape = DAILY_LOAD_SHAPES["Flat"]
+                    weekend_shape = None
+                else:
+                    if siz_shape == "Custom" and siz_custom_df is not None:
+                        monthly_consumption = [float(v) for v in siz_custom_df["kWh"]]
+                    else:
+                        monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]
+                    daily_shape = DAILY_LOAD_SHAPES[siz_daily_shape]
+                    weekend_shape = DAILY_LOAD_SHAPES[siz_weekend_shape_label] if siz_use_weekend_shape else None
+                azimuth_compass = _COMPASS_DIRECTIONS[siz_orientation]
+                tariff_model = {
+                    "Single rate": "single_rate", "Day/Night": "day_night", "Custom hours": "custom",
+                }[siz_tariff_model_label]
 
-            with st.spinner("Querying PVGIS and running the hourly dispatch simulation..."):
-                result = size_deployment(
-                    lat=siz_lat, lon=siz_lon, tilt_deg=siz_tilt,
-                    azimuth_compass_deg=azimuth_compass,
-                    available_area_m2=siz_area,
-                    cell_kwh_per_cell=fin["current_kwh"],
-                    monthly_consumption_kwh=monthly_consumption,
-                    daily_load_shape=daily_shape,
-                    tariff_model=tariff_model,
-                    tariff_high_eur=siz_tariff_high, tariff_low_eur=siz_tariff_low,
-                    low_tariff_hours=siz_low_tariff_hours,
-                    max_payoff_years=siz_max_payoff, max_investment_eur=siz_max_invest,
-                    assumptions={"feed_in_tariff_eur": siz_feedin_value} if siz_feedin_value is not None else None,
-                    pv_yield_fn=_cached_pv_yield_hourly,
-                )
-            st.session_state[f"siz_result_{selected}"] = result
+                with st.spinner("Querying PVGIS and running the hourly dispatch simulation..."):
+                    result = size_deployment(
+                        lat=siz_lat, lon=siz_lon, tilt_deg=siz_tilt,
+                        azimuth_compass_deg=azimuth_compass,
+                        available_area_m2=siz_area,
+                        cell_kwh_per_cell=fin["current_kwh"],
+                        monthly_consumption_kwh=monthly_consumption,
+                        daily_load_shape=daily_shape,
+                        weekend_daily_shape=weekend_shape,
+                        load_hourly_kwh_override=load_hourly_override,
+                        tariff_model=tariff_model,
+                        tariff_high_eur=siz_tariff_high, tariff_low_eur=siz_tariff_low,
+                        low_tariff_hours=siz_low_tariff_hours,
+                        utc_offset_override=siz_utc_offset_override,
+                        max_payoff_years=siz_max_payoff, max_investment_eur=siz_max_invest,
+                        assumptions={"feed_in_tariff_eur": siz_feedin_value} if siz_feedin_value is not None else None,
+                        pv_yield_fn=_cached_pv_yield_hourly,
+                        pv_yield_annual_fn=_cached_pv_yield_annual,
+                    )
+                st.session_state[f"siz_result_{selected}"] = result
 
         result = st.session_state.get(f"siz_result_{selected}")
         if result is None:
@@ -721,6 +808,11 @@ def page_consequences(
                 st.warning(
                     f"PVGIS was unavailable for {len(result['pv_errors'])} of the PV sizes explored — "
                     "results below reflect only the sizes that succeeded."
+                )
+            if result.get("scaling_notes"):
+                st.caption(
+                    f"⚠ Multi-year averaging unavailable for {len(result['scaling_notes'])} PV size(s) — "
+                    "those candidates use one reference year's data unscaled."
                 )
             if not result["feasible"]:
                 st.info(result["constraint_note"])

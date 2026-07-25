@@ -65,6 +65,8 @@ def test_fetch_pv_yield_hourly_never_raises_against_real_endpoint():
     if "pv_kwh" in result:
         assert len(result["pv_kwh"]) == 8760
         assert all(v >= 0 for v in result["pv_kwh"])
+        assert "temp_c" in result
+        assert len(result["temp_c"]) == 8760
     else:
         assert "error" in result
 

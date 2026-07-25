@@ -140,8 +140,11 @@ def fetch_pv_yield_hourly(
     "typical" year by a non-trivial margin. Larger payload than fetch_pv_yield
     (8760 vs 12 records) — timeout defaults higher (30s vs 15s).
 
-    Never raises. Returns {"pv_kwh": list[8760 floats]} on success (P in W
-    for a 1-hour sample -> kWh via /1000), or {"error": str} on any failure,
+    Never raises. Returns {"pv_kwh": list[8760 floats], "temp_c": list[8760 floats]}
+    on success (P in W for a 1-hour sample -> kWh via /1000; T2m is PVGIS's
+    2m ambient air temperature in °C, included "for free" in the same
+    response — used by deployment_sizing's temperature-aware power derating
+    so no second API call is needed), or {"error": str} on any failure,
     including a response that isn't exactly 8760 records (catches a leap
     year, a partial response, or PVGIS changing its sampling resolution).
     """
@@ -165,10 +168,11 @@ def fetch_pv_yield_hourly(
 
         records = sorted(payload["outputs"]["hourly"], key=lambda r: r["time"])
         pv_kwh = [float(r["P"]) / 1000.0 for r in records]
+        temp_c = [float(r["T2m"]) for r in records]
     except Exception as e:
         return {"error": str(e)}
 
     if len(pv_kwh) != 8760:
         return {"error": f"PVGIS returned {len(pv_kwh)} hourly records for {year}, expected 8760"}
 
-    return {"pv_kwh": pv_kwh}
+    return {"pv_kwh": pv_kwh, "temp_c": temp_c}

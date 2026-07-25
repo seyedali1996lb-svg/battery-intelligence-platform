@@ -25,8 +25,26 @@ This module has no Streamlit dependency (mirrors src/consequences.py /
 src/pack_builder.py). PV yield data is supplied externally (normally via
 src/pvgis_client.py) rather than modelled locally — see size_deployment()'s
 pv_yield_fn parameter.
+
+Since the hourly engine shipped, size_deployment() also: (1) scales each
+candidate's single-reference-year hourly PV shape to match PVGIS's
+multi-year climate average annual total (scale_hourly_to_multiyear_average()) —
+so results reflect long-term-typical generation, not one arbitrary year's
+weather, while keeping that year's real hour-to-hour shape; (2) accepts an
+explicit utc_offset_override to replace the longitude-based timezone
+approximation when a caller/user knows the site's real civil offset; (3)
+supports an optional weekend_daily_shape distinct from the weekday shape
+(build_hourly_consumption()); (4) derates the battery's hourly power cap by
+ambient temperature (temperature_derate_factor(), fed by PVGIS's T2m —
+already present in the same hourly response, no extra API call). A true
+LP/MILP optimizer to replace the threshold-heuristic dispatch itself was
+considered and explicitly declined — a different order of engineering
+investment (new solver dependency, full re-architecture) for a tool whose
+whole premise is an honest, cited ESTIMATE, not an optimal-control
+benchmark. See docs/history.md for that scope decision.
 """
 
+from datetime import date, timedelta
 from typing import Callable, Optional
 
 # ---------------------------------------------------------------------------
@@ -139,6 +157,21 @@ SIZING_ASSUMPTIONS = {
         "source": (
             "Same 8% WACC default already used as the discount-rate slider default "
             "in this page's NPV Scenario Planner — kept consistent across both tools."
+        ),
+    },
+    "temp_derate_floor_factor": {
+        "value": 0.3,
+        "slider_range": (0.1, 1.0),
+        "unit": "fraction",
+        "label": "Illustrative — not sourced",
+        "source": (
+            "Battery charge/discharge power capability drops outside a moderate "
+            "temperature band — well-documented general Li-ion behavior (charging "
+            "below 0°C in particular risks lithium plating, see "
+            "battery_knowledge.py's 'iec62619-undertemperature' entry for the "
+            "mechanism), but this specific floor fraction and the temperature "
+            "band in temperature_derate_factor() are engineering judgment, not "
+            "a datasheet curve for any specific cell/BMS."
         ),
     },
     "feed_in_tariff_eur": {
@@ -307,6 +340,64 @@ def shift_to_local_hours(hourly_values: list, utc_offset: int) -> list:
     return hourly_values[-offset:] + hourly_values[:-offset] if offset else list(hourly_values)
 
 
+def scale_hourly_to_multiyear_average(
+    hourly_kwh: list,
+    single_year_annual_kwh: float,
+    multi_year_annual_kwh: float,
+) -> list:
+    """
+    Scales an hourly PV series (fetch_pv_yield_hourly()'s one fixed
+    historical reference year) so its annual total matches PVGIS's
+    multi-year climate-average total (fetch_pv_yield()'s PVcalc E_y) —
+    while preserving that reference year's real hour-to-hour/seasonal
+    shape. Results then reflect long-term-typical generation rather than
+    one arbitrary year's weather (see module docstring). Guards against a
+    zero/near-zero single_year_annual_kwh (degenerate case, e.g.
+    peakpower=0) by returning the series unscaled rather than dividing by zero.
+    """
+    if single_year_annual_kwh <= 0:
+        return list(hourly_kwh)
+    scale = multi_year_annual_kwh / single_year_annual_kwh
+    return [v * scale for v in hourly_kwh]
+
+
+def temperature_derate_factor(
+    temp_c: float,
+    min_full_power_c: float = 0.0,
+    max_full_power_c: float = 35.0,
+    floor_temp_c: float = -20.0,
+    high_floor_temp_c: float = 45.0,
+    floor_factor: float = 0.3,
+) -> float:
+    """
+    Piecewise-linear derating of battery charge/discharge power vs ambient
+    temperature: full power (1.0) within [min_full_power_c, max_full_power_c],
+    linearly reduced outside that band down to floor_factor at floor_temp_c
+    (cold) / high_floor_temp_c (hot), clamped at floor_factor beyond either.
+
+    Reflects the well-documented general behavior that Li-ion charge/
+    discharge power capability drops meaningfully outside a moderate
+    temperature band — charging below 0°C in particular risks lithium
+    plating (see battery_knowledge.py's "iec62619-undertemperature" entry
+    for the mechanism) — but the specific band/floor here are engineering
+    judgment (SIZING_ASSUMPTIONS["temp_derate_floor_factor"]), not a
+    datasheet curve for any specific cell/BMS.
+    """
+    if min_full_power_c <= temp_c <= max_full_power_c:
+        return 1.0
+    if temp_c < min_full_power_c:
+        if temp_c <= floor_temp_c:
+            return floor_factor
+        span = min_full_power_c - floor_temp_c
+        frac = (temp_c - floor_temp_c) / span if span > 0 else 1.0
+        return floor_factor + frac * (1.0 - floor_factor)
+    if temp_c >= high_floor_temp_c:
+        return floor_factor
+    span = high_floor_temp_c - max_full_power_c
+    frac = (high_floor_temp_c - temp_c) / span if span > 0 else 1.0
+    return floor_factor + frac * (1.0 - floor_factor)
+
+
 def night_window_hours(start_hour: int, end_hour: int) -> set:
     """
     Wrap-around-aware set of hour-of-day integers (0-23) for a "night"
@@ -360,23 +451,47 @@ def build_tariff_hour_arrays(
     return price, is_low
 
 
-def build_hourly_consumption(monthly_consumption_kwh: list, daily_shape: list, n_hours: int = 8760) -> list:
+def build_hourly_consumption(
+    monthly_consumption_kwh: list,
+    daily_shape: list,
+    weekend_daily_shape: Optional[list] = None,
+    reference_year: Optional[int] = None,
+    n_hours: int = 8760,
+) -> list:
     """
     Spreads each month's total consumption evenly across its calendar days,
     then each day's total across 24 hours via daily_shape (a length-24
-    weight list summing to 1.0). The same daily_shape is applied to every
-    day of every month — no weekday/weekend variation — a stated
-    simplification, still a real improvement on treating every hour of a
-    month as identical (the monthly estimate_annual_savings()'s implicit
-    assumption).
+    weight list summing to 1.0).
+
+    If weekend_daily_shape is given, real Saturdays/Sundays of
+    reference_year (default pvgis_client.HOURLY_REFERENCE_YEAR — the same
+    calendar the hourly PV series uses, so weekday/weekend line up hour for
+    hour with size_deployment()'s PV data) use it instead of daily_shape.
+    Each day's TOTAL is always that day's even share of its month
+    (monthly_kwh/days) regardless of which shape is used — only the
+    within-day hourly distribution differs — so switching shapes never
+    changes the monthly or annual total.
+
+    Without weekend_daily_shape, the same daily_shape applies to every day
+    of every month — no weekday/weekend variation — still a real
+    improvement on treating every hour of a month as identical (the
+    monthly estimate_annual_savings()'s implicit assumption).
     """
+    if reference_year is None:
+        from pvgis_client import HOURLY_REFERENCE_YEAR
+        reference_year = HOURLY_REFERENCE_YEAR
+
     hourly = []
+    current_date = date(reference_year, 1, 1)
     for month_idx, days in enumerate(_DAYS_IN_MONTH):
         monthly_kwh = float(monthly_consumption_kwh[month_idx])
         daily_kwh = monthly_kwh / days if days else 0.0
         for _day in range(days):
-            for hour_weight in daily_shape:
+            is_weekend = current_date.weekday() >= 5
+            shape = weekend_daily_shape if (is_weekend and weekend_daily_shape) else daily_shape
+            for hour_weight in shape:
                 hourly.append(daily_kwh * hour_weight)
+            current_date += timedelta(days=1)
     if len(hourly) != n_hours:
         raise ValueError(f"built {len(hourly)} hourly values, expected {n_hours}")
     return hourly
@@ -391,6 +506,8 @@ def simulate_hourly_dispatch(
     battery_c_rate: float = 0.5,
     round_trip_efficiency: float = 0.90,
     feed_in_tariff_eur: float = 0.0,
+    temp_hourly_c: Optional[list] = None,
+    temp_derate_floor_factor: float = 0.3,
 ) -> dict:
     """
     Real hour-by-hour dispatch simulation over one calendar year (8760
@@ -405,15 +522,24 @@ def simulate_hourly_dispatch(
        discharges to cover load in ANY hour that isn't flagged low-tariff,
        with no forecasting — it can fully deplete early in a long
        non-low-tariff stretch and then sit empty for the rest of it,
-       understating value relative to a forecast-aware dispatcher.
-    2. Uses ONE fixed historical reference year (pvgis_client.HOURLY_REFERENCE_YEAR)
-       of real PVGIS weather, not a multi-year climate average — annual
-       yield from a single year can differ from a "typical" year.
-    3. The 24-hour tariff/load pattern is identical on every calendar day —
-       no weekday/weekend/holiday variation (see build_tariff_hour_arrays()/
-       build_hourly_consumption()).
-    4. Flat C-rate power cap (battery_c_rate x battery_kwh) — no
-       temperature- or SOC-dependent power derating.
+       understating value relative to a forecast-aware dispatcher. (A true
+       LP/MILP replacement was considered and explicitly declined — see
+       module docstring.)
+    2. pv_hourly_kwh is normally magnitude-scaled to a multi-year climate
+       average by the caller (size_deployment() via
+       scale_hourly_to_multiyear_average()) — but its intra-year hour-to-hour
+       SHAPE (which specific days are sunny/cloudy) is still just one fixed
+       historical reference year's real weather pattern, not averaged.
+    3. The tariff pattern (tariff_hourly_eur/is_low_tariff_hourly) is
+       whatever build_tariff_hour_arrays() built — typically the identical
+       24-hour pattern on every calendar day, no weekday/weekend/holiday
+       tariff variation (unlike load_hourly_kwh, which CAN carry a real
+       weekday/weekend distinction via build_hourly_consumption()'s
+       weekend_daily_shape).
+    4. Power cap is battery_c_rate x battery_kwh, optionally derated per
+       hour by ambient temperature if temp_hourly_c is supplied (via
+       temperature_derate_factor()) — pass temp_hourly_c=None (default) to
+       keep a flat cap. No SOC-dependent derating either way.
     5. Battery starts empty (SOC=0) at hour 0 of the reference year — a
        cold-start bias confined to roughly the first day out of 365,
        negligible in the annual total.
@@ -472,19 +598,24 @@ def simulate_hourly_dispatch(
         is_low = is_low_tariff_hourly[h]
         charge_used = 0.0
 
+        hour_power_cap = (
+            power_cap * temperature_derate_factor(temp_hourly_c[h], floor_factor=temp_derate_floor_factor)
+            if temp_hourly_c is not None else power_cap
+        )
+
         direct_pv = min(pv, load)
         residual_load = load - direct_pv
         pv_surplus = pv - direct_pv
 
         room = battery_kwh - soc
-        to_charge = max(min(pv_surplus, room, power_cap - charge_used), 0.0)
+        to_charge = max(min(pv_surplus, room, hour_power_cap - charge_used), 0.0)
         soc += to_charge
         charge_used += to_charge
         export_kwh = max(pv_surplus - to_charge, 0.0)
 
         battery_output = 0.0
         if residual_load > 0 and not is_low:
-            draw = max(min(soc, power_cap, residual_load / round_trip_efficiency if round_trip_efficiency > 0 else 0.0), 0.0)
+            draw = max(min(soc, hour_power_cap, residual_load / round_trip_efficiency if round_trip_efficiency > 0 else 0.0), 0.0)
             soc -= draw
             battery_output = draw * round_trip_efficiency
             residual_load -= battery_output
@@ -492,7 +623,7 @@ def simulate_hourly_dispatch(
         arb_charge = 0.0
         if is_low:
             room = battery_kwh - soc
-            arb_charge = max(min(room, power_cap - charge_used), 0.0)
+            arb_charge = max(min(room, hour_power_cap - charge_used), 0.0)
             soc += arb_charge
 
         grid_import = max(residual_load, 0.0)
@@ -535,12 +666,16 @@ def size_deployment(
     max_payoff_years: float,
     max_investment_eur: float,
     low_tariff_hours: Optional[set] = None,
+    weekend_daily_shape: Optional[list] = None,
+    utc_offset_override: Optional[int] = None,
     n_cells_range: range = range(1, 21),
     n_pv_steps: int = 6,
     n_cells_coarse_steps: int = 6,
     pv_yield_fn: Optional[Callable] = None,
+    pv_yield_annual_fn: Optional[Callable] = None,
     assumptions: Optional[dict] = None,
     reference_year: Optional[int] = None,
+    load_hourly_kwh_override: Optional[list] = None,
 ) -> dict:
     """
     Grid search over PV size (kWp, derived from available_area_m2 x
@@ -549,16 +684,33 @@ def size_deployment(
     (simulate_hourly_dispatch()) for every candidate.
 
     tariff_model / tariff_high_eur / tariff_low_eur / low_tariff_hours feed
-    build_tariff_hour_arrays(); monthly_consumption_kwh / daily_load_shape
-    feed build_hourly_consumption() — both built once, up front, reused
-    across every candidate.
+    build_tariff_hour_arrays(); monthly_consumption_kwh / daily_load_shape /
+    weekend_daily_shape feed build_hourly_consumption() — both built once,
+    up front, reused across every candidate.
+
+    load_hourly_kwh_override, if given (a real length-8760 hourly/smart-meter
+    consumption series), is used AS-IS instead of build_hourly_consumption() —
+    monthly_consumption_kwh/daily_load_shape/weekend_daily_shape are then
+    ignored (still required arguments for a stable call signature, but their
+    values don't matter in this path). This is the most accurate consumption
+    input this tool supports — real measured data instead of any preset shape.
+
+    utc_offset_override, if given, replaces utc_offset_hours(lon)'s
+    longitude-based approximation — pass a real known civil UTC offset for
+    the site when available.
 
     PV yield depends only on pv_kwp, not on n_cells — pv_yield_fn (defaults
     to pvgis_client.fetch_pv_yield_hourly, resolved inside the function body
     so tests can inject a fake without patching a module attribute) is
-    called AT MOST ONCE PER UNIQUE pv_kwp step, with the result cached
-    (already shifted to local time via shift_to_local_hours()) and reused
-    across every n_cells candidate at that pv_kwp.
+    called AT MOST ONCE PER UNIQUE pv_kwp step. Its single-reference-year
+    result is then scaled to PVGIS's multi-year climate average via
+    pv_yield_annual_fn (defaults to pvgis_client.fetch_pv_yield, the PVcalc
+    endpoint — one more call per unique pv_kwp step, same dedup) and
+    scale_hourly_to_multiyear_average() — if that second call fails, the
+    candidate still proceeds on the unscaled single-year data (logged in
+    "scaling_notes", never fatal). The result (PV + ambient temperature,
+    both shifted to local time via shift_to_local_hours()) is cached and
+    reused across every n_cells candidate at that pv_kwp.
 
     Sizing precision: a coarse pass (n_pv_steps x n_cells_coarse_steps,
     <=36 candidates) finds an approximate winner, then a refine pass fixes
@@ -577,11 +729,14 @@ def size_deployment(
     near-miss) with feasible=False and a constraint_note explaining why.
 
     Returns {"feasible": bool, "winner": dict | None, "candidates": list[dict],
-    "constraint_note": str | None, "pv_errors": list[str]}.
+    "constraint_note": str | None, "pv_errors": list[str], "scaling_notes": list[str]}.
     """
     if pv_yield_fn is None:
         from pvgis_client import fetch_pv_yield_hourly
         pv_yield_fn = fetch_pv_yield_hourly
+    if pv_yield_annual_fn is None:
+        from pvgis_client import fetch_pv_yield
+        pv_yield_annual_fn = fetch_pv_yield
     from pvgis_client import compass_to_pvgis_azimuth, HOURLY_REFERENCE_YEAR
     if reference_year is None:
         reference_year = HOURLY_REFERENCE_YEAR
@@ -591,12 +746,19 @@ def size_deployment(
         a.update(assumptions)
 
     azimuth_pvgis = compass_to_pvgis_azimuth(azimuth_compass_deg)
-    offset = utc_offset_hours(lon)
+    offset = utc_offset_override if utc_offset_override is not None else utc_offset_hours(lon)
 
     tariff_hourly, is_low_hourly = build_tariff_hour_arrays(
         tariff_model, tariff_high_eur, tariff_low_eur, low_tariff_hours,
     )
-    load_hourly = build_hourly_consumption(monthly_consumption_kwh, daily_load_shape)
+    if load_hourly_kwh_override is not None:
+        load_hourly = list(load_hourly_kwh_override)
+        if len(load_hourly) != 8760:
+            raise ValueError(f"load_hourly_kwh_override must have 8760 values, got {len(load_hourly)}")
+    else:
+        load_hourly = build_hourly_consumption(
+            monthly_consumption_kwh, daily_load_shape, weekend_daily_shape, reference_year,
+        )
 
     max_pv_kwp = max(available_area_m2 * a["panel_density_kwp_per_m2"], 0.0)
     if max_pv_kwp <= 0:
@@ -622,34 +784,56 @@ def size_deployment(
 
     pv_hourly_cache = {}
     pv_errors = []
+    scaling_notes = []
 
     def _pv_hourly_for(pv_kwp):
         key = round(pv_kwp, 3)
         if key in pv_hourly_cache:
             return pv_hourly_cache[key]
         if pv_kwp <= 0:
-            local = [0.0] * 8760
+            entry = {"pv": [0.0] * 8760, "temp": None}
+            pv_hourly_cache[key] = entry
+            return entry
+
+        result = pv_yield_fn(
+            lat=lat, lon=lon, peakpower_kwp=pv_kwp,
+            tilt_deg=tilt_deg, azimuth_deg=azimuth_pvgis,
+            year=reference_year,
+        )
+        if "error" in result:
+            pv_errors.append(f"{pv_kwp:.2f} kWp: {result['error']}")
+            pv_hourly_cache[key] = None
+            return None
+
+        pv_kwh = result["pv_kwh"]
+        temp_c = result.get("temp_c")
+        single_year_annual = sum(pv_kwh)
+
+        annual_result = pv_yield_annual_fn(
+            lat=lat, lon=lon, peakpower_kwp=pv_kwp, tilt_deg=tilt_deg, azimuth_deg=azimuth_pvgis,
+        )
+        if annual_result and "error" not in annual_result:
+            pv_kwh = scale_hourly_to_multiyear_average(pv_kwh, single_year_annual, annual_result["annual_kwh"])
         else:
-            result = pv_yield_fn(
-                lat=lat, lon=lon, peakpower_kwp=pv_kwp,
-                tilt_deg=tilt_deg, azimuth_deg=azimuth_pvgis,
-                year=reference_year,
+            scaling_notes.append(
+                f"{pv_kwp:.2f} kWp: multi-year averaging unavailable "
+                f"({(annual_result or {}).get('error', 'no data')}) — using single reference year unscaled."
             )
-            if "error" in result:
-                pv_errors.append(f"{pv_kwp:.2f} kWp: {result['error']}")
-                pv_hourly_cache[key] = None
-                return None
-            local = shift_to_local_hours(result["pv_kwh"], offset)
-        pv_hourly_cache[key] = local
-        return local
+
+        entry = {
+            "pv": shift_to_local_hours(pv_kwh, offset),
+            "temp": shift_to_local_hours(temp_c, offset) if temp_c is not None else None,
+        }
+        pv_hourly_cache[key] = entry
+        return entry
 
     def _evaluate(pv_kwp, n_cells):
-        pv_local = _pv_hourly_for(pv_kwp)
-        if pv_local is None:
+        pv_entry = _pv_hourly_for(pv_kwp)
+        if pv_entry is None:
             return None
         battery_kwh = n_cells * cell_kwh_per_cell
         sim = simulate_hourly_dispatch(
-            pv_hourly_kwh=pv_local,
+            pv_hourly_kwh=pv_entry["pv"],
             load_hourly_kwh=load_hourly,
             tariff_hourly_eur=tariff_hourly,
             is_low_tariff_hourly=is_low_hourly,
@@ -657,6 +841,8 @@ def size_deployment(
             battery_c_rate=a["battery_c_rate"],
             round_trip_efficiency=a["round_trip_efficiency"],
             feed_in_tariff_eur=a["feed_in_tariff_eur"],
+            temp_hourly_c=pv_entry["temp"],
+            temp_derate_floor_factor=a["temp_derate_floor_factor"],
         )
         annual_savings_eur = sim["annual_savings_eur"]
         investment_eur = pv_kwp * a["pv_install_cost_eur_per_kwp"] + battery_kwh * a["bess_install_cost_eur_per_kwh"]
@@ -705,6 +891,7 @@ def size_deployment(
             "candidates": [],
             "constraint_note": "No PV/battery size produced a usable result — PVGIS was unavailable at every size explored.",
             "pv_errors": pv_errors,
+            "scaling_notes": scaling_notes,
         }
 
     feasible_candidates = [c for c in candidates if c["feasible"]]
@@ -716,6 +903,7 @@ def size_deployment(
             "candidates": candidates,
             "constraint_note": None,
             "pv_errors": pv_errors,
+            "scaling_notes": scaling_notes,
         }
 
     winner = max(candidates, key=lambda c: c["npv_eur"])
@@ -729,4 +917,5 @@ def size_deployment(
         "candidates": candidates,
         "constraint_note": note,
         "pv_errors": pv_errors,
+        "scaling_notes": scaling_notes,
     }

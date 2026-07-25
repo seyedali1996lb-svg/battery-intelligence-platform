@@ -119,7 +119,11 @@ def test_solar_storage_sizing_calculate_flow_completes_promptly(isolated_db, mon
     def _fast_hourly(**kwargs):
         return {"pv_kwh": [1.0] * 8760}
 
+    def _fast_annual(**kwargs):
+        return {"annual_kwh": 8760.0, "monthly_kwh": [730.0] * 12, "months": list(range(1, 13))}
+
     monkeypatch.setattr(pvgis_client, "fetch_pv_yield_hourly", _fast_hourly)
+    monkeypatch.setattr(pvgis_client, "fetch_pv_yield", _fast_annual)
 
     at = _logged_in_app(
         role="Engineer", page="consequences", data_mode="nasa",
@@ -144,3 +148,42 @@ def test_solar_storage_sizing_calculate_flow_completes_promptly(isolated_db, mon
         f"Calculate flow took {elapsed:.2f}s even with PVGIS mocked out — "
         "the hourly dispatch simulation itself may need optimizing."
     )
+
+
+def test_solar_storage_sizing_csv_upload_without_file_shows_error_not_crash(isolated_db):
+    """Selecting 'Upload hourly CSV' and clicking Calculate with no file
+    chosen must show a validation error, never crash the page."""
+    at = _logged_in_app(
+        role="Engineer", page="consequences", data_mode="nasa",
+        selected_cell="B0006",
+        siz_shape="Upload hourly CSV",
+    )
+    at.run()
+    assert not at.exception, f"Consequences page crashed: {at.exception}"
+
+    at.button(key="siz_calculate_btn").click().run()
+    assert not at.exception, f"Calculate crashed with no CSV uploaded: {at.exception}"
+    # st.error() renders into at.error, not at.markdown.
+    error_texts = [e.value for e in at.error]
+    assert any("Upload a valid" in t for t in error_texts), error_texts
+
+
+def test_parse_hourly_consumption_csv_valid_and_invalid_inputs():
+    """Direct unit test of the CSV parser (no AppTest needed — file-upload
+    widget simulation isn't reliably supported, so this exercises the pure
+    parsing logic directly instead)."""
+    import io
+    from _pages.consequences import _parse_hourly_consumption_csv
+
+    valid_no_header = io.StringIO("\n".join(str(1.0) for _ in range(8760)))
+    assert _parse_hourly_consumption_csv(valid_no_header) == [1.0] * 8760
+
+    valid_with_header = io.StringIO("kwh\n" + "\n".join(str(2.5) for _ in range(8760)))
+    parsed = _parse_hourly_consumption_csv(valid_with_header)
+    assert parsed == [2.5] * 8760
+
+    wrong_length = io.StringIO("\n".join(str(1.0) for _ in range(100)))
+    assert _parse_hourly_consumption_csv(wrong_length) is None
+
+    garbage = io.StringIO("not,a,valid,csv,at,all\n" * 5)
+    assert _parse_hourly_consumption_csv(garbage) is None

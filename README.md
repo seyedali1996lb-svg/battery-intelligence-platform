@@ -74,7 +74,7 @@ See [`docs/datasets/`](docs/datasets/index.md) for schema, citations, and licens
 
 ## The demo application
 
-This repository also contains a Streamlit application (`app/`) that consumes `batlab` — a fleet-monitoring dashboard, EU Battery Passport generator, and decision-support tool built on top of the library, kept working through this restructuring but not the primary deliverable of this repository going forward. It documents a large amount of real, working engineering; see [`docs/history.md`](docs/history.md) for its full build history and architecture, and run it with:
+This repository also contains a Streamlit application (`app/`) that consumes `batlab` — a fleet-monitoring dashboard, EU Battery Passport generator, and decision-support tool built on top of the library, kept working through this restructuring but not the primary deliverable of this repository going forward. It documents a large amount of real, working engineering — e.g. a second-life battery + solar sizing calculator that runs a real hour-by-hour (8760 hours/year) dispatch simulation against live PVGIS solar data, not a monthly approximation; see [`docs/history.md`](docs/history.md) for its full build history and architecture, and run it with:
 
 ```bash
 pip install -r requirements.txt

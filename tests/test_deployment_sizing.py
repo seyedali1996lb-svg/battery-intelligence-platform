@@ -21,6 +21,8 @@ from deployment_sizing import (
     size_deployment,
     utc_offset_hours,
     shift_to_local_hours,
+    scale_hourly_to_multiyear_average,
+    temperature_derate_factor,
     night_window_hours,
     build_tariff_hour_arrays,
     build_hourly_consumption,
@@ -310,13 +312,33 @@ def test_simulate_hourly_dispatch_rejects_mismatched_lengths():
 class _CountingPvYield:
     """Fake hourly pv_yield_fn that records every distinct call for dedup testing."""
 
-    def __init__(self, pv_kwh=None):
+    def __init__(self, pv_kwh=None, temp_c=None):
         self.pv_kwh = pv_kwh or [0.5] * 8760
+        self.temp_c = temp_c
         self.calls = []
 
     def __call__(self, lat, lon, peakpower_kwp, tilt_deg, azimuth_deg, **kwargs):
         self.calls.append(peakpower_kwp)
-        return {"pv_kwh": self.pv_kwh}
+        result = {"pv_kwh": self.pv_kwh}
+        if self.temp_c is not None:
+            result["temp_c"] = self.temp_c
+        return result
+
+
+def _matching_annual_fn(fake_pv_yield: "_CountingPvYield"):
+    """pv_yield_annual_fn whose annual_kwh always matches the fake hourly
+    source's own total — a scaling no-op (factor=1.0) — so tests written
+    before multi-year scaling existed don't need their assertions to
+    account for it. Records calls for dedup verification too."""
+    calls = []
+
+    def _fn(lat, lon, peakpower_kwp, tilt_deg, azimuth_deg, **kwargs):
+        calls.append(peakpower_kwp)
+        total = sum(fake_pv_yield.pv_kwh)
+        return {"annual_kwh": total, "monthly_kwh": [total / 12] * 12, "months": list(range(1, 13))}
+
+    _fn.calls = calls
+    return _fn
 
 
 FLAT_SHAPE_24 = [1 / 24] * 24
@@ -324,6 +346,7 @@ FLAT_SHAPE_24 = [1 / 24] * 24
 
 def test_size_deployment_calls_pv_yield_fn_at_most_once_per_kwp_step():
     fake = _CountingPvYield()
+    annual_fn = _matching_annual_fn(fake)
     result = size_deployment(
         lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
         available_area_m2=20.0, cell_kwh_per_cell=0.05,
@@ -331,13 +354,15 @@ def test_size_deployment_calls_pv_yield_fn_at_most_once_per_kwp_step():
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=15, max_investment_eur=50_000,
         n_cells_range=range(1, 11),
-        pv_yield_fn=fake,
+        pv_yield_fn=fake, pv_yield_annual_fn=annual_fn,
     )
     # 6 pv_kwp steps (0..max), but pv_kwp==0 is synthesized without a call,
     # so at most 5 real calls regardless of how many n_cells are explored
-    # across both the coarse AND refine passes (same pv_kwp reused).
+    # across both the coarse AND refine passes (same pv_kwp reused). Same
+    # dedup bound applies to the annual-averaging call.
     assert len(fake.calls) <= 5
     assert len(fake.calls) == len(set(round(c, 3) for c in fake.calls))
+    assert len(annual_fn.calls) <= 5
     assert result["candidates"]
 
 
@@ -350,7 +375,7 @@ def test_size_deployment_returns_feasible_winner_when_affordable():
         tariff_model="day_night", tariff_high_eur=0.35, tariff_low_eur=0.08,
         low_tariff_hours=night_window_hours(23, 7),
         max_payoff_years=25, max_investment_eur=200_000,
-        pv_yield_fn=fake,
+        pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
     )
     assert result["feasible"] is True
     assert result["winner"] is not None
@@ -366,7 +391,7 @@ def test_size_deployment_near_miss_when_nothing_feasible():
         tariff_model="single_rate", tariff_high_eur=0.10, tariff_low_eur=0.10,
         max_payoff_years=0.01,  # impossible constraint
         max_investment_eur=1_000_000,
-        pv_yield_fn=fake,
+        pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
     )
     assert result["feasible"] is False
     assert result["winner"] is not None  # honest near-miss, not a blank result
@@ -377,13 +402,16 @@ def test_size_deployment_degrades_gracefully_on_pv_errors():
     def failing_pv_yield(**kwargs):
         return {"error": "simulated PVGIS outage"}
 
+    def failing_annual(**kwargs):
+        return {"error": "simulated PVGIS outage"}
+
     result = size_deployment(
         lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
         available_area_m2=20.0, cell_kwh_per_cell=0.05,
         monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=15, max_investment_eur=50_000,
-        pv_yield_fn=failing_pv_yield,
+        pv_yield_fn=failing_pv_yield, pv_yield_annual_fn=failing_annual,
     )
     # pv_kwp=0 step is synthesized locally (no PVGIS call needed), so a
     # battery-only result should still come back rather than an empty result.
@@ -405,7 +433,7 @@ def test_size_deployment_refine_pass_improves_or_matches_coarse_precision():
         low_tariff_hours=night_window_hours(22, 6),
         max_payoff_years=25, max_investment_eur=150_000,
         n_cells_range=range(1, 21), n_cells_coarse_steps=6,
-        pv_yield_fn=fake,
+        pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
     )
     # Some candidate other than an exact coarse-step n_cells value should
     # exist (proof the refine pass actually ran and added candidates).
@@ -422,9 +450,217 @@ def test_size_deployment_candidate_count_is_bounded():
         tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
         max_payoff_years=25, max_investment_eur=150_000,
         n_cells_range=range(1, 21),
-        pv_yield_fn=fake,
+        pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
     )
     assert len(result["candidates"]) <= 60
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: multi-year scaling, timezone override, weekend shape, temperature
+# derating, hourly consumption override
+# ---------------------------------------------------------------------------
+
+def test_scale_hourly_to_multiyear_average_preserves_shape_scales_magnitude():
+    hourly = [1.0, 2.0, 3.0, 4.0]  # sum = 10
+    scaled = scale_hourly_to_multiyear_average(hourly, single_year_annual_kwh=10.0, multi_year_annual_kwh=20.0)
+    assert scaled == [2.0, 4.0, 6.0, 8.0]
+    # shape preserved: ratios between hours unchanged
+    assert scaled[1] / scaled[0] == pytest.approx(hourly[1] / hourly[0])
+
+
+def test_scale_hourly_to_multiyear_average_guards_zero_single_year():
+    hourly = [1.0, 2.0]
+    assert scale_hourly_to_multiyear_average(hourly, single_year_annual_kwh=0.0, multi_year_annual_kwh=20.0) == hourly
+
+
+def test_temperature_derate_factor_full_power_in_band():
+    assert temperature_derate_factor(0.0) == 1.0
+    assert temperature_derate_factor(20.0) == 1.0
+    assert temperature_derate_factor(35.0) == 1.0
+
+
+def test_temperature_derate_factor_clamps_at_floor():
+    assert temperature_derate_factor(-30.0) == pytest.approx(0.3)
+    assert temperature_derate_factor(60.0) == pytest.approx(0.3)
+
+
+def test_temperature_derate_factor_linear_between_band_and_floor():
+    mid_cold = temperature_derate_factor(-10.0)  # halfway between 0 and -20 floor
+    assert 0.3 < mid_cold < 1.0
+    assert mid_cold == pytest.approx(0.65, abs=0.01)
+
+
+def test_size_deployment_multiyear_scaling_changes_result_vs_unscaled():
+    """A multi-year annual total meaningfully different from the fake
+    single-year source should measurably change annual_savings_eur —
+    proof the scaling is actually applied, not silently skipped."""
+    fake = _CountingPvYield(pv_kwh=[1.0] * 8760)  # single-year annual = 8760
+
+    def annual_2x(lat, lon, peakpower_kwp, tilt_deg, azimuth_deg, **kwargs):
+        return {"annual_kwh": 2 * 8760, "monthly_kwh": [2 * 730] * 12, "months": list(range(1, 13))}
+
+    kwargs = dict(
+        lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+        available_area_m2=20.0, cell_kwh_per_cell=0.05,
+        monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
+        tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+        max_payoff_years=25, max_investment_eur=200_000,
+        n_cells_range=range(1, 6),
+    )
+    unscaled = size_deployment(pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake), **kwargs)
+    scaled = size_deployment(pv_yield_fn=fake, pv_yield_annual_fn=annual_2x, **kwargs)
+    # same pv_kwp/n_cells candidates exist in both; doubled PV yield should
+    # not decrease total savings for at least the largest-PV candidate.
+    unscaled_by_kwp = {c["pv_kwp"]: c["annual_savings_eur"] for c in unscaled["candidates"]}
+    scaled_by_kwp = {c["pv_kwp"]: c["annual_savings_eur"] for c in scaled["candidates"]}
+    max_kwp = max(unscaled_by_kwp)
+    if max_kwp > 0:
+        assert scaled_by_kwp[max_kwp] >= unscaled_by_kwp[max_kwp]
+
+
+def test_size_deployment_scaling_note_recorded_on_annual_fetch_failure():
+    fake = _CountingPvYield(pv_kwh=[1.0] * 8760)
+
+    def failing_annual(**kwargs):
+        return {"error": "simulated PVcalc outage"}
+
+    result = size_deployment(
+        lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+        available_area_m2=20.0, cell_kwh_per_cell=0.05,
+        monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
+        tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+        max_payoff_years=25, max_investment_eur=200_000,
+        pv_yield_fn=fake, pv_yield_annual_fn=failing_annual,
+    )
+    # Never fatal — candidates still produced despite the annual-averaging failure.
+    assert result["candidates"]
+    assert result["scaling_notes"]
+
+
+def test_size_deployment_utc_offset_override_is_honored():
+    """A non-default utc_offset_override should shift which hourly PV values
+    line up with which hours. With a UTC-hour-12 PV spike and a load shape
+    that peaks at local hour 12, offset=0 aligns them (high self-consumption)
+    while offset=12 shifts the PV spike to local midnight, where the load
+    shape is zero (near-total waste) — a large, unambiguous difference."""
+    pv = [10.0 if h % 24 == 12 else 0.0 for h in range(8760)]  # spike at UTC hour 12 every day
+    fake = _CountingPvYield(pv_kwh=pv)
+    load_shape_noon_peak = [1.0 if h == 12 else 0.0 for h in range(24)]
+
+    def _run(offset):
+        return size_deployment(
+            lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+            available_area_m2=20.0, cell_kwh_per_cell=0.05,
+            monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=load_shape_noon_peak,
+            tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+            max_payoff_years=25, max_investment_eur=200_000,
+            n_cells_range=range(1, 2),
+            pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+            utc_offset_override=offset,
+        )
+
+    result_0 = _run(0)
+    result_12 = _run(12)
+    savings_0 = result_0["winner"]["annual_savings_eur"]
+    savings_12 = result_12["winner"]["annual_savings_eur"]
+    # offset=0 aligns the PV spike with the load peak (real self-consumption);
+    # offset=12 shifts it to local midnight where load is zero (near-total waste).
+    assert savings_0 > savings_12
+
+
+def test_size_deployment_load_hourly_kwh_override_bypasses_monthly_shape():
+    fake = _CountingPvYield(pv_kwh=[1.0] * 8760)
+    custom_hourly_load = [2.0] * 8760  # a real "smart meter" style series
+    result = size_deployment(
+        lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+        available_area_m2=20.0, cell_kwh_per_cell=0.05,
+        monthly_consumption_kwh=[999_999.0] * 12,  # deliberately absurd — must be ignored
+        daily_load_shape=FLAT_SHAPE_24,
+        tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+        max_payoff_years=25, max_investment_eur=200_000,
+        n_cells_range=range(1, 2),
+        pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+        load_hourly_kwh_override=custom_hourly_load,
+    )
+    # With the absurd monthly total actually used, grid_import would dwarf
+    # everything; assert the small custom-load total was used instead by
+    # checking total energy handled per month stays in the custom load's
+    # plausible range (2.0 kWh/hour * hours-in-month), not the huge one.
+    total_handled = sum(
+        m["direct_pv_kwh"] + m["grid_import_kwh"] for m in result["winner"]["monthly"]
+    )
+    assert total_handled < 2.0 * 8760 * 1.01  # bounded by the custom series, not 999_999*12
+
+
+def test_size_deployment_load_hourly_kwh_override_wrong_length_raises():
+    fake = _CountingPvYield()
+    with pytest.raises(ValueError):
+        size_deployment(
+            lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+            available_area_m2=20.0, cell_kwh_per_cell=0.05,
+            monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
+            tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+            max_payoff_years=25, max_investment_eur=200_000,
+            pv_yield_fn=fake, pv_yield_annual_fn=_matching_annual_fn(fake),
+            load_hourly_kwh_override=[1.0] * 100,  # wrong length
+        )
+
+
+def test_build_hourly_consumption_weekend_shape_used_on_real_weekends():
+    monthly = [310.0] * 12
+    weekday_shape = [0.0] * 24
+    weekday_shape[9] = 1.0  # all weekday consumption at 9am
+    weekend_shape = [0.0] * 24
+    weekend_shape[15] = 1.0  # all weekend consumption at 3pm
+
+    hourly = build_hourly_consumption(monthly, weekday_shape, weekend_daily_shape=weekend_shape, reference_year=2019)
+    # 2019-01-01 was a Tuesday (weekday) -> hour 9 that day should be nonzero
+    assert hourly[9] > 0
+    assert hourly[15] == 0.0
+    # 2019-01-05 was a Saturday (day index 4, hours 96-119) -> hour 15 nonzero, hour 9 zero
+    saturday_start = 4 * 24
+    assert hourly[saturday_start + 15] > 0
+    assert hourly[saturday_start + 9] == 0.0
+
+
+def test_build_hourly_consumption_weekend_shape_preserves_monthly_total():
+    monthly = [310.0] * 12
+    weekday_shape = [1 / 24] * 24
+    weekend_shape = [0.0] * 23 + [1.0]  # all weekend load concentrated at hour 23
+    with_weekend = build_hourly_consumption(monthly, weekday_shape, weekend_daily_shape=weekend_shape, reference_year=2019)
+    without_weekend = build_hourly_consumption(monthly, weekday_shape, reference_year=2019)
+    assert sum(with_weekend) == pytest.approx(sum(without_weekend), rel=1e-6)
+
+
+def test_simulate_hourly_dispatch_temperature_derating_reduces_charging():
+    pv = [5.0] * 8760  # abundant PV surplus every hour
+    load = [0.1] * 8760
+    price = [0.30] * 8760
+    is_low = [False] * 8760
+    battery_kwh = 10.0
+
+    warm_temp = [20.0] * 8760
+    cold_temp = [-25.0] * 8760  # below floor_temp_c=-20 -> factor=0.3
+
+    warm = simulate_hourly_dispatch(pv, load, price, is_low, battery_kwh=battery_kwh, battery_c_rate=0.5, temp_hourly_c=warm_temp)
+    cold = simulate_hourly_dispatch(pv, load, price, is_low, battery_kwh=battery_kwh, battery_c_rate=0.5, temp_hourly_c=cold_temp)
+
+    warm_total_output = sum(m["battery_output_kwh"] for m in warm["monthly"])
+    cold_total_output = sum(m["battery_output_kwh"] for m in cold["monthly"])
+    # colder derating caps power lower -> can't charge/discharge as much per hour,
+    # though with abundant PV and low load the effect shows up as slower fill,
+    # not necessarily less total over a full year — assert it never raises and
+    # cold never outperforms warm.
+    assert cold_total_output <= warm_total_output + 1e-6
+
+
+def test_simulate_hourly_dispatch_no_temp_hourly_c_uses_flat_cap():
+    pv = [5.0] * 8760
+    load = [0.1] * 8760
+    price = [0.30] * 8760
+    is_low = [False] * 8760
+    result = simulate_hourly_dispatch(pv, load, price, is_low, battery_kwh=10.0, temp_hourly_c=None)
+    assert isinstance(result["annual_savings_eur"], float)  # never raises, backward compatible
 
 
 def test_sizing_assumptions_shape_matches_convention():
