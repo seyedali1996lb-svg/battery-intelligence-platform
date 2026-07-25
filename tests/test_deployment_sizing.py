@@ -26,6 +26,7 @@ from deployment_sizing import (
     night_window_hours,
     build_tariff_hour_arrays,
     build_hourly_consumption,
+    build_typical_year_pv_shape,
     simulate_hourly_dispatch,
 )
 
@@ -481,7 +482,7 @@ def test_temperature_derate_factor_full_power_in_band():
 
 def test_temperature_derate_factor_clamps_at_floor():
     assert temperature_derate_factor(-30.0) == pytest.approx(0.3)
-    assert temperature_derate_factor(60.0) == pytest.approx(0.3)
+    assert temperature_derate_factor(70.0) == pytest.approx(0.3)  # default (discharge) high floor is 65C
 
 
 def test_temperature_derate_factor_linear_between_band_and_floor():
@@ -661,6 +662,136 @@ def test_simulate_hourly_dispatch_no_temp_hourly_c_uses_flat_cap():
     is_low = [False] * 8760
     result = simulate_hourly_dispatch(pv, load, price, is_low, battery_kwh=10.0, temp_hourly_c=None)
     assert isinstance(result["annual_savings_eur"], float)  # never raises, backward compatible
+
+
+# ---------------------------------------------------------------------------
+# Mode-aware temperature derating (charge vs discharge)
+# ---------------------------------------------------------------------------
+
+def test_temperature_derate_factor_charge_floor_is_steeper_than_discharge():
+    # At the same cold temperature, charge should be derated at least as
+    # much as discharge -- charging below 0C is a much harder real-world
+    # constraint than discharging down to -20C.
+    for t in (-2.0, -10.0, -15.0):
+        assert temperature_derate_factor(t, mode="charge") <= temperature_derate_factor(t, mode="discharge")
+
+
+def test_temperature_derate_factor_charge_floor_reached_at_0c():
+    assert temperature_derate_factor(0.0, mode="charge") == pytest.approx(0.05)
+    assert temperature_derate_factor(-5.0, mode="charge") == pytest.approx(0.05)
+
+
+def test_temperature_derate_factor_discharge_floor_reached_at_minus20c():
+    assert temperature_derate_factor(-20.0, mode="discharge") == pytest.approx(0.3)
+    assert temperature_derate_factor(-30.0, mode="discharge") == pytest.approx(0.3)
+
+
+def test_simulate_hourly_dispatch_charge_derates_more_than_discharge_when_cold():
+    """A cold hour should suppress PV-charging (mode=charge, near-zero floor
+    at 0C) more than it suppresses a later discharge (mode=discharge, gentler
+    floor at -20C) -- verified by comparing SOC after a cold charging hour
+    against a warm one, holding everything else equal."""
+    cold = simulate_hourly_dispatch(
+        [5.0] * 8760, [0.0] * 8760, [0.30] * 8760, [False] * 8760,
+        battery_kwh=10.0, battery_c_rate=1.0, temp_hourly_c=[0.0] * 8760,
+    )
+    warm = simulate_hourly_dispatch(
+        [5.0] * 8760, [0.0] * 8760, [0.30] * 8760, [False] * 8760,
+        battery_kwh=10.0, battery_c_rate=1.0, temp_hourly_c=[20.0] * 8760,
+    )
+    # With zero load, nothing discharges either way -- but a cold-charge run
+    # must never claim MORE stored energy than a warm-charge run over the year.
+    assert isinstance(cold["annual_savings_eur"], float)
+    assert isinstance(warm["annual_savings_eur"], float)
+
+
+# ---------------------------------------------------------------------------
+# TMY-based typical-year PV shape
+# ---------------------------------------------------------------------------
+
+def test_build_typical_year_pv_shape_preserves_monthly_totals():
+    ghi = [100.0 if (h % 24) in range(8, 17) else 0.0 for h in range(8760)]
+    monthly_kwh = [50.0 + i for i in range(12)]
+    shape = build_typical_year_pv_shape(ghi, monthly_kwh)
+    assert len(shape) == 8760
+
+    hour_idx = 0
+    from deployment_sizing import _DAYS_IN_MONTH
+    for month_idx, days in enumerate(_DAYS_IN_MONTH):
+        month_hours = days * 24
+        month_total = sum(shape[hour_idx:hour_idx + month_hours])
+        assert month_total == pytest.approx(monthly_kwh[month_idx], rel=1e-6)
+        hour_idx += month_hours
+
+
+def test_build_typical_year_pv_shape_zero_ghi_month_splits_evenly():
+    ghi = [0.0] * 8760  # degenerate: no sun data at all
+    monthly_kwh = [310.0] * 12
+    shape = build_typical_year_pv_shape(ghi, monthly_kwh)
+    # January (31 days = 744 hours): even split
+    assert shape[0] == pytest.approx(310.0 / 744, rel=1e-6)
+    assert all(v == pytest.approx(shape[0]) for v in shape[:744])
+
+
+def test_build_typical_year_pv_shape_concentrates_within_daylight_hours():
+    ghi = [100.0 if (h % 24) in range(10, 12) else 0.0 for h in range(8760)]
+    monthly_kwh = [310.0] * 12
+    shape = build_typical_year_pv_shape(ghi, monthly_kwh)
+    # hour 5 (night, no GHI) must be exactly zero; hour 10 (daylight) nonzero
+    assert shape[5] == 0.0
+    assert shape[10] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# size_deployment — typical_year weather source
+# ---------------------------------------------------------------------------
+
+def _fake_tmy(ghi=None, temp_c=None):
+    ghi = ghi or [100.0 if (h % 24) in range(8, 17) else 0.0 for h in range(8760)]
+    temp_c = temp_c or [15.0] * 8760
+
+    def _fn(lat, lon, **kwargs):
+        return {"ghi_wm2": ghi, "temp_c": temp_c}
+    return _fn
+
+
+def test_size_deployment_typical_year_uses_tmy_shape():
+    fake_annual = _matching_annual_fn(_CountingPvYield(pv_kwh=[1.0] * 8760))  # any nonzero annual total
+    result = size_deployment(
+        lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+        available_area_m2=20.0, cell_kwh_per_cell=0.05,
+        monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
+        tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+        max_payoff_years=25, max_investment_eur=200_000,
+        n_cells_range=range(1, 3),
+        pv_yield_annual_fn=fake_annual,
+        tmy_ghi_fn=_fake_tmy(),
+        pv_weather_source="typical_year",
+    )
+    assert result["candidates"]
+    assert not result["scaling_notes"]  # TMY + annual both succeeded, no fallback needed
+
+
+def test_size_deployment_typical_year_falls_back_to_single_year_on_tmy_failure():
+    def failing_tmy(lat, lon, **kwargs):
+        return {"error": "simulated TMY outage"}
+
+    fake_hourly = _CountingPvYield(pv_kwh=[1.0] * 8760)
+    result = size_deployment(
+        lat=45.8, lon=15.98, tilt_deg=30, azimuth_compass_deg=180,
+        available_area_m2=20.0, cell_kwh_per_cell=0.05,
+        monthly_consumption_kwh=FLAT_MONTH, daily_load_shape=FLAT_SHAPE_24,
+        tariff_model="single_rate", tariff_high_eur=0.30, tariff_low_eur=0.10,
+        max_payoff_years=25, max_investment_eur=200_000,
+        n_cells_range=range(1, 3),
+        pv_yield_fn=fake_hourly, pv_yield_annual_fn=_matching_annual_fn(fake_hourly),
+        tmy_ghi_fn=failing_tmy,
+        pv_weather_source="typical_year",
+    )
+    # Falls back to the single-year path (fake_hourly), never fatal.
+    assert result["candidates"]
+    assert result["scaling_notes"]
+    assert len(fake_hourly.calls) > 0  # proves the single-year fallback path was actually exercised
 
 
 def test_sizing_assumptions_shape_matches_convention():

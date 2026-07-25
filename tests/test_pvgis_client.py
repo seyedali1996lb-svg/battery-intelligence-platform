@@ -8,7 +8,7 @@ test_bms_connectors.py). compass_to_pvgis_azimuth() is tested separately
 since a sign-convention bug there would silently produce a plausible-looking
 but wrong yield number rather than an exception."""
 
-from pvgis_client import compass_to_pvgis_azimuth, fetch_pv_yield, fetch_pv_yield_hourly
+from pvgis_client import compass_to_pvgis_azimuth, fetch_pv_yield, fetch_pv_yield_hourly, fetch_tmy_ghi
 
 
 def test_compass_to_pvgis_azimuth_cardinal_points():
@@ -82,6 +82,33 @@ def test_fetch_pv_yield_hourly_returns_error_dict_on_bad_host():
         )
     finally:
         pvgis_client.PVGIS_SERIESCALC_URL = original_url
+
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+def test_fetch_tmy_ghi_never_raises_against_real_endpoint():
+    # Real PVGIS tmy call — may succeed or fail depending on network
+    # availability, but must never raise. Confirms the 8760-length contract.
+    result = fetch_tmy_ghi(lat=45.8, lon=15.98, timeout=15)
+    assert isinstance(result, dict)
+    if "ghi_wm2" in result:
+        assert len(result["ghi_wm2"]) == 8760
+        assert all(v >= 0 for v in result["ghi_wm2"])
+        assert "temp_c" in result
+        assert len(result["temp_c"]) == 8760
+    else:
+        assert "error" in result
+
+
+def test_fetch_tmy_ghi_returns_error_dict_on_bad_host():
+    import pvgis_client
+    original_url = pvgis_client.PVGIS_TMY_URL
+    try:
+        pvgis_client.PVGIS_TMY_URL = "https://this-host-does-not-exist.invalid/v1"
+        result = fetch_tmy_ghi(lat=45.8, lon=15.98, timeout=5)
+    finally:
+        pvgis_client.PVGIS_TMY_URL = original_url
 
     assert isinstance(result, dict)
     assert "error" in result

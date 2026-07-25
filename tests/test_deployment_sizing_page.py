@@ -187,3 +187,70 @@ def test_parse_hourly_consumption_csv_valid_and_invalid_inputs():
 
     garbage = io.StringIO("not,a,valid,csv,at,all\n" * 5)
     assert _parse_hourly_consumption_csv(garbage) is None
+
+
+def test_parse_hourly_consumption_csv_two_column_timestamp_format():
+    """Real smart-meter-style export: timestamp,kWh, hourly cadence, header row."""
+    import io
+    import pandas as pd
+    from _pages.consequences import _parse_hourly_consumption_csv
+
+    idx = pd.date_range("2023-01-01", periods=8760, freq="h")
+    lines = ["timestamp,kWh"] + [f"{ts.isoformat()},1.5" for ts in idx]
+    buf = io.StringIO("\n".join(lines))
+    parsed = _parse_hourly_consumption_csv(buf)
+    assert parsed is not None
+    assert len(parsed) == 8760
+    assert all(v == pytest.approx(1.5) for v in parsed)
+
+
+def test_parse_hourly_consumption_csv_two_column_sub_hourly_resamples():
+    """15-minute-interval readings should sum up to hourly totals, not be
+    dropped or misinterpreted as a malformed file."""
+    import io
+    import pandas as pd
+    from _pages.consequences import _parse_hourly_consumption_csv
+
+    idx = pd.date_range("2023-01-01", periods=8760 * 4, freq="15min")
+    lines = ["timestamp,kWh"] + [f"{ts.isoformat()},0.5" for ts in idx]
+    buf = io.StringIO("\n".join(lines))
+    parsed = _parse_hourly_consumption_csv(buf)
+    assert parsed is not None
+    assert len(parsed) == 8760
+    assert all(v == pytest.approx(2.0) for v in parsed)  # 4 x 0.5 kWh per hour
+
+
+def test_solar_storage_sizing_typical_year_and_region_preset_render_candidate_table(isolated_db, monkeypatch):
+    """Exercises the TMY typical-year weather source, a non-default site
+    region cost preset, and the candidate-grid table together — the
+    combination of new controls added in this batch."""
+    import pvgis_client
+
+    def _fast_tmy(**kwargs):
+        ghi = [100.0 if (h % 24) in range(8, 17) else 0.0 for h in range(8760)]
+        return {"ghi_wm2": ghi, "temp_c": [15.0] * 8760}
+
+    def _fast_annual(**kwargs):
+        return {"annual_kwh": 1000.0, "monthly_kwh": [1000.0 / 12] * 12, "months": list(range(1, 13))}
+
+    monkeypatch.setattr(pvgis_client, "fetch_tmy_ghi", _fast_tmy)
+    monkeypatch.setattr(pvgis_client, "fetch_pv_yield", _fast_annual)
+
+    at = _logged_in_app(
+        role="Engineer", page="consequences", data_mode="nasa",
+        selected_cell="B0006",
+        siz_lat=33.111, siz_lon=44.222,  # unique coords, avoid cross-test cache hits
+        siz_weather_source="Typical year (TMY shape)",
+        siz_site_region="Germany",
+    )
+    at.run()
+    assert not at.exception
+
+    at.button(key="siz_calculate_btn").click().run()
+    assert not at.exception, f"Calculate crashed with typical-year + region preset: {at.exception}"
+
+    text = _all_text(at)
+    assert "PV size" in text  # a real result rendered
+
+    expander_labels = [e.label for e in at.expander]
+    assert any("sizes explored" in label for label in expander_labels), expander_labels

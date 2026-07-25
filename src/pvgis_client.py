@@ -37,12 +37,29 @@ timestamps were already local). Callers building an hourly dispatch
 simulation must correct for this — see deployment_sizing.utc_offset_hours()
 / shift_to_local_hours() — this module only fetches the raw UTC-indexed
 series and does not attempt the correction itself.
+
+Also verified live: PVGIS has a dedicated tmy (Typical Meteorological
+Year) endpoint — a constructed "typical" year built by selecting the most
+statistically representative real month from a multi-year dataset for
+each calendar month, rather than one arbitrary historical year (see
+fetch_tmy_ghi()). CONFIRMED LIVE that tmy does NOT support
+pvcalculation=1 (the param is silently ignored) — it only returns raw
+weather (global horizontal irradiance, ambient temperature), not PV power
+output. Getting real PV power from TMY data would require this app to
+reimplement irradiance-to-power modelling itself (plane-of-array
+transposition, temperature coefficients, inverter curves) — exactly the
+complexity avoided everywhere else in this module by leaning on PVGIS's
+own PVcalc/seriescalc pvcalculation=1 support. fetch_tmy_ghi() is used
+only as a SHAPE proxy (deployment_sizing.build_typical_year_pv_shape()
+redistributes real PVcalc-derived monthly kWh totals across hours
+proportional to TMY's irradiance pattern), not a PV-output source on its own.
 """
 
 import requests
 
 PVGIS_PVCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_2/PVcalc"
 PVGIS_SERIESCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_2/seriescalc"
+PVGIS_TMY_URL = "https://re.jrc.ec.europa.eu/api/v5_2/tmy"
 
 # 2019 verified non-leap (365 days -> exactly 8760 hourly records) and within
 # PVGIS-SARAH2's valid year range for European sites. Used as the single
@@ -176,3 +193,37 @@ def fetch_pv_yield_hourly(
         return {"error": f"PVGIS returned {len(pv_kwh)} hourly records for {year}, expected 8760"}
 
     return {"pv_kwh": pv_kwh, "temp_c": temp_c}
+
+
+def fetch_tmy_ghi(lat: float, lon: float, timeout: int = 30) -> dict:
+    """
+    Fetch PVGIS's Typical Meteorological Year (TMY) — see module docstring
+    for what this is and why it's a shape-only input, not a PV-output source.
+
+    Independent of PV system geometry (no peakpower/tilt/azimuth params —
+    TMY is a weather dataset, not a PV-performance calculation), so unlike
+    fetch_pv_yield_hourly() this only needs to be fetched ONCE per site,
+    not once per candidate PV size.
+
+    Never raises. Returns {"ghi_wm2": list[8760 floats], "temp_c": list[8760
+    floats]} on success (G(h) = global horizontal irradiance in W/m²; T2m =
+    2m ambient air temperature in °C), or {"error": str} on any failure,
+    including a response that isn't exactly 8760 records.
+    """
+    params = {"lat": lat, "lon": lon, "outputformat": "json"}
+
+    try:
+        resp = requests.get(PVGIS_TMY_URL, params=params, timeout=timeout)
+        resp.raise_for_status()
+        payload = resp.json()
+
+        records = sorted(payload["outputs"]["tmy_hourly"], key=lambda r: r["time(UTC)"])
+        ghi = [float(r["G(h)"]) for r in records]
+        temp_c = [float(r["T2m"]) for r in records]
+    except Exception as e:
+        return {"error": str(e)}
+
+    if len(ghi) != 8760:
+        return {"error": f"PVGIS returned {len(ghi)} TMY hourly records, expected 8760"}
+
+    return {"ghi_wm2": ghi, "temp_c": temp_c}

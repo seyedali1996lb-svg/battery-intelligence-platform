@@ -64,6 +64,24 @@ FEED_IN_TARIFF_PRESETS = {
     "Custom": (None, None),
 }
 
+# PV install-cost presets by country, researched live (this session): real
+# ranges (Germany ~€1,400-1,600/kWp, France ~€1,300-1,700/kWp, Italy
+# ~€1,100-1,500/kWp, Spain ~€1,400-1,800/kWp — IRENA Renewable Power
+# Generation Costs + Fraunhofer ISE Photovoltaics Report), midpoints used
+# here. BESS install cost is deliberately NOT localized — no comparably
+# reliable per-country breakdown was found in this session's research
+# (only a Germany-specific example and an EU-wide average), so it stays at
+# SIZING_ASSUMPTIONS's single EU-wide default regardless of region chosen,
+# rather than fabricating country-specific precision that isn't backed by
+# a real source.
+SITE_REGION_PV_COST_EUR_PER_KWP = {
+    "EU average (default)": None,
+    "Germany": 1500.0,
+    "France": 1500.0,
+    "Italy": 1300.0,
+    "Spain": 1600.0,
+}
+
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float, year: int) -> dict:
@@ -93,12 +111,56 @@ def _cached_pv_yield_annual(lat: float, lon: float, peakpower_kwp: float, tilt_d
     )
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def _cached_tmy_ghi(lat: float, lon: float) -> dict:
+    """Cached wrapper around pvgis_client.fetch_tmy_ghi() — passed to
+    size_deployment() as tmy_ghi_fn when pv_weather_source="typical_year".
+    Independent of PV system geometry, so cached/fetched once per site
+    regardless of how many PV sizes are explored."""
+    from pvgis_client import fetch_tmy_ghi
+    return fetch_tmy_ghi(lat=lat, lon=lon)
+
+
 def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
-    """Parses a user-uploaded hourly consumption CSV: one numeric column,
-    8760 rows, an optional header row (auto-detected — if the first cell
-    isn't numeric, it's treated as a header and dropped). Returns a
-    list[8760] on success, or None if the file doesn't parse to exactly
-    8760 numeric values."""
+    """Parses a user-uploaded consumption CSV in either of two formats:
+
+    (a) two columns (timestamp, kWh), header row expected — a real
+    smart-meter-style export. The timestamp column is parsed, data sorted
+    chronologically and resampled to hourly (summed, so sub-hourly
+    interval reads aggregate correctly), and must produce exactly 8760
+    hourly rows (one full year) after resampling — tried first if the file
+    has 2+ columns.
+
+    (b) one numeric column, 8760 rows, an optional header row
+    (auto-detected — if the first cell isn't numeric, it's treated as a
+    header and dropped) — used as-is, already assumed hourly and in order.
+    Tried if (a) isn't applicable or doesn't produce exactly 8760 rows.
+
+    Returns a list[8760] on success, or None if neither format parses to
+    exactly 8760 numeric values."""
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    try:
+        raw = pd.read_csv(uploaded_file)
+        if raw.shape[1] >= 2:
+            ts = pd.to_datetime(raw.iloc[:, 0], errors="coerce")
+            vals = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
+            combined = pd.DataFrame({"ts": ts, "val": vals}).dropna()
+            if len(combined) > 0:
+                hourly = combined.set_index("ts").sort_index()["val"].resample("h").sum()
+                if len(hourly) == 8760:
+                    return hourly.tolist()
+    except Exception:
+        pass
+
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
     try:
         raw = pd.read_csv(uploaded_file, header=None)
         col = raw.iloc[:, 0]
@@ -715,6 +777,22 @@ def page_consequences(
                     "UTC offset (hours)", min_value=-12, max_value=14, value=1, step=1,
                     key="siz_utc_offset",
                 )
+            siz_site_region = st.selectbox(
+                "Site region (PV cost preset)", list(SITE_REGION_PV_COST_EUR_PER_KWP.keys()),
+                key="siz_site_region",
+                help="Only PV install cost is localized — no comparably reliable "
+                     "per-country BESS cost breakdown was found in research for this "
+                     "tool, so battery cost stays at the EU-wide default regardless.",
+            )
+            siz_weather_source_label = st.selectbox(
+                "PV weather data", ["Single reference year (2019)", "Typical year (TMY shape)"],
+                key="siz_weather_source",
+                help="Typical year uses PVGIS's TMY (statistically representative "
+                     "months from a multi-year dataset) to shape hour-to-hour PV "
+                     "generation, combined with PVGIS's real monthly totals for "
+                     "magnitude — falls back to the single reference year if TMY "
+                     "data is unavailable.",
+            )
 
         fin_c1, fin_c2 = st.columns(2)
         with fin_c1:
@@ -767,6 +845,16 @@ def page_consequences(
                 tariff_model = {
                     "Single rate": "single_rate", "Day/Night": "day_night", "Custom hours": "custom",
                 }[siz_tariff_model_label]
+                weather_source = (
+                    "typical_year" if siz_weather_source_label == "Typical year (TMY shape)" else "single_year"
+                )
+
+                siz_assumptions = {}
+                if siz_feedin_value is not None:
+                    siz_assumptions["feed_in_tariff_eur"] = siz_feedin_value
+                _region_pv_cost = SITE_REGION_PV_COST_EUR_PER_KWP[siz_site_region]
+                if _region_pv_cost is not None:
+                    siz_assumptions["pv_install_cost_eur_per_kwp"] = _region_pv_cost
 
                 with st.spinner("Querying PVGIS and running the hourly dispatch simulation..."):
                     result = size_deployment(
@@ -783,9 +871,11 @@ def page_consequences(
                         low_tariff_hours=siz_low_tariff_hours,
                         utc_offset_override=siz_utc_offset_override,
                         max_payoff_years=siz_max_payoff, max_investment_eur=siz_max_invest,
-                        assumptions={"feed_in_tariff_eur": siz_feedin_value} if siz_feedin_value is not None else None,
+                        assumptions=siz_assumptions or None,
                         pv_yield_fn=_cached_pv_yield_hourly,
                         pv_yield_annual_fn=_cached_pv_yield_annual,
+                        pv_weather_source=weather_source,
+                        tmy_ghi_fn=_cached_tmy_ghi,
                     )
                 st.session_state[f"siz_result_{selected}"] = result
 
@@ -857,6 +947,25 @@ def page_consequences(
                 f"Across the year: {_total_arb:,.0f} kWh bought at the low tariff for arbitrage · "
                 f"{_total_export:,.0f} kWh exported at the feed-in tariff."
             )
+
+            with st.expander(f"All {len(result['candidates'])} sizes explored", expanded=False):
+                st.caption(
+                    "Every PV x battery combination evaluated (coarse + refine passes) — "
+                    "the winner above is the highest-NPV row satisfying your payoff/investment limits."
+                )
+                _cand_df = pd.DataFrame([
+                    {
+                        "PV (kWp)": round(c["pv_kwp"], 2),
+                        "Battery (Wh)": round(c["battery_kwh"] * 1000, 0),
+                        "Cells": c["n_cells"],
+                        "Investment (€)": round(c["investment_eur"], 0),
+                        "Payback (yr)": round(c["payback_years"], 1) if c["payback_years"] is not None else None,
+                        "NPV (€)": round(c["npv_eur"], 0),
+                        "Feasible": c["feasible"],
+                    }
+                    for c in result["candidates"]
+                ]).sort_values("NPV (€)", ascending=False, ignore_index=True)
+                st.dataframe(_cand_df, use_container_width=True, hide_index=True)
 
             try:
                 from battery_knowledge import get_document, industry_context_doc_ids

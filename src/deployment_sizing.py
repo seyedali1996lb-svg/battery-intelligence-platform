@@ -163,15 +163,22 @@ SIZING_ASSUMPTIONS = {
         "value": 0.3,
         "slider_range": (0.1, 1.0),
         "unit": "fraction",
-        "label": "Illustrative — not sourced",
+        "label": "Cited estimate",
         "source": (
-            "Battery charge/discharge power capability drops outside a moderate "
-            "temperature band — well-documented general Li-ion behavior (charging "
-            "below 0°C in particular risks lithium plating, see "
-            "battery_knowledge.py's 'iec62619-undertemperature' entry for the "
-            "mechanism), but this specific floor fraction and the temperature "
-            "band in temperature_derate_factor() are engineering judgment, not "
-            "a datasheet curve for any specific cell/BMS."
+            "Controls only the DISCHARGE floor at -20°C in "
+            "temperature_derate_factor() — the -20°C discharge / 0°C charge "
+            "floor boundaries and ~60-65°C high-temperature ceilings are "
+            "grounded in general commercial Li-ion BESS operating-range "
+            "guidance (e.g. a 280Ah LFP cell's derating documentation, "
+            "surveyed via EVreporter, 2023); charging below 0°C risking "
+            "lithium plating is the same mechanism cited in "
+            "battery_knowledge.py's 'iec62619-undertemperature' entry, per "
+            "IEC 62619:2022. The exact ramp SHAPE between the full-power band "
+            "and each floor (not just the boundary temperatures) remains "
+            "engineering judgment, not a datasheet curve for any one cell/BMS "
+            "— and the charge-side floor (0.05) is fixed, not user-adjustable, "
+            "reflecting that 'cannot charge below 0°C' is a much harder "
+            "real-world constraint than a soft derate."
         ),
     },
     "feed_in_tariff_eur": {
@@ -363,26 +370,63 @@ def scale_hourly_to_multiyear_average(
 
 def temperature_derate_factor(
     temp_c: float,
-    min_full_power_c: float = 0.0,
-    max_full_power_c: float = 35.0,
-    floor_temp_c: float = -20.0,
-    high_floor_temp_c: float = 45.0,
-    floor_factor: float = 0.3,
+    mode: str = "discharge",
+    min_full_power_c: "float | None" = None,
+    max_full_power_c: float = 45.0,
+    floor_temp_c: "float | None" = None,
+    high_floor_temp_c: "float | None" = None,
+    floor_factor: "float | None" = None,
 ) -> float:
     """
     Piecewise-linear derating of battery charge/discharge power vs ambient
-    temperature: full power (1.0) within [min_full_power_c, max_full_power_c],
-    linearly reduced outside that band down to floor_factor at floor_temp_c
-    (cold) / high_floor_temp_c (hot), clamped at floor_factor beyond either.
+    temperature. mode="discharge" (default) or mode="charge" select real,
+    cited reference bounds for any of min_full_power_c/floor_temp_c/
+    high_floor_temp_c/floor_factor left as None (explicit values always
+    override the mode default):
 
-    Reflects the well-documented general behavior that Li-ion charge/
-    discharge power capability drops meaningfully outside a moderate
-    temperature band — charging below 0°C in particular risks lithium
-    plating (see battery_knowledge.py's "iec62619-undertemperature" entry
-    for the mechanism) — but the specific band/floor here are engineering
-    judgment (SIZING_ASSUMPTIONS["temp_derate_floor_factor"]), not a
-    datasheet curve for any specific cell/BMS.
+    - "discharge": full power down to 0°C, linearly reduced to floor_factor
+      (default 0.3, SIZING_ASSUMPTIONS["temp_derate_floor_factor"]) at
+      -20°C, and toward the same floor above 65°C. Li-ion cells can
+      typically discharge down to roughly -20°C, just at reduced power.
+    - "charge": full power down to 5°C, dropping steeply to a near-zero
+      floor (0.05, not user-adjustable) at 0°C, and toward the same floor
+      above 60°C. Most Li-ion chemistries effectively cannot accept charge
+      below 0°C without risking lithium plating (see IEC 62619:2022 and
+      this app's own battery_knowledge.py "iec62619-undertemperature"
+      entry for the mechanism) — charge gets a much steeper/lower floor
+      than discharge, a real qualitative difference, not the same curve
+      applied symmetrically to both directions.
+
+    Source for the -20°C discharge floor / 0°C charge floor / ~60-65°C
+    high-temperature ceilings: general commercial Li-ion BESS operating-range
+    guidance (e.g. a 280Ah LFP cell's derating documentation, surveyed via
+    EVreporter, 2023). The exact SHAPE of each ramp (not just the boundary
+    temperatures) is still engineering judgment, not a specific datasheet
+    curve for any one cell/BMS.
+
+    Full power (1.0) within [min_full_power_c, max_full_power_c], linearly
+    reduced outside that band down to floor_factor at floor_temp_c (cold) /
+    high_floor_temp_c (hot), clamped at floor_factor beyond either.
     """
+    if mode == "charge":
+        if min_full_power_c is None:
+            min_full_power_c = 5.0
+        if floor_temp_c is None:
+            floor_temp_c = 0.0
+        if high_floor_temp_c is None:
+            high_floor_temp_c = 60.0
+        if floor_factor is None:
+            floor_factor = 0.05
+    else:
+        if min_full_power_c is None:
+            min_full_power_c = 0.0
+        if floor_temp_c is None:
+            floor_temp_c = -20.0
+        if high_floor_temp_c is None:
+            high_floor_temp_c = 65.0
+        if floor_factor is None:
+            floor_factor = 0.3
+
     if min_full_power_c <= temp_c <= max_full_power_c:
         return 1.0
     if temp_c < min_full_power_c:
@@ -411,6 +455,43 @@ def night_window_hours(start_hour: int, end_hour: int) -> set:
     if start_hour < end_hour:
         return set(range(start_hour, end_hour))
     return set(range(start_hour, 24)) | set(range(0, end_hour))
+
+
+def build_typical_year_pv_shape(ghi_wm2_hourly: list, monthly_pv_kwh: list, n_hours: int = 8760) -> list:
+    """
+    Redistributes each month's REAL PVcalc-derived kWh total
+    (monthly_pv_kwh, from pvgis_client.fetch_pv_yield()) across that
+    month's hours proportional to TMY global horizontal irradiance
+    (ghi_wm2_hourly, from pvgis_client.fetch_tmy_ghi()) — a shape-only
+    proxy for "how much sun fell this specific hour relative to other
+    hours in the same month", without this app reimplementing PV
+    performance modelling (irradiance transposition to the panel's actual
+    tilt/azimuth, temperature coefficients, inverter efficiency curves —
+    all things PVGIS's own PVcalc/seriescalc already do server-side for
+    the MAGNITUDE this function distributes). Result sums to exactly
+    monthly_pv_kwh's total within each month.
+
+    If a month's total GHI is zero (a degenerate edge case), that month's
+    hours split evenly instead of dividing by zero.
+    """
+    hourly = [0.0] * n_hours
+    hour_idx = 0
+    for month_idx, days in enumerate(_DAYS_IN_MONTH):
+        month_hours = days * 24
+        month_ghi = ghi_wm2_hourly[hour_idx:hour_idx + month_hours]
+        month_total_ghi = sum(month_ghi)
+        month_kwh = float(monthly_pv_kwh[month_idx])
+        if month_total_ghi > 0:
+            for i, g in enumerate(month_ghi):
+                hourly[hour_idx + i] = month_kwh * (g / month_total_ghi)
+        else:
+            even_share = month_kwh / month_hours if month_hours else 0.0
+            for i in range(month_hours):
+                hourly[hour_idx + i] = even_share
+        hour_idx += month_hours
+    if hour_idx != n_hours:
+        raise ValueError(f"built {hour_idx} hourly values, expected {n_hours}")
+    return hourly
 
 
 def build_tariff_hour_arrays(
@@ -537,9 +618,13 @@ def simulate_hourly_dispatch(
        weekday/weekend distinction via build_hourly_consumption()'s
        weekend_daily_shape).
     4. Power cap is battery_c_rate x battery_kwh, optionally derated per
-       hour by ambient temperature if temp_hourly_c is supplied (via
-       temperature_derate_factor()) — pass temp_hourly_c=None (default) to
-       keep a flat cap. No SOC-dependent derating either way.
+       hour by ambient temperature if temp_hourly_c is supplied — via
+       temperature_derate_factor(), called separately for charge (PV-charge
+       + arbitrage-charge, a steep near-zero floor below 0°C) and discharge
+       (a gentler floor down to -20°C), since real Li-ion charge/discharge
+       temperature limits genuinely differ, not the same curve both ways.
+       Pass temp_hourly_c=None (default) to keep a flat cap. No
+       SOC-dependent derating either way.
     5. Battery starts empty (SOC=0) at hour 0 of the reference year — a
        cold-start bias confined to roughly the first day out of 365,
        negligible in the annual total.
@@ -598,24 +683,26 @@ def simulate_hourly_dispatch(
         is_low = is_low_tariff_hourly[h]
         charge_used = 0.0
 
-        hour_power_cap = (
-            power_cap * temperature_derate_factor(temp_hourly_c[h], floor_factor=temp_derate_floor_factor)
-            if temp_hourly_c is not None else power_cap
-        )
+        if temp_hourly_c is not None:
+            t = temp_hourly_c[h]
+            hour_charge_cap = power_cap * temperature_derate_factor(t, mode="charge", floor_factor=temp_derate_floor_factor)
+            hour_discharge_cap = power_cap * temperature_derate_factor(t, mode="discharge", floor_factor=temp_derate_floor_factor)
+        else:
+            hour_charge_cap = hour_discharge_cap = power_cap
 
         direct_pv = min(pv, load)
         residual_load = load - direct_pv
         pv_surplus = pv - direct_pv
 
         room = battery_kwh - soc
-        to_charge = max(min(pv_surplus, room, hour_power_cap - charge_used), 0.0)
+        to_charge = max(min(pv_surplus, room, hour_charge_cap - charge_used), 0.0)
         soc += to_charge
         charge_used += to_charge
         export_kwh = max(pv_surplus - to_charge, 0.0)
 
         battery_output = 0.0
         if residual_load > 0 and not is_low:
-            draw = max(min(soc, hour_power_cap, residual_load / round_trip_efficiency if round_trip_efficiency > 0 else 0.0), 0.0)
+            draw = max(min(soc, hour_discharge_cap, residual_load / round_trip_efficiency if round_trip_efficiency > 0 else 0.0), 0.0)
             soc -= draw
             battery_output = draw * round_trip_efficiency
             residual_load -= battery_output
@@ -623,7 +710,7 @@ def simulate_hourly_dispatch(
         arb_charge = 0.0
         if is_low:
             room = battery_kwh - soc
-            arb_charge = max(min(room, hour_power_cap - charge_used), 0.0)
+            arb_charge = max(min(room, hour_charge_cap - charge_used), 0.0)
             soc += arb_charge
 
         grid_import = max(residual_load, 0.0)
@@ -676,6 +763,8 @@ def size_deployment(
     assumptions: Optional[dict] = None,
     reference_year: Optional[int] = None,
     load_hourly_kwh_override: Optional[list] = None,
+    pv_weather_source: str = "single_year",
+    tmy_ghi_fn: Optional[Callable] = None,
 ) -> dict:
     """
     Grid search over PV size (kWp, derived from available_area_m2 x
@@ -712,6 +801,17 @@ def size_deployment(
     both shifted to local time via shift_to_local_hours()) is cached and
     reused across every n_cells candidate at that pv_kwp.
 
+    pv_weather_source="typical_year" (default "single_year") tries a better
+    shape instead: TMY global-horizontal-irradiance data (tmy_ghi_fn,
+    defaults to pvgis_client.fetch_tmy_ghi — fetched ONCE for the whole
+    site, not per pv_kwp, since TMY is a weather dataset independent of PV
+    system geometry) redistributes each pv_kwp's real PVcalc monthly kWh
+    totals across hours via build_typical_year_pv_shape(), giving both a
+    more representative shape AND correct magnitude in one step (no
+    separate scale_hourly_to_multiyear_average() call needed in this mode).
+    If TMY or the monthly PVcalc fetch fails, this mode falls back to the
+    exact same single_year path above (logged in "scaling_notes", never fatal).
+
     Sizing precision: a coarse pass (n_pv_steps x n_cells_coarse_steps,
     <=36 candidates) finds an approximate winner, then a refine pass fixes
     pv_kwp at the coarse winner's value (zero additional PVGIS calls — reuses
@@ -737,6 +837,9 @@ def size_deployment(
     if pv_yield_annual_fn is None:
         from pvgis_client import fetch_pv_yield
         pv_yield_annual_fn = fetch_pv_yield
+    if tmy_ghi_fn is None:
+        from pvgis_client import fetch_tmy_ghi
+        tmy_ghi_fn = fetch_tmy_ghi
     from pvgis_client import compass_to_pvgis_azimuth, HOURLY_REFERENCE_YEAR
     if reference_year is None:
         reference_year = HOURLY_REFERENCE_YEAR
@@ -785,6 +888,12 @@ def size_deployment(
     pv_hourly_cache = {}
     pv_errors = []
     scaling_notes = []
+    _tmy_cache = {}
+
+    def _get_tmy():
+        if "result" not in _tmy_cache:
+            _tmy_cache["result"] = tmy_ghi_fn(lat=lat, lon=lon)
+        return _tmy_cache["result"]
 
     def _pv_hourly_for(pv_kwp):
         key = round(pv_kwp, 3)
@@ -794,6 +903,26 @@ def size_deployment(
             entry = {"pv": [0.0] * 8760, "temp": None}
             pv_hourly_cache[key] = entry
             return entry
+
+        if pv_weather_source == "typical_year":
+            tmy = _get_tmy()
+            annual_result = pv_yield_annual_fn(
+                lat=lat, lon=lon, peakpower_kwp=pv_kwp, tilt_deg=tilt_deg, azimuth_deg=azimuth_pvgis,
+            )
+            if tmy and "error" not in tmy and annual_result and "error" not in annual_result:
+                shape = build_typical_year_pv_shape(tmy["ghi_wm2"], annual_result["monthly_kwh"])
+                entry = {
+                    "pv": shift_to_local_hours(shape, offset),
+                    "temp": shift_to_local_hours(tmy["temp_c"], offset),
+                }
+                pv_hourly_cache[key] = entry
+                return entry
+            reason = (tmy or {}).get("error") or (annual_result or {}).get("error") or "no data"
+            scaling_notes.append(
+                f"{pv_kwp:.2f} kWp: typical-year (TMY) data unavailable ({reason}) — "
+                "falling back to single reference year."
+            )
+            # falls through to the single-year path below
 
         result = pv_yield_fn(
             lat=lat, lon=lon, peakpower_kwp=pv_kwp,
