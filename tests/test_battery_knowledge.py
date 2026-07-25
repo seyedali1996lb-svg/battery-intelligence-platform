@@ -5,7 +5,12 @@ appended for the Solar + Storage Sizing "Industry context" callout — TF-IDF
 retrieval is corpus-wide, so a badly-chosen new entry could in principle
 crowd out an old one for a query that used to hit it cleanly."""
 
-from battery_knowledge import DOCUMENTS, INDUSTRY_CONTEXT_DOC_IDS, get_document
+from battery_knowledge import (
+    DOCUMENTS,
+    INDUSTRY_CONTEXT_DOCS_BY_SIGNAL,
+    get_document,
+    industry_context_doc_ids,
+)
 from copilot_retrieval import retrieve
 
 
@@ -24,16 +29,37 @@ def test_get_document_returns_none_for_unknown_id():
     assert get_document("this-id-does-not-exist") is None
 
 
-def test_industry_context_doc_ids_resolve_to_real_documents():
-    assert INDUSTRY_CONTEXT_DOC_IDS  # non-empty
-    for doc_id in INDUSTRY_CONTEXT_DOC_IDS:
+def test_industry_context_signal_docs_resolve_to_real_documents():
+    for doc_id in INDUSTRY_CONTEXT_DOCS_BY_SIGNAL.values():
         assert get_document(doc_id) is not None
 
 
-def test_industry_context_docs_cite_a_real_iea_source_inline():
-    for doc_id in INDUSTRY_CONTEXT_DOC_IDS:
+def test_industry_context_signal_docs_cite_a_real_iea_source_inline():
+    for doc_id in INDUSTRY_CONTEXT_DOCS_BY_SIGNAL.values():
         text = get_document(doc_id)
         assert "IEA" in text
+
+
+def test_industry_context_doc_ids_always_includes_default():
+    ids = industry_context_doc_ids(payback_years=5.0, battery_kwh=0.001)
+    assert ids == [INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["default"]]
+
+
+def test_industry_context_doc_ids_long_payback_adds_cost_context():
+    ids = industry_context_doc_ids(payback_years=15.0, battery_kwh=0.001)
+    assert INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["long_payback"] in ids
+    assert len(ids) == 2
+
+
+def test_industry_context_doc_ids_large_deployment_adds_demand_context():
+    ids = industry_context_doc_ids(payback_years=5.0, battery_kwh=1.0)
+    assert INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["large_deployment"] in ids
+    assert len(ids) == 2
+
+
+def test_industry_context_doc_ids_none_payback_never_crashes():
+    ids = industry_context_doc_ids(payback_years=None, battery_kwh=0.001)
+    assert ids == [INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["default"]]
 
 
 def test_retrieve_still_surfaces_original_thermal_runaway_doc():

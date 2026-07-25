@@ -8,7 +8,7 @@ test_bms_connectors.py). compass_to_pvgis_azimuth() is tested separately
 since a sign-convention bug there would silently produce a plausible-looking
 but wrong yield number rather than an exception."""
 
-from pvgis_client import compass_to_pvgis_azimuth, fetch_pv_yield
+from pvgis_client import compass_to_pvgis_azimuth, fetch_pv_yield, fetch_pv_yield_hourly
 
 
 def test_compass_to_pvgis_azimuth_cardinal_points():
@@ -49,6 +49,37 @@ def test_fetch_pv_yield_returns_error_dict_on_bad_host():
         )
     finally:
         pvgis_client.PVGIS_PVCALC_URL = original_url
+
+    assert isinstance(result, dict)
+    assert "error" in result
+
+
+def test_fetch_pv_yield_hourly_never_raises_against_real_endpoint():
+    # Real PVGIS seriescalc call — may succeed or fail depending on network
+    # availability, but must never raise. Confirms the 8760-length contract.
+    result = fetch_pv_yield_hourly(
+        lat=45.8, lon=15.98, peakpower_kwp=1.0, tilt_deg=30, azimuth_deg=0,
+        timeout=15,
+    )
+    assert isinstance(result, dict)
+    if "pv_kwh" in result:
+        assert len(result["pv_kwh"]) == 8760
+        assert all(v >= 0 for v in result["pv_kwh"])
+    else:
+        assert "error" in result
+
+
+def test_fetch_pv_yield_hourly_returns_error_dict_on_bad_host():
+    import pvgis_client
+    original_url = pvgis_client.PVGIS_SERIESCALC_URL
+    try:
+        pvgis_client.PVGIS_SERIESCALC_URL = "https://this-host-does-not-exist.invalid/v1"
+        result = fetch_pv_yield_hourly(
+            lat=45.8, lon=15.98, peakpower_kwp=1.0, tilt_deg=30, azimuth_deg=0,
+            timeout=5,
+        )
+    finally:
+        pvgis_client.PVGIS_SERIESCALC_URL = original_url
 
     assert isinstance(result, dict)
     assert "error" in result

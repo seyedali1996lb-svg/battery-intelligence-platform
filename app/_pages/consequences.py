@@ -15,15 +15,32 @@ from design_system import make_badge, BADGE_VALIDATED, BADGE_ESTIMATE, BADGE_ILL
 
 
 # ---------------------------------------------------------------------------
-# Solar + Storage Sizing — seasonal consumption shape presets
+# Solar + Storage Sizing — consumption/tariff presets
 # ---------------------------------------------------------------------------
 # Simple illustrative monthly-weight curves (sum to 1.0), not literature-cited —
 # a user picking "Winter-heavy"/"Summer-heavy" is approximating their own bill's
-# shape, not relying on this app for a validated load-profile model.
+# shape, not relying on this app for a validated load-profile model. "Custom"
+# is handled separately in the UI (a 12-row st.data_editor), not a weight curve.
 SEASONAL_SHAPES = {
     "Flat":          [1 / 12] * 12,
     "Winter-heavy":  [0.12, 0.11, 0.09, 0.07, 0.06, 0.05, 0.05, 0.05, 0.06, 0.08, 0.10, 0.16],
     "Summer-heavy":  [0.05, 0.05, 0.06, 0.08, 0.10, 0.12, 0.13, 0.13, 0.10, 0.07, 0.06, 0.05],
+}
+
+# Same illustrative-curve status as SEASONAL_SHAPES, but for hour-of-day
+# rather than month-of-year — feeds deployment_sizing.build_hourly_consumption().
+DAILY_LOAD_SHAPES = {
+    "Flat": [1 / 24] * 24,
+    "Residential (morning+evening peaks)": [
+        0.020, 0.015, 0.012, 0.010, 0.010, 0.015, 0.035, 0.060,
+        0.055, 0.035, 0.030, 0.030, 0.032, 0.030, 0.028, 0.032,
+        0.045, 0.065, 0.080, 0.075, 0.065, 0.050, 0.035, 0.026,
+    ],
+    "Commercial (daytime)": [
+        0.010, 0.010, 0.010, 0.010, 0.010, 0.015, 0.025, 0.050,
+        0.070, 0.080, 0.085, 0.085, 0.080, 0.085, 0.085, 0.080,
+        0.070, 0.055, 0.035, 0.020, 0.015, 0.012, 0.010, 0.010,
+    ],
 }
 
 _COMPASS_DIRECTIONS = {
@@ -31,17 +48,33 @@ _COMPASS_DIRECTIONS = {
     "S": 180, "SW": 225, "W": 270, "NW": 315,
 }
 
+# Only Germany/France get a feed-in-tariff preset — researched live (this
+# session): Italy incentivizes via a tax-credit mechanism (not a flat
+# per-kWh export rate) and Spain compensates at a daily marginal price (no
+# single stable number) — neither can be cited honestly as one figure, so
+# they're deliberately omitted rather than forcing a misleading preset.
+FEED_IN_TARIFF_PRESETS = {
+    "None (self-consumption only)": (0.0, None),
+    "Germany (~€0.079/kWh, EEG Aug 2025)": (0.079, "EEG feed-in tariff for surplus-feed systems ≤10kW, effective Aug 2025 (pv-magazine reporting). 20-year guaranteed rate at commissioning, so a new installation's rate may differ."),
+    "France (~€0.235/kWh, <3kWp)": (0.235, "French residential feed-in tariff for systems <3kWp, revised quarterly — this is a snapshot, verify the current published rate before relying on it."),
+    "Custom": (None, None),
+}
+
 
 @st.cache_data(show_spinner=False, ttl=86400)
-def _cached_pv_yield(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float) -> dict:
-    """Cached wrapper around pvgis_client.fetch_pv_yield() — PVGIS's climate-average
-    output doesn't change hour to hour, and this is the only calculation on this
-    page that hits a network API, so results are cached for a day per input combo.
-    Passed to deployment_sizing.size_deployment() as its pv_yield_fn — azimuth_deg
-    here is already in PVGIS convention (size_deployment converts once from the
-    user's compass bearing before calling this for each pv_kwp step)."""
-    from pvgis_client import fetch_pv_yield
-    return fetch_pv_yield(lat=lat, lon=lon, peakpower_kwp=peakpower_kwp, tilt_deg=tilt_deg, azimuth_deg=azimuth_deg)
+def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float, year: int) -> dict:
+    """Cached wrapper around pvgis_client.fetch_pv_yield_hourly() — PVGIS's
+    historical-year hourly output doesn't change hour to hour, and this is
+    the only calculation on this page that hits a network API, so results
+    are cached for a day per input combo. Passed to
+    deployment_sizing.size_deployment() as its pv_yield_fn — azimuth_deg
+    here is already in PVGIS convention (size_deployment converts once from
+    the user's compass bearing before calling this for each pv_kwp step)."""
+    from pvgis_client import fetch_pv_yield_hourly
+    return fetch_pv_yield_hourly(
+        lat=lat, lon=lon, peakpower_kwp=peakpower_kwp, tilt_deg=tilt_deg,
+        azimuth_deg=azimuth_deg, year=year,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -509,10 +542,10 @@ def page_consequences(
 
     # ── H1b: Solar + Storage Sizing ─────────────────────────────────────────
     with st.expander("☀️ Solar + Storage Sizing", expanded=False):
-        from deployment_sizing import SIZING_ASSUMPTIONS, size_deployment
+        from deployment_sizing import SIZING_ASSUMPTIONS, size_deployment, night_window_hours
 
         _md_html(
-            f"""
+            """
             <div style="font-size:12px;color:#8896a8;margin-bottom:4px;line-height:1.6">
                 Size a PV array + this second-life battery against a real consumption
                 and tariff profile, using PVGIS (EU Commission public solar data) for
@@ -521,34 +554,77 @@ def page_consequences(
                 grounded in EU tariff/solar data, so the currency switch is deliberate.
             </div>
             <div style="font-size:11px;color:#4a5568;margin-bottom:16px;line-height:1.6">
-                Monthly energy-balance estimate, not an hourly dispatch simulation —
-                it will tend to overstate real-world savings unless the self-consumption
-                derating below is kept realistic. {BADGE_ILLUST} assumptions — expand
-                "All assumptions" below the Sustainability Snapshot for details.
+                Runs a real hour-by-hour (8760 hours/year) dispatch simulation — not a
+                monthly approximation. Still a documented heuristic, not a forecast-aware
+                optimizer, and uses one fixed historical year of PVGIS weather data —
+                see the "Solar + Storage Sizing" row in Settings → Configure's roadmap
+                table for the full list of simplifications.
             </div>
             """
         )
 
         siz_c1, siz_c2, siz_c3 = st.columns(3)
+        siz_custom_df = None
         with siz_c1:
             st.markdown("**Consumption**")
-            siz_annual_kwh = st.number_input(
-                "Annual consumption (kWh)", min_value=0.0, value=4000.0, step=100.0,
-                key="siz_annual_kwh",
-            )
             siz_shape = st.selectbox(
-                "Seasonal shape", list(SEASONAL_SHAPES.keys()), key="siz_shape",
+                "Profile", list(SEASONAL_SHAPES.keys()) + ["Custom"], key="siz_shape",
             )
-            st.markdown("**Tariff**")
-            siz_tariff_high = st.number_input(
-                "High tariff (€/kWh)", min_value=0.0, value=0.30, step=0.01,
-                key="siz_tariff_high",
-            )
-            siz_tariff_low = st.number_input(
-                "Low tariff (€/kWh)", min_value=0.0, value=0.12, step=0.01,
-                key="siz_tariff_low",
+            if siz_shape == "Custom":
+                st.caption("Enter your own monthly kWh (e.g. from utility bills).")
+                _default_custom = pd.DataFrame({
+                    "Month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+                    "kWh": [333.3] * 12,
+                })
+                siz_custom_df = st.data_editor(
+                    _default_custom, key="siz_custom_monthly", hide_index=True,
+                    num_rows="fixed", use_container_width=True,
+                    column_config={"Month": st.column_config.TextColumn(disabled=True)},
+                )
+            else:
+                siz_annual_kwh = st.number_input(
+                    "Annual consumption (kWh)", min_value=0.0, value=4000.0, step=100.0,
+                    key="siz_annual_kwh",
+                )
+            siz_daily_shape = st.selectbox(
+                "Daily shape", list(DAILY_LOAD_SHAPES.keys()), key="siz_daily_shape",
             )
         with siz_c2:
+            st.markdown("**Tariff**")
+            siz_tariff_model_label = st.selectbox(
+                "Tariff model", ["Single rate", "Day/Night", "Custom hours"], key="siz_tariff_model",
+            )
+            siz_tariff_high = st.number_input(
+                "High tariff (€/kWh)", min_value=0.0, value=0.30, step=0.01, key="siz_tariff_high",
+            )
+            siz_low_tariff_hours = None
+            siz_tariff_low = siz_tariff_high
+            if siz_tariff_model_label == "Single rate":
+                st.caption("No time-of-use distinction — battery only offsets load directly, no grid arbitrage.")
+            elif siz_tariff_model_label == "Day/Night":
+                siz_tariff_low = st.number_input(
+                    "Night tariff (€/kWh)", min_value=0.0, value=0.12, step=0.01, key="siz_tariff_low",
+                )
+                night_c1, night_c2 = st.columns(2)
+                with night_c1:
+                    siz_night_start = st.number_input(
+                        "Night starts (hour)", min_value=0, max_value=23, value=23, step=1, key="siz_night_start",
+                    )
+                with night_c2:
+                    siz_night_end = st.number_input(
+                        "Night ends (hour)", min_value=0, max_value=23, value=7, step=1, key="siz_night_end",
+                    )
+                siz_low_tariff_hours = night_window_hours(siz_night_start, siz_night_end)
+            else:
+                siz_tariff_low = st.number_input(
+                    "Low tariff (€/kWh)", min_value=0.0, value=0.12, step=0.01, key="siz_tariff_low",
+                )
+                siz_low_hours_selected = st.multiselect(
+                    "Low-tariff hours (0-23)", list(range(24)),
+                    default=[23, 0, 1, 2, 3, 4, 5, 6], key="siz_low_hours",
+                )
+                siz_low_tariff_hours = set(siz_low_hours_selected)
+        with siz_c3:
             st.markdown("**PV site**")
             siz_lat = st.number_input(
                 "Latitude", min_value=-90.0, max_value=90.0, value=45.80, step=0.01,
@@ -567,7 +643,9 @@ def page_consequences(
                 "Available area (m²)", min_value=0.0, value=30.0, step=1.0,
                 key="siz_area",
             )
-        with siz_c3:
+
+        fin_c1, fin_c2 = st.columns(2)
+        with fin_c1:
             st.markdown("**Financial constraints**")
             siz_max_payoff = st.number_input(
                 "Max payoff period (years)", min_value=1.0, value=15.0, step=1.0,
@@ -577,28 +655,50 @@ def page_consequences(
                 "Max investment (€)", min_value=0.0, value=25_000.0, step=500.0,
                 key="siz_max_invest",
             )
-            st.markdown(
-                "<div style='font-size:11px;color:#4a5568;margin-top:8px;line-height:1.5'>"
+            st.caption(
                 "Battery size is searched automatically (1-20 units of this cell) — "
-                "not the pack-size input above, which is for the financial comparison "
-                "cards only.</div>",
-                unsafe_allow_html=True,
+                "not the pack-size input above, which is for the financial comparison cards only."
             )
+        with fin_c2:
+            st.markdown("**Feed-in tariff**")
+            siz_feedin_label = st.selectbox(
+                "Export remuneration", list(FEED_IN_TARIFF_PRESETS.keys()), key="siz_feedin",
+            )
+            _preset_val, _preset_note = FEED_IN_TARIFF_PRESETS[siz_feedin_label]
+            if siz_feedin_label == "Custom":
+                siz_feedin_value = st.number_input(
+                    "Feed-in tariff (€/kWh)", min_value=0.0, value=0.0, step=0.01, key="siz_feedin_custom",
+                )
+            else:
+                siz_feedin_value = _preset_val
+                if _preset_note:
+                    st.caption(_preset_note)
 
         if st.button("Calculate", key="siz_calculate_btn"):
-            monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]
+            if siz_shape == "Custom" and siz_custom_df is not None:
+                monthly_consumption = [float(v) for v in siz_custom_df["kWh"]]
+            else:
+                monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]
+            daily_shape = DAILY_LOAD_SHAPES[siz_daily_shape]
             azimuth_compass = _COMPASS_DIRECTIONS[siz_orientation]
+            tariff_model = {
+                "Single rate": "single_rate", "Day/Night": "day_night", "Custom hours": "custom",
+            }[siz_tariff_model_label]
 
-            with st.spinner("Querying PVGIS and sizing the deployment..."):
+            with st.spinner("Querying PVGIS and running the hourly dispatch simulation..."):
                 result = size_deployment(
                     lat=siz_lat, lon=siz_lon, tilt_deg=siz_tilt,
                     azimuth_compass_deg=azimuth_compass,
                     available_area_m2=siz_area,
                     cell_kwh_per_cell=fin["current_kwh"],
                     monthly_consumption_kwh=monthly_consumption,
+                    daily_load_shape=daily_shape,
+                    tariff_model=tariff_model,
                     tariff_high_eur=siz_tariff_high, tariff_low_eur=siz_tariff_low,
+                    low_tariff_hours=siz_low_tariff_hours,
                     max_payoff_years=siz_max_payoff, max_investment_eur=siz_max_invest,
-                    pv_yield_fn=_cached_pv_yield,
+                    assumptions={"feed_in_tariff_eur": siz_feedin_value} if siz_feedin_value is not None else None,
+                    pv_yield_fn=_cached_pv_yield_hourly,
                 )
             st.session_state[f"siz_result_{selected}"] = result
 
@@ -650,8 +750,7 @@ def page_consequences(
             siz_fig = go.Figure()
             months_lbl = [m["month"] for m in monthly]
             siz_fig.add_trace(go.Bar(x=months_lbl, y=[m["direct_pv_kwh"] for m in monthly], name="Direct PV", marker_color="#f6ad55"))
-            siz_fig.add_trace(go.Bar(x=months_lbl, y=[m["pv_via_battery_kwh"] for m in monthly], name="PV via battery", marker_color="#68d391"))
-            siz_fig.add_trace(go.Bar(x=months_lbl, y=[m["arbitrage_kwh"] for m in monthly], name="Tariff arbitrage", marker_color="#63b3ed"))
+            siz_fig.add_trace(go.Bar(x=months_lbl, y=[m["battery_output_kwh"] for m in monthly], name="Battery discharge", marker_color="#68d391"))
             siz_fig.add_trace(go.Bar(x=months_lbl, y=[m["grid_import_kwh"] for m in monthly], name="Still grid-import", marker_color="#4a5568"))
             siz_fig.update_layout(base_layout(
                 barmode="stack",
@@ -660,18 +759,27 @@ def page_consequences(
             ))
             st.plotly_chart(siz_fig, use_container_width=True)
 
+            _total_arb = sum(m["arb_charge_kwh"] for m in monthly)
+            _total_export = sum(m["export_kwh"] for m in monthly)
+            st.caption(
+                f"Across the year: {_total_arb:,.0f} kWh bought at the low tariff for arbitrage · "
+                f"{_total_export:,.0f} kWh exported at the feed-in tariff."
+            )
+
             try:
-                from battery_knowledge import get_document, INDUSTRY_CONTEXT_DOC_IDS
-                ctx_text = get_document(INDUSTRY_CONTEXT_DOC_IDS[0])
+                from battery_knowledge import get_document, industry_context_doc_ids
+                _ctx_ids = industry_context_doc_ids(winner["payback_years"], winner["battery_kwh"])
             except Exception:
-                ctx_text = None
-            if ctx_text:
-                render_card(
-                    "<div style='font-size:10px;font-weight:700;color:#718096;text-transform:uppercase;"
-                    "letter-spacing:0.08em;margin-bottom:8px'>Industry context</div>"
-                    f"<div style='font-size:12px;color:#a0aec0;line-height:1.6'>{ctx_text}</div>",
-                    extra_style="margin-top:16px",
-                )
+                _ctx_ids = []
+            for _ctx_id in _ctx_ids:
+                _ctx_text = get_document(_ctx_id)
+                if _ctx_text:
+                    render_card(
+                        "<div style='font-size:10px;font-weight:700;color:#718096;text-transform:uppercase;"
+                        "letter-spacing:0.08em;margin-bottom:8px'>Industry context</div>"
+                        f"<div style='font-size:12px;color:#a0aec0;line-height:1.6'>{_ctx_text}</div>",
+                        extra_style="margin-top:16px",
+                    )
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 3: Sustainability

@@ -322,12 +322,44 @@ DOCUMENTS: list[dict] = [
 
 _DOCUMENTS_BY_ID = {d["id"]: d["text"] for d in DOCUMENTS}
 
-# Shown next to the Solar + Storage Sizing calculator's result — the most
-# directly on-topic entry for "sizing a second-life battery for stationary
-# storage use".
-INDUSTRY_CONTEXT_DOC_IDS = ["iea-stationary-storage-secondlife-2026"]
-
 
 def get_document(doc_id: str) -> "str | None":
     """Return one corpus entry's text by id, or None if the id doesn't exist."""
     return _DOCUMENTS_BY_ID.get(doc_id)
+
+
+# ---------------------------------------------------------------------------
+# Contextual selection for the Solar + Storage Sizing "Industry context"
+# callout — a small signal->doc mapping kept separate from DOCUMENTS (no
+# schema change to the corpus itself). Deliberately simple: a handful of
+# characteristics of the sizing RESULT pick 1-2 of the IEA-sourced entries
+# above, rather than every callout always showing the same fixed one.
+# ---------------------------------------------------------------------------
+
+INDUSTRY_CONTEXT_DOCS_BY_SIGNAL = {
+    "default": "iea-stationary-storage-secondlife-2026",
+    "long_payback": "iea-battery-cost-trends-2026",
+    "large_deployment": "iea-ev-battery-deployment-2026",
+}
+
+
+def industry_context_doc_ids(
+    payback_years: "float | None",
+    battery_kwh: float,
+    large_kwh_threshold: float = 0.02,
+) -> list:
+    """
+    Returns 1-2 doc ids for the Industry context callout: always includes
+    "default" (the stationary-storage/second-life entry, most directly
+    on-topic for this feature generally); additionally includes
+    "long_payback" (cost-trend context) if payback_years > 10, or
+    "large_deployment" (battery demand-growth context) if battery_kwh
+    exceeds large_kwh_threshold. At most one of the two extra signals is
+    added (payback checked first) — capped at 2 cards total.
+    """
+    ids = [INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["default"]]
+    if payback_years is not None and payback_years > 10:
+        ids.append(INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["long_payback"])
+    elif battery_kwh > large_kwh_threshold:
+        ids.append(INDUSTRY_CONTEXT_DOCS_BY_SIGNAL["large_deployment"])
+    return ids
