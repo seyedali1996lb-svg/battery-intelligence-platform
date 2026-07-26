@@ -165,6 +165,28 @@ See [`docs/history.md`](docs/history.md) for the fuller production-readiness roa
 
 ## Installation
 
+### Just want to see the app? (no programming experience needed)
+
+This gets the Streamlit dashboard open in your web browser. It takes about 10 minutes the first time.
+
+1. **Install Python.** Go to [python.org/downloads](https://www.python.org/downloads/) and click the big yellow "Download Python" button. Run the installer.
+   - **Windows:** on the very first install screen, tick the box that says **"Add Python to PATH"** before clicking Install — this step is easy to miss and everything below depends on it.
+   - **Mac:** just run the installer normally.
+2. **Download this project.** On this page, click the green **`Code`** button near the top, then **`Download ZIP`**. Once it's downloaded, unzip it (double-click it, or right-click → "Extract All" on Windows) to a folder you can find, e.g. your Desktop.
+3. **Open a terminal in that folder.** A terminal is just a window where you type commands instead of clicking things.
+   - **Windows:** open the unzipped folder in File Explorer, click once in the empty address bar at the top, type `cmd`, and press Enter.
+   - **Mac:** open the unzipped folder in Finder, then Finder menu → Services → "New Terminal at Folder" (or open the Terminal app and type `cd ` followed by dragging the folder into the window, then press Enter).
+4. **Type these two lines into that window, pressing Enter after each one, and wait for each to finish** (the first one downloads everything the app needs and can take a few minutes):
+   ```bash
+   pip install -r requirements.txt
+   streamlit run app/main.py
+   ```
+5. A new tab should open automatically in your web browser with the app running. If it doesn't, the terminal will print a line like `Local URL: http://localhost:8501` — copy that address into your browser.
+
+To stop the app later, go back to that terminal window and press `Ctrl+C`. To run it again another day, you only need step 4's second command (`streamlit run app/main.py`) from inside that same folder.
+
+### Using `batlab` as a Python library
+
 ```bash
 pip install -e ".[severson,oxford,calce]"   # extras are only needed for those loaders' parsers
 ```
