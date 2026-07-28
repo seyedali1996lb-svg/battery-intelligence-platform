@@ -571,6 +571,62 @@ def test_benchmark_page_renders_leaderboard_with_logged_runs(isolated_db):
     assert "nasa" in at.dataframe[0].value["Dataset"].values
 
 
+def test_overview_shows_no_cross_chem_badge_when_no_transfer_study_logged(isolated_db):
+    """Baseline: with nothing logged in the registry, the Overview page
+    must render normally with no cross-dataset transfer badge -- the
+    badge is opt-in-by-evidence, never a placeholder."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "CROSS-CHEM TRANSFER" not in text
+
+
+def test_overview_shows_cross_chem_transfer_error_badge_when_logged(isolated_db):
+    """Once a cross-chemistry generalization study has been logged for this
+    cell's own dataset (nasa -> severson), the Overview page must show the
+    real transfer error next to the RUL sample-size badge -- same "report
+    the honest number" principle as the sample-size badge itself."""
+    import experiment_registry as reg
+
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa_to_severson", chemistry="LiCoO2 -> LFP",
+        feature_set=["cycle_number"], feature_version="v9-crate-stress-index-dod-proxy",
+        hyperparams={"random_state": 42}, seed=42, cell_ids=["B0005", "S-b1c2"], n_rows=100,
+        lco_metrics={
+            "soh_mae": 22.0, "soh_r2": -34.6, "rul_mae": 1350.9, "rul_r2": -1.14,
+            "rul_reliable": False, "per_cell": {},
+        },
+        notes="Cross-chemistry generalization study: trained on nasa, zero-shot evaluated on severson.",
+    )
+
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "CROSS-CHEM TRANSFER: WEAK" in text
+    assert "severson" in text.lower()
+
+
+def test_overview_shows_not_evaluated_cross_chem_badge_for_incompatible_pairing(isolated_db):
+    """The Oxford schema-incompatibility case: log_cross_chemistry_unavailable()
+    records an honest "not evaluated" row (no fabricated number) -- the
+    Overview badge must surface that disclosure, not silently omit it."""
+    import experiment_registry as reg
+
+    reg.log_cross_chemistry_unavailable(
+        "nasa", "oxford", "Oxford schema incompatible with the per-cycle feature pipeline.",
+        org_id=reg.PLATFORM_ORG_ID,
+    )
+
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "CROSS-CHEM TRANSFER: NOT EVALUATED" in text
+    assert "oxford" in text.lower()
+
+
 def test_regenerate_report_button_replays_and_shows_recorded_vs_reproduced(isolated_db, monkeypatch):
     """utils.render_regenerate_report_button() end-to-end: given a bundle
     carrying a logged experiment_run_id, clicking Regenerate must replay

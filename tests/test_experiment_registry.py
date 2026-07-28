@@ -240,3 +240,84 @@ def test_git_commit_hash_returns_nonempty_string():
     commit = reg._git_commit_hash()
     assert isinstance(commit, str)
     assert len(commit) > 0
+
+
+# ---------------------------------------------------------------------------
+# Cross-chemistry generalization study
+# ---------------------------------------------------------------------------
+
+def test_run_cross_chemistry_transfer_logs_a_real_run(db):
+    train_data = {
+        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
+        "CellB": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+    }
+    eval_data = {"CellC": make_cycles_df(n_cycles=150, fade_per_cycle=0.0007)}
+
+    result = reg.run_cross_chemistry_transfer("fake_train", train_data, "fake_eval", eval_data)
+
+    assert result["n_common_features"] > 0
+    run = reg.get_run(reg.PLATFORM_ORG_ID, result["run_id"])
+    assert run["dataset"] == "fake_train_to_fake_eval"
+    assert run["cell_ids"] == ["CellA", "CellB", "CellC"]
+    assert run["rul_reliable"] is False  # never claimed reliable for an out-of-domain transfer
+    assert run["fold_metrics"] == {}     # not leave-cell-out
+    assert "Cross-chemistry generalization study" in run["notes"]
+
+
+def test_run_cross_chemistry_transfer_raises_on_incompatible_schema(db, monkeypatch):
+    """A domain pair sharing too few real feature columns must refuse
+    rather than report a number built on 1-2 coincidental columns. In
+    practice this codebase's generic capacity/cycle-derived features
+    (fade_rate_*, soh_velocity_50cy, ...) are present for almost any
+    per-cycle dataset, so the guard is exercised here by shrinking the
+    universe of columns get_model_matrix() is allowed to consider --
+    simulating the real failure mode (a dataset missing the raw
+    quantities most FEATURE_COLUMNS derive from, like Oxford's checkpoint
+    schema, which has no cycle_number/resistance_ohm/temperature_c at
+    all and can't even reach get_model_matrix -- see
+    log_cross_chemistry_unavailable() for how that specific case is
+    actually handled)."""
+    import batlab.features.engineering as engineering
+
+    monkeypatch.setattr(engineering, "FEATURE_COLUMNS", ["cycle_number"])
+
+    train_data = {"CellA": make_cycles_df(n_cycles=100)}
+    eval_data = {"CellB": make_cycles_df(n_cycles=100)}
+
+    with pytest.raises(ValueError, match="usable feature column"):
+        reg.run_cross_chemistry_transfer("fake_train", train_data, "fake_eval", eval_data)
+
+
+def test_log_cross_chemistry_unavailable_records_null_metrics_not_a_fabricated_number(db):
+    run_id = reg.log_cross_chemistry_unavailable(
+        "nasa", "oxford", "Oxford schema incompatible.", org_id=reg.PLATFORM_ORG_ID,
+    )
+    run = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert run["dataset"] == "nasa_to_oxford"
+    assert run["soh_mae"] is None
+    assert run["rul_mae"] is None
+    assert run["rul_r2"] is None
+    assert "Oxford schema incompatible" in run["notes"]
+
+
+def test_cross_chemistry_runs_for_train_dataset_filters_by_prefix(db):
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa_to_severson", chemistry="LiCoO2 -> LFP",
+        feature_set=["cycle_number"], feature_version=FEATURE_VERSION,
+        hyperparams={"random_state": 42}, seed=42, cell_ids=["A"], n_rows=10,
+        lco_metrics=_lco_metrics(),
+    )
+    reg.log_cross_chemistry_unavailable("nasa", "oxford", "reason", org_id=reg.PLATFORM_ORG_ID)
+    reg.log_run(  # unrelated run -- must not be picked up
+        org_id=reg.PLATFORM_ORG_ID, dataset="severson", chemistry="LFP",
+        feature_set=["cycle_number"], feature_version=FEATURE_VERSION,
+        hyperparams={"random_state": 42}, seed=42, cell_ids=["B"], n_rows=10,
+        lco_metrics=_lco_metrics(),
+    )
+
+    runs = reg.cross_chemistry_runs_for_train_dataset("nasa")
+    assert {r["dataset"] for r in runs} == {"nasa_to_severson", "nasa_to_oxford"}
+
+
+def test_cross_chemistry_runs_for_train_dataset_empty_when_none_logged(db):
+    assert reg.cross_chemistry_runs_for_train_dataset("nasa") == []

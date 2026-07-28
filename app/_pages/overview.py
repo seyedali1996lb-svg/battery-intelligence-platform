@@ -276,6 +276,49 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             + (f" · R²={fold_r2:.2f}" if fold_r2 is not None else "")
             + "</span>"
         )
+
+    # Cross-dataset transfer-error honesty badge (companion to the sample-
+    # size badge above): if this cell's own dataset was ever used as the
+    # training side of a logged cross-chemistry generalization study (see
+    # src/experiment_registry.py's run_cross_chemistry_transfer()), show
+    # the real transfer error next to the LCO badge — same "disclose the
+    # real number, even a bad one" principle, extended from "does this
+    # model generalize to a held-out cell of the same chemistry" to "does
+    # it generalize to a different chemistry at all".
+    _transfer_html = ""
+    try:
+        import html as _html_mod
+        import experiment_registry as _reg
+
+        _is_nasa      = cell_id in NASA_CELL_IDS
+        _is_severson  = cell_id.startswith("S-")
+        _is_synth     = (not _is_nasa) and (not _is_severson) and (cell_id in CELL_STRESS_PROFILES)
+        _cell_dataset = "nasa" if _is_nasa else ("severson" if _is_severson else ("synth" if _is_synth else None))
+
+        if _cell_dataset:
+            _transfer_runs = _reg.cross_chemistry_runs_for_train_dataset(_cell_dataset)
+            _evaluated = [r for r in _transfer_runs if r["rul_mae"] is not None]
+            if _evaluated:
+                _t = _evaluated[0]
+                _eval_ds = _t["dataset"].split("_to_", 1)[1]
+                _tooltip = (
+                    f"Trained on {_cell_dataset}, zero-shot evaluated on {_eval_ds} — "
+                    f"RUL MAE {_t['rul_mae']:.0f} cycles, R²={_t['rul_r2']:.2f}. "
+                    "Cross-chemistry transfer is expected to be weak; see Benchmark for the full record."
+                )
+                _transfer_html = (
+                    f"<span class='tag-calibrating' title=\"{_html_mod.escape(_tooltip)}\">"
+                    f"CROSS-CHEM TRANSFER: WEAK ({_eval_ds})</span>"
+                )
+            elif _transfer_runs:
+                _t = _transfer_runs[0]
+                _eval_ds = _t["dataset"].split("_to_", 1)[1]
+                _transfer_html = (
+                    f"<span class='tag-calibrating' title=\"{_html_mod.escape(_t['notes'] or '')}\">"
+                    f"CROSS-CHEM TRANSFER: NOT EVALUATED ({_eval_ds})</span>"
+                )
+    except Exception:
+        _transfer_html = ""  # honesty badge is best-effort -- never block the page over it
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
 
     # ── Reconcile the primary RUL model against the trajectory-match model ──
@@ -389,6 +432,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 &nbsp;·&nbsp; {rul_hero}
                 &nbsp;·&nbsp; {source_tag}
                 &nbsp;·&nbsp; {conf_html}
+                {("&nbsp;·&nbsp; " + _transfer_html) if _transfer_html else ""}
             </div>
             {interval_html}
         </div>

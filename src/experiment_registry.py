@@ -310,3 +310,189 @@ def reload_reference_cell_data(dataset: str, cell_ids: "list[str] | None" = None
         f"{REFERENCE_DATASETS} are reloadable; a tenant's uploaded-data raw "
         "cycles are never persisted, so an 'uploaded' run cannot be replayed."
     )
+
+
+# ---------------------------------------------------------------------------
+# Cross-chemistry generalization study — honest zero-shot transfer error
+# ---------------------------------------------------------------------------
+#
+# "Cross-dataset transfer" here means: fit one GBRT model on ALL of the
+# training domain's cells (not leave-cell-out — there is no held-out cell
+# from the *same* domain), then evaluate it, unmodified, on a completely
+# different chemistry's cells it has never seen a single row of. This is a
+# much harder ask than LCO (same chemistry, held-out cell) and is expected
+# to produce a materially worse number — see
+# src/battery_knowledge.py's "why-resistance-scales-differ" entry, which
+# already documents that a combined NASA+synthetic model produced a
+# negative R2 for exactly this reason (incompatible resistance scales
+# across sources). The whole point of this study is to report that real
+# number, however bad, not to engineer a flattering one.
+#
+# A model can only be evaluated on a feature vector shaped like the one it
+# was trained on, so the model here is trained on the INTERSECTION of the
+# two domains' available feature columns (get_model_matrix()'s own
+# per-source availability filtering already makes NASA/Severson/synthetic
+# each expose a different column set — see FEATURE_COLUMNS usage in
+# batlab.features.engineering). If that intersection is too small to be a
+# meaningful model, run_cross_chemistry_transfer() raises rather than
+# silently reporting a number from 1-2 weak features.
+
+MIN_COMMON_FEATURES_FOR_TRANSFER = 3
+
+
+def run_cross_chemistry_transfer(
+    train_dataset: str,
+    train_cell_data: dict,
+    eval_dataset: str,
+    eval_cell_data: dict,
+    org_id: int = PLATFORM_ORG_ID,
+) -> dict:
+    """
+    Fit a GBRT model on train_cell_data (all cells, single fit — not LCO),
+    zero-shot evaluate it on eval_cell_data, log the result to the
+    registry under dataset=f"{train_dataset}_to_{eval_dataset}", and
+    return {"run_id", "soh_mae", "soh_r2", "rul_mae", "rul_r2",
+    "n_common_features"}.
+
+    Raises ValueError if the two domains share fewer than
+    MIN_COMMON_FEATURES_FOR_TRANSFER usable feature columns — a genuine
+    schema incompatibility (e.g. Oxford's checkpoint-indexed data has no
+    cycle_number/resistance_ohm/temperature_c at all) makes any number
+    this function could produce scientifically meaningless, not just
+    pessimistic; the honest response is to refuse, not to report a
+    number built on 1-2 coincidentally-shared columns.
+    """
+    import pandas as pd
+    from sklearn.metrics import mean_absolute_error, r2_score
+    from batlab.features.engineering import build_features, get_model_matrix, FEATURE_VERSION, FEATURE_COLUMNS
+    from batlab.models.gbrt import train_models, predict, GBRT_PARAMS
+    from chemistry_profiles import ChemistryProfile
+
+    def _featured(cell_data: dict) -> dict:
+        out = {}
+        for cid, df in cell_data.items():
+            feat = build_features(df)
+            X, y_soh, y_rul = get_model_matrix(feat)
+            out[cid] = (X, y_soh, y_rul)
+        return out
+
+    train_inputs = _featured(train_cell_data)
+    eval_inputs  = _featured(eval_cell_data)
+
+    train_cols = set(next(iter(train_inputs.values()))[0].columns)
+    eval_cols  = set(next(iter(eval_inputs.values()))[0].columns)
+    common = [c for c in FEATURE_COLUMNS if c in train_cols and c in eval_cols]
+
+    if len(common) < MIN_COMMON_FEATURES_FOR_TRANSFER:
+        raise ValueError(
+            f"{train_dataset} and {eval_dataset} share only {len(common)} "
+            f"usable feature column(s) ({common}) — fewer than the "
+            f"{MIN_COMMON_FEATURES_FOR_TRANSFER} required for a meaningful "
+            "cross-chemistry transfer evaluation. This is a real schema "
+            "incompatibility (missing raw quantities like resistance or "
+            "temperature in one domain), not something a larger dataset "
+            "would fix."
+        )
+
+    X_train = pd.concat([X[common] for X, _, _ in train_inputs.values()])
+    y_soh_train = pd.concat([y for _, y, _ in train_inputs.values()])
+    y_rul_train = pd.concat([y for _, _, y in train_inputs.values()])
+    bndl = train_models(X_train, y_soh_train, y_rul_train)
+
+    X_eval = pd.concat([X[common] for X, _, _ in eval_inputs.values()])
+    y_soh_eval = pd.concat([y for _, y, _ in eval_inputs.values()])
+    y_rul_eval = pd.concat([y for _, _, y in eval_inputs.values()])
+    preds = predict(bndl, X_eval)
+
+    soh_mae = float(mean_absolute_error(y_soh_eval, preds["soh_pred"]))
+    soh_r2  = float(r2_score(y_soh_eval, preds["soh_pred"]))
+    rul_mae = float(mean_absolute_error(y_rul_eval, preds["rul_pred"]))
+    rul_r2  = float(r2_score(y_rul_eval, preds["rul_pred"]))
+
+    train_sample = next(iter(train_cell_data))
+    eval_sample  = next(iter(eval_cell_data))
+    dataset_key  = f"{train_dataset}_to_{eval_dataset}"
+
+    run_id = log_run(
+        org_id=org_id,
+        dataset=dataset_key,
+        chemistry=f"{ChemistryProfile.for_cell(train_sample).short_name} -> "
+                  f"{ChemistryProfile.for_cell(eval_sample).short_name}",
+        feature_set=common,
+        feature_version=FEATURE_VERSION,
+        hyperparams=dict(GBRT_PARAMS),
+        seed=GBRT_PARAMS["random_state"],
+        cell_ids=list(train_cell_data.keys()) + list(eval_cell_data.keys()),
+        n_rows=len(X_train) + len(X_eval),
+        lco_metrics={
+            "soh_mae": soh_mae, "soh_r2": soh_r2,
+            "rul_mae": rul_mae, "rul_r2": rul_r2,
+            "rul_reliable": False,  # never claim reliable on an out-of-domain zero-shot transfer
+            "per_cell": {},         # not leave-cell-out — a single train-on-all/eval-on-all split
+        },
+        notes=(
+            f"Cross-chemistry generalization study: trained on {train_dataset} "
+            f"({len(train_cell_data)} cells), zero-shot evaluated on "
+            f"{eval_dataset} ({len(eval_cell_data)} cells), using the "
+            f"{len(common)} feature column(s) both domains have available "
+            f"({', '.join(common)}). Not leave-cell-out — a single "
+            "train-on-all-of-one-domain / eval-on-all-of-the-other split. "
+            "Report the number honestly, including a poor one — see "
+            "src/battery_knowledge.py's why-resistance-scales-differ entry "
+            "for why cross-chemistry transfer is expected to be weak."
+        ),
+    )
+
+    return {
+        "run_id": run_id, "soh_mae": soh_mae, "soh_r2": soh_r2,
+        "rul_mae": rul_mae, "rul_r2": rul_r2, "n_common_features": len(common),
+    }
+
+
+def cross_chemistry_runs_for_train_dataset(train_dataset: str, tenant_org_id: "int | None" = None) -> list[dict]:
+    """
+    Every logged cross-chemistry transfer run (evaluated or "not
+    evaluated") whose training side was train_dataset — e.g.
+    cross_chemistry_runs_for_train_dataset("nasa") returns the
+    nasa_to_severson / nasa_to_oxford rows. Used by the Overview page's
+    cross-dataset transfer-error honesty badge to show, next to a NASA
+    cell's RUL sample-size badge, how well the NASA-trained model
+    generalizes to chemistries it wasn't trained on.
+    """
+    all_runs = leaderboard(tenant_org_id=tenant_org_id)
+    prefix = f"{train_dataset}_to_"
+    return [r for r in all_runs if r["dataset"].startswith(prefix)]
+
+
+def log_cross_chemistry_unavailable(
+    train_dataset: str,
+    eval_dataset: str,
+    reason: str,
+    org_id: int = PLATFORM_ORG_ID,
+) -> str:
+    """
+    Log an honest "attempted but not possible" record for a cross-chemistry
+    pairing that can't be evaluated at all (e.g. Oxford's checkpoint-
+    indexed schema has no cycle_number/resistance_ohm/temperature_c, so
+    run_cross_chemistry_transfer() would have to refuse). Every metric is
+    None (not a fabricated number, not silently skipped) — the Benchmark
+    leaderboard shows this row with "—" for every metric and `reason` in
+    its notes, same transparency the rest of this registry gives every
+    other run.
+    """
+    return log_run(
+        org_id=org_id,
+        dataset=f"{train_dataset}_to_{eval_dataset}",
+        chemistry="not evaluated",
+        feature_set=[],
+        feature_version="n/a",
+        hyperparams={},
+        seed=0,
+        cell_ids=[],
+        n_rows=0,
+        lco_metrics={
+            "soh_mae": None, "soh_r2": None, "rul_mae": None, "rul_r2": None,
+            "rul_reliable": False, "per_cell": {},
+        },
+        notes=f"Not evaluated: {reason}",
+    )
