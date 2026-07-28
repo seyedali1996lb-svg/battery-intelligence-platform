@@ -174,6 +174,35 @@ class ExperimentRun(Base):
     notes           = Column(Text)
 
 
+class KGNode(Base):
+    """One knowledge-graph node — src/knowledge_graph.py owns the domain
+    schema/logic (node types, provenance rules); this table only stores the
+    flattened rows produced by its graph_to_rows(). Same split-ownership
+    pattern as ExperimentRun above. org_id uses PLATFORM_ORG_ID (imported
+    at call time from experiment_registry.py, not redefined here) for the
+    graph built from the shared reference fleets."""
+    __tablename__ = "kg_nodes"
+    org_id    = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    node_type = Column(String, primary_key=True)
+    node_id   = Column(String, primary_key=True)
+    attrs     = Column(Text)  # JSON-encoded dict
+
+
+class KGEdge(Base):
+    """One knowledge-graph edge. edge_id is a deterministic
+    'src_key|dst_key|edge_type' string (see knowledge_graph.graph_to_rows())
+    so re-saving an unchanged edge is a no-op merge, not a duplicate row."""
+    __tablename__ = "kg_edges"
+    org_id    = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    edge_id   = Column(String, primary_key=True)
+    edge_type = Column(String, nullable=False)
+    src_key   = Column(String, nullable=False)
+    dst_key   = Column(String, nullable=False)
+    source_fn = Column(String)   # provenance: "module.function" that computed this edge
+    doi       = Column(String)   # provenance: literature DOI, when applicable
+    attrs     = Column(Text)     # JSON-encoded dict of extra edge attributes
+
+
 # ---------------------------------------------------------------------------
 # Init + migration + seeding
 # ---------------------------------------------------------------------------
@@ -226,7 +255,7 @@ def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
     for _t in ("decisions", "cell_cohort_tags", "settings", "upload_meta",
-               "failure_signatures", "experiment_runs"):
+               "failure_signatures", "experiment_runs", "kg_nodes", "kg_edges"):
         _ensure_org_id_column(_t)
     _seed_demo_org_and_users()
 
@@ -595,3 +624,47 @@ def get_experiment_run(org_id: int, run_id: str) -> "dict | None":
     with Session() as s:
         row = s.query(ExperimentRun).filter_by(org_id=org_id, run_id=run_id).one_or_none()
         return _experiment_run_row_to_dict(row) if row is not None else None
+
+
+# ---------------------------------------------------------------------------
+# Knowledge graph (src/knowledge_graph.py owns the schema/domain logic)
+# ---------------------------------------------------------------------------
+
+def save_knowledge_graph(org_id: int, node_rows: list, edge_rows: list) -> None:
+    """Replace org_id's saved graph snapshot with node_rows/edge_rows (the
+    flattened output of knowledge_graph.graph_to_rows()) — a full
+    delete-then-insert, not an incremental merge, since a graph rebuild is
+    expected to change which edges exist (e.g. a cell's mechanism verdict
+    updates), not just add new ones."""
+    with Session() as s:
+        s.query(KGNode).filter_by(org_id=org_id).delete()
+        s.query(KGEdge).filter_by(org_id=org_id).delete()
+        for r in node_rows:
+            s.add(KGNode(org_id=org_id, node_type=r["node_type"], node_id=r["node_id"], attrs=r["attrs"]))
+        for r in edge_rows:
+            s.add(KGEdge(
+                org_id=org_id, edge_id=r["edge_id"], edge_type=r["edge_type"],
+                src_key=r["src_key"], dst_key=r["dst_key"],
+                source_fn=r["source_fn"], doi=r["doi"], attrs=r["attrs"],
+            ))
+        s.commit()
+
+
+def load_knowledge_graph_rows(org_id: int) -> "tuple[list[dict], list[dict]]":
+    """Load org_id's saved graph snapshot as (node_rows, edge_rows) —
+    the same shape knowledge_graph.graph_to_rows() produces, ready for
+    knowledge_graph.graph_from_rows()."""
+    with Session() as s:
+        node_rows = [
+            {"node_type": r.node_type, "node_id": r.node_id, "attrs": r.attrs}
+            for r in s.query(KGNode).filter_by(org_id=org_id).all()
+        ]
+        edge_rows = [
+            {
+                "edge_id": r.edge_id, "edge_type": r.edge_type,
+                "src_key": r.src_key, "dst_key": r.dst_key,
+                "source_fn": r.source_fn, "doi": r.doi, "attrs": r.attrs,
+            }
+            for r in s.query(KGEdge).filter_by(org_id=org_id).all()
+        ]
+        return node_rows, edge_rows
