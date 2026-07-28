@@ -142,6 +142,38 @@ class FailureSignature(Base):
     trend_vector        = Column(Text)  # JSON-encoded list[float]
 
 
+class ExperimentRun(Base):
+    """One logged GBRT training run — see src/experiment_registry.py for the
+    dataclass/orchestration layer built on top of this table (same split as
+    FailureSignature above / trajectory_memory.py: this class owns storage
+    only). org_id uses the reserved PLATFORM_ORG_ID (0) sentinel — see
+    experiment_registry.py's module docstring — for runs trained on the
+    platform's own shared reference fleets (NASA/synthetic/Severson), which
+    belong to no single tenant; real org_id values are used for runs trained
+    on an org's own uploaded data."""
+    __tablename__ = "experiment_runs"
+    run_id          = Column(String, primary_key=True)
+    org_id          = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    dataset         = Column(String, nullable=False)   # "nasa" | "synth" | "severson" | "uploaded" | "nasa_to_severson" ...
+    chemistry       = Column(String)                   # e.g. "LiCoO2", "LFP", "NCA"
+    feature_set     = Column(Text)                      # JSON-encoded list[str] of columns actually used
+    feature_version = Column(String)                    # batlab.features.engineering.FEATURE_VERSION at log time
+    hyperparams     = Column(Text)                      # JSON-encoded dict (GBRT_PARAMS)
+    seed            = Column(Integer)
+    cell_ids        = Column(Text)                      # JSON-encoded list[str] — the LCO population
+    n_cells         = Column(Integer)
+    n_rows          = Column(Integer)
+    soh_mae         = Column(Float)
+    soh_r2          = Column(Float)
+    rul_mae         = Column(Float)
+    rul_r2          = Column(Float)
+    rul_reliable    = Column(Integer)                   # 0/1 — SQLite has no native bool
+    fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
+    git_commit      = Column(String)
+    timestamp       = Column(String)
+    notes           = Column(Text)
+
+
 # ---------------------------------------------------------------------------
 # Init + migration + seeding
 # ---------------------------------------------------------------------------
@@ -193,7 +225,8 @@ def _seed_demo_org_and_users() -> None:
 def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
-    for _t in ("decisions", "cell_cohort_tags", "settings", "upload_meta", "failure_signatures"):
+    for _t in ("decisions", "cell_cohort_tags", "settings", "upload_meta",
+               "failure_signatures", "experiment_runs"):
         _ensure_org_id_column(_t)
     _seed_demo_org_and_users()
 
@@ -480,3 +513,85 @@ def load_failure_signatures(org_id: int) -> list:
             )
             for r in rows
         ]
+
+
+# ---------------------------------------------------------------------------
+# Experiment registry (src/experiment_registry.py owns the dataclass/logic)
+# ---------------------------------------------------------------------------
+
+def save_experiment_run(org_id: int, entry: dict) -> None:
+    """Insert one logged run. entry keys match the ExperimentRun columns
+    (feature_set/hyperparams/cell_ids/fold_metrics already JSON-encoded
+    strings; rul_reliable already an int 0/1) — see
+    experiment_registry.log_run() for the caller that builds this dict."""
+    with Session() as s:
+        s.merge(ExperimentRun(
+            run_id=entry["run_id"],
+            org_id=org_id,
+            dataset=entry.get("dataset"),
+            chemistry=entry.get("chemistry"),
+            feature_set=entry.get("feature_set"),
+            feature_version=entry.get("feature_version"),
+            hyperparams=entry.get("hyperparams"),
+            seed=entry.get("seed"),
+            cell_ids=entry.get("cell_ids"),
+            n_cells=entry.get("n_cells"),
+            n_rows=entry.get("n_rows"),
+            soh_mae=entry.get("soh_mae"),
+            soh_r2=entry.get("soh_r2"),
+            rul_mae=entry.get("rul_mae"),
+            rul_r2=entry.get("rul_r2"),
+            rul_reliable=entry.get("rul_reliable"),
+            fold_metrics=entry.get("fold_metrics"),
+            git_commit=entry.get("git_commit"),
+            timestamp=entry.get("timestamp"),
+            notes=entry.get("notes"),
+        ))
+        s.commit()
+
+
+def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
+    return {
+        "run_id":          r.run_id,
+        "org_id":          r.org_id,
+        "dataset":         r.dataset,
+        "chemistry":       r.chemistry,
+        "feature_set":     json.loads(r.feature_set) if r.feature_set else [],
+        "feature_version": r.feature_version,
+        "hyperparams":     json.loads(r.hyperparams) if r.hyperparams else {},
+        "seed":            r.seed,
+        "cell_ids":        json.loads(r.cell_ids) if r.cell_ids else [],
+        "n_cells":         r.n_cells,
+        "n_rows":          r.n_rows,
+        "soh_mae":         r.soh_mae,
+        "soh_r2":          r.soh_r2,
+        "rul_mae":         r.rul_mae,
+        "rul_r2":          r.rul_r2,
+        "rul_reliable":    bool(r.rul_reliable),
+        "fold_metrics":    json.loads(r.fold_metrics) if r.fold_metrics else {},
+        "git_commit":      r.git_commit,
+        "timestamp":       r.timestamp,
+        "notes":           r.notes,
+    }
+
+
+def load_experiment_runs(org_ids: "int | list[int]") -> list[dict]:
+    """Load logged runs for one org_id, or every org_id in a list (used by
+    the leaderboard to combine an org's own uploaded-data runs with the
+    shared PLATFORM_ORG_ID reference-dataset runs — see
+    experiment_registry.py). Newest first."""
+    ids = [org_ids] if isinstance(org_ids, int) else list(org_ids)
+    with Session() as s:
+        rows = (
+            s.query(ExperimentRun)
+            .filter(ExperimentRun.org_id.in_(ids))
+            .order_by(ExperimentRun.timestamp.desc())
+            .all()
+        )
+        return [_experiment_run_row_to_dict(r) for r in rows]
+
+
+def get_experiment_run(org_id: int, run_id: str) -> "dict | None":
+    with Session() as s:
+        row = s.query(ExperimentRun).filter_by(org_id=org_id, run_id=run_id).one_or_none()
+        return _experiment_run_row_to_dict(row) if row is not None else None

@@ -219,11 +219,19 @@ def _compute_features_only(battery_dict: dict) -> tuple[dict, dict]:
 
 
 def _train_and_predict(battery_dict: dict, raw_fdfs: dict,
-                       model_inputs: dict) -> tuple[dict, dict, dict]:
+                       model_inputs: dict, dataset: "str | None" = None,
+                       org_id: "int | None" = None) -> tuple[dict, dict, dict]:
     """Train SOH+RUL models on pre-computed features and apply predictions.
 
     Separated from feature engineering so load_everything() can use a features
     cache hit to skip build_features() while still running LCO + model training.
+
+    dataset/org_id: when both are given, this fit is logged to the
+    experiment registry (src/experiment_registry.py) — the single place a
+    real train_models()+run_lco() call happens for the built-in reference
+    fleets, so every load_everything() pipeline gets logged automatically
+    with no separate call needed. Left as None for callers (tests, dead
+    code paths) that don't have a dataset/org_id to attribute the run to.
     """
     X_all     = pd.concat([m[0] for m in model_inputs.values()])
     y_soh_all = pd.concat([m[1] for m in model_inputs.values()])
@@ -244,6 +252,25 @@ def _train_and_predict(battery_dict: dict, raw_fdfs: dict,
         for cid, fold in lco["per_cell"].items()
     }
     bndl["metrics"]["per_cell_rul_reliable"] = per_cell_rul_ok
+
+    if dataset is not None and org_id is not None:
+        import experiment_registry as _reg
+        from batlab.features.engineering import FEATURE_VERSION as _FV
+        from batlab.models.gbrt import GBRT_PARAMS as _GBRT_PARAMS
+        from chemistry_profiles import ChemistryProfile as _CP
+        _sample_cell = next(iter(battery_dict))
+        bndl["metrics"]["experiment_run_id"] = _reg.log_run(
+            org_id=org_id,
+            dataset=dataset,
+            chemistry=_CP.for_cell(_sample_cell).short_name,
+            feature_set=list(X_all.columns),
+            feature_version=_FV,
+            hyperparams=dict(_GBRT_PARAMS),
+            seed=_GBRT_PARAMS["random_state"],
+            cell_ids=list(battery_dict.keys()),
+            n_rows=len(X_all),
+            lco_metrics=lco,
+        )
 
     featured_dfs, split_cycles = {}, {}
     for cell_id, (X, y_soh, y_rul) in model_inputs.items():
@@ -292,18 +319,22 @@ def load_everything():
 
     def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict, dict]:
         """3-tier cache: full bundle → features-only → full pipeline. Thread-safe — no st.* calls."""
+        import experiment_registry as _reg
+
         cached = load_cached(key, cell_dict)
         if cached is not None:
             return cached
         feat_cached = load_features_cached(key, cell_dict)
         if feat_cached is not None:
             raw_fdfs, model_inputs = feat_cached
-            result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
+            result = _train_and_predict(cell_dict, raw_fdfs, model_inputs,
+                                        dataset=key, org_id=_reg.PLATFORM_ORG_ID)
             save_cached(key, cell_dict, result)
             return result
         raw_fdfs, model_inputs = _compute_features_only(cell_dict)
         save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
-        result = _train_and_predict(cell_dict, raw_fdfs, model_inputs)
+        result = _train_and_predict(cell_dict, raw_fdfs, model_inputs,
+                                    dataset=key, org_id=_reg.PLATFORM_ORG_ID)
         save_cached(key, cell_dict, result)
         return result
 

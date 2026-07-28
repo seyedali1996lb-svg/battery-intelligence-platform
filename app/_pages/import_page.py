@@ -15,7 +15,7 @@ from design_system import section_header_html
 from utils import _action_bar, base_layout, LEGEND_H, render_card, load_tenant_bundle_cached
 from import_adapter import adapt_upload_to_pipeline
 from batlab.features.engineering import build_features, get_model_matrix
-from batlab.models.gbrt import train_models, predict
+from batlab.models.gbrt import train_models, predict, GBRT_PARAMS
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
@@ -142,6 +142,27 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 up_bndl["metrics"]["lco_limited"] = lco_limited
                 _step("reliability", "✓", "Per-cell reliability computed"
                       + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
+
+                # Log this fit to the experiment registry — same call every
+                # upload-training run makes, no separate "log it" step for
+                # the user or a future caller to forget (see
+                # src/experiment_registry.py's module docstring).
+                import experiment_registry as _reg
+                from batlab.features.engineering import FEATURE_VERSION as _FV
+                from chemistry_profiles import ChemistryProfile as _CP
+                _sample_cell = next(iter(battery["cells"]))
+                up_bndl["metrics"]["experiment_run_id"] = _reg.log_run(
+                    org_id=st.session_state["auth_org_id"],
+                    dataset="uploaded",
+                    chemistry=_CP.for_cell(_sample_cell).short_name,
+                    feature_set=list(X_all.columns),
+                    feature_version=_FV,
+                    hyperparams=dict(GBRT_PARAMS),
+                    seed=GBRT_PARAMS["random_state"],
+                    cell_ids=list(battery["cells"].keys()),
+                    n_rows=len(X_all),
+                    lco_metrics=lco,
+                )
 
                 # 7 — Build featured_dfs / split_cycles
                 _step("load", "⏳", "Loading results into dashboard…")
