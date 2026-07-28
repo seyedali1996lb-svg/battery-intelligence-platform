@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from recommendations import diagnose_mechanism, mechanism_corroboration_note
+from recommendations import diagnose_mechanism, mechanism_corroboration_note, physics_ml_agreement_note
 
 
 def _make_cell_df(n=100, ce_slope=0.0, ce_base=0.999, nonlinearity=0.0,
@@ -120,3 +120,32 @@ def test_no_note_when_mechanism_confidence_too_low():
     the recommendation over."""
     assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "Low")) is None
     assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "No data")) is None
+
+
+# ---------------------------------------------------------------------------
+# physics_ml_agreement_note() -- same caution-note contract as
+# mechanism_corroboration_note() above, wrapping
+# src/physics_calibration.py's physics_ml_agreement() diagnostic (Phase 6
+# physics-informed intelligence).
+# ---------------------------------------------------------------------------
+
+def test_no_note_when_physics_and_ml_agree():
+    assert physics_ml_agreement_note({"agree": True}) is None
+
+
+def test_no_note_when_comparison_undecidable():
+    """agree=None means insufficient data on one or both sides -- not a
+    disagreement worth surfacing."""
+    assert physics_ml_agreement_note({"agree": None}) is None
+
+
+def test_caution_note_when_physics_and_ml_disagree():
+    agreement = {
+        "agree": False,
+        "physics": {"dominant_mode_label": "LAM — Loss of Active Material (physics: linear fade channel)"},
+        "ml": {"verdict": "LLI — Loss of Lithium Inventory", "confidence_label": "High"},
+    }
+    note = physics_ml_agreement_note(agreement)
+    assert note is not None
+    assert "LAM" in note and "LLI" in note
+    assert "elevated caution" in note

@@ -330,3 +330,37 @@ def mechanism_corroboration_note(action: str, mechanism: dict) -> "str | None":
             f"assumes. Treat with elevated caution."
         )
     return None
+
+
+def physics_ml_agreement_note(agreement: dict) -> "str | None":
+    """
+    Caution-note wrapper around src/physics_calibration.py's
+    physics_ml_agreement() — same exact contract as
+    mechanism_corroboration_note() above: returns None in the common,
+    unremarkable case (physics and ML agree, or either side has too little
+    data to compare), and a short plain-English caution string only when
+    the two independently-derived mechanism verdicts genuinely disagree.
+
+    `agreement` is the dict returned by
+    physics_calibration.physics_ml_agreement(cell_id, df) — this function
+    does not recompute anything, it only decides whether that comparison
+    is noteworthy enough to surface as a caution (mirroring the split
+    between an always-on diagnostic and a caution-only note that
+    physics_ml_agreement()'s own docstring describes).
+
+    This is the same reused pattern as mechanism_corroboration_note(): two
+    independent analytical surfaces (there, the action classifier vs. the
+    mechanism classifier; here, a scipy physics fit vs. the mechanism
+    classifier) that could silently diverge with no arbitration between
+    them — surfaced honestly rather than resolved by picking one.
+    """
+    if agreement.get("agree") is not False:
+        return None
+    physics = agreement.get("physics", {})
+    ml = agreement.get("ml", {})
+    return (
+        f"Physics-fitted degradation mode ({physics.get('dominant_mode_label', '?')}) disagrees "
+        f"with the ML mechanism classifier's verdict ({ml.get('verdict', '?')}, "
+        f"{ml.get('confidence_label', '?')} confidence) — two independently-derived signals point "
+        f"different ways. Treat either mechanism call with elevated caution until they converge."
+    )
