@@ -55,6 +55,7 @@ The platform is organized into five engineering modules:
 - Gradient-boosted regression tree (GBRT) models for point estimates
 - Remaining useful life (RUL) prediction
 - Quantile regression for uncertainty estimation around each RUL prediction
+- An experiment registry (`src/experiment_registry.py`) that logs every training run automatically — dataset, feature set, hyperparameters, seed, fold metrics, git commit — with reproducible one-click replay of any past run
 
 **Battery Diagnostics**
 - dQ/dV differential-capacity analysis
@@ -119,7 +120,8 @@ This is public-data validation, not industrial validation — the 0.806 describe
 
 - A per-cell **battery health dashboard** — SOH/RUL, degradation trajectory, dQ/dV, anomaly flags
 - A **fleet monitoring** concept view across multiple cells at once, plus a simulated live-telemetry Monitor page
-- An **EU Battery Passport** generator
+- An **EU Battery Passport** generator, with a "regenerate this report" action that replays the exact recorded pipeline (dataset, feature set, hyperparameters, seed) behind any displayed result
+- A **Benchmark** leaderboard across every logged training run — filterable by dataset/chemistry, sortable by any metric, with fold-level drill-down — including an honest cross-chemistry generalization study (train on NASA, zero-shot evaluate on Severson) reporting the real transfer error, not a flattering one
 - A **second-life / Solar + Storage Sizing calculator** — a real hour-by-hour (8760 hours/year) dispatch simulation against PVGIS solar data, with temperature-aware battery derating cited to real cell documentation (BU-410), not a monthly approximation
 
 Currently demonstrated using public datasets and simulated telemetry. Real BMS integration requires real hardware data.
