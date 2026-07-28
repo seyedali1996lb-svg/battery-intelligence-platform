@@ -571,6 +571,59 @@ def test_benchmark_page_renders_leaderboard_with_logged_runs(isolated_db):
     assert "nasa" in at.dataframe[0].value["Dataset"].values
 
 
+def test_benchmark_page_physics_divergence_button_runs_for_nasa(isolated_db):
+    """Clicking "Run held-out-cell divergence check" on a NASA run's
+    drill-down must render the physics-vs-GBRT divergence table with no
+    exception, using real locally-cached NASA cell data reloaded via
+    experiment_registry.reload_reference_cell_data() -- not a mock."""
+    import experiment_registry as reg
+
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number", "fade_rate_30cy"],
+        feature_version="v10-physics-calibration",
+        hyperparams={"random_state": 42}, seed=42,
+        cell_ids=["B0005", "B0006"], n_rows=300,
+        lco_metrics={
+            "soh_mae": 1.1, "soh_r2": 0.83, "rul_mae": 22.0, "rul_r2": 0.55,
+            "rul_reliable": True,
+            "per_cell": {"B0005": {"soh_mae": 1.0, "soh_r2": 0.9, "rul_mae": 20, "rul_r2": 0.6}},
+        },
+    )
+
+    at = _logged_in_app(role="Engineer", page="benchmark", data_mode="nasa")
+    at.run()
+    assert not at.exception
+
+    btn = next(b for b in at.button if "divergence check" in b.label.lower())
+    btn.click().run(timeout=180)
+    assert not at.exception, f"Divergence check raised: {at.exception}"
+    all_captions = "\n".join(c.value for c in at.caption)
+    assert "not measuring the same thing" in all_captions
+    assert len(at.dataframe) >= 1
+    assert "B0005" in at.dataframe[-1].value["Cell"].values or "B0006" in at.dataframe[-1].value["Cell"].values
+
+
+def test_benchmark_page_no_physics_divergence_section_for_uploaded_dataset(isolated_db):
+    """Uploaded-data runs have no NASA/Severson physics calibration path --
+    the divergence section must not appear at all, not show an error."""
+    import experiment_registry as reg
+
+    reg.log_run(
+        org_id=1, dataset="uploaded", chemistry="Custom",
+        feature_set=["cycle_number"], feature_version="v10-physics-calibration",
+        hyperparams={"random_state": 42}, seed=42,
+        cell_ids=["MyCell1"], n_rows=100,
+        lco_metrics={"soh_mae": 1.0, "soh_r2": 0.8, "rul_mae": 10.0, "rul_r2": 0.5,
+                     "rul_reliable": True, "per_cell": {}},
+    )
+    at = _logged_in_app(role="Engineer", page="benchmark", data_mode="nasa")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "Physics vs GBRT" not in text
+
+
 def test_overview_shows_no_cross_chem_badge_when_no_transfer_study_logged(isolated_db):
     """Baseline: with nothing logged in the registry, the Overview page
     must render normally with no cross-dataset transfer badge -- the

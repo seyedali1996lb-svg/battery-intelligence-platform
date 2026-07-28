@@ -140,3 +140,64 @@ def page_benchmark(org_id: int) -> None:
             "cross-dataset transfer run (a single train/eval split, not "
             "leave-cell-out)."
         )
+
+    # ── Physics vs GBRT held-out-cell divergence (Phase 6) ──────────────────
+    _render_physics_divergence_section(run["dataset"])
+
+
+def _render_physics_divergence_section(selected_dataset: str) -> None:
+    """
+    physics_calibration.physics_gbrt_divergence_report() compares, per
+    calibration-eligible cell, a real leave-cell-out GBRT fold against a
+    physics fit calibrated on that cell's own history. Gated behind a
+    button (not auto-run on page load) since it retrains one GBRT model
+    per eligible cell -- real cost, not free like the rest of this page's
+    reads from the already-logged registry.
+
+    Only offered for NASA/Severson (physics_calibration.py's own
+    calibration-eligibility gate — see its module docstring for why Oxford/
+    synthetic/uploaded cells are out of scope) and only when raw cell data
+    is reloadable for the run's dataset (experiment_registry.
+    reload_reference_cell_data() — the same reload path "Regenerate this
+    report" already uses elsewhere in this app).
+    """
+    import experiment_registry as reg
+
+    base_dataset = selected_dataset.split("_to_")[0]  # strip cross-chemistry "X_to_Y" suffixes
+    if base_dataset not in ("nasa", "severson"):
+        return
+
+    st.markdown("#### Physics vs GBRT — held-out-cell divergence")
+    st.caption(
+        "Compares a genuine leave-cell-out GBRT fold against a physics fit "
+        "calibrated directly on that same cell's own history — surfaced "
+        "honestly, including any disagreement, per this project's standing "
+        "practice of never suppressing model disagreement (see the "
+        "Overview page's RUL reconciliation)."
+    )
+    if st.button("Run held-out-cell divergence check", key=f"bench_divergence_{base_dataset}"):
+        with st.spinner("Running leave-cell-out folds + physics calibration per cell…"):
+            try:
+                cell_data = reg.reload_reference_cell_data(base_dataset)
+                from physics_calibration import physics_gbrt_divergence_report
+                report = physics_gbrt_divergence_report(cell_data)
+            except Exception as exc:
+                st.info(f"Divergence check unavailable: {exc}")
+                return
+        if not report:
+            st.caption("No calibration-eligible cells with enough data in this dataset.")
+            return
+        div_table = pd.DataFrame([
+            {
+                "Cell":              r["cell_id"],
+                "Physics dominant mode": r["physics_dominant_mode_label"].split("(")[0].strip(),
+                "Physics fit R2":    _fmt(r["physics_fit_r2"]),
+                "GBRT SOH MAE (%)":  _fmt(r["gbrt_soh_mae"]),
+                "Physics SOH MAE (%)": _fmt(r["physics_soh_mae"]),
+                "Closer to actual":  r["closer_model"],
+                "Divergence":        f"{r['divergence_pct']:.0f}%",
+            }
+            for r in report
+        ])
+        st.dataframe(div_table, use_container_width=True, hide_index=True)
+        st.caption(report[0]["note"])
