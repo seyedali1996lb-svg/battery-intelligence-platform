@@ -322,3 +322,86 @@ def test_cross_org_isolation(db):
     loaded_b = db.load_failure_signatures(org_b)
     assert len(loaded_a) == 1 and loaded_a[0].failure_mode == "LLI"
     assert len(loaded_b) == 1 and loaded_b[0].failure_mode == "LAM"
+
+
+# ---------------------------------------------------------------------------
+# FleetAsset hierarchy: Organization -> Site -> Fleet -> Pack -> Cell
+# ---------------------------------------------------------------------------
+
+def test_demo_org_gets_default_site_and_fleet_on_init(db):
+    """init_db() backfills a default Site + Fleet for every org, including
+    the seeded Demo Org, without any explicit call needed."""
+    sites = db.list_sites(DEMO_ORG_ID)
+    assert len(sites) == 1
+    assert sites[0]["name"] == "Default Site"
+
+    fleets = db.list_fleets(DEMO_ORG_ID)
+    assert len(fleets) == 1
+    assert fleets[0]["name"] == "Default Fleet"
+    assert fleets[0]["site_id"] == sites[0]["id"]
+
+
+def test_default_fleet_hierarchy_backfill_is_idempotent(db):
+    """Calling init_db() again (or _seed_default_fleet_hierarchy() directly)
+    must not create duplicate default sites/fleets."""
+    db.init_db()
+    db._seed_default_fleet_hierarchy()
+    assert len(db.list_sites(DEMO_ORG_ID)) == 1
+    assert len(db.list_fleets(DEMO_ORG_ID)) == 1
+
+
+def test_new_org_gets_default_site_and_fleet_immediately(db):
+    """A brand-new org created via signup (not present at the last
+    init_db() backfill) must still get its own default Site/Fleet right
+    away, not just at the next process restart."""
+    org_id = db.create_organization_with_admin("New Co", "newco_admin", "password123")["org_id"]
+    sites = db.list_sites(org_id)
+    assert len(sites) == 1 and sites[0]["name"] == "Default Site"
+    fleets = db.list_fleets(org_id)
+    assert len(fleets) == 1 and fleets[0]["name"] == "Default Fleet"
+
+
+def test_migration_does_not_disturb_pre_existing_data(db):
+    """Adding the FleetAsset tables/backfill must not alter any
+    pre-existing decisions/settings/etc. -- purely additive."""
+    db.save_decision(DEMO_ORG_ID, {"id": "d1", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"})
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 82.0)
+
+    db.init_db()  # re-run migration/backfill
+
+    decisions = db.load_decisions(DEMO_ORG_ID)
+    assert len(decisions) == 1 and decisions[0]["id"] == "d1"
+    assert db.get_setting(DEMO_ORG_ID, "eol_threshold_pct") == 82.0
+
+
+def test_site_fleet_pack_hierarchy_crud(db):
+    site = db.create_site(DEMO_ORG_ID, "Warehouse A")
+    fleet = db.create_fleet(DEMO_ORG_ID, site["id"], "Forklift Fleet")
+    pack = db.create_pack(DEMO_ORG_ID, fleet["id"], "Pack 1")
+
+    assert any(s["id"] == site["id"] for s in db.list_sites(DEMO_ORG_ID))
+    assert db.list_fleets(DEMO_ORG_ID, site_id=site["id"]) == [fleet]
+    assert db.list_packs(DEMO_ORG_ID, fleet_id=fleet["id"]) == [pack]
+
+    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0005", position=0)
+    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0006", position=1)
+    assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0005", "B0006"]
+
+    db.remove_cell_from_pack(DEMO_ORG_ID, pack["id"], "B0005")
+    assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0006"]
+
+
+def test_fleet_asset_hierarchy_is_org_scoped(db):
+    """Two orgs' sites/fleets/packs never leak into each other's listings --
+    same cross-tenant isolation guarantee as every other table in this
+    module."""
+    org_a = db.create_organization_with_admin("Org A", "siteadmin_a", "passwordA")["org_id"]
+    org_b = db.create_organization_with_admin("Org B", "siteadmin_b", "passwordB")["org_id"]
+
+    site_a = db.create_site(org_a, "Site A")
+    site_b = db.create_site(org_b, "Site B")
+
+    # Each org already has its own default site from signup, plus the new one
+    assert {s["name"] for s in db.list_sites(org_a)} == {"Default Site", "Site A"}
+    assert {s["name"] for s in db.list_sites(org_b)} == {"Default Site", "Site B"}
+    assert site_a["id"] not in [s["id"] for s in db.list_sites(org_b)]

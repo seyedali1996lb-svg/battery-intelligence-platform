@@ -258,6 +258,7 @@ def init_db() -> None:
                "failure_signatures", "experiment_runs", "kg_nodes", "kg_edges"):
         _ensure_org_id_column(_t)
     _seed_demo_org_and_users()
+    _seed_default_fleet_hierarchy()
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +310,7 @@ def create_organization_with_admin(org_name: str, username: str, password: str, 
         s.add(user)
         s.commit()
         s.refresh(user)
+        _ensure_default_site_and_fleet(s, org.id)
         return {"org_id": org.id, "org_name": org.name, "user_id": user.id}
 
 
@@ -668,3 +670,165 @@ def load_knowledge_graph_rows(org_id: int) -> "tuple[list[dict], list[dict]]":
             for r in s.query(KGEdge).filter_by(org_id=org_id).all()
         ]
         return node_rows, edge_rows
+
+
+# ---------------------------------------------------------------------------
+# FleetAsset hierarchy: Organization -> Site -> Fleet -> Pack -> Cell
+#
+# A persisted, org-scoped asset hierarchy for grouping cells by physical
+# location/deployment -- distinct from src/pack_builder.py's Virtual Pack
+# Builder (an ephemeral, session-only what-if simulation of series/parallel
+# packs; untouched by this hierarchy). Cells are never their own DB rows
+# anywhere in this app (they live as DataFrames/model bundles), so PackCell
+# links a Pack to an existing string cell_id the same way CellCohortTag
+# already does, rather than introducing a new Cell table.
+# ---------------------------------------------------------------------------
+
+class Site(Base):
+    __tablename__ = "sites"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    org_id     = Column(Integer, nullable=False, default=_DEMO_ORG_ID)
+    name       = Column(String, nullable=False)
+    created_at = Column(String)
+
+
+class Fleet(Base):
+    __tablename__ = "fleets"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    org_id     = Column(Integer, nullable=False, default=_DEMO_ORG_ID)
+    site_id    = Column(Integer, nullable=False)
+    name       = Column(String, nullable=False)
+    created_at = Column(String)
+
+
+class Pack(Base):
+    __tablename__ = "packs"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    org_id     = Column(Integer, nullable=False, default=_DEMO_ORG_ID)
+    fleet_id   = Column(Integer, nullable=False)
+    name       = Column(String, nullable=False)
+    created_at = Column(String)
+
+
+class PackCell(Base):
+    """One cell assigned to a pack. cell_id is the app's existing string
+    cell identifier (NASA/Severson/synthetic/uploaded) -- not a foreign key
+    to a Cell table, since none exists anywhere else in this app."""
+    __tablename__ = "pack_cells"
+    org_id   = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    pack_id  = Column(Integer, primary_key=True)
+    cell_id  = Column(String, primary_key=True)
+    position = Column(Integer)
+
+
+# ---------------------------------------------------------------------------
+# FleetAsset hierarchy -- CRUD
+# ---------------------------------------------------------------------------
+
+def create_site(org_id: int, name: str) -> dict:
+    with Session() as s:
+        site = Site(org_id=org_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
+        s.add(site)
+        s.commit()
+        s.refresh(site)
+        return {"id": site.id, "org_id": site.org_id, "name": site.name, "created_at": site.created_at}
+
+
+def list_sites(org_id: int) -> list[dict]:
+    with Session() as s:
+        rows = s.query(Site).filter_by(org_id=org_id).order_by(Site.id).all()
+        return [{"id": r.id, "org_id": r.org_id, "name": r.name, "created_at": r.created_at} for r in rows]
+
+
+def create_fleet(org_id: int, site_id: int, name: str) -> dict:
+    with Session() as s:
+        fleet = Fleet(org_id=org_id, site_id=site_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
+        s.add(fleet)
+        s.commit()
+        s.refresh(fleet)
+        return {"id": fleet.id, "org_id": fleet.org_id, "site_id": fleet.site_id,
+                "name": fleet.name, "created_at": fleet.created_at}
+
+
+def list_fleets(org_id: int, site_id: "int | None" = None) -> list[dict]:
+    with Session() as s:
+        q = s.query(Fleet).filter_by(org_id=org_id)
+        if site_id is not None:
+            q = q.filter_by(site_id=site_id)
+        rows = q.order_by(Fleet.id).all()
+        return [{"id": r.id, "org_id": r.org_id, "site_id": r.site_id,
+                  "name": r.name, "created_at": r.created_at} for r in rows]
+
+
+def create_pack(org_id: int, fleet_id: int, name: str) -> dict:
+    with Session() as s:
+        pack = Pack(org_id=org_id, fleet_id=fleet_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
+        s.add(pack)
+        s.commit()
+        s.refresh(pack)
+        return {"id": pack.id, "org_id": pack.org_id, "fleet_id": pack.fleet_id,
+                "name": pack.name, "created_at": pack.created_at}
+
+
+def list_packs(org_id: int, fleet_id: "int | None" = None) -> list[dict]:
+    with Session() as s:
+        q = s.query(Pack).filter_by(org_id=org_id)
+        if fleet_id is not None:
+            q = q.filter_by(fleet_id=fleet_id)
+        rows = q.order_by(Pack.id).all()
+        return [{"id": r.id, "org_id": r.org_id, "fleet_id": r.fleet_id,
+                  "name": r.name, "created_at": r.created_at} for r in rows]
+
+
+def add_cell_to_pack(org_id: int, pack_id: int, cell_id: str, position: "int | None" = None) -> None:
+    with Session() as s:
+        s.merge(PackCell(org_id=org_id, pack_id=pack_id, cell_id=cell_id, position=position))
+        s.commit()
+
+
+def remove_cell_from_pack(org_id: int, pack_id: int, cell_id: str) -> None:
+    with Session() as s:
+        row = s.query(PackCell).filter_by(org_id=org_id, pack_id=pack_id, cell_id=cell_id).one_or_none()
+        if row is not None:
+            s.delete(row)
+            s.commit()
+
+
+def list_pack_cells(org_id: int, pack_id: int) -> list[str]:
+    with Session() as s:
+        rows = (
+            s.query(PackCell)
+            .filter_by(org_id=org_id, pack_id=pack_id)
+            .order_by(PackCell.position, PackCell.cell_id)
+            .all()
+        )
+        return [r.cell_id for r in rows]
+
+
+def _ensure_default_site_and_fleet(s, org_id: int) -> None:
+    """Idempotent, non-destructive: gives org_id one default Site + one
+    default Fleet underneath it if it doesn't have any Site yet. Only ever
+    adds rows, never modifies/removes anything -- safe to call for both a
+    brand-new org (create_organization_with_admin) and every pre-existing
+    org on every init_db() (_seed_default_fleet_hierarchy)."""
+    existing = s.query(Site).filter_by(org_id=org_id).first()
+    if existing is not None:
+        return
+    site = Site(org_id=org_id, name="Default Site", created_at=datetime.datetime.now().isoformat())
+    s.add(site)
+    s.commit()
+    s.refresh(site)
+    s.add(Fleet(
+        org_id=org_id, site_id=site.id, name="Default Fleet",
+        created_at=datetime.datetime.now().isoformat(),
+    ))
+    s.commit()
+
+
+def _seed_default_fleet_hierarchy() -> None:
+    """Additive backfill: every existing Organization gets one default Site
+    + Fleet via _ensure_default_site_and_fleet() above. Mirrors
+    _seed_demo_org_and_users()'s "create on first run only" pattern."""
+    with Session() as s:
+        for org in s.query(Organization).all():
+            _ensure_default_site_and_fleet(s, org.id)
