@@ -68,6 +68,7 @@ The platform is organized into five engineering modules:
 - Second-life viability evaluation, with cited and illustrative-assumption economics kept explicitly separate
 - An EU Battery Passport (Regulation 2023/1542 field structure) generator
 - Fleet-level lifecycle tracking across multiple cells
+- A `FleetAsset` hierarchy (Organization → Site → Fleet → Pack → Cell, `src/db.py`) for organizing cells by physical deployment, and a formal `BMSAdapter` protocol (`src/bms_connectors.py`) that the Victron VRM and Orion Jr2 adapters both implement — structural readiness for a real BMS integration, not a claim that one has happened (see [Limitations](#limitations))
 
 ## Architecture
 
@@ -148,8 +149,8 @@ Turning per-cell diagnostics into fleet- and deployment-level decision support �
 **Phase 3 — Digital twin architecture** *(not started)*
 A defined architecture connecting a cell's measured history, its derived health indicators, and a physics-based degradation model (an early PyBaMM-based capacity projection exists as one candidate building block) into a single continuously-updated representation. No such architecture exists yet — a physics projection module is not a digital twin.
 
-**Phase 4 — Real-time battery integration** *(not started)*
-Validating the existing "real API shape, never proven against a live account" Victron VRM and Orion Jr2 adapters (`src/bms_connectors.py`) against an actual account, and pointing the Live Monitor page's MQTT stream (`src/mqtt_stream.py`, `src/live_feed.py`) at real telemetry instead of its current simulated replay feed. This is the honest prerequisite for any future live-BMS or live-ESS capability — not a rebrand of the existing simulation.
+**Phase 4 — Real-time battery integration** *(formalized, not yet validated)*
+The Victron VRM and Orion Jr2 adapters (`src/bms_connectors.py`) now share one formal `BMSAdapter` protocol, and the MQTT ingestion path (`src/mqtt_stream.py`) has explicit fault detection for malformed/corrupted telemetry (missing fields, bad timestamps, dropped packets, unit mixups — exercised by a synthetic fault-injection harness replaying real public cycling data, `tests/synthetic_ingestion/`). What remains is the actual prerequisite this phase was always about: validating the adapters against a real, live account, and pointing the Live Monitor page's MQTT stream at real telemetry instead of its current simulated replay feed. Formalizing the interface is not the same as proving it against real hardware — that step hasn't happened yet.
 
 ## Limitations
 
@@ -158,7 +159,7 @@ Being explicit about what this platform is not, as of today:
 **Currently:**
 - No proprietary factory or manufacturer data — only the four public datasets listed above
 - No real vehicle or stationary-storage fleet — fleet views operate on the same public-dataset cells or an honestly-labelled synthetic fleet
-- No validated live BMS connection — the Victron/Orion adapters exist in code but have never been run against a live account, and Live Monitor's telemetry stream is a simulated replay, not a real one
+- No validated live BMS connection — the Victron/Orion adapters (now unified under one formal `BMSAdapter` protocol) exist in code but have never been run against a live account, and Live Monitor's telemetry stream is a simulated replay, not a real one
 
 **Future, contingent on real access:**
 - Industrial or research partnerships providing real operational data
