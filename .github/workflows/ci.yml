@@ -42,6 +42,9 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -v
 
+      - name: Audit knowledge graph provenance
+        run: python scripts/audit_knowledge_graph_provenance.py
+
       - name: Check MODEL_VERSION bumped when model training code changed
         run: |
           python -c "
