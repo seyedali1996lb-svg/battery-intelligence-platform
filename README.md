@@ -61,6 +61,7 @@ The platform is organized into five engineering modules:
 - dQ/dV differential-capacity analysis
 - Knee-point and other aging-indicator detection
 - Anomaly-threshold flagging against expected degradation behavior
+- A Battery Digital Knowledge Graph (`src/knowledge_graph.py`, NetworkX) linking cells to their chemistry, dataset, degradation-mechanism verdict, and the literature that corroborates it — every edge requires a traceable source function or DOI, audited in CI. A cell's mechanism verdict is computed once and shared as one graph edge across Health, Decide & Ask, and the Copilot, and a "cells like this one" query in Explore ranks by shared chemistry, mechanism, and SOH
 
 **Lifecycle Intelligence**
 - Second-life viability evaluation, with cited and illustrative-assumption economics kept explicitly separate
