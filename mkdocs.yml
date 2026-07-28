@@ -29,6 +29,13 @@ theme:
 
 nav:
   - Home: index.md
+  - Product direction:
+      - Decision: product_direction.md
+      - Overclaiming audit: overclaiming_audit.md
+      - Research Platform setup: research_platform_setup.md
+      - Lifecycle Intelligence trigger: lifecycle_intelligence_trigger.md
+      - Deferred concepts: deferred_product_concepts.md
+      - Hosted-researcher pricing: hosted_researcher_pricing.md
   - Datasets: datasets/index.md
   - API reference:
       - datasets: api/datasets.md

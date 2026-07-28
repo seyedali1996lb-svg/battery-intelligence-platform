@@ -140,6 +140,10 @@ See [`docs/history.md`](docs/history.md) for its full build history and architec
 
 ## Roadmap preview
 
+The platform's formal product direction — why "Battery Research Platform"
+is the near-term focus, and what's explicitly deferred — is written up in
+[`docs/product_direction.md`](docs/product_direction.md).
+
 **Phase 1 — Research foundation** *(current)*
 The `batlab` library itself: standardized dataset loaders for all four datasets, literature-cited feature engineering, leave-cell-out-validated GBRT/quantile models, and reproducible benchmark manifests. This phase is what's installable and tested today.
 
