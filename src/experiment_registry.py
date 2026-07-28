@@ -249,3 +249,64 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     }
     result["run"] = run
     return result
+
+
+# ---------------------------------------------------------------------------
+# Reference-dataset reload — for replay_run() and the cross-chemistry study
+# ---------------------------------------------------------------------------
+
+REFERENCE_DATASETS = ("nasa", "synth", "severson")
+
+
+def reload_reference_cell_data(dataset: str, cell_ids: "list[str] | None" = None) -> dict:
+    """
+    Reconstruct {cell_id: raw_cycles_DataFrame} for one of the platform's
+    built-in reference datasets by calling the same loaders
+    app/main.py's load_everything() uses. These three sources are always
+    reproducibly reloadable (checked-in/cached CSVs, or a deterministic
+    physics generator), unlike a tenant's uploaded data — see
+    PLATFORM_ORG_ID's docstring above — so replay_run() never needs the
+    raw input to have been separately persisted for these three.
+
+    cell_ids restricts the reload to a specific run's population (e.g.
+    run["cell_ids"]); omit to reload every cell currently available for
+    that dataset.
+
+    Raises ValueError for "uploaded" or any unrecognized dataset key —
+    there is no reference loader for tenant-uploaded data (the raw
+    uploaded cycles are never persisted, only the trained result — see
+    src/bundle_cache.py's save_tenant_bundle()) — and for "severson" when
+    the raw dataset isn't cached locally on this deployment.
+    """
+    if dataset == "synth":
+        from data_loader import build_battery, CELL_STRESS_PROFILES
+        ids = cell_ids or list(CELL_STRESS_PROFILES.keys())
+        battery = build_battery(battery_id="Oxford_B1", cell_ids=ids)
+        return {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
+
+    if dataset == "nasa":
+        from data_loader import build_battery
+        from batlab.datasets.nasa import CELL_IDS as _NASA_IDS
+        ids = cell_ids or list(_NASA_IDS)
+        battery = build_battery(battery_id="NASA_B1", cell_ids=ids)
+        return {cid: cell["cycles"] for cid, cell in battery["cells"].items()}
+
+    if dataset == "severson":
+        from batlab.datasets.severson import load_severson_cells, any_cached
+        if not any_cached():
+            raise ValueError(
+                "Severson raw data is not cached locally on this deployment — cannot reload for replay."
+            )
+        all_cells = load_severson_cells(status_fn=lambda msg: None)
+        if cell_ids is None:
+            return all_cells
+        missing = [c for c in cell_ids if c not in all_cells]
+        if missing:
+            raise ValueError(f"Severson cache is missing {len(missing)} requested cell(s): {missing}")
+        return {cid: all_cells[cid] for cid in cell_ids}
+
+    raise ValueError(
+        f"No reference reload available for dataset={dataset!r} — only "
+        f"{REFERENCE_DATASETS} are reloadable; a tenant's uploaded-data raw "
+        "cycles are never persisted, so an 'uploaded' run cannot be replayed."
+    )

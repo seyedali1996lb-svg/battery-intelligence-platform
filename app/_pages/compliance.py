@@ -11,7 +11,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _action_bar, _md_html, base_layout, LEGEND_H, NASA_CELL_IDS, render_card
+from utils import (
+    _action_bar, _md_html, base_layout, LEGEND_H, NASA_CELL_IDS, render_card,
+    render_regenerate_report_button,
+)
 from design_system import (
     make_badge, make_state_badge, section_header_html,
     BADGE_ESTIMATE, BADGE_ILLUST,
@@ -406,6 +409,9 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
             mime="application/ld+json",
             use_container_width=True,
         )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    render_regenerate_report_button(bundle, st.session_state.get("auth_org_id"), key_suffix=f"passport_{selected}")
 
 
 def page_sustainability(selected: str, df: pd.DataFrame):

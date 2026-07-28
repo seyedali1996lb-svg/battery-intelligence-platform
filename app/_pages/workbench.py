@@ -22,6 +22,8 @@ never two nav items for what is really one workflow on one cell.
 import streamlit as st
 import pandas as pd
 
+from utils import render_regenerate_report_button
+
 _VIEW_MECHANISM = "Mechanism (Health)"
 _VIEW_DECISION  = "Decision (Decide & Ask)"
 
@@ -66,3 +68,7 @@ def page_cell_workbench(
         page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable)
     else:
         page_decision(selected, df, featured_dfs, bundles, rul_reliable)
+
+    render_regenerate_report_button(
+        bundle, st.session_state.get("auth_org_id"), key_suffix=f"workbench_{selected}"
+    )

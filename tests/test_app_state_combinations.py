@@ -570,3 +570,55 @@ def test_benchmark_page_renders_leaderboard_with_logged_runs(isolated_db):
     assert len(at.dataframe) == 2  # leaderboard table + fold drill-down table
     assert "nasa" in at.dataframe[0].value["Dataset"].values
 
+
+def test_regenerate_report_button_replays_and_shows_recorded_vs_reproduced(isolated_db, monkeypatch):
+    """utils.render_regenerate_report_button() end-to-end: given a bundle
+    carrying a logged experiment_run_id, clicking Regenerate must replay
+    the recorded pipeline and render both the recorded and reproduced
+    metrics. Tested in isolation (AppTest.from_string(), not the full
+    main.py) with a tiny synthetic cell population and
+    reload_reference_cell_data() monkeypatched to avoid touching the real
+    NASA/synthetic/Severson loaders -- this is a UI-integration test for
+    the registry's replay path, not a re-test of replay_run() itself
+    (already covered by tests/test_experiment_registry.py)."""
+    import experiment_registry as reg
+    from conftest import make_cycles_df
+    from batlab.validation.lco import run_lco
+    from batlab.features.engineering import FEATURE_VERSION
+
+    cell_data = {
+        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
+        "CellB": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+    }
+    lco = run_lco(cell_data, seed=42)
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number", "fade_rate_30cy"], feature_version=FEATURE_VERSION,
+        hyperparams={"random_state": 42}, seed=42,
+        cell_ids=list(cell_data.keys()), n_rows=400, lco_metrics=lco,
+    )
+    monkeypatch.setattr(reg, "reload_reference_cell_data", lambda dataset, cell_ids=None: cell_data)
+
+    app_dir = str(pathlib.Path(__file__).parent.parent / "app")
+    src_dir = str(pathlib.Path(__file__).parent.parent / "src")
+    script = f"""
+import sys
+sys.path.insert(0, {app_dir!r})
+sys.path.insert(0, {src_dir!r})
+from utils import render_regenerate_report_button
+bundle = {{"metrics": {{"experiment_run_id": {run_id!r}}}}}
+render_regenerate_report_button(bundle, org_id=1, key_suffix="test")
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    assert not at.exception, f"Initial render raised: {at.exception}"
+
+    btn = next(b for b in at.button if "Regenerate" in b.label)
+    btn.click().run()
+    assert not at.exception, f"Click raised: {at.exception}"
+
+    texts = _all_text(at)
+    assert "Recorded" in texts
+    assert "Reproduced now" in texts
+    assert f"{lco['rul_mae']:.1f}" in texts  # the reproduced number matches the recorded one exactly
+
