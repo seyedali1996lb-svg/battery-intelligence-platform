@@ -98,7 +98,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 else:
                     raw_fdfs, model_inputs = {}, {}
                     for cid, cell in battery["cells"].items():
-                        df_feat = build_features(cell["cycles"])
+                        df_feat = build_features(cell["cycles"], cell_id=cid)
                         X, y_soh, y_rul = get_model_matrix(df_feat)
                         all_X.append(X); all_y_soh.append(y_soh); all_y_rul.append(y_rul)
                         cell_featured[cid] = (df_feat, X)

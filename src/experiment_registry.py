@@ -371,7 +371,7 @@ def run_cross_chemistry_transfer(
     def _featured(cell_data: dict) -> dict:
         out = {}
         for cid, df in cell_data.items():
-            feat = build_features(df)
+            feat = build_features(df, cell_id=cid)
             X, y_soh, y_rul = get_model_matrix(feat)
             out[cid] = (X, y_soh, y_rul)
         return out

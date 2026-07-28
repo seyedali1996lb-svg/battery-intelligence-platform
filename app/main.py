@@ -211,7 +211,7 @@ def _compute_features_only(battery_dict: dict) -> tuple[dict, dict]:
     raw_fdfs     = {}
     model_inputs = {}
     for cell_id, cell in battery_dict.items():
-        df_feat = build_features(cell["cycles"])
+        df_feat = build_features(cell["cycles"], cell_id=cell_id)
         X, y_soh, y_rul = get_model_matrix(df_feat)
         raw_fdfs[cell_id]     = df_feat
         model_inputs[cell_id] = (X, y_soh, y_rul)

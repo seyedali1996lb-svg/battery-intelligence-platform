@@ -68,7 +68,7 @@ def build_auditable_graph():
         "Cell1": _make_cycles_df(220, fade_per_cycle=0.0005, resistance_rise_per_cycle=0.00003),
         "Cell2": _make_cycles_df(220, fade_per_cycle=0.0016, resistance_rise_per_cycle=0.00035),
     }
-    featured_dfs = {cid: build_features(df) for cid, df in cells.items()}
+    featured_dfs = {cid: build_features(df, cell_id=cid) for cid, df in cells.items()}
 
     # A minimal stand-in bundle (no real trained model) — only its metrics
     # dict is read by populate_reference_fleet()'s contradicts-edge check,

@@ -50,6 +50,24 @@ import pandas as pd
 
 from batlab.features.dqdv import add_dqdv_features
 
+# physics_calibration lives in src/ (the app-specific integration layer),
+# not batlab — batlab is a standalone, independently-citable research
+# library (see pyproject.toml: its own minimal dependency list, no PyBaMM,
+# no dependency on the app's sys.path setup) and every existing import
+# direction in this codebase is src/app -> batlab, never the reverse.
+# build_features() below imports physics_calibration lazily, inside the
+# function body, guarded by try/except, and only when a cell_id is actually
+# supplied -- so `pip install batlab` on its own (no src/ on sys.path, no
+# PyBaMM installed) still works exactly as it does today; only this app's
+# own pipeline (which has both) actually exercises that import path.
+PHYSICS_FEATURE_COLUMNS = [
+    "physics_beta_sei",
+    "physics_beta_lam",
+    "physics_k_r",
+    "physics_fit_r2",
+    "physics_spm_capacity_ah",
+]
+
 
 # ---------------------------------------------------------------------------
 # Feature engineering
@@ -69,9 +87,11 @@ from batlab.features.dqdv import add_dqdv_features
 #     only on feature values, not on model training code.
 # Both now import it from here instead, so it is structurally impossible
 # for them to disagree with each other or with this module.
-FEATURE_VERSION = "v9-crate-stress-index-dod-proxy"
+FEATURE_VERSION = "v10-physics-calibration"
 
-def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.DataFrame:
+def build_features(
+    df: pd.DataFrame, eol_threshold_pct: float = 80.0, cell_id: "str | None" = None,
+) -> pd.DataFrame:
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 
     # ── Capacity fade — ensure present regardless of source ──
@@ -235,6 +255,24 @@ def build_features(df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> pd.Data
     # ── dQ/dV features ──
     df = add_dqdv_features(df)
 
+    # ── Physics calibration features (SEI/LAM decomposition) ──
+    # Lazy, guarded import — see the module-level note above
+    # PHYSICS_FEATURE_COLUMNS for why this isn't a top-level import.
+    try:
+        from physics_calibration import calibrated_feature_series
+        physics_df = calibrated_feature_series(df, cell_id)
+    except Exception:
+        # src/ not on sys.path, PyBaMM/scipy import failure, or any other
+        # environment gap -- physics features are simply absent (NaN),
+        # same graceful-degradation contract as every other optional
+        # feature block above (c_rate, temperature, resistance, ...).
+        physics_df = pd.DataFrame(
+            {col: np.full(len(df), np.nan) for col in PHYSICS_FEATURE_COLUMNS},
+            index=df.index,
+        )
+    for col in PHYSICS_FEATURE_COLUMNS:
+        df[col] = physics_df[col]
+
     return df
 
 
@@ -281,6 +319,28 @@ FEATURE_COLUMNS = [
     "c_rate_rolling_10cy",
     "stress_index",
     "dod_proxy",
+    # Physics calibration (src/physics_calibration.py) — per-cell scipy fit
+    # of a two-term degradation model against this cell's OWN measured
+    # history, refit causally every 25 cycles (no future leakage). Only
+    # populated for NASA/Severson cells; NaN (dropped by get_model_matrix)
+    # for everything else.
+    #   physics_beta_sei: SEI/LLI-driven sqrt(n) capacity-loss rate.
+    #   physics_beta_lam: active-material-loss linear-in-n rate.
+    #   physics_k_r: SEI resistance growth rate (independent corroborating
+    #     signal, fit from resistance_ohm rather than capacity).
+    #   physics_fit_r2: goodness of the two-term fit -- lets the model learn
+    #     to discount these features when the fit itself is untrustworthy.
+    # physics_spm_capacity_ah is deliberately NOT included here: it is cached
+    # per PyBaMM parameter set (see physics_calibration._nominal_capacity_ah),
+    # so it is constant across every cell of a given chemistry within any
+    # single per-source model (this app never trains one combined model
+    # across chemistries -- see app/main.py's load_everything() docstring) --
+    # a GBRT feature with zero within-model variance carries no signal. It
+    # stays in the featured DataFrame for display/diagnostic use only.
+    "physics_beta_sei",
+    "physics_beta_lam",
+    "physics_k_r",
+    "physics_fit_r2",
 ]
 
 TARGET_SOH = "soh_pct"

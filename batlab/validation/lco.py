@@ -55,7 +55,7 @@ def run_lco(cell_data: dict, seed: int = 42) -> dict:
     # Build feature matrices per cell
     featured = {}
     for cell_id, df in cell_data.items():
-        df_feat = build_features(df)
+        df_feat = build_features(df, cell_id=cell_id)
         X, y_soh, y_rul = get_model_matrix(df_feat)
         featured[cell_id] = (X, y_soh, y_rul)
 
