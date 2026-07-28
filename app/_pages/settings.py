@@ -801,6 +801,86 @@ def page_settings(featured_dfs: dict, bundles: dict):
                     st.success(f"Added {_tm_username} ({_tm_role}) to {st.session_state.get('auth_org_name', 'this organization')}.")
 
     # ────────────────────────────────────────────────────────────────────────
+    # Sites & Fleets (admin-only — FleetAsset hierarchy: Site -> Fleet -> Pack)
+    # ────────────────────────────────────────────────────────────────────────
+    if st.session_state.get("auth_role") == "admin":
+        _section("Sites & Fleets")
+        _md_html(
+            "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+            "Group cells by physical deployment: a Site (e.g. a warehouse or depot) contains "
+            "one or more Fleets, each of which contains Packs of cells. Every organization "
+            "starts with one Default Site / Default Fleet — add more as your deployment grows. "
+            "This is separate from the Explore page's Virtual Pack Builder, which simulates "
+            "series/parallel packs for analysis and doesn't persist anything."
+            "</div>"
+        )
+        _org_id_sf = st.session_state["auth_org_id"]
+        _sf_sites  = db.list_sites(_org_id_sf)
+
+        _sf_col1, _sf_col2 = st.columns(2)
+        _new_site_name = _sf_col1.text_input("New site name", key="new_site_name", placeholder="Warehouse B")
+        if _sf_col1.button("Add site", key="add_site_btn"):
+            if _new_site_name.strip():
+                db.create_site(_org_id_sf, _new_site_name)
+                st.rerun()
+            else:
+                st.error("Site name is required.")
+
+        if _sf_sites:
+            _site_options = {s["name"]: s["id"] for s in _sf_sites}
+            _sel_site_name = _sf_col2.selectbox("Site", list(_site_options.keys()), key="sf_site_select")
+            _sel_site_id   = _site_options[_sel_site_name]
+
+            _sf_col3, _sf_col4 = st.columns(2)
+            _new_fleet_name = _sf_col3.text_input("New fleet name", key="new_fleet_name", placeholder="Forklift Fleet")
+            if _sf_col3.button("Add fleet", key="add_fleet_btn"):
+                if _new_fleet_name.strip():
+                    db.create_fleet(_org_id_sf, _sel_site_id, _new_fleet_name)
+                    st.rerun()
+                else:
+                    st.error("Fleet name is required.")
+
+            _sf_fleets = db.list_fleets(_org_id_sf, site_id=_sel_site_id)
+            if _sf_fleets:
+                _fleet_options = {f["name"]: f["id"] for f in _sf_fleets}
+                _sel_fleet_name = _sf_col4.selectbox("Fleet", list(_fleet_options.keys()), key="sf_fleet_select")
+                _sel_fleet_id   = _fleet_options[_sel_fleet_name]
+
+                _new_pack_name = st.text_input("New pack name", key="new_pack_name", placeholder="Pack 1")
+                if st.button("Add pack", key="add_pack_btn"):
+                    if _new_pack_name.strip():
+                        db.create_pack(_org_id_sf, _sel_fleet_id, _new_pack_name)
+                        st.rerun()
+                    else:
+                        st.error("Pack name is required.")
+
+                _sf_packs = db.list_packs(_org_id_sf, fleet_id=_sel_fleet_id)
+                for _pack in _sf_packs:
+                    _pack_cells = db.list_pack_cells(_org_id_sf, _pack["id"])
+                    with st.expander(f"📦 {_pack['name']} ({len(_pack_cells)} cell(s))"):
+                        if _pack_cells:
+                            st.write(", ".join(_pack_cells))
+                        else:
+                            st.caption("No cells assigned yet.")
+                        _all_cell_ids = sorted(featured_dfs.keys())
+                        _assignable = [c for c in _all_cell_ids if c not in _pack_cells]
+                        if _assignable:
+                            _sf_pick_cell = st.selectbox(
+                                "Assign a cell", _assignable, key=f"sf_assign_cell_{_pack['id']}",
+                            )
+                            if st.button("Assign", key=f"sf_assign_btn_{_pack['id']}"):
+                                db.add_cell_to_pack(_org_id_sf, _pack["id"], _sf_pick_cell, position=len(_pack_cells))
+                                st.rerun()
+            else:
+                st.caption("No fleets in this site yet — add one above.")
+        else:
+            _empty_state(
+                "No sites yet",
+                "Add a site above to start building this organization's fleet hierarchy.",
+                icon="🏭",
+            )
+
+    # ────────────────────────────────────────────────────────────────────────
     # LLM Copilot API Key
     # ────────────────────────────────────────────────────────────────────────
     _section("AI Copilot — Language Model")

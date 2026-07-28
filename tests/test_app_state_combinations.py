@@ -425,6 +425,28 @@ def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warni
     assert duplication_warnings == [], f"session-state duplication warning fired: {duplication_warnings}"
 
 
+def test_settings_sites_and_fleets_panel_renders_for_admin(isolated_db):
+    """The new FleetAsset "Sites & Fleets" panel (admin-only) must render
+    without crashing, showing the Default Site/Fleet every org is seeded
+    with by db.init_db()."""
+    at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic")
+    at.run()
+
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    assert "Sites & Fleets" in _all_text(at)
+    assert any("Default Site" in list(w.options) for w in at.selectbox if w.key == "sf_site_select")
+
+
+def test_settings_sites_and_fleets_panel_hidden_for_non_admin(isolated_db):
+    """Same admin-only gate as the existing Team Members section."""
+    at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic",
+                         auth_role="engineer")
+    at.run()
+
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    assert "Sites & Fleets" not in _all_text(at)
+
+
 def test_live_monitor_fragment_does_not_crash_with_an_active_connection(isolated_db, monkeypatch):
     """
     Regression test for a production crash on Streamlit Cloud: Live
