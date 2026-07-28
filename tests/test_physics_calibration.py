@@ -298,3 +298,45 @@ def test_physics_ml_agreement_returns_structured_result():
     assert "physics" in result and "ml" in result
     assert result["agree"] in (True, False, None)
     assert isinstance(result["note"], str) and len(result["note"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# physics_gbrt_divergence_report — held-out-cell validation
+# ---------------------------------------------------------------------------
+
+def test_divergence_report_skips_ineligible_cells():
+    cell_data = {
+        SYNTH_ID: make_cycles_df(n_cycles=200),
+        "Cell2": make_cycles_df(n_cycles=200, fade_per_cycle=0.001),
+    }
+    report = pc.physics_gbrt_divergence_report(cell_data)
+    assert report == []  # neither cell is NASA/Severson
+
+
+def test_divergence_report_structure_for_eligible_cells():
+    cell_data = {
+        "B0005": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, resistance_rise_per_cycle=0.00004),
+        "B0006": make_cycles_df(n_cycles=220, fade_per_cycle=0.0012, resistance_rise_per_cycle=0.00006),
+        "B0007": make_cycles_df(n_cycles=180, fade_per_cycle=0.0009, resistance_rise_per_cycle=0.00003),
+    }
+    report = pc.physics_gbrt_divergence_report(cell_data)
+    assert len(report) == 3
+    reported_ids = {r["cell_id"] for r in report}
+    assert reported_ids == {"B0005", "B0006", "B0007"}
+    for r in report:
+        assert r["gbrt_soh_mae"] >= 0
+        assert r["physics_soh_mae"] >= 0
+        assert r["closer_model"] in ("physics", "gbrt", "comparable")
+        assert "not measuring the same thing" in r["note"]
+
+
+def test_divergence_report_ignores_ineligible_cells_when_mixed_with_eligible():
+    cell_data = {
+        "B0005": make_cycles_df(n_cycles=200, fade_per_cycle=0.001, resistance_rise_per_cycle=0.00005),
+        "B0006": make_cycles_df(n_cycles=200, fade_per_cycle=0.0015, resistance_rise_per_cycle=0.0001),
+        SYNTH_ID: make_cycles_df(n_cycles=200, fade_per_cycle=0.002),
+    }
+    report = pc.physics_gbrt_divergence_report(cell_data)
+    reported_ids = {r["cell_id"] for r in report}
+    assert reported_ids == {"B0005", "B0006"}
+    assert SYNTH_ID not in reported_ids

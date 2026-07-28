@@ -403,13 +403,7 @@ def calibrate_cell(cell_id: str, df: pd.DataFrame, eol_threshold_pct: float = 80
 # feature — but this function is not, so it stays causal throughout.
 # ---------------------------------------------------------------------------
 
-PHYSICS_FEATURE_COLUMNS = [
-    "physics_beta_sei",
-    "physics_beta_lam",
-    "physics_k_r",
-    "physics_fit_r2",
-    "physics_spm_capacity_ah",
-]
+from batlab.features.engineering import PHYSICS_FEATURE_COLUMNS  # single source of truth
 
 
 def calibrated_feature_series(df: pd.DataFrame, cell_id: "str | None") -> pd.DataFrame:
@@ -540,3 +534,136 @@ def physics_ml_agreement(cell_id: str, df: pd.DataFrame) -> dict:
         )
 
     return {"physics": physics, "ml": ml, "agree": agree, "note": note}
+
+
+# ---------------------------------------------------------------------------
+# Held-out-cell validation — physics-fitted trajectory vs the GBRT's own
+# leave-cell-out SOH prediction for a cell it never trained on.
+#
+# Precedent for surfacing disagreement rather than suppressing it: this
+# project's established pattern (see app/_pages/overview.py's
+# reconcile_rul_estimates()/trajectory_memory.py docstrings) is that when
+# two independent estimates of the same quantity disagree, the disagreement
+# itself is surfaced honestly — never silently resolved by picking
+# whichever number looks better. The same discipline applies here.
+# ---------------------------------------------------------------------------
+
+def physics_gbrt_divergence_report(cell_data: dict) -> list[dict]:
+    """
+    For every calibration-eligible cell in cell_data, run one leave-cell-out
+    fold (GBRT trained on every OTHER cell, predicting this cell's SOH
+    trajectory — same fold structure as batlab.validation.lco.run_lco(),
+    not reimplemented, just invoked per-cell here so each fold's raw
+    predictions are available) and compare it against this cell's own
+    physics calibration (fit entirely from ITS OWN measured history — no
+    cross-cell information at all, the physics side of this comparison is
+    "held out" by construction, not by a train/test split).
+
+    Returns a list of per-cell dicts:
+      cell_id, n_cycles,
+      physics_fit_r2, physics_dominant_mode_label,
+      gbrt_soh_mae         — GBRT LCO fold's SOH MAE (%) vs actual, this cell
+      physics_soh_mae      — physics two-term model's SOH MAE (%) vs actual,
+                             fit and evaluated on the SAME cycles (in-sample
+                             for physics, out-of-sample for GBRT — an honest
+                             asymmetry, called out in `note` below, not
+                             hidden)
+      closer_model         — "physics" | "gbrt" | "comparable"
+      divergence_pct       — |physics_soh_mae - gbrt_soh_mae| / gbrt_soh_mae * 100
+      note                 — plain-English disclosure of what this
+                             comparison does and does not prove
+    Cells that aren't calibration-eligible, or have too few cycles, are
+    skipped (not silently — the returned list simply won't contain them;
+    callers wanting an explicit "why is X missing" should check
+    _eligible_for_calibration / calibrate_cell()'s own error field directly).
+
+    Training folds are restricted to OTHER calibration-eligible cells in
+    cell_data, not every cell passed in — mirrors app/main.py's own
+    per-source-only training rule (NASA/Severson/synthetic are never
+    trained together; see load_everything()'s docstring on incompatible
+    resistance scales). A non-eligible cell's featured DataFrame has no
+    physics_* columns at all (all-NaN, dropped by get_model_matrix()),
+    while an eligible cell's does — concatenating those two would crash
+    GradientBoostingRegressor on real NaNs, not a graceful degradation, so
+    this function never builds that combination in the first place.
+    """
+    from batlab.features.engineering import build_features, get_model_matrix
+    from batlab.models.gbrt import train_models, predict
+    from sklearn.metrics import mean_absolute_error
+
+    eligible_ids = [cid for cid in cell_data if _eligible_for_calibration(cid)]
+    reports = []
+
+    for held_out in eligible_ids:
+        train_ids = [c for c in eligible_ids if c != held_out]
+        if len(train_ids) < 1:
+            continue
+
+        train_inputs = []
+        for cid in train_ids:
+            feat = build_features(cell_data[cid], cell_id=cid)
+            X, y_soh, y_rul = get_model_matrix(feat)
+            if len(X) > 0:
+                train_inputs.append((X, y_soh, y_rul))
+        if not train_inputs:
+            continue
+
+        held_out_df = cell_data[held_out]
+        physics = calibrate_cell(held_out, held_out_df)
+        if physics.get("error") is not None:
+            continue
+
+        feat_test = build_features(held_out_df, cell_id=held_out)
+        X_test, y_soh_test, y_rul_test = get_model_matrix(feat_test)
+        if len(X_test) == 0:
+            continue
+
+        import pandas as _pd
+        X_train = _pd.concat([t[0] for t in train_inputs])
+        y_soh_train = _pd.concat([t[1] for t in train_inputs])
+        y_rul_train = _pd.concat([t[2] for t in train_inputs])
+        bndl = train_models(X_train, y_soh_train, y_rul_train)
+        gbrt_preds = predict(bndl, X_test)
+        gbrt_soh_mae = float(mean_absolute_error(y_soh_test, gbrt_preds["soh_pred"]))
+
+        cycles_test = feat_test.loc[X_test.index, "cycle_number"].values.astype(float)
+        soh_actual = y_soh_test.values.astype(float)
+        n0 = cycles_test[0] if cycles_test[0] > 0 else 1.0
+        n_shifted = cycles_test - n0 + 1.0
+        physics_soh_pred = _two_term_fade_model(
+            n_shifted, physics["beta_sei"], physics["beta_lam"],
+        ) * 100.0
+        physics_soh_mae = float(mean_absolute_error(soh_actual, physics_soh_pred))
+
+        divergence_pct = (
+            abs(physics_soh_mae - gbrt_soh_mae) / max(gbrt_soh_mae, 1e-9) * 100.0
+        )
+        if physics_soh_mae < gbrt_soh_mae * 0.85:
+            closer = "physics"
+        elif gbrt_soh_mae < physics_soh_mae * 0.85:
+            closer = "gbrt"
+        else:
+            closer = "comparable"
+
+        reports.append({
+            "cell_id": held_out,
+            "n_cycles": int(len(cycles_test)),
+            "physics_fit_r2": physics["fit_r2"],
+            "physics_dominant_mode_label": physics["dominant_mode_label"],
+            "gbrt_soh_mae": gbrt_soh_mae,
+            "physics_soh_mae": physics_soh_mae,
+            "closer_model": closer,
+            "divergence_pct": divergence_pct,
+            "note": (
+                f"GBRT trained on {len(train_ids)} other cell(s), evaluated on "
+                f"{held_out} it never saw a single row of (true held-out generalization). "
+                f"Physics was fit directly on {held_out}'s own history (in-sample by "
+                f"construction — not a generalization test, a different question: "
+                f"'does this cell's own physics-fitted curve match its own measured "
+                f"trajectory?'). The two MAEs are not measuring the same thing and this "
+                f"divergence number should not be read as 'physics beat GBRT' or vice "
+                f"versa without that asymmetry in mind."
+            ),
+        })
+
+    return reports
