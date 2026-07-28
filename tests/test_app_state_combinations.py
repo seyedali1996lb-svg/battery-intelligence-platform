@@ -531,3 +531,42 @@ def test_use_case_picker_does_not_reopen_expanders_on_a_later_unrelated_visit(is
         if "Full economics" in e.label or "Solar" in e.label:
             assert not e.proto.expanded, f"Expander '{e.label}' should stay collapsed on a normal visit"
 
+
+def test_benchmark_page_empty_state_no_crash(isolated_db):
+    """No experiment runs logged yet in this isolated DB -- the Benchmark
+    page must show its empty state, not crash trying to build a leaderboard
+    table/filters from zero rows."""
+    at = _logged_in_app(role="Engineer", page="benchmark", data_mode="nasa")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "No experiment runs logged yet" in text
+
+
+def test_benchmark_page_renders_leaderboard_with_logged_runs(isolated_db):
+    """Once a run is logged (the registry's normal auto-logging path, here
+    seeded directly), the Benchmark page must render a leaderboard table
+    and a fold-level drill-down for it without crashing."""
+    import experiment_registry as reg
+
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number", "fade_rate_30cy"],
+        feature_version="v9-crate-stress-index-dod-proxy",
+        hyperparams={"random_state": 42}, seed=42,
+        cell_ids=["B0005", "B0006"], n_rows=300,
+        lco_metrics={
+            "soh_mae": 1.1, "soh_r2": 0.83, "rul_mae": 22.0, "rul_r2": 0.55,
+            "rul_reliable": True,
+            "per_cell": {"B0005": {"soh_mae": 1.0, "soh_r2": 0.9, "rul_mae": 20, "rul_r2": 0.6}},
+        },
+    )
+
+    at = _logged_in_app(role="Engineer", page="benchmark", data_mode="nasa")
+    at.run()
+    assert not at.exception
+    text = _all_text(at)
+    assert "Model Benchmark" in text
+    assert len(at.dataframe) == 2  # leaderboard table + fold drill-down table
+    assert "nasa" in at.dataframe[0].value["Dataset"].values
+

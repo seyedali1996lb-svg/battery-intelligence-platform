@@ -416,6 +416,7 @@ NAV_GROUPS = [
     ("Analyse", [
         ("Overview",   "overview"),
         ("Explore",    "compare"),
+        ("Benchmark",  "benchmark"),
     ]),
     ("EU Passport", [          # A6: promoted from 3rd to 2nd — 2027 deadline
         ("Compliance", "compliance"),
@@ -532,6 +533,7 @@ def _command_palette_dialog():
         "decision": ("decision",  ["decision", "replace", "repurpose", "second life", "what should"]),
         "copilot": ("copilot",   ["copilot", "ask", "budget", "cost", "risk", "question"]),
         "health": ("health",    ["degrading", "mechanism", "lli", "lam", "fade", "resistance"]),
+        "benchmark": ("benchmark", ["benchmark", "leaderboard", "experiment", "runs", "model performance"]),
     }
     st.markdown("### ⌘ Command Palette")
     _pal_input = st.text_input(
@@ -947,6 +949,7 @@ def main():
     from _pages.copilot import page_copilot
     from _pages.workbench import page_cell_workbench
     from _pages.compliance import page_compliance
+    from _pages.benchmark import page_benchmark
     if not render_login():
         return   # login form rendered; stop until credentials provided
 
@@ -1280,6 +1283,8 @@ def main():
                              rul_reliable, bundle)
     elif page == "compare":
         page_compare(cell_ids, active_fdfs, bundles)
+    elif page == "benchmark":
+        page_benchmark(st.session_state["auth_org_id"])
     elif page in ("copilot", "insights"):
         page_copilot(cell_ids, active_fdfs, bundles, selected)
     elif page in ("decision", "consequences", "recommendations"):
