@@ -25,7 +25,7 @@ from batlab.features.knee_detection import degradation_phases
 # ---------------------------------------------------------------------------
 
 def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
-                bundle: dict = None, rul_reliable: bool = True):
+                bundle: dict = None, rul_reliable: bool = True, graph=None):
     _action_bar("health")
     st.markdown(f"# What is degrading {cell_id}?")
     _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/masks
@@ -197,15 +197,20 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # ── Section 2: Mechanism (always visible) ───────────────────────────────
     _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
-    # Single call to the shared classifier — this used to be an inline
-    # re-implementation of diagnose_mechanism()'s scoring logic that had
-    # already drifted from it (missing the CE-deficit signal), meaning this
-    # always-visible card and the deep "Degradation Mechanism Classifier"
-    # expander further down could silently disagree on the same cell's
-    # verdict — exactly the "independent widget, not a synthesized verdict"
-    # bug class this whole review is about. Computed once here and reused
-    # by the deep expander below, so there is exactly one source of truth
-    # for this cell's mechanism verdict on this page.
+    # Read from the shared Battery Knowledge Graph exhibits edge
+    # (src/knowledge_graph.py) rather than calling diagnose_mechanism()
+    # independently — this used to be (and briefly was again, before the
+    # graph existed) an inline re-implementation that had already drifted
+    # from the shared classifier once (missing the CE-deficit signal),
+    # meaning this always-visible card and the deep "Degradation Mechanism
+    # Classifier" expander further down could silently disagree on the same
+    # cell's verdict. The graph edge is the single source of truth now: the
+    # Cell Workbench's Decide & Ask view and the Copilot both read this
+    # exact edge for this cell too, so all three surfaces are structurally
+    # incapable of disagreeing. get_or_compute_mechanism() falls back to a
+    # direct diagnose_mechanism() call when no graph is supplied (e.g. a
+    # freshly-uploaded cell not yet part of the platform graph, or a legacy
+    # caller/test that doesn't pass graph=).
     _mech = {
         "verdict": "Insufficient data", "verdict_color": "#718096", "verdict_icon": "○",
         "verdict_body": "Not enough degradation signals to classify mechanism. Continue cycling.",
@@ -213,8 +218,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         "confidence_notes": [], "lli_score": 0, "lam_score": 0, "signals": {},
     }
     try:
-        from recommendations import diagnose_mechanism
-        _mech = diagnose_mechanism(df)
+        if graph is not None:
+            from knowledge_graph import get_or_compute_mechanism
+            _mech_edge = get_or_compute_mechanism(graph, cell_id, df)
+            _mech = {**_mech, **_mech_edge}
+        else:
+            from recommendations import diagnose_mechanism
+            _mech = diagnose_mechanism(df)
     except Exception:
         pass
 

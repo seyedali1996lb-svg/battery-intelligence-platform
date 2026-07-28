@@ -13,12 +13,12 @@ import plotly.graph_objects as go
 from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card, _resample_df
 
 
-def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
+def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     _action_bar("compare")
     st.markdown("# Explore")
 
     _exp_view = st.radio(
-        "view", ["Compare", "Cluster", "Cohort", "Pack Builder", "Reference Datasets"],
+        "view", ["Compare", "Cluster", "Cohort", "Pack Builder", "Related Cells", "Reference Datasets"],
         horizontal=True, key="explore_view_radio", label_visibility="collapsed",
     )
 
@@ -35,6 +35,11 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict):
     # ── Pack Builder tab ─────────────────────────────────────────────────────
     if _exp_view == "Pack Builder":
         render_pack_builder(active_fdfs, bundles, key_prefix="explore")
+        return
+
+    # ── Related Cells tab ────────────────────────────────────────────────────
+    if _exp_view == "Related Cells":
+        _page_related_cells(cell_ids, active_fdfs, graph)
         return
 
     # ── Reference Datasets tab ──────────────────────────────────────────────
@@ -587,6 +592,74 @@ def _page_explore_cohort(active_fdfs: dict):
             "No cohort tags set yet",
             "Tag cells above by batch, supplier, or site to compare cohort health.",
             icon="🏷",
+        )
+
+
+def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
+    """"Cells like this one" — a graph-query panel over the Battery
+    Knowledge Graph (src/knowledge_graph.py). Ranks candidates by same
+    chemistry (required — cross-chemistry comparison isn't physically
+    meaningful, see battery_knowledge.py's why-resistance-scales-differ
+    entry), then same diagnosed mechanism verdict, then closeness in SOH.
+    This is a read-only query over the graph the platform already built —
+    no new computation happens here.
+    """
+    st.markdown("<div class='section-header'>Cells like this one</div>", unsafe_allow_html=True)
+    st.caption(
+        "Graph query over the Battery Knowledge Graph: same chemistry, ranked by shared "
+        "degradation mechanism first, then closest State of Health."
+    )
+
+    if graph is None:
+        _empty_state(
+            "Knowledge graph not available",
+            "The Battery Knowledge Graph wasn't passed to this page — try reloading.",
+            icon="◇",
+        )
+        return
+
+    from knowledge_graph import cells_like, mechanism_edge
+
+    if st.session_state.get("related_cells_pick") not in cell_ids:
+        st.session_state["related_cells_pick"] = cell_ids[0]
+    pick = st.selectbox("Cell", options=cell_ids, key="related_cells_pick")
+
+    my_mech = mechanism_edge(graph, pick)
+    if my_mech:
+        st.markdown(
+            f"<div style='font-size:12px;color:#a0aec0;margin-bottom:10px'>"
+            f"<strong style='color:{my_mech.get('verdict_color', '#e2e8f0')}'>{pick}</strong> "
+            f"exhibits <strong style='color:{my_mech.get('verdict_color', '#e2e8f0')}'>"
+            f"{my_mech.get('verdict', 'Insufficient data')}</strong> "
+            f"({my_mech.get('confidence_label', 'No data')} confidence).</div>",
+            unsafe_allow_html=True,
+        )
+
+    matches = cells_like(graph, pick, top_k=8)
+    if not matches:
+        _empty_state(
+            "No related cells found",
+            f"No other cell in the active fleet shares {pick}'s chemistry classification, "
+            "or the graph hasn't indexed this cell yet.",
+            icon="◇",
+        )
+        return
+
+    for m in matches:
+        _mech_note = (
+            "same mechanism" if m["same_mechanism"]
+            else (f"mechanism: {m['mechanism'] or 'unknown'}")
+        )
+        _dataset_note = "same dataset" if m["same_dataset"] else f"dataset: {m['dataset'] or 'unknown'}"
+        _soh_str = f"{m['soh_pct']:.1f}%" if m["soh_pct"] is not None else "n/a"
+        render_card(
+            f"<div style='display:flex;justify-content:space-between;align-items:center'>"
+            f"<div><strong style='color:#e2e8f0;font-size:14px'>{m['cell_id']}</strong>"
+            f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+            f"{m['chemistry'] or 'unknown chemistry'} · {_dataset_note} · {_mech_note}</div></div>"
+            f"<div style='font-size:16px;font-weight:800;color:#63b3ed'>{_soh_str}</div>"
+            f"</div>",
+            extra_style="margin-bottom:8px",
         )
 
 

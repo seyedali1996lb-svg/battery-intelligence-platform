@@ -37,6 +37,7 @@ def page_cell_workbench(
     bundles: dict,
     rul_reliable: bool,
     bundle: dict,
+    graph=None,
 ) -> None:
     """
     default_view: "health" or "decision" -- which page-key the router used
@@ -65,9 +66,9 @@ def page_cell_workbench(
     )
 
     if view == _VIEW_MECHANISM:
-        page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable)
+        page_health(df, split_cycle, selected, bundle=bundle, rul_reliable=rul_reliable, graph=graph)
     else:
-        page_decision(selected, df, featured_dfs, bundles, rul_reliable)
+        page_decision(selected, df, featured_dfs, bundles, rul_reliable, graph=graph)
 
     render_regenerate_report_button(
         bundle, st.session_state.get("auth_org_id"), key_suffix=f"workbench_{selected}"

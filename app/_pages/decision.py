@@ -27,6 +27,7 @@ def page_decision(
     featured_dfs: dict,
     bundles: dict,
     rul_reliable: bool,
+    graph=None,
 ):
     """Merged Recommendations + EOL Economics page.
 
@@ -69,13 +70,23 @@ def page_decision(
 
     st.markdown(f"# What should I do with {selected}?")
 
-    # Mechanism verdict computed before the hero card so a real disagreement
-    # (Decision Support review finding: classify() never sees this signal)
-    # can be surfaced as a caution line inside the recommendation itself,
-    # not just displayed adjacent to it as unrelated context.
+    # Mechanism verdict read from the shared Battery Knowledge Graph exhibits
+    # edge (src/knowledge_graph.py) — the same edge Health's compact card and
+    # the Copilot's "mechanism" answer read, so this page can no longer
+    # silently disagree with either about the same cell's verdict. Computed
+    # before the hero card so a real disagreement between the mechanism
+    # verdict and the SOH-based recommendation (Decision Support review
+    # finding: classify() never sees this signal) can be surfaced as a
+    # caution line inside the recommendation itself, not just displayed
+    # adjacent to it as unrelated context.
     try:
-        from recommendations import diagnose_mechanism, mechanism_corroboration_note
-        _dec_mech = diagnose_mechanism(df)
+        from recommendations import mechanism_corroboration_note
+        if graph is not None:
+            from knowledge_graph import get_or_compute_mechanism
+            _dec_mech = get_or_compute_mechanism(graph, selected, df)
+        else:
+            from recommendations import diagnose_mechanism
+            _dec_mech = diagnose_mechanism(df)
         _corroboration_note = mechanism_corroboration_note(action, _dec_mech)
     except Exception:
         _dec_mech = None

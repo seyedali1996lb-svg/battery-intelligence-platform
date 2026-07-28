@@ -388,6 +388,33 @@ def load_everything():
     return featured_dfs, bundles, split_cycles
 
 
+@st.cache_resource(show_spinner=False)
+def get_platform_graph(_featured_dfs_all: dict, _bundles: dict):
+    """Build (once per process, same caching pattern as load_everything()
+    itself) the Battery Digital Knowledge Graph (src/knowledge_graph.py) for
+    the platform's shared reference fleets. Leading-underscore params are
+    excluded from Streamlit's cache-key hashing (the same documented
+    convention app/utils.py's cached_match_fleet() uses) — featured_dfs_all/
+    bundles are themselves already the output of a cache_resource call, so
+    this only actually runs once per process too.
+
+    This is the ONE graph instance Health / the Cell Workbench / the
+    Copilot / Explore's "cells like this" panel all read from — see
+    knowledge_graph.get_or_compute_mechanism()'s docstring for why sharing
+    one graph instance (not just one function) closes the mechanism-
+    verdict-computed-independently bug class for good.
+    """
+    import knowledge_graph as kg
+    import experiment_registry as reg
+
+    graph = kg.build_platform_graph(_featured_dfs_all, _bundles, tenant_org_id=None)
+    try:
+        kg.save_graph(reg.PLATFORM_ORG_ID, graph)
+    except Exception:
+        pass  # persistence is a nice-to-have snapshot, not required for the graph to work in-session
+    return graph
+
+
 # ---------------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------------
@@ -961,6 +988,7 @@ def main():
     )
     featured_dfs_all, bundles, split_cycles_all = load_everything()
     _train_placeholder.empty()
+    graph = get_platform_graph(featured_dfs_all, bundles)
 
     # ── Guided tour (once per session, first-time visitors) ───────────────────
     # Sequenced via _active_first_run_overlay() so it can never stack with the
@@ -1280,16 +1308,16 @@ def main():
                       trajectory_memory=trajectory_memory)
     elif page == "health":
         page_cell_workbench("health", selected, df, split_cycle, active_fdfs, bundles,
-                             rul_reliable, bundle)
+                             rul_reliable, bundle, graph=graph)
     elif page == "compare":
-        page_compare(cell_ids, active_fdfs, bundles)
+        page_compare(cell_ids, active_fdfs, bundles, graph=graph)
     elif page == "benchmark":
         page_benchmark(st.session_state["auth_org_id"])
     elif page in ("copilot", "insights"):
-        page_copilot(cell_ids, active_fdfs, bundles, selected)
+        page_copilot(cell_ids, active_fdfs, bundles, selected, graph=graph)
     elif page in ("decision", "consequences", "recommendations"):
         page_cell_workbench("decision", selected, df, split_cycle, active_fdfs, bundles,
-                             rul_reliable, bundle)
+                             rul_reliable, bundle, graph=graph)
     elif page in ("compliance", "sustainability", "passport", "reports"):
         page_compliance(selected, df, bundle, rul_reliable, active_fdfs, bundles)
     elif page in ("fleet", "exec_summary"):

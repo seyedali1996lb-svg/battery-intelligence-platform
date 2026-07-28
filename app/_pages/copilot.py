@@ -23,6 +23,7 @@ def page_copilot(
     featured_dfs: dict,
     bundles: dict,
     selected: str,
+    graph=None,
 ):
     _action_bar("copilot")
     from battery_copilot import (
@@ -37,6 +38,7 @@ def page_copilot(
         answer_anomaly,
         answer_recent_trajectory,
         answer_fleet_compare,
+        answer_mechanism,
         answer_alerts,
         answer_replacement_budget,
         answer_fleet_risk,
@@ -95,7 +97,7 @@ def page_copilot(
         "letter-spacing:0.1em;padding:10px 0 4px'>Cell questions</div>",
         unsafe_allow_html=True,
     )
-    _tech_keys = ["health", "drivers", "rul", "compare", "recent", "anomaly", "fleet_compare"]
+    _tech_keys = ["health", "drivers", "rul", "compare", "recent", "anomaly", "fleet_compare", "mechanism"]
     _trows = [_tech_keys[:4], _tech_keys[4:]]
     for _row_keys in _trows:
         _cols = st.columns(len(_row_keys))
@@ -206,6 +208,18 @@ def page_copilot(
         contexts = [ctx]
     elif query == "fleet_compare":
         response = answer_fleet_compare(ctx, fleet_stats)
+        contexts = [ctx]
+    elif query == "mechanism":
+        _mech_edge, _mech_lit = None, []
+        if graph is not None:
+            try:
+                from knowledge_graph import get_or_compute_mechanism, literature_for_mechanism, MECHANISM_VERDICT_TO_KEY
+                _mech_edge = get_or_compute_mechanism(graph, selected, featured_dfs[selected])
+                _mech_key = MECHANISM_VERDICT_TO_KEY.get(_mech_edge.get("verdict"), "insufficient_data")
+                _mech_lit = literature_for_mechanism(graph, _mech_key)
+            except Exception:
+                _mech_edge = None
+        response = answer_mechanism(ctx, _mech_edge, _mech_lit)
         contexts = [ctx]
     elif query == "alerts":
         response = answer_alerts(fleet_stats)

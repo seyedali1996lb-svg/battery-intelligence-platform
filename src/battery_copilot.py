@@ -51,6 +51,7 @@ QUERY_LABELS: dict[str, str] = {
     "recent":              "What happened in the last 20 cycles?",
     "anomaly":             "Is this cell behaving unusually?",
     "fleet_compare":       "How does this cell rank in the fleet?",
+    "mechanism":           "What degradation mechanism is this cell showing?",
     "alerts":              "Fleet alert summary",
     # Business queries
     "replacement_budget":  "What will replacement cost over the next 12 months?",
@@ -61,13 +62,14 @@ QUERY_LABELS: dict[str, str] = {
 # Suggested follow-up queries after each answer — cell-agnostic queries like
 # "alerts" only appear as follow-ups, not as mandatory first choices.
 FOLLOW_UP_MAP: dict[str, list[str]] = {
-    "health":             ["drivers", "recent",        "fleet_compare"],
-    "drivers":            ["health",  "anomaly",        "recent"],
-    "rul":                ["health",  "fleet_compare",  "compare"],
-    "compare":            ["health",  "fleet_compare",  "rul"],
+    "health":             ["drivers", "mechanism",       "recent"],
+    "drivers":            ["health",  "anomaly",         "recent"],
+    "rul":                ["health",  "fleet_compare",   "compare"],
+    "compare":            ["health",  "fleet_compare",   "rul"],
     "recent":             ["anomaly", "drivers",         "rul"],
     "anomaly":            ["recent",  "drivers",         "fleet_compare"],
     "fleet_compare":      ["health",  "rul",             "anomaly"],
+    "mechanism":          ["health",  "drivers",         "recent"],
     "alerts":             ["fleet_compare", "health",   "rul"],
     "replacement_budget": ["fleet_risk", "business_case", "alerts"],
     "fleet_risk":         ["replacement_budget", "business_case", "alerts"],
@@ -531,6 +533,58 @@ def answer_rul(ctx: dict) -> str:
         interval_note = ""
 
     return body + interval_note
+
+
+def answer_mechanism(ctx: dict, mechanism: "dict | None", literature: "list[dict] | None" = None) -> str:
+    """
+    Explain this cell's degradation-mechanism verdict (LLI vs LAM).
+
+    `mechanism` is the Battery Knowledge Graph's exhibits edge for this cell
+    (src/knowledge_graph.py's get_or_compute_mechanism()) — the same shared
+    verdict Health's compact card and the Cell Workbench's Decide & Ask view
+    read, not an independent recomputation. Before this function existed,
+    the Copilot had no mechanism awareness at all — a real gap: Health and
+    Decide & Ask both surfaced the LLI/LAM verdict, but asking the Copilot
+    about it returned nothing.
+
+    `literature` (optional) is the list of corroborating LiteratureSource
+    entries from knowledge_graph.literature_for_mechanism() — appended as
+    grounding background, same pattern as answer_query()'s retrieval block.
+    """
+    cell = ctx["cell_id"]
+
+    if not mechanism:
+        return (
+            f"No degradation-mechanism verdict is available yet for {cell} — "
+            f"it may not be part of the platform's tracked fleet."
+        )
+
+    verdict = mechanism.get("verdict", "Insufficient data")
+    conf    = mechanism.get("confidence_label", "No data")
+
+    if verdict == "Insufficient data" or conf == "No data":
+        return (
+            f"**{cell}** does not yet have enough degradation signal to classify a dominant "
+            f"mechanism — this needs coulombic-efficiency, SOH-trend, and/or resistance-trend "
+            f"data (at least 10-20 cycles of history). Continue cycling to accumulate signal."
+        )
+
+    lli = mechanism.get("lli_score", 0)
+    lam = mechanism.get("lam_score", 0)
+    notes = mechanism.get("confidence_notes", [])
+    body  = mechanism.get("verdict_body", "")
+
+    lines = [
+        f"**{cell}**'s dominant degradation mechanism is **{verdict}** "
+        f"({conf} confidence — LLI score {lli}, LAM score {lam}, "
+        f"from {', '.join(notes) if notes else 'no'} signal(s)).",
+        body,
+    ]
+    if literature:
+        lines.append("**Related background:**")
+        for doc in literature:
+            lines.append(f"- {doc.get('text', '')}")
+    return "\n\n".join(l for l in lines if l)
 
 
 def answer_compare(ctx_a: dict, ctx_b: dict) -> str:
