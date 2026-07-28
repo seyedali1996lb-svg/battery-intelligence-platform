@@ -9,11 +9,13 @@ flag text) to soh_pct/SOH throughout, matching what the data actually is.
 """
 
 import inspect
+import json
+from types import SimpleNamespace
 
 import numpy as np
 
 import mqtt_stream
-from mqtt_stream import AnomalyDetector, _ZSCORE_WINDOW
+from mqtt_stream import AnomalyDetector, _ZSCORE_WINDOW, validate_telemetry
 
 
 def test_no_soc_pct_key_anywhere_in_module():
@@ -131,3 +133,157 @@ def test_multi_signal_anomaly_does_not_fire_on_quiet_baseline():
     kinds = [f["kind"] for f in flags]
 
     assert "MULTI_SIGNAL_ANOMALY" not in kinds
+
+
+# ---------------------------------------------------------------------------
+# validate_telemetry() -- ingestion fault detection (malformed/corrupted
+# data), a structurally different concern from AnomalyDetector.check()
+# above (which only ever judges an already-well-formed reading's value).
+# ---------------------------------------------------------------------------
+
+def _clean_msg(**overrides):
+    msg = {
+        "cell_id": "B0005", "cycle": 1, "seq": 0,
+        "ts": "2024-01-15T12:00:00Z",
+        "voltage_v": 3.7, "current_a": -2.0, "temperature_c": 24.0,
+        "capacity_ah": 1.8, "soh_pct": 90.0,
+    }
+    msg.update(overrides)
+    return msg
+
+
+def test_clean_message_produces_no_faults():
+    detector = AnomalyDetector("B0005", "default")
+    assert validate_telemetry(_clean_msg(), detector) == []
+
+
+def test_missing_cell_id_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    msg = _clean_msg()
+    del msg["cell_id"]
+    faults = validate_telemetry(msg, detector)
+    assert any(f["kind"] == "MISSING_CELL_ID" for f in faults)
+
+
+def test_missing_timestamp_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    msg = _clean_msg()
+    del msg["ts"]
+    faults = validate_telemetry(msg, detector)
+    assert any(f["kind"] == "MISSING_TIMESTAMP" for f in faults)
+
+
+def test_unparseable_timestamp_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    faults = validate_telemetry(_clean_msg(ts="not-a-timestamp"), detector)
+    assert any(f["kind"] == "UNPARSEABLE_TIMESTAMP" for f in faults)
+
+
+def test_out_of_order_timestamp_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    validate_telemetry(_clean_msg(ts="2024-01-15T12:00:10Z"), detector)
+    faults = validate_telemetry(_clean_msg(ts="2024-01-15T12:00:05Z"), detector)
+    assert any(f["kind"] == "OUT_OF_ORDER_TIMESTAMP" for f in faults)
+
+
+def test_duplicate_timestamp_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    validate_telemetry(_clean_msg(ts="2024-01-15T12:00:10Z"), detector)
+    faults = validate_telemetry(_clean_msg(ts="2024-01-15T12:00:10Z"), detector)
+    assert any(f["kind"] == "DUPLICATE_TIMESTAMP" for f in faults)
+
+
+def test_monotonic_timestamps_do_not_fault():
+    detector = AnomalyDetector("B0005", "default")
+    validate_telemetry(_clean_msg(ts="2024-01-15T12:00:00Z"), detector)
+    faults = validate_telemetry(_clean_msg(ts="2024-01-15T12:00:05Z"), detector)
+    assert faults == []
+
+
+def test_dropped_packet_gap_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    validate_telemetry(_clean_msg(seq=10), detector)
+    faults = validate_telemetry(_clean_msg(seq=15), detector)
+    gap_faults = [f for f in faults if f["kind"] == "DROPPED_PACKET_GAP"]
+    assert len(gap_faults) == 1
+    assert "4 message" in gap_faults[0]["detail"]
+
+
+def test_consecutive_seq_does_not_fault():
+    detector = AnomalyDetector("B0005", "default")
+    validate_telemetry(_clean_msg(seq=10), detector)
+    faults = validate_telemetry(_clean_msg(seq=11), detector)
+    assert not any(f["kind"] == "DROPPED_PACKET_GAP" for f in faults)
+
+
+def test_implausible_capacity_flagged_for_unit_mixup():
+    """A capacity_ah of 1823 (an Ah field actually holding a millamp-hour
+    value -- 1.823 Ah reported as 1823) must be flagged -- this is a real
+    unit-mixup case the existing AnomalyDetector cannot catch at all, since
+    it never looks at capacity_ah."""
+    detector = AnomalyDetector("B0005", "default")
+    faults = validate_telemetry(_clean_msg(capacity_ah=1823.0), detector)
+    assert any(f["kind"] == "IMPLAUSIBLE_CAPACITY" for f in faults)
+
+
+def test_negative_capacity_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    faults = validate_telemetry(_clean_msg(capacity_ah=-1.0), detector)
+    assert any(f["kind"] == "IMPLAUSIBLE_CAPACITY" for f in faults)
+
+
+def test_plausible_capacity_does_not_fault():
+    detector = AnomalyDetector("B0005", "default")
+    faults = validate_telemetry(_clean_msg(capacity_ah=1.8), detector)
+    assert faults == []
+
+
+def test_non_numeric_capacity_flagged():
+    detector = AnomalyDetector("B0005", "default")
+    faults = validate_telemetry(_clean_msg(capacity_ah="oops"), detector)
+    assert any(f["kind"] == "NON_NUMERIC_CAPACITY" for f in faults)
+
+
+# ---------------------------------------------------------------------------
+# _on_message() wiring -- faults are quarantined (logged + queued), not
+# silently dropped, and don't block telemetry/anomaly processing.
+# ---------------------------------------------------------------------------
+
+def _fake_msg(payload: dict, topic: str = "battery-intelligence/B0005/telemetry"):
+    return SimpleNamespace(payload=json.dumps(payload).encode(), topic=topic)
+
+
+def test_on_message_pushes_fault_to_queue():
+    mqtt_stream._detectors.pop("FAULT-TEST-1", None)
+    mqtt_stream.drain_faults(1000)  # empty any leftovers from other tests
+
+    mqtt_stream._on_message(None, {"chemistry_map": {}}, _fake_msg(_clean_msg(cell_id="FAULT-TEST-1", capacity_ah=9999.0)))
+
+    faults = mqtt_stream.drain_faults(1000)
+    assert any(f["kind"] == "IMPLAUSIBLE_CAPACITY" and f["cell_id"] == "FAULT-TEST-1" for f in faults)
+
+
+def test_on_message_malformed_json_logged_not_raised(caplog):
+    bad_msg = SimpleNamespace(payload=b"{not valid json", topic="battery-intelligence/B0005/telemetry")
+    with caplog.at_level("WARNING", logger="mqtt_stream"):
+        mqtt_stream._on_message(None, {"chemistry_map": {}}, bad_msg)  # must not raise
+    assert any("unparseable" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_on_message_still_pushes_telemetry_and_anomalies_alongside_faults():
+    mqtt_stream._detectors.pop("FAULT-TEST-2", None)
+    mqtt_stream.drain_telemetry(1000)
+    mqtt_stream.drain_anomalies(1000)
+    mqtt_stream.drain_faults(1000)
+
+    mqtt_stream._on_message(
+        None, {"chemistry_map": {}},
+        _fake_msg(_clean_msg(cell_id="FAULT-TEST-2", capacity_ah=9999.0, voltage_v=10.0)),
+    )
+
+    telemetry = mqtt_stream.drain_telemetry(1000)
+    anomalies = mqtt_stream.drain_anomalies(1000)
+    faults    = mqtt_stream.drain_faults(1000)
+    assert len(telemetry) == 1
+    assert any(a["kind"] == "OVERVOLTAGE" for a in anomalies)
+    assert any(f["kind"] == "IMPLAUSIBLE_CAPACITY" for f in faults)

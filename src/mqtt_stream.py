@@ -33,6 +33,7 @@ Anomaly detection runs on every received message:
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 import time
@@ -42,6 +43,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ── Default connection parameters ────────────────────────────────────────────
 DEFAULT_HOST  = "test.mosquitto.org"
@@ -69,11 +72,22 @@ _ZSCORE_THRESH     = 2.5     # flag threshold
 _MULTI_SIGNAL_ELEVATED   = 1.5   # per-channel Z-score to count as "contributing" to a combined anomaly
 _MULTI_SIGNAL_COMBINED   = 3.5   # combined (Euclidean-norm) Z-score threshold across channels
 
+# ── Ingestion fault-detection thresholds ──────────────────────────────────────
+# These catch malformed/corrupted DATA (missing fields, unparseable
+# timestamps, out-of-order delivery, dropped packets, wrong-unit-scale
+# values) -- a structurally different concern from AnomalyDetector.check()
+# above, which only ever sees a well-formed message and judges whether its
+# *value* is physically worrying. A message that fails a fault check here
+# is quarantined (logged + queued to _faults) rather than silently dropped
+# or fed to the anomaly detector as if it were trustworthy.
+_CAPACITY_AH_MAX = 50.0   # a single cell's capacity_ah above this indicates a unit mixup (e.g. mAh in an Ah field), not a real reading
+
 # ── Thread-safe message store ─────────────────────────────────────────────────
 # Module-level so publisher and subscriber share one namespace across Streamlit reruns.
 
 _incoming:   queue.Queue   = queue.Queue(maxsize=2000)
 _anomalies:  queue.Queue   = queue.Queue(maxsize=500)
+_faults:     queue.Queue   = queue.Queue(maxsize=500)
 _pub_thread: Optional[threading.Thread] = None
 _sub_client = None          # paho client for subscriber
 _pub_running = threading.Event()
@@ -91,6 +105,8 @@ class AnomalyDetector:
         self._i_hist   : deque = deque(maxlen=_ZSCORE_WINDOW)
         self._t_hist   : deque = deque(maxlen=_ZSCORE_WINDOW)
         self._last_temp: Optional[float] = None
+        self._last_ts  : Optional[datetime] = None   # ingestion fault tracking (out-of-order/duplicate)
+        self._last_seq : Optional[int] = None         # ingestion fault tracking (dropped-packet gaps)
 
     def check(self, msg: dict) -> list[dict]:
         """Return list of anomaly dicts (empty if clean)."""
@@ -196,16 +212,101 @@ class AnomalyDetector:
         return flags
 
 
+def _parse_ts(raw) -> "Optional[datetime]":
+    """Best-effort ISO-8601 parse (handles a trailing 'Z', which
+    datetime.fromisoformat rejects before Python 3.11). Returns None on any
+    unparseable/missing value -- never raises."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def validate_telemetry(payload: dict, detector: "AnomalyDetector") -> list[dict]:
+    """
+    Ingestion-layer fault checks, run on every incoming message BEFORE
+    AnomalyDetector.check(). These catch malformed/corrupted DATA (missing
+    fields, unparseable timestamps, out-of-order/duplicate delivery,
+    dropped packets, wrong-unit-scale values) -- a structurally different
+    concern from AnomalyDetector, which only ever judges whether an
+    already-well-formed reading's *value* is physically worrying. A
+    message that trips one of these checks should be quarantined (logged +
+    queued to _faults), not silently dropped or fed to the anomaly
+    detector as if it were trustworthy.
+
+    Mutates detector's _last_ts/_last_seq tracking as a side effect (same
+    pattern as AnomalyDetector.check()'s own rolling-history updates).
+    Returns a list of fault dicts (empty if clean); never raises.
+    """
+    faults: list[dict] = []
+    cell_id = payload.get("cell_id")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _flag(kind, detail, severity="warning"):
+        return {
+            "cell_id":  cell_id or "unknown",
+            "ts":       payload.get("ts", now_iso),
+            "kind":     kind,
+            "detail":   detail,
+            "severity": severity,
+            "seq":      payload.get("seq", 0),
+        }
+
+    if not cell_id:
+        faults.append(_flag("MISSING_CELL_ID", "Message has no cell_id — cannot attribute to a fleet asset.", "critical"))
+
+    ts_raw = payload.get("ts")
+    ts_parsed = _parse_ts(ts_raw)
+    if ts_raw is None:
+        faults.append(_flag("MISSING_TIMESTAMP", "Message has no ts field."))
+    elif ts_parsed is None:
+        faults.append(_flag("UNPARSEABLE_TIMESTAMP", f"ts value {ts_raw!r} is not valid ISO-8601."))
+    else:
+        if detector._last_ts is not None:
+            if ts_parsed < detector._last_ts:
+                faults.append(_flag("OUT_OF_ORDER_TIMESTAMP",
+                    f"ts {ts_raw} is earlier than the previous reading's {detector._last_ts.isoformat()} "
+                    f"— messages arrived (or were corrupted) out of order."))
+            elif ts_parsed == detector._last_ts:
+                faults.append(_flag("DUPLICATE_TIMESTAMP", f"ts {ts_raw} repeats the previous reading's timestamp exactly."))
+        detector._last_ts = ts_parsed
+
+    seq = payload.get("seq")
+    if isinstance(seq, int):
+        if detector._last_seq is not None and seq > detector._last_seq + 1:
+            _gap = seq - detector._last_seq - 1
+            faults.append(_flag("DROPPED_PACKET_GAP",
+                f"seq jumped from {detector._last_seq} to {seq} — {_gap} message(s) appear to have been "
+                f"dropped in transit."))
+        detector._last_seq = seq
+
+    cap = payload.get("capacity_ah")
+    if cap is not None:
+        try:
+            cap_f = float(cap)
+            if cap_f < 0 or cap_f > _CAPACITY_AH_MAX:
+                faults.append(_flag("IMPLAUSIBLE_CAPACITY",
+                    f"capacity_ah={cap_f} is outside any physically plausible single-cell range "
+                    f"(0-{_CAPACITY_AH_MAX} Ah) — likely a unit mixup (e.g. mAh reported as Ah)."))
+        except (TypeError, ValueError):
+            faults.append(_flag("NON_NUMERIC_CAPACITY", f"capacity_ah={cap!r} is not numeric."))
+
+    return faults
+
+
 # ── Subscriber ───────────────────────────────────────────────────────────────
 
 _detectors: dict[str, AnomalyDetector] = {}
 
 
 def _on_message(client, userdata, msg):
-    """paho callback — decode JSON, run anomaly check, push to queues."""
+    """paho callback — decode JSON, run fault + anomaly checks, push to queues."""
     try:
         payload = json.loads(msg.payload.decode())
-    except Exception:
+    except Exception as e:
+        logger.warning("Dropped unparseable MQTT message on %s: %s", getattr(msg, "topic", "?"), e)
         return
 
     cell_id   = payload.get("cell_id", "unknown")
@@ -213,13 +314,22 @@ def _on_message(client, userdata, msg):
 
     if cell_id not in _detectors:
         _detectors[cell_id] = AnomalyDetector(cell_id, chemistry)
+    detector = _detectors[cell_id]
 
     # Push telemetry
     if not _incoming.full():
         _incoming.put_nowait(payload)
 
-    # Push anomalies
-    for flag in _detectors[cell_id].check(payload):
+    # Ingestion faults — malformed/corrupted data (missing fields, bad
+    # timestamps, dropped packets, wrong-unit-scale values). Quarantined
+    # (logged + queued) rather than silently dropped.
+    for fault in validate_telemetry(payload, detector):
+        logger.warning("Ingestion fault [%s] %s: %s", fault["kind"], fault["cell_id"], fault["detail"])
+        if not _faults.full():
+            _faults.put_nowait(fault)
+
+    # Anomalies — physically-plausible-but-worrying readings
+    for flag in detector.check(payload):
         if not _anomalies.full():
             _anomalies.put_nowait(flag)
 
@@ -296,6 +406,19 @@ def drain_anomalies(max_msgs: int = 100) -> list[dict]:
     for _ in range(max_msgs):
         try:
             msgs.append(_anomalies.get_nowait())
+        except queue.Empty:
+            break
+    return msgs
+
+
+def drain_faults(max_msgs: int = 100) -> list[dict]:
+    """Pull up to max_msgs from the ingestion-fault queue (see
+    validate_telemetry() -- malformed/corrupted data, distinct from the
+    anomaly queue's physically-plausible-but-worrying readings)."""
+    msgs = []
+    for _ in range(max_msgs):
+        try:
+            msgs.append(_faults.get_nowait())
         except queue.Empty:
             break
     return msgs
