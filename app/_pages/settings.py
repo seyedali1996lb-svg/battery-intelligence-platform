@@ -917,7 +917,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.rerun()
 
     _section("Production Readiness Roadmap")
-    st.caption("This platform runs as a portfolio demo with intentional constraints. The table below documents the credible path to production deployment.")
+    st.caption("This platform's primary direction is a Research Platform for public battery-cycling data (see docs/product_direction.md) — the Streamlit app you're using is a real demo built on that library, run with intentional constraints, not a production fleet-operations deployment. The table below documents the credible path to production deployment for fleet-operator use cases.")
 
     roadmap_rows = [
         ("Authentication", "Real DB-backed auth (User/Organization models, bcrypt-hashed passwords) — self-service org signup, admin-invites-teammate. Session cookies/JWT are demo-grade", "OAuth2 via Okta/LDAP for enterprise SSO; rotate the demo-grade JWT secret via a real secrets manager"),
