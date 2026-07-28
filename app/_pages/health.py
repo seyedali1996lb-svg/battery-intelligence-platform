@@ -228,6 +228,23 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     except Exception:
         pass
 
+    # Physics-ML mechanism agreement (Phase 6 physics-informed intelligence):
+    # cross-checks _mech's ML verdict above against a physics fit calibrated
+    # directly from this cell's own capacity/resistance history (see
+    # src/physics_calibration.py) -- reuses recommendations.py's existing
+    # caution-note pattern (mechanism_corroboration_note) rather than
+    # inventing a new one. None for non-NASA/Severson cells or whenever
+    # either side lacks enough data to compare.
+    _physics_agreement_note = None
+    _agreement = None
+    try:
+        from physics_calibration import physics_ml_agreement
+        from recommendations import physics_ml_agreement_note
+        _agreement = physics_ml_agreement(cell_id, df)
+        _physics_agreement_note = physics_ml_agreement_note(_agreement)
+    except Exception:
+        pass
+
     # ── E1: 12-month SOH trajectory forecast with uncertainty cone ──────────────
     st.markdown("<div class='section-header'>12-Month SOH Forecast</div>", unsafe_allow_html=True)
     import numpy as _np_e1
@@ -341,6 +358,12 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             padding="14px 20px",
             extra_style="display:flex;align-items:center;gap:12px",
         )
+        if _physics_agreement_note:
+            st.markdown(
+                f"<div style='margin-top:6px;font-size:12px;color:#f6ad55;"
+                f"border-top:1px solid #2d374855;padding-top:6px'>⚠ {_physics_agreement_note}</div>",
+                unsafe_allow_html=True,
+            )
 
     # ── Section 3: Action (always visible) ──────────────────────────────────
     with _mc_right:
@@ -1368,6 +1391,34 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             _rul_ph = _pb.get("rul_physics")
             _pc4.metric("Physics RUL", f"{_rul_ph:,} cy" if _rul_ph is not None else "—")
 
+            # ── SEI/LAM decomposition (src/physics_calibration.py) ──
+            # Reuses the calibration already computed for the mechanism-
+            # agreement note above _mc_left, rather than re-fitting here.
+            _phys_cal = (_agreement or {}).get("physics")
+            if _phys_cal is None:
+                try:
+                    from physics_calibration import calibrate_cell as _calibrate_cell_local
+                    _phys_cal = _calibrate_cell_local(cell_id, df)
+                except Exception:
+                    _phys_cal = None
+            if _phys_cal and _phys_cal.get("eligible") and _phys_cal.get("error") is None:
+                st.caption(
+                    "SEI/LAM decomposition — two-term fit splitting the single β above into "
+                    "an SEI/LLI channel (√n) and an active-material-loss channel (linear-in-n):"
+                )
+                _pd1, _pd2, _pd3, _pd4 = st.columns(4)
+                _pd1.metric("β SEI (√n)", f"{_phys_cal['beta_sei']:.5f}")
+                _pd2.metric("β LAM (linear)", f"{_phys_cal['beta_lam']:.6f}")
+                _pd3.metric(
+                    "SEI resistance growth (k_r)",
+                    f"{_phys_cal['k_r']:.4f}" if _phys_cal.get("k_r") is not None else "— (no IR data)",
+                )
+                _pd4.metric("Physics dominant mode", _phys_cal["dominant_mode_label"].split("(")[0].strip())
+                if _physics_agreement_note:
+                    st.caption(f"⚠ {_physics_agreement_note}")
+                elif _agreement and _agreement.get("agree"):
+                    st.caption(f"✓ {_agreement['note']}")
+
             # ── Projection chart ──
             _fig_pb = go.Figure()
 
@@ -1413,6 +1464,32 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                     name="ML linear extrapolation (GBRT fade)",
                     line=dict(color="#f6ad55", width=1, dash="dash"),
                     hovertemplate="Cycle %{x}: %{y:.1f}% SOH<extra>GBRT</extra>",
+                ))
+
+            # GBRT 80% RUL interval (Q10/Q90), translated onto the SOH axis --
+            # the real trained quantile models (batlab.models.gbrt's
+            # rul_q10_model/rul_q90_model), not a heuristic. Q10/Q90 are
+            # cycles-remaining-to-EOL estimates, so each traces a straight
+            # line from (current cycle, current SOH) to (current cycle +
+            # Q10 or Q90, EOL threshold) -- an honest, if approximate,
+            # translation of a point interval into a trajectory cone, shown
+            # alongside the physics β±2σ band above rather than replacing it
+            # (Phase 6 physics-informed intelligence -- confidence intervals
+            # from two independent sources, side by side).
+            _gbrt_eol_soh = float(st.session_state.get("eol_threshold_pct", 80.0))
+            if _e1_q10 is not None and _e1_q90 is not None and _e1_q10 >= 0 and _e1_q90 >= 0:
+                _gbrt_cur_cy = int(latest["cycle_number"])
+                _gbrt_lo_cy  = _gbrt_cur_cy + _e1_q10   # optimistic: EOL reached sooner (Q10)
+                _gbrt_hi_cy  = _gbrt_cur_cy + _e1_q90   # pessimistic: EOL reached later (Q90)
+                _fig_pb.add_trace(go.Scatter(
+                    x=[_gbrt_cur_cy, _gbrt_hi_cy, _gbrt_lo_cy, _gbrt_cur_cy],
+                    y=[current_soh, _gbrt_eol_soh, _gbrt_eol_soh, current_soh],
+                    fill="toself",
+                    fillcolor="rgba(246,173,85,0.10)",
+                    line=dict(color="rgba(0,0,0,0)"),
+                    name="GBRT 80% RUL interval (Q10–Q90)",
+                    showlegend=True,
+                    hoverinfo="skip",
                 ))
 
             # Temperature sensitivity bands (H3) — β(T) = β₀·exp(−Ea/RT)

@@ -678,3 +678,40 @@ render_regenerate_report_button(bundle, org_id=1, key_suffix="test")
     assert "Reproduced now" in texts
     assert f"{lco['rul_mae']:.1f}" in texts  # the reproduced number matches the recorded one exactly
 
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Physics-Informed Battery Intelligence (src/physics_calibration.py)
+# ---------------------------------------------------------------------------
+
+def test_health_page_shows_physics_sei_lam_decomposition_for_nasa_cell(isolated_db):
+    """
+    Health page's Model Comparison expander must show the physics
+    calibration's SEI/LAM decomposition (beta_sei, beta_lam, resistance
+    growth k_r, dominant mode) for a real NASA cell -- not just the
+    pre-existing single-beta PyBaMM fit. Regression guard for the physics
+    calibration -> GBRT/UI wiring (src/physics_calibration.py).
+    """
+    at = _logged_in_app(role="Engineer", page="health", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Health page raised an exception: {at.exception}"
+
+    metric_labels = {m.label for m in at.metric}
+    assert "β SEI (√n)" in metric_labels
+    assert "β LAM (linear)" in metric_labels
+    assert "SEI resistance growth (k_r)" in metric_labels
+    assert "Physics dominant mode" in metric_labels
+
+    dominant = next(m.value for m in at.metric if m.label == "Physics dominant mode")
+    assert dominant in ("LLI — Loss of Lithium Inventory", "LAM — Loss of Active Material", "Mixed LLI + LAM")
+
+
+def test_health_page_no_physics_metrics_for_synthetic_cell(isolated_db):
+    """Synthetic cells are not calibration-eligible (NASA/Severson only) --
+    the SEI/LAM decomposition block must not appear at all for them,
+    rather than showing empty/placeholder physics metrics."""
+    at = _logged_in_app(role="Engineer", page="health", data_mode="synthetic")
+    at.run()
+    assert not at.exception, f"Health page raised an exception: {at.exception}"
+    metric_labels = {m.label for m in at.metric}
+    assert "β SEI (√n)" not in metric_labels
+
