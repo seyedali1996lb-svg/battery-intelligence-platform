@@ -557,6 +557,44 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"Data provenance: {_cell_provenance(cell_id).upper()}"
         )
 
+    # ── H4.5: Why the model predicts this SOH — top drivers + citations ────
+    # Same feature-importance data Copilot's answer_prediction_drivers()
+    # narrates in chat form, surfaced natively here as a hover-tooltip
+    # table so it's visible without asking the Copilot a question.
+    if bundle is not None:
+        with st.expander("🔎 Why the model predicts this SOH — top drivers", expanded=False):
+            import html as _html
+            from battery_copilot import FEATURE_LABELS as _drv_labels, FEATURE_PHYSICS as _drv_physics
+            from battery_knowledge import get_feature_citation
+            from batlab.models.gbrt import top_drivers as _top_drivers
+
+            _drivers = _top_drivers(bundle, model="soh", top_n=5)
+            _driver_rows = []
+            for _d in _drivers:
+                _fname     = _d["feature"]
+                _citation  = get_feature_citation(_fname)
+                _tooltip   = _drv_physics.get(_fname, "")
+                if _citation:
+                    _tooltip += (
+                        f" (Source: {_citation['title']}, doi:{_citation['doi']})"
+                        if _tooltip else
+                        f"Source: {_citation['title']}, doi:{_citation['doi']}"
+                    )
+                _driver_rows.append({
+                    "name":  _drv_labels.get(_fname, _fname),
+                    "pct":   _d["importance_pct"],
+                    "tooltip": _html.escape(_tooltip or "No physics explanation on file for this feature."),
+                })
+            for _row in _driver_rows:
+                _md_html(
+                    f"<div title=\"{_row['tooltip']}\" style='padding:6px 0;border-bottom:1px solid #2d3748;"
+                    f"cursor:help'>"
+                    f"<span style='font-size:13px;color:#e2e8f0;font-weight:600'>{_row['name']}</span>"
+                    f"<span style='font-size:12px;color:#8896a8;float:right'>{_row['pct']:.1f}%</span>"
+                    f"</div>"
+                )
+            st.caption("Hover a driver for its physical explanation and literature citation (where one is on file).")
+
     # ── H5: Tier 2 — Evidence layer ─────────────────────────────────────────
     _md_html(
         "<div style='font-size:10px;font-weight:700;color:#2d3748;text-transform:uppercase;"

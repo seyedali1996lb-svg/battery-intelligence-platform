@@ -37,6 +37,7 @@ import numpy as np
 
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from copilot_templates import TEMPLATES as _T
+from battery_knowledge import get_feature_citation
 
 # ---------------------------------------------------------------------------
 # Navigation constants
@@ -474,12 +475,15 @@ def answer_prediction_drivers(ctx: dict) -> str:
         f"ranked by contribution to prediction accuracy:\n"
     ]
     for i, f in enumerate(ctx["top_features"], 1):
-        name    = FEATURE_LABELS.get(f["feature"], f["feature"])
-        pct     = f["importance_pct"]
-        physics = FEATURE_PHYSICS.get(f["feature"], "")
+        name     = FEATURE_LABELS.get(f["feature"], f["feature"])
+        pct      = f["importance_pct"]
+        physics  = FEATURE_PHYSICS.get(f["feature"], "")
+        citation = get_feature_citation(f["feature"])
         lines.append(f"**{i}. {name} — {pct:.1f}%**")
         if physics:
             lines.append(physics)
+        if citation:
+            lines.append(f"*Source: {citation['title']} (doi:{citation['doi']}) — {citation['relevance']}*")
         lines.append("")
 
     if accuracy_note:

@@ -7,8 +7,10 @@ crowd out an old one for a query that used to hit it cleanly."""
 
 from battery_knowledge import (
     DOCUMENTS,
+    FEATURE_CITATIONS,
     INDUSTRY_CONTEXT_DOCS_BY_SIGNAL,
     get_document,
+    get_feature_citation,
     industry_context_doc_ids,
 )
 from copilot_retrieval import retrieve
@@ -77,3 +79,57 @@ def test_retrieve_still_surfaces_original_lli_lam_doc():
 def test_retrieve_surfaces_new_iea_stationary_storage_doc_for_its_own_topic():
     results = retrieve("second-life battery reuse stationary storage economics", top_k=3)
     assert any("stationary storage" in r.lower() for r in results)
+
+
+# ---------------------------------------------------------------------------
+# FEATURE_CITATIONS — structured citation objects for battery_copilot's
+# FEATURE_PHYSICS entries
+# ---------------------------------------------------------------------------
+
+def test_feature_citations_covers_every_battery_copilot_physics_feature():
+    """FEATURE_CITATIONS must have an entry for every key in
+    battery_copilot.FEATURE_PHYSICS (the static prose these citations back)
+    -- catches a future FEATURE_PHYSICS addition silently going uncited."""
+    from battery_copilot import FEATURE_PHYSICS
+    assert set(FEATURE_CITATIONS.keys()) == set(FEATURE_PHYSICS.keys())
+
+
+def test_every_feature_citation_has_doi_title_and_relevance():
+    for feature, citation in FEATURE_CITATIONS.items():
+        assert citation.get("doi"), f"{feature} citation missing a doi"
+        assert citation.get("title"), f"{feature} citation missing a title"
+        assert citation.get("relevance"), f"{feature} citation missing a relevance line"
+        # A real DOI always starts with "10." (the DOI registrant prefix) --
+        # guards against an empty or placeholder string sneaking past review.
+        assert citation["doi"].startswith("10."), f"{feature} doi doesn't look like a real DOI: {citation['doi']!r}"
+
+
+def test_get_feature_citation_returns_none_for_uncited_feature():
+    # stress_index/dod_proxy are derived/dimensionless features, not
+    # themselves named diagnostics in either cited paper -- no citation on
+    # file for them is the honest answer, not a bug.
+    assert get_feature_citation("stress_index") is None
+    assert get_feature_citation("this-is-not-a-real-feature") is None
+
+
+def test_get_feature_citation_returns_the_recorded_object():
+    citation = get_feature_citation("resistance_ohm")
+    assert citation is not None
+    assert citation["doi"] == "10.1016/j.jpowsour.2005.01.006"
+
+
+def test_answer_prediction_drivers_cites_a_source_for_a_cited_feature():
+    """battery_copilot.answer_prediction_drivers() must inline a citation
+    line for any top driver that has one on file -- the actual consumer of
+    FEATURE_CITATIONS, not just the lookup helper in isolation."""
+    from battery_copilot import answer_prediction_drivers
+
+    ctx = {
+        "cell_id": "TestCell",
+        "top_features": [{"feature": "resistance_ohm", "importance_pct": 42.0}],
+        "soh_fold_r2": 0.85,
+        "lco_soh_r2": 0.8,
+    }
+    answer = answer_prediction_drivers(ctx)
+    assert "doi:10.1016/j.jpowsour.2005.01.006" in answer
+    assert "Vetter" in answer

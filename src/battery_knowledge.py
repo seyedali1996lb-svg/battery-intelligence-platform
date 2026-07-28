@@ -312,6 +312,117 @@ DOCUMENTS: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
+# Structured feature citations — DOI/title/relevance objects, one per key in
+# src/battery_copilot.py's FEATURE_PHYSICS dict (the static prose explaining
+# each ML feature's battery-science meaning). Two real, DOI-verified papers
+# cover all ten features honestly:
+#
+#   Birkl et al. 2017 — a diagnostic-features review specifically about
+#   tracking capacity/resistance fade rate over cycle life (the same
+#   category of signal every fade_rate_*/fade_acceleration/soh_velocity/
+#   resistance_trend/resistance_normalized feature belongs to). Already
+#   named (without a DOI) in batlab/features/engineering.py's own module
+#   docstring for this exact reason.
+#
+#   Vetter et al. 2005 — the classic, heavily-cited general review of
+#   lithium-ion aging mechanisms (SEI growth driving resistance rise,
+#   Arrhenius temperature dependence), covering resistance_ohm and
+#   temp_rolling_30cy.
+#
+# Both DOIs were verified against a live web search before being recorded
+# here, not recalled from memory and typed in — an incorrect DOI would be
+# a worse credibility failure than no DOI at all. As with the rest of this
+# module (see engineering.py's own docstring), these citations establish
+# that the general *category* of signal is an established diagnostic in
+# the literature, not a claim that this code implements a numbered
+# equation from either paper.
+# ---------------------------------------------------------------------------
+
+_BIRKL_2017 = {
+    "doi":   "10.1016/j.jpowsour.2016.12.011",
+    "title": "Birkl, Roberts, McTurk, Bruce, Howey — \"Degradation diagnostics "
+             "for lithium ion cells\" (J. Power Sources 341, 373-386, 2017)",
+}
+
+_VETTER_2005 = {
+    "doi":   "10.1016/j.jpowsour.2005.01.006",
+    "title": "Vetter et al. — \"Ageing mechanisms in lithium-ion batteries\" "
+             "(J. Power Sources 147, 269-281, 2005)",
+}
+
+FEATURE_CITATIONS: dict[str, dict] = {
+    "cycle_number": {
+        **_BIRKL_2017,
+        "relevance": "Cycle age as the baseline variable every fade-tracking "
+                     "diagnostic in this review is indexed against.",
+    },
+    "fade_rate_10cy": {
+        **_BIRKL_2017,
+        "relevance": "Short-window capacity fade rate — the review's core "
+                     "diagnostic for tracking how fast a cell is losing "
+                     "usable capacity.",
+    },
+    "fade_rate_30cy": {
+        **_BIRKL_2017,
+        "relevance": "Medium-window capacity fade rate, smoothing the same "
+                     "diagnostic to reduce cycle-to-cycle noise.",
+    },
+    "fade_rate_50cy": {
+        **_BIRKL_2017,
+        "relevance": "Long-window capacity fade rate — most stable view of "
+                     "the review's fade-rate diagnostic, at the cost of "
+                     "responsiveness to recent change.",
+    },
+    "fade_acceleration": {
+        **_BIRKL_2017,
+        "relevance": "Second derivative of capacity fade — the review's "
+                     "diagnostic basis for detecting an accelerating, "
+                     "non-linear fade regime rather than assuming linear decline.",
+    },
+    "soh_velocity_50cy": {
+        **_BIRKL_2017,
+        "relevance": "Rate of State-of-Health loss per cycle — the same "
+                     "fade-tracking diagnostic expressed in percentage-of-"
+                     "health terms rather than absolute capacity.",
+    },
+    "resistance_trend_30cy": {
+        **_BIRKL_2017,
+        "relevance": "Trend in internal resistance over a rolling window — "
+                     "one of the review's named degradation-diagnostic signals "
+                     "alongside capacity fade rate.",
+    },
+    "resistance_normalized": {
+        **_BIRKL_2017,
+        "relevance": "Resistance rise relative to a cell's own initial value — "
+                     "the review's approach to making resistance-based "
+                     "diagnostics comparable across cells with different "
+                     "absolute resistance scales.",
+    },
+    "resistance_ohm": {
+        **_VETTER_2005,
+        "relevance": "Internal resistance rise as a direct consequence of SEI "
+                     "(solid-electrolyte interphase) growth — one of this "
+                     "review's central aging mechanisms.",
+    },
+    "temp_rolling_30cy": {
+        **_VETTER_2005,
+        "relevance": "Operating temperature's role in accelerating aging "
+                     "kinetics (Arrhenius-type temperature dependence) — "
+                     "discussed throughout this review as a primary driver "
+                     "of how fast the SEI and other aging mechanisms progress.",
+    },
+}
+
+
+def get_feature_citation(feature_name: str) -> "dict | None":
+    """Return the structured citation object for one FEATURE_PHYSICS key
+    (doi/title/relevance), or None if this feature has no citation on file —
+    e.g. a purely derived/dimensionless feature (stress_index, dod_proxy)
+    that isn't itself a named diagnostic in the cited literature."""
+    return FEATURE_CITATIONS.get(feature_name)
+
+
+# ---------------------------------------------------------------------------
 # Direct id lookup — for callers that need one specific, guaranteed-topical
 # snippet (e.g. the Solar + Storage Sizing "Industry context" callout) rather
 # than TF-IDF-ranked retrieval. copilot_retrieval.retrieve()'s min_score
