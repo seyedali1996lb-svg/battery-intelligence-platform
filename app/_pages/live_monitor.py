@@ -24,7 +24,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     from mqtt_stream import (
         start_subscriber, stop_subscriber, is_subscriber_connected,
         start_publisher, stop_publisher, publisher_running,
-        drain_telemetry, drain_anomalies,
+        drain_telemetry, drain_anomalies, drain_faults,
         DEFAULT_HOST, DEFAULT_PORT, TOPIC_PREFIX,
     )
 
@@ -83,12 +83,14 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             stop_subscriber()
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
+            st.session_state["lm_faults"] = []
             _clear_pybamm_cache(_replay_cell)
             st.rerun()
         else:
             # Clear old buffers
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
+            st.session_state["lm_faults"] = []
             _clear_pybamm_cache(_replay_cell)
             # Start subscriber first, then publisher
             _data_mode = st.session_state.get("data_mode", "synthetic")
@@ -114,6 +116,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
     if _btn_col2.button("🗑 Clear", key="lm_clear", use_container_width=True):
         st.session_state["lm_telemetry"] = []
         st.session_state["lm_anomalies"] = []
+        st.session_state["lm_faults"] = []
         _clear_pybamm_cache(_replay_cell)
         st.rerun()
 
@@ -153,21 +156,24 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             st.session_state["lm_telemetry"] = []
         if "lm_anomalies" not in st.session_state:
             st.session_state["lm_anomalies"] = []
+        if "lm_faults" not in st.session_state:
+            st.session_state["lm_faults"] = []
 
         if _sub_connected:
             _new_telem   = drain_telemetry(200)
             _new_anomaly = drain_anomalies(100)
+            _new_fault   = drain_faults(100)
             if _new_telem:
                 st.session_state["lm_telemetry"].extend(_new_telem)
                 # Keep last 1000 readings in memory
                 st.session_state["lm_telemetry"] = st.session_state["lm_telemetry"][-1000:]
+            _wh_url_lm  = st.session_state.get("webhook_url", "")
+            _wh_evts_lm = st.session_state.get("webhook_events", [])
+            _wh_sec_lm  = st.session_state.get("webhook_secret", "")
             if _new_anomaly:
                 st.session_state["lm_anomalies"].extend(_new_anomaly)
                 st.session_state["lm_anomalies"] = st.session_state["lm_anomalies"][-200:]
                 # ── Webhook push ────────────────────────────────────────────
-                _wh_url_lm  = st.session_state.get("webhook_url", "")
-                _wh_evts_lm = st.session_state.get("webhook_events", [])
-                _wh_sec_lm  = st.session_state.get("webhook_secret", "")
                 if _wh_url_lm and _wh_evts_lm:
                     from notifications import send_webhook
                     for _an in _new_anomaly:
@@ -187,9 +193,29 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                             },
                             _wh_url_lm, _wh_sec_lm,
                         )
+            if _new_fault:
+                st.session_state["lm_faults"].extend(_new_fault)
+                st.session_state["lm_faults"] = st.session_state["lm_faults"][-200:]
+                # ── Webhook push (ingestion faults -- malformed/corrupted
+                # data, distinct from the anomaly push above) ──────────────
+                if _wh_url_lm and "INGESTION_FAULT" in _wh_evts_lm:
+                    from notifications import send_webhook
+                    for _flt in _new_fault:
+                        send_webhook(
+                            "INGESTION_FAULT",
+                            {
+                                "cell_id":   _flt.get("cell_id", _replay_cell),
+                                "kind":      _flt.get("kind"),
+                                "severity":  _flt.get("severity", "warning"),
+                                "detail":    _flt.get("detail", ""),
+                                "timestamp": _flt.get("ts", datetime.datetime.now().isoformat()),
+                            },
+                            _wh_url_lm, _wh_sec_lm,
+                        )
 
-        _telem = st.session_state["lm_telemetry"]
-        _anom  = st.session_state["lm_anomalies"]
+        _telem  = st.session_state["lm_telemetry"]
+        _anom   = st.session_state["lm_anomalies"]
+        _faults = st.session_state["lm_faults"]
 
         if not _telem:
             _empty_state(
@@ -409,5 +435,47 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 "<div style='color:#4a5568;font-size:13px;padding:12px 0'>No anomalies detected.</div>",
                 unsafe_allow_html=True,
             )
+
+        # ── Ingestion Faults ────────────────────────────────────────────────
+        # Malformed/corrupted DATA (missing fields, bad timestamps, dropped
+        # packets, wrong-unit-scale values) caught by mqtt_stream.
+        # validate_telemetry() -- a structurally different concern from the
+        # Anomaly Log above, which only ever sees well-formed readings and
+        # judges whether the value itself is physically worrying.
+        with st.expander(f"🚧 Ingestion Faults ({len(_faults)})", expanded=False):
+            if _faults:
+                _fault_recent = list(reversed(_faults[-50:]))
+                for _f in _fault_recent:
+                    _fsev = _f.get("severity", "warning")
+                    _fc   = "#fc8181" if _fsev == "critical" else "#f6ad55"
+                    _fts  = str(_f.get("ts", ""))[:19].replace("T", " ")
+                    st.markdown(
+                        f"<div style='background:{_fc}11;border-left:3px solid {_fc};"
+                        f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
+                        f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
+                        f"<span style='color:{_fc};font-weight:700'>{_f.get('kind', 'UNKNOWN')}</span>"
+                        f"<span style='color:#4a5568;font-size:11px'>{_fts}</span>"
+                        f"</div>"
+                        f"<div style='color:#a0aec0'>{_f.get('cell_id', '')} — {_f.get('detail', '')}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                _df_fault_exp = _pd_lm.DataFrame(_faults)
+                _fault_csv    = _df_fault_exp.to_csv(index=False).encode()
+                st.download_button(
+                    "Export ingestion fault log CSV", data=_fault_csv,
+                    file_name=f"ingestion_faults_{_replay_cell}.csv", mime="text/csv",
+                    key="lm_export_faults",
+                )
+            else:
+                st.markdown(
+                    "<div style='color:#4a5568;font-size:13px;padding:8px 0'>"
+                    "No ingestion faults detected. This panel exercises real fault-detection logic "
+                    "(missing/out-of-order timestamps, dropped-packet gaps, implausible unit-scale "
+                    "values) against whatever replay traffic is flowing — it will only show entries "
+                    "when the underlying data actually trips one of those checks."
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
     _telemetry_fragment()

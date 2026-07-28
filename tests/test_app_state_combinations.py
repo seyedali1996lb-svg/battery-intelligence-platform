@@ -368,6 +368,43 @@ def test_live_monitor_physics_twin_check_runs_against_streamed_telemetry(isolate
     assert any("not a live-synced digital twin" in c for c in captions)
 
 
+def test_live_monitor_ingestion_faults_panel_renders_with_no_faults(isolated_db):
+    """The new Ingestion Faults expander must render an honest empty state
+    when nothing has tripped a fault check yet, not crash or show stale
+    placeholder content."""
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(5),
+        lm_anomalies=[], lm_faults=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed: {at.exception}"
+    assert any("Ingestion Faults" in (e.label or "") for e in at.expander)
+    assert "No ingestion faults detected" in _all_text(at)
+
+
+def test_live_monitor_ingestion_faults_panel_renders_seeded_faults(isolated_db):
+    """With pre-seeded fault entries (as mqtt_stream.drain_faults() would
+    have produced), the panel must show them -- kind, cell_id, detail --
+    and offer a CSV export, mirroring the existing Anomaly Log."""
+    seeded_faults = [
+        {
+            "cell_id": "B0005", "kind": "IMPLAUSIBLE_CAPACITY",
+            "detail": "capacity_ah=1823.0 is outside any physically plausible range",
+            "severity": "warning", "ts": "2026-01-01T00:00:05Z", "seq": 5,
+        },
+    ]
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(5),
+        lm_anomalies=[], lm_faults=seeded_faults,
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed: {at.exception}"
+    assert "IMPLAUSIBLE_CAPACITY" in _all_text(at)
+    assert any("Export ingestion fault log CSV" in (b.label or "") for b in at.download_button)
+
+
 def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db):
     """
     Regression test (Engineering Usability review finding): the mechanism

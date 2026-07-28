@@ -549,7 +549,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         "Fire on", key="webhook_events",
         options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
                  "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY",
-                 "FLEET_DIGEST", "TRAJECTORY_MATCH", "PASSPORT_GAP"],
+                 "FLEET_DIGEST", "TRAJECTORY_MATCH", "PASSPORT_GAP", "INGESTION_FAULT"],
         help="Only event types checked here will trigger a webhook POST. FLEET_DIGEST/"
              "TRAJECTORY_MATCH/PASSPORT_GAP are session/page-load-triggered best-effort "
              "alerts, not a real background cron.",
