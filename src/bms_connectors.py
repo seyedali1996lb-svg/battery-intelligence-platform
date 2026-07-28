@@ -16,7 +16,42 @@ None rather than raising when unconfigured, so the UI can show a clear
 empty state instead of a stack trace.
 """
 
+from typing import Protocol, runtime_checkable
+
 import pandas as pd
+
+
+@runtime_checkable
+class BMSAdapter(Protocol):
+    """
+    Structural contract every BMS connector class in this module satisfies.
+
+    Codifies what fetch_victron_vrm()/fetch_orion_bms() already do
+    informally (credential guard -> vendor request -> map onto the app's
+    standard cycle-data columns) so the next connector is "implement these
+    3 members," not "read the other two and copy the pattern." This is a
+    Protocol, not an ABC each adapter must inherit from -- any object with
+    a matching `name`/`is_configured()`/`fetch()` shape satisfies it, which
+    keeps the underlying fetch_*() functions (already exercised directly
+    by app/_pages/settings.py and tests/test_bms_connectors.py) completely
+    untouched.
+    """
+
+    name: str
+
+    def is_configured(self) -> bool:
+        """True if this adapter has everything it needs to attempt a fetch
+        (credentials/IDs supplied), without making any network call."""
+        ...
+
+    def fetch(self) -> "pd.DataFrame | None":
+        """Fetch cycle data in the app's standard schema (cell_id,
+        cycle_number, capacity_ah, resistance_ohm, temperature_c,
+        test_date), or None if not configured or the vendor returned no
+        records. Each concrete adapter documents its own error-handling
+        contract (raise vs. never-raise) -- see VictronVRMAdapter /
+        OrionBMSAdapter below."""
+        ...
 
 
 def fetch_victron_vrm(base_url: str, api_token: str, installation_id: str) -> "pd.DataFrame | None":
@@ -121,3 +156,88 @@ def fetch_orion_bms(
         return None
 
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# BMSAdapter-conforming wrapper classes
+#
+# These wrap the free functions above with a uniform stateful interface
+# (credentials held on the instance, not re-passed to every call) and a
+# uniform test_connection() contract -- new code, so unlike the wrapped
+# functions it can standardize on "never raise, always return a result
+# dict" regardless of which underlying fetch_*() contract it delegates to.
+# The wrapped functions themselves are untouched: existing callers
+# (app/_pages/settings.py, tests/test_bms_connectors.py) keep working as-is.
+# ---------------------------------------------------------------------------
+
+class VictronVRMAdapter:
+    """BMSAdapter wrapping fetch_victron_vrm(). fetch_victron_vrm() itself
+    lets HTTP errors propagate (its existing, tested contract) -- this
+    class's fetch() catches them instead, so a caller of the class-based
+    interface never needs its own try/except."""
+
+    name = "Victron VRM"
+
+    def __init__(self, base_url: str, api_token: str, installation_id: str):
+        self.base_url = base_url
+        self.api_token = api_token
+        self.installation_id = installation_id
+
+    def is_configured(self) -> bool:
+        return bool(self.base_url and self.api_token and self.installation_id)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        try:
+            return fetch_victron_vrm(self.base_url, self.api_token, self.installation_id)
+        except Exception:
+            return None
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        try:
+            df = fetch_victron_vrm(self.base_url, self.api_token, self.installation_id)
+        except Exception as e:
+            return {"ok": False, "message": f"VRM connection failed: {e}", "n_records": None}
+        if df is None or len(df) == 0:
+            return {"ok": True, "message": "Connected, but no records were returned.", "n_records": 0}
+        return {"ok": True, "message": f"Fetched {len(df)} records.", "n_records": len(df)}
+
+
+class OrionBMSAdapter:
+    """BMSAdapter wrapping fetch_orion_bms(). fetch_orion_bms() already
+    never raises (returns a dict with an "error" key instead) -- this
+    class's fetch() normalizes that into the shared None/DataFrame
+    contract every BMSAdapter.fetch() promises."""
+
+    name = "Orion Jr2"
+
+    def __init__(self, cell_id: str, api_key: str, api_base_url: str = "https://api.orion-bms.com/v1"):
+        self.cell_id = cell_id
+        self.api_key = api_key
+        self.api_base_url = api_base_url
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        result = fetch_orion_bms(self.cell_id, self.api_key, self.api_base_url)
+        if isinstance(result, dict):  # {"error": ...} -- not a DataFrame
+            return None
+        return result
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        result = fetch_orion_bms(self.cell_id, self.api_key, self.api_base_url)
+        if result is None:
+            return {"ok": True, "message": "Connected, but no records were returned.", "n_records": 0}
+        if isinstance(result, dict) and "error" in result:
+            return {"ok": False, "message": f"Orion connection failed: {result['error']}", "n_records": None}
+        return {"ok": True, "message": f"Fetched {len(result)} records.", "n_records": len(result)}
