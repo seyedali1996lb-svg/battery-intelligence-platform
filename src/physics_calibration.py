@@ -143,6 +143,28 @@ def _param_set_for_cell(cell_id: str) -> "str | None":
 # view); here it would otherwise run once per cell per fleet-wide training
 # pass, which is wasted work — every NASA cell shares one NCA_Kim2011
 # discharge result, every Severson cell shares one Chen2020 result.
+#
+# Measured cost (this dev environment, PyBaMM 26.6.2.0, first call per
+# parameter set): NCA_Kim2011 ~1.6s (cold — includes casadi/JIT compile),
+# Chen2020 ~0.08s (warm — shares compiled machinery with the prior call in
+# the same process). In the same ballpark as this feature's original ~2.7s/
+# cell estimate; caching per param_set instead of per cell means an
+# N-cell fleet pays this cost at most twice (once per eligible chemistry),
+# not N times. The two-term/resistance scipy fits themselves (the actual
+# per-cell, per-refit cost inside calibrated_feature_series()) are
+# consistently sub-millisecond — the SPM discharge is the only PyBaMM-
+# dependent, genuinely slow part of this module.
+#
+# Beyond this in-process cache, every real training pipeline call site
+# (app/main.py's load_everything(), app/_pages/import_page.py's upload
+# flow) already routes build_features() output through src/bundle_cache.py's
+# existing disk cache, keyed by a signature that includes FEATURE_VERSION —
+# so on any warm start (server restart, repeat page load), the physics
+# columns are loaded from disk with zero PyBaMM/scipy re-computation at
+# all, the same as every other feature column. No new disk-caching layer
+# was needed for that: bumping FEATURE_VERSION when this module was wired
+# in was enough to make bundle_cache.py's existing signature-based
+# invalidation cover it for free.
 # ---------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=8)
