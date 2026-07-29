@@ -275,14 +275,11 @@ def page_decision(
             _af_colour = {"fit": "#48bb78", "marginal": "#f6ad55", "not_fit": "#fc8181"}
             for _i, (_app_key, _app) in enumerate(fit_scores.items()):
                 with _af_cols[_i % len(_af_cols)]:
-                    st.markdown(
-                        f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                        f"padding:14px 16px'>"
+                    render_card(
                         f"<div style='font-size:11px;color:#4a5568'>{_app['short']}</div>"
                         f"<div style='font-size:16px;font-weight:700;color:{_af_colour[_app['fit']]};margin-top:4px'>"
-                        f"{_app['fit'].replace('_', ' ').title()}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True,
+                        f"{_app['fit'].replace('_', ' ').title()}</div>",
+                        padding="14px 16px",
                     )
 
         # ── 4b. Second-life marketplace ──────────────────────────────────────
@@ -290,9 +287,7 @@ def page_decision(
             st.markdown("<div class='section-header'>Second-Life Marketplace</div>", unsafe_allow_html=True)
             _sl_eligible = soh >= 70.0
             _sl_col = "#68d391" if _sl_eligible else "#718096"
-            _md_html(
-                f"<div style='background:#1e2a38;border:1px solid {_sl_col}44;border-radius:10px;"
-                f"padding:18px 22px;margin-bottom:12px'>"
+            render_card(
                 f"<div style='display:flex;justify-content:space-between;align-items:flex-start'>"
                 f"<div>"
                 f"<div style='font-size:14px;font-weight:700;color:{_sl_col}'>"
@@ -303,8 +298,10 @@ def page_decision(
                 f"</div>"
                 f"</div>"
                 f"<div style='font-size:22px;color:{_sl_col};margin-left:16px'>♻</div>"
-                f"</div>"
-                f"</div>"
+                f"</div>",
+                border_color=f"{_sl_col}44",
+                padding="18px 22px",
+                extra_style="margin-bottom:12px",
             )
             if _sl_eligible:
                 _mk_col1, _mk_col2 = st.columns(2)
@@ -547,12 +544,11 @@ def page_decision(
                 _template_dc = answer_query(_dc_input, _dc_ctx)
                 _dc_answer = llm_answer(_dc_input, _template_dc, _api_key_dc) if _api_key_dc else _template_dc
                 _badge_dc = make_badge("Claude Haiku", "#667eea") if _api_key_dc else make_badge("Template", "#718096")
-                _md_html(
-                    f"<div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;"
-                    f"padding:16px 20px;margin-top:8px'>"
+                render_card(
                     f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{_badge_dc} · {selected}</div>"
-                    f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_dc_answer}</div>"
-                    f"</div>"
+                    f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_dc_answer}</div>",
+                    padding="16px 20px",
+                    extra_style="margin-top:8px",
                 )
         except Exception as _dc_e:
             st.caption(f"Copilot unavailable: {_dc_e}")
