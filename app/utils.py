@@ -301,15 +301,24 @@ def _resample_df(df: "pd.DataFrame", max_points: int = 500) -> "pd.DataFrame":
 # ---------------------------------------------------------------------------
 
 def _cell_provenance(cell_id: str) -> str:
-    """Return the data-origin token for a given cell."""
-    if cell_id in NASA_CELL_IDS or cell_id.startswith(SEVERSON_CELL_PREFIX):
-        return "measured"
-    return "synthetic"
+    """Return the data-origin token for a given cell.
+
+    Delegates to ChemistryProfile.for_cell() rather than a hand-rolled
+    is-NASA / Severson-prefix chain — this exact function was patched once
+    before for Severson (see docs/history.md's "Severson cells labelled
+    SYNTHETIC" entry) by hardcoding a second prefix check, and the same gap
+    silently reopened for Oxford's prefix once that dataset was added. Routing
+    through the one canonical classifier means a newly added dataset can't
+    fall through to the wrong label here again.
+    """
+    from chemistry_profiles import ChemistryProfile
+    return ChemistryProfile.for_cell(cell_id).provenance
 
 
 def _analysis_provenance(cell_id: str, analysis: str = "derived") -> str:
     """Return the provenance token for a specific analysis type."""
-    if cell_id in NASA_CELL_IDS or cell_id.startswith(SEVERSON_CELL_PREFIX):
+    from chemistry_profiles import ChemistryProfile
+    if ChemistryProfile.for_cell(cell_id).provenance == "measured":
         return "measured" if analysis == "cycle" else "simulated"
     return "synthetic"
 
@@ -318,14 +327,9 @@ def _cell_source(cell_id: str) -> str:
     """Coarse data-source tag — used to block physically-meaningless mixed-source
     packs (capacity/resistance scales aren't comparable across chemistries) and
     to pick the right per-cell bundle for RUL-reliability lookups."""
-    from data_loader import CELL_STRESS_PROFILES
-    if cell_id in NASA_CELL_IDS:
-        return "nasa"
-    if cell_id.startswith(SEVERSON_CELL_PREFIX):
-        return "severson"
-    if cell_id in CELL_STRESS_PROFILES:
-        return "synthetic"
-    return "uploaded"
+    from chemistry_profiles import ChemistryProfile
+    _kind = ChemistryProfile.for_cell(cell_id).source_kind
+    return {"synth": "synthetic", "upload": "uploaded"}.get(_kind, _kind)
 
 
 # ---------------------------------------------------------------------------
