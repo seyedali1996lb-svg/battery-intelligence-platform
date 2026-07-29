@@ -245,27 +245,21 @@ def _first_neighbor_of_type(g: nx.MultiDiGraph, node_key_: str, edge_type: str, 
 # ---------------------------------------------------------------------------
 
 def dataset_key_for_cell(cell_id: str) -> str:
-    """Same source-classification rules used throughout the app (NASA_CELL_IDS
-    list, 'S-' Severson prefix, 'OX-' Oxford prefix, else synthetic/uploaded —
-    see app/utils.py's NASA_CELL_IDS / SEVERSON_CELL_PREFIX and
-    chemistry_profiles.ChemistryProfile.for_cell() for the same convention).
-    Returns "uploaded" for anything not matching a known built-in pattern —
-    callers with better information (e.g. import_page.py, which knows a cell
-    came from an upload for certain) should pass dataset_key explicitly
-    instead of relying on this guess.
+    """Delegates to chemistry_profiles.ChemistryProfile.for_cell() -- this
+    function used to reimplement the same nasa/severson/oxford/synth/upload
+    classification independently (a duplicate of the exact chain that has
+    caused real mislabeling bugs elsewhere in this project whenever it
+    drifted from the canonical one). Returns "uploaded" (not "upload") for
+    anything not matching a known built-in pattern, to preserve this
+    function's existing dataset-key vocabulary -- callers with better
+    information (e.g. import_page.py, which knows a cell came from an
+    upload for certain) should pass dataset_key explicitly instead of
+    relying on this guess.
     """
-    from data_loader import CELL_STRESS_PROFILES
+    from chemistry_profiles import ChemistryProfile
 
-    nasa_ids = {"B0005", "B0006", "B0007", "B0018"}
-    if cell_id in nasa_ids:
-        return "nasa"
-    if cell_id.startswith("S-"):
-        return "severson"
-    if cell_id.startswith("OX-"):
-        return "oxford"
-    if cell_id in CELL_STRESS_PROFILES or cell_id.startswith(("Cell", "OxBat")):
-        return "synth"
-    return "uploaded"
+    kind = ChemistryProfile.for_cell(cell_id).source_kind
+    return "uploaded" if kind == "upload" else kind
 
 
 def link_cell_to_dataset(
