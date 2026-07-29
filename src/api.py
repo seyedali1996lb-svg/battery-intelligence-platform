@@ -79,6 +79,7 @@ except ImportError as _e:
 import numpy as np
 
 from src.db import get_user_by_username, verify_password, init_db
+from src.chemistry_profiles import ChemistryProfile
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 
@@ -333,7 +334,6 @@ class LineageRow(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_NASA_CELL_IDS = {"B0005", "B0006", "B0007", "B0018"}
 _CYCLES_PER_MONTH = 200
 _REPLACEMENT_COST_USD = 150
 
@@ -347,9 +347,10 @@ def _soh_status(soh: float) -> str:
 
 
 def _rul_reliable_for(cell_id: str, bundles: dict) -> bool:
-    if cell_id in _NASA_CELL_IDS:
+    _kind = ChemistryProfile.for_cell(cell_id).source_kind
+    if _kind == "nasa":
         bndl = bundles.get("nasa", {})
-    elif cell_id.startswith("S-"):
+    elif _kind == "severson":
         bndl = bundles.get("severson", {})
     else:
         # "synth" and "upload" are both real keys once an org has uploaded
