@@ -405,3 +405,107 @@ def test_fleet_asset_hierarchy_is_org_scoped(db):
     assert {s["name"] for s in db.list_sites(org_a)} == {"Default Site", "Site A"}
     assert {s["name"] for s in db.list_sites(org_b)} == {"Default Site", "Site B"}
     assert site_a["id"] not in [s["id"] for s in db.list_sites(org_b)]
+
+
+# ---------------------------------------------------------------------------
+# Login lockout (Enterprise Readiness audit finding: login.py had no
+# rate-limiting at all before this -- unlimited password guesses against any
+# username)
+# ---------------------------------------------------------------------------
+
+def test_unlocked_account_returns_none(db):
+    assert db.is_login_locked_out("engineer") is None
+
+
+def test_lockout_triggers_after_max_failed_attempts(db):
+    for _ in range(db._MAX_FAILED_LOGIN_ATTEMPTS - 1):
+        db.record_failed_login("engineer")
+        assert db.is_login_locked_out("engineer") is None, "should not lock out before the threshold"
+    db.record_failed_login("engineer")  # the Nth attempt crosses the threshold
+    assert db.is_login_locked_out("engineer") is not None
+
+
+def test_successful_login_resets_attempt_counter(db):
+    for _ in range(db._MAX_FAILED_LOGIN_ATTEMPTS - 1):
+        db.record_failed_login("engineer")
+    db.reset_login_attempts("engineer")
+    assert db.is_login_locked_out("engineer") is None
+    # Confirm the counter itself was cleared, not just the lock -- one more
+    # failed attempt right after a reset should not immediately re-lock.
+    db.record_failed_login("engineer")
+    assert db.is_login_locked_out("engineer") is None
+
+
+def test_lockout_is_per_username_not_global(db):
+    for _ in range(db._MAX_FAILED_LOGIN_ATTEMPTS):
+        db.record_failed_login("engineer")
+    assert db.is_login_locked_out("engineer") is not None
+    assert db.is_login_locked_out("admin") is None
+
+
+def test_failed_login_against_nonexistent_username_is_a_safe_no_op(db):
+    """Locking out (or erroring on) a username that was never registered
+    would let an attacker distinguish "real user, wrong password" from "no
+    such user" by comparing responses -- must behave identically to a
+    normal miss instead."""
+    db.record_failed_login("this-username-does-not-exist")
+    assert db.is_login_locked_out("this-username-does-not-exist") is None
+    db.reset_login_attempts("this-username-does-not-exist")  # must not raise
+
+
+def test_lockout_expiry_is_in_the_future_when_active(db):
+    import datetime
+    for _ in range(db._MAX_FAILED_LOGIN_ATTEMPTS):
+        db.record_failed_login("engineer")
+    locked_until = db.is_login_locked_out("engineer")
+    assert locked_until is not None
+    assert datetime.datetime.fromisoformat(locked_until) > datetime.datetime.now()
+
+
+def test_expired_lockout_no_longer_blocks_login(db):
+    """A lockout in the past (simulating LOCKOUT_MINUTES having elapsed)
+    must not keep blocking sign-in -- writes locked_until directly rather
+    than sleeping LOCKOUT_MINUTES in a test."""
+    import datetime
+    for _ in range(db._MAX_FAILED_LOGIN_ATTEMPTS):
+        db.record_failed_login("engineer")
+    assert db.is_login_locked_out("engineer") is not None
+
+    with db.Session() as s:
+        row = s.query(db.User).filter_by(username="engineer").one()
+        row.locked_until = (datetime.datetime.now() - datetime.timedelta(minutes=1)).isoformat()
+        s.commit()
+
+    assert db.is_login_locked_out("engineer") is None
+
+
+def test_login_lockout_columns_migrate_onto_pre_existing_users_table(tmp_path, monkeypatch):
+    """Same additive-migration guarantee as test_migration_preserves_pre_existing_rows_without_org_id
+    above -- a users table created before this module gained login lockout
+    must still get the new columns (and keep its existing rows) on the next
+    init_db(), not crash or silently drop the account."""
+    test_db_path = tmp_path / "test_legacy.db"
+    conn = sqlite3.connect(test_db_path)
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, username TEXT UNIQUE, "
+        "password_hash TEXT, role TEXT, display_name TEXT, created_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO users (org_id, username, password_hash, role, display_name, created_at) "
+        "VALUES (1, 'legacyuser', 'x', 'engineer', 'Legacy User', '2020-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(db_module, "DB_PATH", test_db_path)
+    monkeypatch.setattr(
+        db_module, "engine",
+        db_module.create_engine(f"sqlite:///{test_db_path}", connect_args={"check_same_thread": False}),
+    )
+    monkeypatch.setattr(db_module, "Session", db_module.sessionmaker(bind=db_module.engine))
+    db_module.init_db()
+
+    user = db_module.get_user_by_username("legacyuser")
+    assert user is not None, "pre-existing row must survive the migration"
+    assert db_module.is_login_locked_out("legacyuser") is None
+    db_module.record_failed_login("legacyuser")  # must not raise on the newly-added columns

@@ -57,19 +57,28 @@ def render_login() -> bool:
                 signin_submitted = st.form_submit_button("Sign in", use_container_width=True, type="primary")
 
             if signin_submitted:
-                user = db.get_user_by_username(username)
-                if user and db.verify_password(password, user["password_hash"]):
-                    _log_in_user(user)
-                    st.rerun()
+                _locked_until = db.is_login_locked_out(username)
+                if _locked_until:
+                    st.error(
+                        f"Too many failed sign-in attempts. Locked until "
+                        f"{_locked_until[:16].replace('T', ' ')} (server time)."
+                    )
                 else:
-                    st.error("Invalid username or password.")
+                    user = db.get_user_by_username(username)
+                    if user and db.verify_password(password, user["password_hash"]):
+                        db.reset_login_attempts(username)
+                        _log_in_user(user)
+                        st.rerun()
+                    else:
+                        db.record_failed_login(username)
+                        st.error("Invalid username or password.")
 
             st.markdown(
-                "<div style='margin-top:20px;font-size:11px;color:#4a5568;text-align:center;line-height:2'>"
-                "<strong style='color:#718096'>Demo credentials (Demo Org)</strong><br>"
+                "<div style='margin-top:20px;font-size:11px;color:#a0aec0;text-align:center;line-height:2'>"
+                "<strong style='color:#a0aec0'>Demo credentials (Demo Org)</strong><br>"
                 + "<br>".join(
-                    f"<span style='color:#718096'>{u}</span> / {v[0]}"
-                    f"<span style='color:#4a5568;margin-left:8px'>({v[2]})</span>"
+                    f"<span style='color:#a0aec0'>{u}</span> / {v[0]}"
+                    f"<span style='color:#a0aec0;margin-left:8px'>({v[2]})</span>"
                     for u, v in db.DEMO_USERS.items()
                 )
                 + "</div>",

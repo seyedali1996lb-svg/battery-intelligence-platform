@@ -404,7 +404,7 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
                             f"<span style='background:{_ck}22;border:1px solid {_ck}55;color:{_ck};"
                             f"font-size:11px;font-weight:600;padding:2px 9px;border-radius:8px'>{p}</span>"
                             for p in _peers
-                        ) if _peers else "<span style='color:#4a5568;font-size:12px'>No peers — unique cluster</span>"
+                        ) if _peers else "<span style='color:#a0aec0;font-size:12px'>No peers — unique cluster</span>"
                         _scol.markdown(
                             f"<div style='background:#1e2a38;border:1px solid {_ck}44;border-radius:8px;"
                             f"padding:12px 14px'>"
@@ -655,7 +655,7 @@ def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
         render_card(
             f"<div style='display:flex;justify-content:space-between;align-items:center'>"
             f"<div><strong style='color:#e2e8f0;font-size:14px'>{m['cell_id']}</strong>"
-            f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>"
             f"{m['chemistry'] or 'unknown chemistry'} · {_dataset_note} · {_mech_note}</div></div>"
             f"<div style='font-size:16px;font-weight:800;color:#63b3ed'>{_soh_str}</div>"
             f"</div>",

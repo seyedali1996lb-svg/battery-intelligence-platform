@@ -418,7 +418,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         interval_html = (
             f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
             f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
-            + (f"&nbsp;·&nbsp;<span style='color:#4a5568'>{_unc_explanation}</span>" if _unc_explanation else "")
+            + (f"&nbsp;·&nbsp;<span style='color:#a0aec0'>{_unc_explanation}</span>" if _unc_explanation else "")
             + f"</div>"
         )
 

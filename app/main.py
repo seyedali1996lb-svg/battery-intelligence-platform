@@ -88,14 +88,14 @@ if st.session_state.get("light_mode", False):
         div[data-testid="stMarkdownContainer"],
         div[data-testid="stMarkdownContainer"] * { color: #1a202c !important; }
         h1, h2, h3, h4 { color: #1a202c !important; }
-        .hero-label  { color: #4a5568 !important; }
-        .hero-sub    { color: #4a5568 !important; }
-        .t-body, .t-caption { color: #4a5568 !important; }
-        .metric-chip-label, .metric-chip-sub { color: #4a5568 !important; }
+        .hero-label  { color:#a0aec0 !important; }
+        .hero-sub    { color:#a0aec0 !important; }
+        .t-body, .t-caption { color:#a0aec0 !important; }
+        .metric-chip-label, .metric-chip-sub { color:#a0aec0 !important; }
 
         /* ── Sidebar nav ── */
         section[data-testid="stSidebar"] button[kind="secondary"] {
-            color: #4a5568 !important; background: transparent !important;
+            color:#a0aec0 !important; background: transparent !important;
         }
         section[data-testid="stSidebar"] button[kind="secondary"]:hover {
             background: rgba(0,0,0,0.05) !important; color: #1a202c !important;
@@ -123,24 +123,24 @@ if st.session_state.get("light_mode", False):
             background: #f7f8fa !important;
         }
         .empty-state-title { color: #2d3748 !important; }
-        .empty-state-body  { color: #4a5568 !important; }
+        .empty-state-body  { color:#a0aec0 !important; }
 
         /* ── Section headers ── */
         .section-header {
-            color: #4a5568 !important;
+            color:#a0aec0 !important;
             border-color: #e2e8f0 !important;
         }
 
         /* ── Streamlit native widgets ── */
         div[data-testid="stMetricValue"]  { color: #1a202c !important; }
-        div[data-testid="stMetricLabel"]  { color: #4a5568 !important; }
+        div[data-testid="stMetricLabel"]  { color:#a0aec0 !important; }
         div[data-testid="stMetricDelta"]  { color: #2d3748 !important; }
         .stSelectbox label,
         .stSlider label,
         .stRadio label,
         .stCheckbox label,
         .stTextInput label,
-        .stNumberInput label { color: #4a5568 !important; }
+        .stNumberInput label { color:#a0aec0 !important; }
         .stTextInput input,
         .stNumberInput input,
         .stSelectbox [data-baseweb="select"] {
@@ -169,8 +169,8 @@ if st.session_state.get("light_mode", False):
 
         /* ── Sidebar inline divs with dark hard-coded colours ── */
         section[data-testid="stSidebar"] div[style*="color:#8896a8"],
-        section[data-testid="stSidebar"] div[style*="color:#4a5568"],
-        section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color: #4a5568 !important; }
+        section[data-testid="stSidebar"] div[style*="color:#a0aec0"],
+        section[data-testid="stSidebar"] div[style*="color:#2d3748"] { color:#a0aec0 !important; }
         section[data-testid="stSidebar"] div[style*="color:#e2e8f0"],
         section[data-testid="stSidebar"] div[style*="color:#a0aec0"] { color: #2d3748 !important; }
         section[data-testid="stSidebar"] div[style*="background:#1e2a38"],
@@ -478,7 +478,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
     current = st.session_state.get("data_mode", "nasa")
 
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding:0 4px 6px'>Data Source</div>",
         unsafe_allow_html=True,
     )
@@ -534,7 +534,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
                 st.session_state["data_mode"] = m["key"]
                 st.rerun()
             st.markdown(
-                f"<div style='font-size:11px;color:#4a5568;margin:-8px 0 5px 4px'>"
+                f"<div style='font-size:11px;color:#a0aec0;margin:-8px 0 5px 4px'>"
                 f"{m['status']}</div>",
                 unsafe_allow_html=True,
             )
@@ -543,7 +543,7 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
             st.markdown(
                 f"<div style='padding:8px 12px;margin-bottom:5px;opacity:0.45'>"
                 f"<div style='font-size:13px;color:#8896a8'>○  {m['label']}</div>"
-                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{m['status']}</div>"
+                f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>{m['status']}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -773,7 +773,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 unsafe_allow_html=True,
             )
         with _rc2:
-            if st.button("↺", key="change_role_btn", use_container_width=True,
+            if st.button("↺ Change role", key="change_role_btn", use_container_width=True,
                          help="Switch role (Engineer / Fleet Manager / Executive)"):
                 st.session_state["role_chosen"] = False
                 st.rerun()
@@ -839,7 +839,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
         # ── Cell selector ──
         st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
         st.markdown(
-            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
             "letter-spacing:0.08em;padding:0 4px 8px'>Cell</div>",
             unsafe_allow_html=True,
         )
@@ -947,6 +947,24 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             st.session_state["light_mode"] = _lm_toggle
             st.rerun()
 
+        # Identity + logout — a login session otherwise persists indefinitely
+        # (no app-level timeout beyond the browser tab/WebSocket staying
+        # open), and there was no UI path at all to end it early. Real gap
+        # on a shared/kiosk machine, found during an Enterprise Readiness
+        # audit alongside login.py's missing lockout (see db.py).
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='font-size:11px;color:#a0aec0;padding:0 4px 4px'>"
+            f"{st.session_state.get('auth_name') or st.session_state.get('auth_user', '')} · "
+            f"{st.session_state.get('auth_org_name', '')}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Log out", key="sidebar_logout_btn", use_container_width=True):
+            for _k in ("authenticated", "auth_user", "auth_role", "auth_name",
+                       "auth_org_id", "auth_org_name"):
+                st.session_state.pop(_k, None)
+            st.rerun()
+
     return selected
 
 
@@ -983,7 +1001,7 @@ def main():
 
     _train_placeholder = st.empty()
     _train_placeholder.markdown(
-        "<div style='text-align:center;padding:40px;color:#4a5568;font-size:14px'>"
+        "<div style='text-align:center;padding:40px;color:#a0aec0;font-size:14px'>"
         "Initialising models… (first run only — cached on subsequent loads)</div>",
         unsafe_allow_html=True,
     )
@@ -1125,7 +1143,7 @@ def main():
             "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
             "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
             "Welcome to Battery Intelligence</div>"
-            "<div style='font-size:14px;color:#718096;margin-bottom:32px'>"
+            "<div style='font-size:14px;color:#a0aec0;margin-bottom:32px'>"
             "I'll personalise the dashboard for your role. You can change this any time in Settings.</div>"
             "</div>",
             unsafe_allow_html=True,
@@ -1137,7 +1155,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>🔧</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Engineer</div>"
-                "<div style='font-size:12px;color:#718096'>Diagnose cells · Deep analytics · Root-cause tools</div>"
+                "<div style='font-size:12px;color:#a0aec0'>Diagnose cells · Deep analytics · Root-cause tools</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1148,7 +1166,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>🚗</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Fleet Manager</div>"
-                "<div style='font-size:12px;color:#718096'>Monitor fleet · Prioritise replacements · Alerts</div>"
+                "<div style='font-size:12px;color:#a0aec0'>Monitor fleet · Prioritise replacements · Alerts</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1159,7 +1177,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>📊</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Executive</div>"
-                "<div style='font-size:12px;color:#718096'>Fleet KPIs · CAPEX forecast · ESG compliance</div>"
+                "<div style='font-size:12px;color:#a0aec0'>Fleet KPIs · CAPEX forecast · ESG compliance</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1170,7 +1188,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>📋</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Compliance Officer</div>"
-                "<div style='font-size:12px;color:#718096'>EU 2023/1542 passport · Audit trail · Regulatory alerts</div>"
+                "<div style='font-size:12px;color:#a0aec0'>EU 2023/1542 passport · Audit trail · Regulatory alerts</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1206,7 +1224,7 @@ def main():
             "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
             "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
             "What are you here to do?</div>"
-            "<div style='font-size:14px;color:#718096;margin-bottom:32px'>"
+            "<div style='font-size:14px;color:#a0aec0;margin-bottom:32px'>"
             "This just picks where you land — everything stays reachable from the sidebar either way.</div>"
             "</div>",
             unsafe_allow_html=True,
@@ -1218,7 +1236,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>🔋</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Diagnose a battery</div>"
-                "<div style='font-size:12px;color:#718096'>SOH/RUL, degradation mechanism, recommendations</div>"
+                "<div style='font-size:12px;color:#a0aec0'>SOH/RUL, degradation mechanism, recommendations</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1229,7 +1247,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>📡</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Monitor live telemetry</div>"
-                "<div style='font-size:12px;color:#718096'>Streaming SOH/anomaly view (demo mode simulates the feed)</div>"
+                "<div style='font-size:12px;color:#a0aec0'>Streaming SOH/anomaly view (demo mode simulates the feed)</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1240,7 +1258,7 @@ def main():
                 "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
                 "<div style='font-size:28px;margin-bottom:8px'>☀️</div>"
                 "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Plan a storage deployment</div>"
-                "<div style='font-size:12px;color:#718096'>Size a second-life battery + solar, payback/NPV</div>"
+                "<div style='font-size:12px;color:#a0aec0'>Size a second-life battery + solar, payback/NPV</div>"
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -1298,7 +1316,7 @@ def main():
     st.markdown(
         "<div style='text-align:right;margin-bottom:4px'>"
         "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
-        "style='font-size:10px;color:#4a5568;cursor:default'>demo mode</span></div>",
+        "style='font-size:10px;color:#a0aec0;cursor:default'>demo mode</span></div>",
         unsafe_allow_html=True,
     )
 

@@ -93,7 +93,7 @@ def render_application_profile_and_eol() -> None:
     _section("Application End-of-Life Threshold")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "The EOL threshold defines when a cell is 'retired' for your application. "
         "The standard industry convention is <strong style='color:#8896a8'>80% SOH</strong>, "
         "but this is not universal — a delivery van needing 90% range may retire at 88%, "
@@ -143,7 +143,7 @@ def render_alert_thresholds() -> None:
     _section("🔔 Alert Thresholds")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "Configure alert thresholds that trigger warning banners across all pages. "
         "Alerts are evaluated on every page load against the currently active fleet.</div>",
         unsafe_allow_html=True,
@@ -181,7 +181,7 @@ def render_rul_reliability_threshold(bundles: dict) -> None:
     _section("RUL Reliability Threshold")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "The reliability floor gates whether RUL predictions are shown or suppressed. "
         "Cells whose held-out fold R² falls below this value have RUL withheld across "
         "all pages — shown as 'Not calibrated' instead of a cycle count. "
@@ -225,7 +225,7 @@ def render_rul_reliability_threshold(bundles: dict) -> None:
     th_cols = st.columns([2, 1, 1, 1, 2])
     for col, hdr in zip(th_cols, ["Cell", "RUL fold R²", f"At {RUL_RELIABLE_FLOOR} (active)", f"At {preview_floor:.2f} (preview)", "Change"]):
         col.markdown(
-            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"<div style='font-size:10px;font-weight:600;color:#a0aec0;"
             f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
             unsafe_allow_html=True,
         )
@@ -262,7 +262,7 @@ def render_model_cache() -> None:
     _section("Model Cache")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "Training takes 20–60 s on first run. The trained model bundles are stored on disk "
         "in <code style='color:#63b3ed'>.cache/bundles/</code> and reloaded instantly on "
         "subsequent runs. The cache is automatically invalidated when cycle counts change "
@@ -814,9 +814,9 @@ def render_production_roadmap() -> None:
             f"<div style='padding:12px 0;border-bottom:1px solid #2d3748'>"
             f"<div style='font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:6px'>{gap}</div>"
             f"<div style='display:flex;gap:16px'>"
-            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Demo behaviour</div>"
+            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Demo behaviour</div>"
             f"<div style='font-size:12px;color:#8896a8;line-height:1.5'>{demo}</div></div>"
-            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Production path</div>"
+            f"<div style='flex:1'><div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px'>Production path</div>"
             f"<div style='font-size:12px;color:#8896a8;line-height:1.5'>{prod}</div></div>"
             f"</div></div>",
             unsafe_allow_html=True,
@@ -844,7 +844,7 @@ def render_about() -> None:
         status_c = C_GREEN if status == "Done" else C_MUTED
         st.markdown(
             f"<div style='display:flex;gap:16px;padding:10px 0;border-bottom:1px solid #2d3748;align-items:flex-start'>"
-            f"<div style='min-width:64px;font-size:11px;font-weight:600;color:#4a5568;padding-top:2px'>{ph}</div>"
+            f"<div style='min-width:64px;font-size:11px;font-weight:600;color:#a0aec0;padding-top:2px'>{ph}</div>"
             f"<div style='min-width:120px;font-size:13px;font-weight:600;color:#e2e8f0'>{name}</div>"
             f"<div style='flex:1;font-size:12px;color:#8896a8;line-height:1.5'>{desc}</div>"
             f"<div style='min-width:48px;font-size:12px;font-weight:600;color:{status_c};text-align:right'>{status}</div>"
@@ -854,7 +854,7 @@ def render_about() -> None:
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;line-height:1.8;padding:14px 18px;"
+        "<div style='font-size:12px;color:#a0aec0;line-height:1.8;padding:14px 18px;"
         "background:#1a202c;border-radius:8px'>"
         "<strong style='color:#8896a8'>Stack</strong> — "
         "scikit-learn GBRT · Streamlit · Plotly · reportlab<br>"

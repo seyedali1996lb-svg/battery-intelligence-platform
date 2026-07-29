@@ -115,6 +115,12 @@ class User(Base):
     role          = Column(String, nullable=False)
     display_name  = Column(String)
     created_at    = Column(String)
+    # Login lockout (Enterprise Readiness audit finding: login.py had no
+    # rate-limiting at all -- unlimited password guesses against any
+    # username). See is_login_locked_out()/record_failed_login()/
+    # reset_login_attempts() below.
+    failed_login_attempts = Column(Integer, default=0)
+    locked_until           = Column(String, nullable=True)  # ISO datetime, or None
 
 
 class Decision(Base):
@@ -255,6 +261,22 @@ def _ensure_org_id_column(table_name: str) -> None:
             conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN org_id INTEGER DEFAULT {_DEMO_ORG_ID}"))
 
 
+def _ensure_login_lockout_columns() -> None:
+    """Additive migration for pre-existing local DBs, same pattern as
+    _ensure_org_id_column() above -- a users table created before this
+    module gained login lockout won't get the new columns automatically
+    from Base.metadata.create_all() alone."""
+    insp = inspect(engine)
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    with engine.begin() as conn:
+        if "failed_login_attempts" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"))
+        if "locked_until" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN locked_until TEXT"))
+
+
 def _seed_demo_org_and_users() -> None:
     """Idempotent: creates the Demo Org + its 4 demo accounts on first run only."""
     with Session() as s:
@@ -281,6 +303,7 @@ def init_db() -> None:
     for _t in ("decisions", "cell_cohort_tags", "settings", "upload_meta",
                "failure_signatures", "experiment_runs", "kg_nodes", "kg_edges"):
         _ensure_org_id_column(_t)
+    _ensure_login_lockout_columns()
     _seed_demo_org_and_users()
     _seed_default_fleet_hierarchy()
 
@@ -298,6 +321,54 @@ def verify_password(password: str, password_hash: str) -> bool:
         return bcrypt.checkpw(password.encode(), password_hash.encode())
     except (ValueError, TypeError):
         return False
+
+
+_MAX_FAILED_LOGIN_ATTEMPTS = 5
+_LOCKOUT_MINUTES = 15
+
+
+def is_login_locked_out(username: str) -> "str | None":
+    """Returns the ISO-format lockout-expiry timestamp if this username is
+    currently locked out (still in the future), else None. login.py checks
+    this before calling verify_password(), so a locked-out account never
+    even attempts a bcrypt check."""
+    with Session() as s:
+        row = s.query(User).filter_by(username=username.strip().lower()).one_or_none()
+        if row is None or not row.locked_until:
+            return None
+        if datetime.datetime.fromisoformat(row.locked_until) > datetime.datetime.now():
+            return row.locked_until
+        return None
+
+
+def record_failed_login(username: str) -> None:
+    """Increments the failed-attempt counter for this username; locks the
+    account for _LOCKOUT_MINUTES once _MAX_FAILED_LOGIN_ATTEMPTS is reached.
+    No-op for a username that doesn't exist -- a distinguishable response
+    for "wrong password, real user" vs "no such user" would leak which
+    usernames are registered."""
+    with Session() as s:
+        row = s.query(User).filter_by(username=username.strip().lower()).one_or_none()
+        if row is None:
+            return
+        row.failed_login_attempts = (row.failed_login_attempts or 0) + 1
+        if row.failed_login_attempts >= _MAX_FAILED_LOGIN_ATTEMPTS:
+            row.locked_until = (
+                datetime.datetime.now() + datetime.timedelta(minutes=_LOCKOUT_MINUTES)
+            ).isoformat()
+        s.commit()
+
+
+def reset_login_attempts(username: str) -> None:
+    """Called on successful login -- clears the failed-attempt counter and
+    any lockout."""
+    with Session() as s:
+        row = s.query(User).filter_by(username=username.strip().lower()).one_or_none()
+        if row is None:
+            return
+        row.failed_login_attempts = 0
+        row.locked_until = None
+        s.commit()
 
 
 def _slugify(name: str) -> str:

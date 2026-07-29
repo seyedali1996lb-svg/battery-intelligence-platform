@@ -417,10 +417,10 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                     f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
                     f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
                     f"<span style='color:{_ac};font-weight:700'>{_akind}</span>"
-                    f"<span style='color:#4a5568;font-size:11px'>{_ats}</span>"
+                    f"<span style='color:#a0aec0;font-size:11px'>{_ats}</span>"
                     f"</div>"
                     f"<div style='color:#a0aec0;margin-bottom:4px'>{_adet}</div>"
-                    f"<div style='color:#718096;font-size:11px;border-top:1px solid {_ac}22;"
+                    f"<div style='color:#a0aec0;font-size:11px;border-top:1px solid {_ac}22;"
                     f"padding-top:4px;margin-top:4px'>"
                     f"<span style='color:{_ac};font-weight:600'>Diagnosis: </span>{_diag}</div>"
                     f"</div>",
@@ -436,7 +436,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             )
         else:
             st.markdown(
-                "<div style='color:#4a5568;font-size:13px;padding:12px 0'>No anomalies detected.</div>",
+                "<div style='color:#a0aec0;font-size:13px;padding:12px 0'>No anomalies detected.</div>",
                 unsafe_allow_html=True,
             )
 
@@ -458,7 +458,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                         f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
                         f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
                         f"<span style='color:{_fc};font-weight:700'>{_f.get('kind', 'UNKNOWN')}</span>"
-                        f"<span style='color:#4a5568;font-size:11px'>{_fts}</span>"
+                        f"<span style='color:#a0aec0;font-size:11px'>{_fts}</span>"
                         f"</div>"
                         f"<div style='color:#a0aec0'>{_f.get('cell_id', '')} — {_f.get('detail', '')}</div>"
                         f"</div>",
@@ -473,7 +473,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 )
             else:
                 st.markdown(
-                    "<div style='color:#4a5568;font-size:13px;padding:8px 0'>"
+                    "<div style='color:#a0aec0;font-size:13px;padding:8px 0'>"
                     "No ingestion faults detected. This panel exercises real fault-detection logic "
                     "(missing/out-of-order timestamps, dropped-packet gaps, implausible unit-scale "
                     "values) against whatever replay traffic is flowing — it will only show entries "

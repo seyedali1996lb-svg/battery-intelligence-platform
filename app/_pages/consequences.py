@@ -74,10 +74,10 @@ def page_consequences(
             f"""
             <div style="background:#1e2a38;border:1px dashed #2d3748;border-radius:12px;
                         padding:48px;text-align:center">
-                <div style="font-size:18px;font-weight:600;color:#4a5568;margin-bottom:12px">
+                <div style="font-size:18px;font-weight:600;color:#a0aec0;margin-bottom:12px">
                     Still in Primary Life
                 </div>
-                <div style="font-size:14px;color:#4a5568;max-width:480px;margin:0 auto;line-height:1.7">
+                <div style="font-size:14px;color:#a0aec0;max-width:480px;margin:0 auto;line-height:1.7">
                     SOH is {soh:.1f}% — above the 85% threshold where second-life assessment
                     becomes relevant. Return here as the cell degrades toward 85% SOH.
                 </div>
@@ -97,13 +97,13 @@ def page_consequences(
         <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:24px">
             <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
                         padding:10px 18px;min-width:140px">
-                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">State of Health</div>
+                <div style="font-size:10px;color:#a0aec0;margin-bottom:4px">State of Health</div>
                 <div style="font-size:20px;font-weight:700;color:#e2e8f0">{soh:.1f}%</div>
                 <div style="margin-top:6px">{BADGE_VALIDATED}</div>
             </div>
             <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
                         padding:10px 18px;min-width:160px">
-                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">Fade rate (30-cy)</div>
+                <div style="font-size:10px;color:#a0aec0;margin-bottom:4px">Fade rate (30-cy)</div>
                 <div style="font-size:20px;font-weight:700;color:#e2e8f0">
                     {fade_30*1000:.2f} <span style="font-size:13px;color:#8896a8">mAh/cy</span>
                 </div>
@@ -111,7 +111,7 @@ def page_consequences(
             </div>
             <div style="background:#1e2a38;border:1px solid #2d3748;border-radius:8px;
                         padding:10px 18px;min-width:140px">
-                <div style="font-size:10px;color:#4a5568;margin-bottom:4px">Est. RUL</div>
+                <div style="font-size:10px;color:#a0aec0;margin-bottom:4px">Est. RUL</div>
                 <div style="font-size:20px;font-weight:700;color:{rul_colour}">{rul_display}</div>
                 <div style="margin-top:6px">{BADGE_VALIDATED}</div>
             </div>
@@ -123,7 +123,7 @@ def page_consequences(
     # Section 1: Second-Life Application Fit
     # ────────────────────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:20px'>Second-Life Application Fit</div>",
         unsafe_allow_html=True,
@@ -145,7 +145,7 @@ def page_consequences(
             for r in res["reasons"]
         )
         source_html = (
-            f"<div style='margin-top:10px;font-size:10px;color:#4a5568;font-style:italic;"
+            f"<div style='margin-top:10px;font-size:10px;color:#a0aec0;font-style:italic;"
             f"line-height:1.4'>{res['source']}</div>"
         )
         with col:
@@ -175,7 +175,7 @@ def page_consequences(
     # Section 2: Financial Comparison
     # ────────────────────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:20px'>Financial Comparison</div>",
         unsafe_allow_html=True,
@@ -185,7 +185,7 @@ def page_consequences(
 
     with fin_left:
         st.markdown(
-            "<div style='font-size:12px;color:#4a5568;margin-bottom:12px'>"
+            "<div style='font-size:12px;color:#a0aec0;margin-bottom:12px'>"
             "Adjust assumptions — defaults are mid-points of the cited ranges.</div>",
             unsafe_allow_html=True,
         )
@@ -262,7 +262,7 @@ def page_consequences(
         )
 
         st.markdown(
-            f"<div style='font-size:11px;color:#4a5568;margin-bottom:16px'>{kwh_note}</div>",
+            f"<div style='font-size:11px;color:#a0aec0;margin-bottom:16px'>{kwh_note}</div>",
             unsafe_allow_html=True,
         )
 
@@ -325,7 +325,7 @@ def page_consequences(
     # Break-even chart
     # ────────────────────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:20px'>Value Crossover — When Does Recycling Win?</div>",
         unsafe_allow_html=True,
@@ -411,7 +411,7 @@ def page_consequences(
         ),
     ))
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:12px'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:12px'>"
         "Reuse net value = (remaining capacity × $/kWh) − repack cost, projected as SOH declines. "
         "Recycle value is fixed. "
         "All figures are estimates — adjust sliders above to explore scenarios.</div>",
@@ -465,12 +465,12 @@ def page_consequences(
             "<div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px'>"
             + "".join(
                 f"<div style='background:#1e2a38;border:2px solid {('#2d3748' if lbl != _best_npv[0] else col)};border-radius:10px;padding:14px 16px'>"
-                f"<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+                f"<div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;"
                 f"letter-spacing:0.08em;margin-bottom:6px'>{lbl}</div>"
                 f"<div style='font-size:26px;font-weight:800;color:{col}'>${v:,.0f}</div>"
-                f"<div style='font-size:10px;color:#718096;margin-top:4px'>5-yr NPV</div>"
+                f"<div style='font-size:10px;color:#a0aec0;margin-top:4px'>5-yr NPV</div>"
                 + (f"<div style='font-size:10px;font-weight:700;color:{col};margin-top:6px'>★ Optimal</div>" if lbl == _best_npv[0] else "")
-                + f"<div style='font-size:10px;color:#4a5568;margin-top:8px;line-height:1.4'>{desc}</div>"
+                + f"<div style='font-size:10px;color:#a0aec0;margin-top:8px;line-height:1.4'>{desc}</div>"
                 + "</div>"
                 for lbl, v, col, desc in _strategies
             )
@@ -489,7 +489,7 @@ def page_consequences(
     # Section 3: Sustainability
     # ────────────────────────────────────────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:20px'>Sustainability Snapshot</div>",
         unsafe_allow_html=True,
@@ -527,15 +527,15 @@ def page_consequences(
                 f"""
                 <div style="background:#1e2a38;border:1px solid #2d374855;
                             border-radius:10px;padding:20px">
-                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
+                    <div style="font-size:11px;color:#a0aec0;margin-bottom:6px">
                         CO₂ avoided by reuse vs making a new cell
                     </div>
                     <div style="font-size:28px;font-weight:700;color:#48bb78">
                         {sus['co2_avoided_by_reuse']:.2f} kg
                     </div>
-                    <div style="font-size:11px;color:#4a5568;margin-top:4px">CO₂e avoided</div>
+                    <div style="font-size:11px;color:#a0aec0;margin-top:4px">CO₂e avoided</div>
                     <div style="margin-top:10px">{co2_badge}</div>
-                    <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
+                    <div style="font-size:11px;color:#a0aec0;margin-top:8px;font-style:italic;line-height:1.4">
                         Reusing this cell avoids manufacturing one equivalent new cell.
                         Recycling instead saves only ~{sus['co2_recycling_credit']:.2f} kg
                         &nbsp;{make_badge("Cited estimate", "#b7791f")}&nbsp;
@@ -549,15 +549,15 @@ def page_consequences(
                 f"""
                 <div style="background:#1e2a38;border:1px solid #2d374855;
                             border-radius:10px;padding:20px">
-                    <div style="font-size:11px;color:#4a5568;margin-bottom:6px">
+                    <div style="font-size:11px;color:#a0aec0;margin-bottom:6px">
                         Recoverable material value if recycled now
                     </div>
                     <div style="font-size:28px;font-weight:700;color:#f6ad55">
                         ${sus['material_recovery_value']:.2f}
                     </div>
-                    <div style="font-size:11px;color:#4a5568;margin-top:4px">cobalt + lithium recovery</div>
+                    <div style="font-size:11px;color:#a0aec0;margin-top:4px">cobalt + lithium recovery</div>
                     <div style="margin-top:10px">{mat_badge}</div>
-                    <div style="font-size:11px;color:#4a5568;margin-top:8px;font-style:italic;line-height:1.4">
+                    <div style="font-size:11px;color:#a0aec0;margin-top:8px;font-style:italic;line-height:1.4">
                         LiCoO₂ cobalt content is the primary driver. Value tracks cobalt spot price
                         (Sommerville et al. 2020).
                     </div>

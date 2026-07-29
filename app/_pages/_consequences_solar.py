@@ -247,7 +247,7 @@ def render_solar_storage_sizing(selected: str, current_kwh: float) -> None:
                 <strong>€</strong>, unlike the rest of this page ($) — this tool is
                 grounded in EU tariff/solar data, so the currency switch is deliberate.
             </div>
-            <div style="font-size:11px;color:#4a5568;margin-bottom:16px;line-height:1.6">
+            <div style="font-size:11px;color:#a0aec0;margin-bottom:16px;line-height:1.6">
                 Runs a real hour-by-hour (8760 hours/year) dispatch simulation — not a
                 monthly approximation. PV magnitude is scaled to PVGIS's multi-year
                 climate average (the hour-to-hour shape is still one reference year's
@@ -603,7 +603,7 @@ def render_solar_storage_sizing(selected: str, current_kwh: float) -> None:
                 _ctx_text = get_document(_ctx_id)
                 if _ctx_text:
                     render_card(
-                        "<div style='font-size:10px;font-weight:700;color:#718096;text-transform:uppercase;"
+                        "<div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;"
                         "letter-spacing:0.08em;margin-bottom:8px'>Industry context</div>"
                         f"<div style='font-size:12px;color:#a0aec0;line-height:1.6'>{_ctx_text}</div>",
                         extra_style="margin-top:16px",

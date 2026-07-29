@@ -25,7 +25,7 @@ def _passport_field_row(f: dict) -> str:
     muted = f["state"] == "unavailable"
     value_colour = "#4a5568" if muted else "#e2e8f0"
     note_html = (
-        f"<div style='font-size:11px;color:#4a5568;margin-top:3px;line-height:1.5'>{f['note']}</div>"
+        f"<div style='font-size:11px;color:#a0aec0;margin-top:3px;line-height:1.5'>{f['note']}</div>"
         if f.get("note") else "<div style='height:0'></div>"
     )
     font_style = "italic" if muted else "normal"
@@ -112,7 +112,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
                     st.markdown(
                         f"<div style='font-size:11px;padding:4px 0;border-bottom:1px solid #2d3748;'>"
                         f"<span style='color:#fc8181'>●</span> <strong style='color:#e2e8f0'>{_fname}</strong>"
-                        f"<br><span style='color:#718096;font-size:10px'>How to fill: {_tip}</span></div>",
+                        f"<br><span style='color:#a0aec0;font-size:10px'>How to fill: {_tip}</span></div>",
                         unsafe_allow_html=True,
                     )
     st.markdown("")
@@ -146,7 +146,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         if not _fields:
             continue
         st.markdown(
-            f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            f"<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
             f"letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
             f"margin-bottom:4px;margin-top:20px'>{title}</div>",
             unsafe_allow_html=True,
@@ -156,7 +156,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
 
     # ── 5: Critical Raw Materials (EU Battery Regulation Art. 13) ──
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:4px;margin-top:20px'>5 · Critical Raw Materials (EU Reg. 2023/1542 Art. 13)</div>",
         unsafe_allow_html=True,
@@ -177,7 +177,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
 
     # ── 6: End-of-Life R-code Taxonomy ──
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:4px;margin-top:20px'>6 · End-of-Life R-Code Taxonomy (IEC 62902 / EU Art. 70)</div>",
         unsafe_allow_html=True,
@@ -205,7 +205,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
 
     # ── 7: Compliance Status (prose, no badge) ──
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:12px;margin-top:20px'>7 · Compliance Status</div>",
         unsafe_allow_html=True,
@@ -233,7 +233,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
 
     # ── E3: QR Code generator ─────────────────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:12px;margin-top:24px'>8 · Physical Deployment — QR Code</div>",
         unsafe_allow_html=True,
@@ -271,7 +271,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
 
     # ── Machine-readable export (JSON-LD) ─────────────────────────────────────
     st.markdown(
-        "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.08em;padding-bottom:8px;border-bottom:1px solid #2d3748;"
         "margin-bottom:12px;margin-top:24px'>9 · Machine-Readable Export</div>",
         unsafe_allow_html=True,

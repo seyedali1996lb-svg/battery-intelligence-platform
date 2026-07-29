@@ -94,7 +94,7 @@ def page_copilot(
 
     # ── Chip grid — suggestions beneath the text input ─────────────────────
     st.markdown(
-        "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.1em;padding:10px 0 4px'>Cell questions</div>",
         unsafe_allow_html=True,
     )
@@ -114,7 +114,7 @@ def page_copilot(
 
     # Fleet & business questions
     st.markdown(
-        "<div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.1em;padding:10px 0 4px'>Fleet &amp; business</div>",
         unsafe_allow_html=True,
     )
@@ -132,7 +132,7 @@ def page_copilot(
 
     if not query and not _free_text_query:
         st.markdown(
-            "<div style='text-align:center;padding:40px 24px;color:#4a5568;font-size:14px'>"
+            "<div style='text-align:center;padding:40px 24px;color:#a0aec0;font-size:14px'>"
             "Type a question above or choose a topic. The Copilot answers using only "
             "values already computed by the model pipeline for "
             "<strong style='color:#8896a8'>" + selected + "</strong>.</div>",
@@ -147,7 +147,7 @@ def page_copilot(
         _template_ft = answer_query(_free_text_query, _ctx_ft)
         _llm_key_ft = "claude-haiku-4-5-20251001"
         st.markdown(
-            f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-bottom:8px'>"
             f"Answering: <em style='color:#8896a8'>{_free_text_query}</em>"
             + (" · Claude Haiku" if _api_key_ft else " · Template fallback")
             + "</div>",
@@ -250,7 +250,7 @@ def page_copilot(
         make_badge("Claude Haiku", "#9f7aea") + "&nbsp;" if _llm_key_cp else ""
     )
     st.markdown(
-        f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+        f"<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
         f"letter-spacing:0.1em;margin:28px 0 16px;padding-bottom:8px;border-bottom:1px solid #2d3748'>"
         f"{QUERY_LABELS.get(query, '')}{cell_label}&nbsp;&nbsp;{_llm_badge}</div>",
         unsafe_allow_html=True,
@@ -270,7 +270,7 @@ def page_copilot(
     follow_ups = FOLLOW_UP_MAP.get(query, [])
     if follow_ups:
         st.markdown(
-            "<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
             "letter-spacing:0.08em;margin:32px 0 10px'>Ask next</div>",
             unsafe_allow_html=True,
         )

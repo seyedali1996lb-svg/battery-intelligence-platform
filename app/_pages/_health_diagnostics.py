@@ -157,14 +157,14 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
         f"""
         <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start">
             <div>
-                <div style="font-size:11px;color:#4a5568;text-transform:uppercase;letter-spacing:0.07em">Current phase</div>
+                <div style="font-size:11px;color:#a0aec0;text-transform:uppercase;letter-spacing:0.07em">Current phase</div>
                 <div style="font-size:26px;font-weight:700;color:{pc}">{current_phase}</div>
-                <div style="font-size:11px;color:#4a5568;margin-top:2px">
+                <div style="font-size:11px;color:#a0aec0;margin-top:2px">
                     {"Knee at cycle " + str(knee["cycle"]) + f" ({knee['soh_at_knee']}% SOH)" if knee["detected"] else "No knee detected yet"}
                 </div>
             </div>
             <div style="border-left:1px solid #2d3748;padding-left:24px">
-                <div style="font-size:11px;color:#4a5568;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
+                <div style="font-size:11px;color:#a0aec0;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.07em">Cycle breakdown</div>
                 <div style="font-size:12px;color:#a0aec0;line-height:2">
                     <span style="color:#63b3ed">Early</span> — {n_early} cycles (rolling features stabilising)<br>
                     <span style="color:#48bb78">Plateau</span> — {n_plateau} cycles (linear degradation regime)<br>
@@ -172,7 +172,7 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
                 </div>
             </div>
             <div style="border-left:1px solid #2d3748;padding-left:24px;max-width:280px">
-                <div style="font-size:11px;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
+                <div style="font-size:11px;color:#a0aec0;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.07em">What this means</div>
                 <div style="font-size:11px;color:#8896a8;line-height:1.7">
                     {"The cell is past its knee point — degradation has entered the rapid-fade regime. "
                      "Remaining life estimates are shorter and less predictable than in the plateau phase. "
@@ -296,7 +296,7 @@ def render_mechanism_classifier_expander(_mech: dict) -> None:
                 f"<span style='font-size:22px'>{_mech['verdict_icon']}</span>"
                 f"<div>"
                 f"<div style='font-size:14px;font-weight:700;color:{_mech['verdict_color']}'>{_mech['verdict']}</div>"
-                f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+                f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>"
                 f"Confidence: <span style='color:{_mech['confidence_color']};font-weight:600'>{_mech['confidence_label']}</span>"
                 f" · Signals used: {', '.join(_mech['confidence_notes']) if _mech['confidence_notes'] else 'none'}"
                 f"</div></div></div>"
@@ -1013,7 +1013,7 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
             f"<div style='font-size:12px;margin:4px 0 6px;padding:6px 14px;"
             f"background:#1e2a38;border-radius:6px;border-left:3px solid {_gap_col2}'>"
             f"<span style='color:{_gap_col2};font-weight:600'>{_conv_label}</span>"
-            f"<span style='color:#718096;margin-left:10px'>"
+            f"<span style='color:#a0aec0;margin-left:10px'>"
             f"Physics: <strong style='color:#68d391'>{_phys_rul2:,} cy</strong> &nbsp;·&nbsp; "
             f"Data: <strong style='color:#f6ad55'>{int(_gbrt_rul2):,} cy</strong></span></div>"
         )
@@ -1027,7 +1027,7 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
             "Derives nominal capacity from electrochemistry (Single Particle Model), then fits "
             "<code>SOH(n) = 1 − β√n</code> to the measured history. "
             "The √n term reflects diffusion-limited SEI growth slowing over time.<br>"
-            "<span style='color:#4a5568;font-size:11px'>Strong in: early life · new cells · unknown chemistry.<br>"
+            "<span style='color:#a0aec0;font-size:11px'>Strong in: early life · new cells · unknown chemistry.<br>"
             "Weak in: post-knee acceleration · non-SEI failure modes.</span>"
             "</div></div>"
             "<div style='background:#0e1117;border:1px solid #2d3748;border-radius:8px;padding:12px'>"
@@ -1036,7 +1036,7 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
             "<div style='font-size:12px;color:#a0aec0;line-height:1.6'>"
             "Gradient-boosted trees trained across the full cell population under leave-cell-out "
             "validation. Extrapolates the current rolling fade rate forward linearly.<br>"
-            "<span style='color:#4a5568;font-size:11px'>Strong in: cells with rich history · mid–late life.<br>"
+            "<span style='color:#a0aec0;font-size:11px'>Strong in: cells with rich history · mid–late life.<br>"
             "Weak in: early life (fade still decelerating) · sparse data.</span>"
             "</div></div>"
             "</div>"
@@ -1351,7 +1351,7 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
                 f"<div style='font-size:10px;font-weight:700;color:#68d391;text-transform:uppercase;"
                 f"letter-spacing:0.08em;margin-bottom:5px'>⚛ PyBaMM SPM · SEI Growth Model</div>"
                 f"<div style='color:#a0aec0'>{_phys_explain}</div>"
-                f"<div style='color:#4a5568;font-size:11px;margin-top:4px'>"
+                f"<div style='color:#a0aec0;font-size:11px;margin-top:4px'>"
                 f"Parameter set: {_pb['chem_label']} &nbsp;·&nbsp; "
                 f"β = {_pb['beta']:.5f} &nbsp;·&nbsp; "
                 f"Nominal capacity (SPM): {_pb['spm_capacity_ah']:.3f} Ah"
@@ -1362,7 +1362,7 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
                 f"<div style='font-size:10px;font-weight:700;color:#f6ad55;text-transform:uppercase;"
                 f"letter-spacing:0.08em;margin-bottom:5px'>📊 GBRT · Linear Extrapolation</div>"
                 f"<div style='color:#a0aec0'>{_ml_explain}</div>"
-                f"<div style='color:#4a5568;font-size:11px;margin-top:4px'>"
+                f"<div style='color:#a0aec0;font-size:11px;margin-top:4px'>"
                 f"Current fade rate: {_fade_50_val*1000:.3f} mSOH/cy (50-cy rolling) &nbsp;·&nbsp; "
                 f"Regime: {_regime_label}"
                 f"</div></div>"

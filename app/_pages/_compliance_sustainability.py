@@ -130,9 +130,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         label_html = "<br>".join(label_lines)
         with col:
             render_card(
-                f"<div style='font-size:11px;color:#4a5568;line-height:1.5'>{label_html}</div>"
+                f"<div style='font-size:11px;color:#a0aec0;line-height:1.5'>{label_html}</div>"
                 f"<div style='font-size:26px;font-weight:700;color:{colour};margin-top:6px'>{val}</div>"
-                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>CO₂e</div>"
+                f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>CO₂e</div>"
                 f"<div style='margin-top:8px'>{badge}</div>"
                 f"<div style='font-size:10px;color:#2d3748;margin-top:4px;line-height:1.4'>{src_note}</div>",
                 padding="16px 20px",
@@ -145,7 +145,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     _section("Lifecycle Carbon Chart")
 
     st.markdown(
-        f"<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        f"<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         f"Manufacturing and EOL figures are {BADGE_ESTIMATE} from IVL 2019 and Dunn et al. 2015. "
         f"Use-phase CO₂ is {BADGE_ILLUST} — it depends entirely on your grid's carbon intensity "
         f"(set via slider above). Drag the grid slider to see how dominant the use phase becomes "
@@ -236,7 +236,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     )
     st.plotly_chart(fig_lc, use_container_width=True)
     st.markdown(
-        f"<div style='font-size:11px;color:#4a5568;margin-top:-8px;margin-bottom:4px'>"
+        f"<div style='font-size:11px;color:#a0aec0;margin-top:-8px;margin-bottom:4px'>"
         f"'Reuse' use-phase uses {extension_val:.1f}× current cycles ({cycles} → {reuse_cycles:.0f} cycles). "
         f"Second-life extension slider is {BADGE_ILLUST}. "
         f"'New cell' use-phase uses the same {cycles}-cycle baseline at current grid intensity. "
@@ -283,7 +283,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             fade_colour = "#48bb78"
 
         render_card(
-            f"<div style='font-size:11px;font-weight:600;color:#4a5568;text-transform:uppercase;"
+            f"<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
             f"letter-spacing:0.08em;margin-bottom:8px'>Fade rate impact on carbon amortisation</div>"
             f"<div style='display:flex;align-items:baseline;gap:12px;margin-bottom:12px'>"
             f"<div style='font-size:22px;font-weight:700;color:{fade_colour}'>"
@@ -293,7 +293,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"<div style='font-size:13px;color:#a0aec0;line-height:1.8'>"
             f"{fade_implication}"
             f"</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:12px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:12px'>"
             f"This is qualitative direction only — the carbon figures above are based on "
             f"literature estimates, not measurements from this cell. No percentage saving is "
             f"stated here because the absolute manufacturing CO₂ figure (above) already carries "
@@ -328,9 +328,9 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         rec_html = (
             f"<div style='font-size:12px;color:#48bb78;margin-top:4px'>"
             f"~{mat['recovery_pct']}% recovery<br>"
-            f"<span style='font-size:11px;color:#4a5568'>{mat['recovery_note']}</span></div>"
+            f"<span style='font-size:11px;color:#a0aec0'>{mat['recovery_note']}</span></div>"
             if mat["recovery_pct"] is not None else
-            "<div style='font-size:12px;color:#4a5568;margin-top:4px'>Not recovered<br>"
+            "<div style='font-size:12px;color:#a0aec0;margin-top:4px'>Not recovered<br>"
             "<span style='font-size:11px'>Not primary material in LiCoO₂</span></div>"
         )
         eu_dot = (
@@ -342,7 +342,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             render_card(
                 f"<div style='font-size:12px;color:#a0aec0;font-weight:600'>"
                 f"{mat['name']}{eu_dot}</div>"
-                f"<div style='font-size:11px;color:#4a5568;margin-top:2px'>{mat['formula']}</div>"
+                f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>{mat['formula']}</div>"
                 f"<div style='font-size:22px;font-weight:700;color:#e2e8f0;margin-top:8px'>"
                 f"{scaled_g:.1f} g</div>"
                 f"<div style='font-size:11px;color:#8896a8'>est. per cell ({mat['g_range']} @ 2 Ah)</div>"
@@ -355,7 +355,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     if ni_mat:
         ni_g = material_content_for_cell(ni_mat["g_per_2ah"], cell_kwh)
         st.markdown(
-            f"<div style='font-size:11px;color:#4a5568;margin-top:10px;padding:8px 14px;"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:10px;padding:8px 14px;"
             f"background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
             f"<strong style='color:#8896a8'>Nickel (Ni)</strong> — EU critical material, but trace-only in LiCoO₂ chemistry "
             f"(est. {ni_g:.2f} g per cell, {BADGE_ILLUST}). "
@@ -371,7 +371,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     _section("EU Battery Regulation — Recycled Content Targets (2023/1542, Annex XII)")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "Targets apply to industrial batteries and EV batteries by mass of active materials. "
         "Estimated recycled content in <em>current</em> 18650 LiCoO₂ cells is not publicly "
         "certified — the figures below reflect industry-wide estimates, not this specific cell. "
@@ -395,13 +395,13 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"<span>Est. current: <strong style='color:#f6ad55'>{est_recycled}</strong> "
             f"{make_badge('Illustrative', '#718096')}</span>"
             f"</div></div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-bottom:8px'>{current_note}</div>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-bottom:8px'>{current_note}</div>"
             f"<div style='background:#2d3748;border-radius:4px;height:8px;margin-bottom:4px'>"
             f"<div style='background:#63b3ed33;border-radius:4px;height:8px;width:{bar_fill_31}%;"
             f"position:relative'>"
             f"<div style='background:#63b3ed;border-radius:4px;height:8px;width:{bar_fill_36/bar_fill_31*100:.0f}%'>"
             f"</div></div></div>"
-            f"<div style='font-size:10px;color:#4a5568'>Source: {target['source']}</div>",
+            f"<div style='font-size:10px;color:#a0aec0'>Source: {target['source']}</div>",
             padding="14px 20px",
             extra_style="margin-bottom:10px",
         )
@@ -412,7 +412,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     _section("EU Green Deal Alignment — Data Coverage")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px'>"
         "Same three-state system as the Battery Passport page — "
         "Available (pipeline output), Estimated (cited/illustrative), "
         "Not available in demo (genuine gap)."
@@ -431,7 +431,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             f"<div style='flex:1'>"
             f"<div style='font-size:13px;color:{val_colour};font-style:{'italic' if muted else 'normal'}'>"
             f"{field['label']}</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:3px'>{field['note']}</div>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:3px'>{field['note']}</div>"
             f"</div>"
             f"<div style='flex-shrink:0;padding-top:2px'>{badge}</div>"
             f"</div>",

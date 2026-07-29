@@ -71,39 +71,39 @@ def render_fleet_summary_expander(rows: list) -> None:
         _md_html(f"""
         <div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px'>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Fleet Health Index</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Fleet Health Index</div>
             <div style='font-size:28px;font-weight:800;color:{_hi_color}'>{_fleet_hi:.1f}%</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>Avg SOH · {len(rows)} cells monitored</div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>Avg SOH · {len(rows)} cells monitored</div>
           </div>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Accelerated Degradation</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Accelerated Degradation</div>
             <div style='font-size:28px;font-weight:800;color:{"#fc8181" if _knee_past > 0 else "#f6ad55"}'>{_knee_past + _knee_near}</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>{_knee_past} past knee · {_knee_near} approaching</div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>{_knee_past} past knee · {_knee_near} approaching</div>
           </div>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CAPEX Outlook</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CAPEX Outlook</div>
             <div style='font-size:28px;font-weight:800;color:#63b3ed'>${_capex_12m:,}</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>{len(_eol_12m)} replacements forecast · 12-month horizon</div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>{len(_eol_12m)} replacements forecast · 12-month horizon</div>
           </div>
         </div>
         <div style='display:grid;grid-template-columns:repeat(3,1fr);gap:12px'>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Urgent — 3 Months</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Urgent — 3 Months</div>
             <div style='font-size:22px;font-weight:800;color:{"#fc8181" if _eol_3m else "#48bb78"}'>{len(_eol_3m)} cells</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>CAPEX: <strong style='color:#fc8181'>${_capex_3m:,}</strong></div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>CAPEX: <strong style='color:#fc8181'>${_capex_3m:,}</strong></div>
           </div>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Plan — 6 Months</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>Plan — 6 Months</div>
             <div style='font-size:22px;font-weight:800;color:{"#f6ad55" if _eol_6m else "#48bb78"}'>{len(_eol_6m)} cells</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>CAPEX: <strong style='color:#f6ad55'>${_capex_6m:,}</strong></div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>CAPEX: <strong style='color:#f6ad55'>${_capex_6m:,}</strong></div>
           </div>
           <div style='background:#1e2a38;border:1px solid #2d3748;border-radius:10px;padding:14px 16px'>
-            <div style='font-size:10px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CO₂ Liability — 12M</div>
+            <div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px'>CO₂ Liability — 12M</div>
             <div style='font-size:22px;font-weight:800;color:#b794f4'>{_co2_12m:.1f} kg</div>
-            <div style='font-size:11px;color:#718096;margin-top:4px'>Manufacturing CO₂e · {len(_eol_12m)} new cells</div>
+            <div style='font-size:11px;color:#a0aec0;margin-top:4px'>Manufacturing CO₂e · {len(_eol_12m)} new cells</div>
           </div>
         </div>
-        <div style='font-size:10px;color:#4a5568;margin-top:10px'>
+        <div style='font-size:10px;color:#a0aec0;margin-top:10px'>
         Assumptions: {_CYCLES_PER_MONTH} cycles/month · ${_REPLACEMENT_COST_USD}/cell replacement · {_CO2_KG_PER_KWH} kg CO₂e/kWh · {_CELL_KWH*1000:.0f} Wh/cell.
         Adjust in Configure → Application Profile.
         </div>
@@ -247,7 +247,7 @@ def render_alert_inbox(rows: list, _traj_matches: dict) -> None:
                 f"background:#1e2a38;border-left:3px solid {_sc};border-radius:0 8px 8px 0;margin-bottom:6px'>"
                 f"<span style='font-size:14px;margin-top:1px'>{_si}</span>"
                 f"<div><div style='font-size:12px;font-weight:700;color:{_sc}'>{_al['title']}"
-                f"<span style='font-weight:400;color:#4a5568;margin-left:8px'>· {_al['cell']}</span></div>"
+                f"<span style='font-weight:400;color:#a0aec0;margin-left:8px'>· {_al['cell']}</span></div>"
                 f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{_al['body']}</div></div></div>"
             )
         _md_html(_alert_html)
@@ -389,7 +389,7 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
 
         rul_cell = (
             f"{r['rul']:.0f} cy" if (r["rul"] is not None and r["rul_ok"])
-            else "<span style='color:#4a5568'>—</span>"
+            else "<span style='color:#a0aec0'>—</span>"
         )
         eol_cell = (
             f"<span style='color:#fc8181'>Reached at {r['eol_at']}</span>"
@@ -411,7 +411,7 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
 
         table_rows_html += f"""
         <tr style="border-bottom:1px solid #1a202c">
-            <td style="padding:14px 12px;color:#4a5568;font-size:13px">{rank}</td>
+            <td style="padding:14px 12px;color:#a0aec0;font-size:13px">{rank}</td>
             <td style="padding:14px 12px">
                 <span style="font-weight:600;color:#e2e8f0;font-size:14px">{r['cell_id']}</span>
                 <span style="margin-left:8px;font-size:10px;padding:2px 6px;border-radius:8px;{ss}">{r['source']}</span>
@@ -445,27 +445,27 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
         <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
             <thead>
                 <tr style="border-bottom:2px solid #2d3748">
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">#</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cell</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">SOH</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Status</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cycles</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Fade Rate</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Trend</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Knee</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:11px;color:#4a5568;
+                    <th style="padding:10px 12px;text-align:center;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Grade</th>
                 </tr>
             </thead>
@@ -478,7 +478,7 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
 
     # ── Click-to-navigate: jump to any cell's Health view ───────────────────
     st.markdown(
-        "<div style='font-size:11px;color:#4a5568;text-transform:uppercase;"
+        "<div style='font-size:11px;color:#a0aec0;text-transform:uppercase;"
         "letter-spacing:0.07em;margin:12px 0 6px'>Open in Health view →</div>",
         unsafe_allow_html=True,
     )
@@ -650,7 +650,7 @@ def render_risk_matrix(rows: list) -> None:
 
         if uncal_rows:
             st.markdown(
-                f"<div style='font-size:11px;color:#4a5568;margin-top:-8px'>"
+                f"<div style='font-size:11px;color:#a0aec0;margin-top:-8px'>"
                 f"✕ = RUL not calibrated (LCO fold R² below 0.30) — plotted at y=0. "
                 f"Quadrant split at SOH 80% and median RUL of calibrated cells ({rul_med:.0f} cy).</div>",
                 unsafe_allow_html=True,
@@ -933,7 +933,7 @@ def render_second_life_screening(rows: list) -> None:
             f"</div>"
             for r in cells_in_bucket
         ) if cells_in_bucket else (
-            f"<div style='font-size:12px;color:#4a5568;font-style:italic;padding:8px 0'>None</div>"
+            f"<div style='font-size:12px;color:#a0aec0;font-style:italic;padding:8px 0'>None</div>"
         )
         with col:
             _md_html(
@@ -1046,7 +1046,7 @@ def render_anomaly_alert_history(featured_dfs: dict) -> None:
                 f"background:{_sc}22;color:{_sc};border:1px solid {_sc}44'>{_al['type']}</span>"
                 f"<span style='font-size:12px;color:#a0aec0'>Total: <strong style='color:#e2e8f0'>{_al['total_flags']}</strong> flags</span>"
                 f"<span style='font-size:12px;color:#a0aec0'>Last 10 cycles: <strong style='color:{_sc}'>{_al['last_10_cycles']}</strong></span>"
-                f"<span style='font-size:12px;color:#4a5568'>Last at cycle {_al['last_flagged_cycle']}</span>"
+                f"<span style='font-size:12px;color:#a0aec0'>Last at cycle {_al['last_flagged_cycle']}</span>"
                 f"<span style='margin-left:auto;font-size:11px;font-weight:700;color:{_sc}'>{_al['severity']}</span>"
                 f"</div>"
             )

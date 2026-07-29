@@ -60,7 +60,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"{calib_cnt} Calibrating · {n_up - calib_cnt} reliable<br>"
             f"{'Temperature assumed 25°C for: ' + ', '.join(temp_assumed) if temp_assumed else 'Temperature measured for all cells'}"
             f"</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:8px'>"
             f"{', '.join(cell_ids_up)}</div>",
             padding="18px 20px",
             extra_style="margin-bottom:12px",
@@ -71,7 +71,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             st.rerun()
 
         st.markdown(
-            "<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            "<div style='font-size:11px;color:#a0aec0;margin-top:8px'>"
             "Uploaded data is persisted per organization and survives a refresh or a new "
             "login — it is never visible to other organizations. "
             "Clearing uploaded data switches you back to NASA Research Mode for this session; "
@@ -104,7 +104,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"Physics-informed simulation (Arrhenius SEI growth, empirical C-rate factor, "
             f"Rainflow DoD scaling). Resistance: 0.15–0.40 Ω internal. "
             f"<strong>Not real measured data.</strong></div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:8px'>"
             f"{', '.join(synth_ids)}</div>",
             padding="18px 20px",
         )
@@ -117,7 +117,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"LiCoO₂ 18650 cells, ~2 Ah, 24°C, 2A constant discharge. "
             f"Re (electrolyte resistance) from EIS: 0.04–0.07 Ω. "
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:8px'>"
             f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run python -m batlab.datasets.nasa'}</div>",
             padding="18px 20px",
         )
@@ -129,13 +129,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
             f"LFP (A123 APR18650M1A) cells, 1.1 Ah, 30°C chamber, fast-charging protocols. "
             f"Source: Severson et al. (2019), Nature Energy.</div>"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:8px'>"
             f"{', '.join(severson_ids) if severson_ids else 'Not loaded — run python -m batlab.datasets.severson'}</div>",
             padding="18px 20px",
         )
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-top:12px;padding:10px 14px;"
+        "<div style='font-size:12px;color:#a0aec0;margin-top:12px;padding:10px 14px;"
         "background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
         "<strong style='color:#8896a8'>Why two separate models?</strong> "
         "Synthetic and NASA cells use incompatible resistance scales (0.15–0.40 Ω vs 0.04–0.07 Ω Re). "
@@ -151,7 +151,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
     _section("Model Transparency — Leave-Cell-Out Validation")
 
     st.markdown(
-        "<div style='font-size:12px;color:#4a5568;margin-bottom:14px;line-height:1.6'>"
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
         "Leave-cell-out (LCO) cross-validation trains on N−1 cells and tests on the held-out "
         "cell entirely. This is the honest generalisation metric — a row-level split on "
         "a multi-cell dataset leaks cell identity into training. Per-cell fold R² below "
@@ -185,7 +185,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         header_cols = st.columns([2, 1, 1, 1, 2])
         for col, hdr in zip(header_cols, ["Cell", "SOH fold R²", "RUL fold R²", "RUL status", "Note"]):
             col.markdown(
-                f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+                f"<div style='font-size:10px;font-weight:600;color:#a0aec0;"
                 f"text-transform:uppercase;letter-spacing:0.06em'>{hdr}</div>",
                 unsafe_allow_html=True,
             )
@@ -202,7 +202,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
             row_cols[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{soh_r2:.2f}</div>", unsafe_allow_html=True)
             row_cols[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{rul_r2:.2f}</div>", unsafe_allow_html=True)
             row_cols[3].markdown(f"<div style='font-size:13px;color:{status_c};padding:4px 0'>{status_l}</div>", unsafe_allow_html=True)
-            row_cols[4].markdown(f"<div style='font-size:11px;color:#4a5568;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
+            row_cols[4].markdown(f"<div style='font-size:11px;color:#a0aec0;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
 
         st.markdown(
             f"<div style='display:flex;gap:24px;font-size:12px;color:#8896a8;"

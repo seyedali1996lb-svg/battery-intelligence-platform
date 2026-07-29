@@ -240,7 +240,7 @@ def _show_upload_summary():
         f"<div style='font-size:13px;color:#a0aec0;line-height:2'>"
         f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
         f"SOH model R²: <strong style='color:#e2e8f0'>{lco.get('lco_soh_r2', 0):.2f}</strong> "
-        f"<span style='color:#4a5568'>(leave-cell-out)</span><br>"
+        f"<span style='color:#a0aec0'>(leave-cell-out)</span><br>"
         f"RUL reliable: <strong style='color:#e2e8f0'>{rul_reliable_count} of {n}</strong> cells"
         f"</div>"
         f"{lco_lim_html}"
@@ -345,7 +345,7 @@ def page_import():
     if uploaded is None:
         st.markdown(
             "<div style='background:#1a202c;border:1px dashed #2d3748;border-radius:10px;"
-            "padding:40px;text-align:center;color:#4a5568;font-size:13px'>"
+            "padding:40px;text-align:center;color:#a0aec0;font-size:13px'>"
             "Drag and drop a CSV or XLSX file here, or click to browse.<br>"
             "<span style='font-size:11px;color:#2d3748;margin-top:6px;display:block'>"
             "7 columns required — download the template for the exact format.</span>"
@@ -396,7 +396,7 @@ def page_import():
         rename_items = "".join(
             f"<div style='font-size:12px;color:#a0aec0;padding:4px 0;border-bottom:1px solid #2d3748'>"
             f"<span style='color:#8896a8'>{orig}</span>"
-            f"<span style='color:#4a5568;padding:0 8px'>→</span>"
+            f"<span style='color:#a0aec0;padding:0 8px'>→</span>"
             f"<span style='color:#48bb78'>{canon}</span>"
             f"</div>"
             for orig, canon in sorted(renames.items())
@@ -407,7 +407,7 @@ def page_import():
             f"<div style='font-size:13px;font-weight:600;color:#48bb78;margin-bottom:8px'>"
             f"✓ Auto-matched {len(renames)} column{'s' if len(renames) != 1 else ''}</div>"
             f"{rename_items}"
-            f"<div style='font-size:11px;color:#4a5568;margin-top:10px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:10px'>"
             f"Column names were automatically remapped to the pipeline's expected format. "
             f"If a mapping looks wrong, rename the column in your CSV and re-upload."
             f"</div>"
@@ -527,7 +527,7 @@ def page_import():
     tbl_cols = st.columns([2, 1, 2, 2, 1])
     for col, hdr in zip(tbl_cols, ["Cell ID", "Cycles", "Capacity range (Ah)", "Resistance range (Ω)", "Temp"]):
         col.markdown(
-            f"<div style='font-size:10px;font-weight:600;color:#4a5568;"
+            f"<div style='font-size:10px;font-weight:600;color:#a0aec0;"
             f"text-transform:uppercase;letter-spacing:0.06em;padding-bottom:6px'>{hdr}</div>",
             unsafe_allow_html=True,
         )
@@ -619,7 +619,7 @@ def page_import():
         _run_analysis_button(df_raw, summary)
 
     st.markdown(
-        "<div style='font-size:11px;color:#4a5568;margin-top:12px;text-align:center'>"
+        "<div style='font-size:11px;color:#a0aec0;margin-top:12px;text-align:center'>"
         "Uploaded data is session-scoped only — refreshing the page reverts to NASA mode. "
         "Switch between modes at any time using the sidebar without losing any data."
         "</div>",

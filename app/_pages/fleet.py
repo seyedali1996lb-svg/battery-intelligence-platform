@@ -48,7 +48,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         _af_stats = build_fleet_stats(featured_dfs, bundles)
         _af_answer = answer_fleet_query(_af_input, _af_stats)
         render_card(
-            f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{make_badge('Template', '#718096')} · Fleet</div>"
+            f"<div style='font-size:10px;color:#a0aec0;margin-bottom:8px'>{make_badge('Template', '#718096')} · Fleet</div>"
             f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_af_answer}</div>",
             padding="16px 20px",
             extra_style="margin-bottom:16px",
@@ -199,11 +199,11 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     with _fe1:
         _md_html(
             f"<div style='text-align:center;padding:8px 0'>"
-            f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+            f"<div style='font-size:10px;color:#a0aec0;text-transform:uppercase;"
             f"letter-spacing:0.1em;margin-bottom:4px'>Fleet Health</div>"
             f"<div style='font-size:36px;font-weight:900;color:{_score_col};line-height:1'>"
             f"{_fscore:.1f}%</div>"
-            f"<div style='font-size:11px;color:#718096;margin-top:2px'>"
+            f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>"
             f"{n_healthy} healthy · {n_degrading} degrading · {n_eol} EOL"
             f"</div></div>"
         )

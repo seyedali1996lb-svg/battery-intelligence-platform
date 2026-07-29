@@ -168,10 +168,10 @@ def metric_tile_html(label: str, value: str, sub: str = "",
     callers can compose several tiles inside one render_card() or a
     st.columns() layout."""
     return (
-        f"<div style='font-size:10px;color:#4a5568;text-transform:uppercase;"
+        f"<div style='font-size:10px;color:#a0aec0;text-transform:uppercase;"
         f"letter-spacing:0.08em;margin-bottom:4px'>{label}</div>"
         f"<div style='font-size:{value_size};font-weight:800;color:{value_color}'>{value}</div>"
-        + (f"<div style='font-size:11px;color:#718096;margin-top:2px'>{sub}</div>" if sub else "")
+        + (f"<div style='font-size:11px;color:#a0aec0;margin-top:2px'>{sub}</div>" if sub else "")
     )
 
 

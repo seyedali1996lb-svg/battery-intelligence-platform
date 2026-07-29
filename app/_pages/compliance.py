@@ -157,10 +157,10 @@ def page_coming_soon(key: str):
                     text-align:center;margin-top:32px">
             <div style="font-size:13px;font-weight:600;color:#2d3748;letter-spacing:0.1em;
                         text-transform:uppercase;margin-bottom:16px">{phase}</div>
-            <div style="font-size:22px;font-weight:700;color:#4a5568;margin-bottom:16px">
+            <div style="font-size:22px;font-weight:700;color:#a0aec0;margin-bottom:16px">
                 {label}
             </div>
-            <div style="font-size:14px;color:#4a5568;max-width:520px;margin:0 auto;line-height:1.7;white-space:pre-line">
+            <div style="font-size:14px;color:#a0aec0;max-width:520px;margin:0 auto;line-height:1.7;white-space:pre-line">
                 {description}
             </div>
         </div>

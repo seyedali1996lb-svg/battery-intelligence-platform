@@ -120,7 +120,7 @@ def page_decision(
             f"<div style='background:#111827;border-left:3px solid {_dec_mech['verdict_color']};"
             f"border-radius:6px;padding:8px 14px;margin:-12px 0 20px;font-size:12px;color:#a0aec0'>"
             f"⚗️ <strong style='color:{_dec_mech['verdict_color']}'>{_dec_mech['verdict']}</strong>"
-            f" <span style='color:#4a5568'>({_dec_mech['confidence_label']} confidence)</span>"
+            f" <span style='color:#a0aec0'>({_dec_mech['confidence_label']} confidence)</span>"
             f" — {_dec_mech['verdict_body'].split('.')[0]}."
             f"</div>",
             unsafe_allow_html=True,
@@ -187,9 +187,9 @@ def page_decision(
         f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px'>{_badge_text}</div>"
         f"<div style='font-size:14px;font-weight:600;color:#e2e8f0;margin-bottom:8px'>{_best_lbl}</div>"
         f"<div style='font-size:40px;font-weight:800;color:{_best_col_v}'>${_best_npv_v:,.0f}</div>"
-        f"<div style='font-size:10px;color:#718096;margin-top:2px'>5-yr NPV at 8% discount rate</div>"
+        f"<div style='font-size:10px;color:#a0aec0;margin-top:2px'>5-yr NPV at 8% discount rate</div>"
         f"<div style='font-size:12px;color:#a0aec0;margin-top:10px;line-height:1.5'>{_best_desc}</div>"
-        f"<div style='font-size:11px;color:#4a5568;margin-top:4px'>{_best_cost_note}</div>"
+        f"<div style='font-size:11px;color:#a0aec0;margin-top:4px'>{_best_cost_note}</div>"
         + (
             f"<div style='font-size:11px;color:#94a3b8;margin-top:10px;padding-top:10px;"
             f"border-top:1px solid #2d3748'>{_npv_max[0]} has the higher 5-yr NPV "
@@ -209,7 +209,7 @@ def page_decision(
                     metric_tile_html(_tile_label, f"${_npv_v:,.0f}", "5-yr NPV",
                                       value_color=_col_v, value_size="26px")
                     + f"<div style='font-size:11px;color:#8896a8;margin-top:8px;line-height:1.5'>{_desc}</div>"
-                    f"<div style='font-size:10px;color:#4a5568;margin-top:4px'>{_cost_note}</div>",
+                    f"<div style='font-size:10px;color:#a0aec0;margin-top:4px'>{_cost_note}</div>",
                     extra_style="height:100%",
                 )
 
@@ -227,7 +227,7 @@ def page_decision(
             f"<strong style='color:#e2e8f0'>${_repack:.0f} repack cost</strong> "
             f"{make_badge('Illustrative', '#718096')}<br>"
             f"Engineering estimate.<br><br>"
-            f"<em style='color:#4a5568'>Not financial advice.</em>"
+            f"<em style='color:#a0aec0'>Not financial advice.</em>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -276,7 +276,7 @@ def page_decision(
             for _i, (_app_key, _app) in enumerate(fit_scores.items()):
                 with _af_cols[_i % len(_af_cols)]:
                     render_card(
-                        f"<div style='font-size:11px;color:#4a5568'>{_app['short']}</div>"
+                        f"<div style='font-size:11px;color:#a0aec0'>{_app['short']}</div>"
                         f"<div style='font-size:16px;font-weight:700;color:{_af_colour[_app['fit']]};margin-top:4px'>"
                         f"{_app['fit'].replace('_', ' ').title()}</div>",
                         padding="14px 16px",
@@ -452,7 +452,7 @@ def page_decision(
                     f"<div style='padding:6px 0'>"
                     f"<div style='font-size:13px;font-weight:600;color:#e2e8f0'>"
                     f"{_dl['cell_id']} — {_dl['action']}</div>"
-                    f"<div style='font-size:11px;color:#4a5568'>{_dl['timestamp']} · SOH {_dl['soh_pct']}%</div>"
+                    f"<div style='font-size:11px;color:#a0aec0'>{_dl['timestamp']} · SOH {_dl['soh_pct']}%</div>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -545,7 +545,7 @@ def page_decision(
                 _dc_answer = llm_answer(_dc_input, _template_dc, _api_key_dc) if _api_key_dc else _template_dc
                 _badge_dc = make_badge("Claude Haiku", "#667eea") if _api_key_dc else make_badge("Template", "#718096")
                 render_card(
-                    f"<div style='font-size:10px;color:#4a5568;margin-bottom:8px'>{_badge_dc} · {selected}</div>"
+                    f"<div style='font-size:10px;color:#a0aec0;margin-bottom:8px'>{_badge_dc} · {selected}</div>"
                     f"<div style='font-size:13px;color:#e2e8f0;line-height:1.7'>{_dc_answer}</div>",
                     padding="16px 20px",
                     extra_style="margin-top:8px",
