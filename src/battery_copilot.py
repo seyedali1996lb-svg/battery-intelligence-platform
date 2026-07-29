@@ -38,6 +38,7 @@ import numpy as np
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from copilot_templates import TEMPLATES as _T
 from battery_knowledge import get_feature_citation
+from chemistry_profiles import ChemistryProfile
 
 # ---------------------------------------------------------------------------
 # Navigation constants
@@ -157,9 +158,6 @@ FEATURE_LABELS: dict[str, str] = {
     "temp_rolling_30cy":     "Temperature (30-cycle avg)",
 }
 
-NASA_CELL_IDS = ["B0005", "B0006", "B0007", "B0018"]
-
-
 # ---------------------------------------------------------------------------
 # Cell context builder — the only source of truth any answer may reference
 # ---------------------------------------------------------------------------
@@ -179,17 +177,16 @@ def build_cell_context(
     from data_loader import CELL_STRESS_PROFILES, _stress_factor
     from batlab.models.gbrt import feature_importance_df
 
-    is_nasa   = cell_id in NASA_CELL_IDS
-    is_synth  = (not is_nasa) and (cell_id in CELL_STRESS_PROFILES)
-    is_upload = not is_nasa and not is_synth
+    # Was an is_nasa/CELL_STRESS_PROFILES-membership/else-upload chain with no
+    # Severson case at all -- a Severson cell fell to the "else" branch, which
+    # picked bundles["upload"] (or bundles["synth"] as its own fallback) for
+    # RUL-reliability/SHAP lookups, and later told the user "Source: user-
+    # uploaded data" for a cell nobody uploaded. ChemistryProfile.for_cell()
+    # gives every real dataset its own bucket.
+    source_kind = ChemistryProfile.for_cell(cell_id).source_kind
+    is_nasa     = source_kind == "nasa"   # kept for backward compat with callers below
 
-    if is_nasa:
-        bundle = bundles["nasa"]
-    elif is_synth:
-        bundle = bundles["synth"]
-    else:
-        bundle = bundles.get("upload") or bundles.get("synth")  # uploaded data uses its own bundle
-
+    bundle = bundles.get(source_kind)
     if bundle is None:
         bundle = bundles.get("nasa") or next(iter(bundles.values()))
 
@@ -231,10 +228,13 @@ def build_cell_context(
     fi           = feature_importance_df(bundle, "soh")
     top_features = fi.head(5).to_dict(orient="records")
 
-    if is_nasa:
+    if source_kind == "nasa":
         source         = "NASA PCoE real measured data"
         operating_note = "discharged at 2A to ~2.7V cutoff at ~24 C lab conditions"
-    elif is_upload:
+    elif source_kind == "severson":
+        source         = "Severson et al. 2019 (Nature Energy) real measured data"
+        operating_note = "fast-charging protocol search, various C-rates, 30 C chamber"
+    elif source_kind == "upload":
         source         = "user-uploaded data"
         operating_note = "operating conditions from uploaded dataset"
     else:
@@ -252,7 +252,7 @@ def build_cell_context(
             f"stress factor {sf:.2f}x baseline"
         )
 
-    data_mode = "nasa" if is_nasa else ("uploaded" if is_upload else "synth")
+    data_mode = source_kind
 
     return {
         "cell_id":        cell_id,
@@ -260,6 +260,7 @@ def build_cell_context(
         "operating_note": operating_note,
         "data_mode":      data_mode,
         "is_nasa":        is_nasa,
+        "source_kind":    source_kind,
         "soh":            soh,
         "status":         status,
         "status_note":    status_note,
@@ -340,17 +341,12 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
     rows: list[dict] = []
 
     for cell_id, df in featured_dfs.items():
-        from data_loader import CELL_STRESS_PROFILES as _CSP
-        is_nasa   = cell_id in NASA_CELL_IDS
-        is_synth  = (not is_nasa) and (cell_id in _CSP)
-        is_upload = not is_nasa and not is_synth
-
-        if is_nasa:
-            bundle = bundles.get("nasa")
-        elif is_synth:
-            bundle = bundles.get("synth")
-        else:
-            bundle = bundles.get("upload") or bundles.get("synth")
+        # Same fix as build_cell_context() above -- Severson cells used to
+        # fall through to the "uploaded" bucket here too, both picking the
+        # wrong model bundle and grouping them with the wrong peers in
+        # answer_anomaly()/answer_fleet_compare() below.
+        source = ChemistryProfile.for_cell(cell_id).source_kind
+        bundle = bundles.get(source)
 
         if bundle is None:
             continue
@@ -364,7 +360,6 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
         cycle    = int(latest["cycle_number"])
         rul_pred = float(latest["rul_pred"]) if rul_reliable else None
 
-        source = "nasa" if is_nasa else ("uploaded" if is_upload else "synth")
         rows.append({
             "cell_id":     cell_id,
             "source":      source,
@@ -614,14 +609,12 @@ def answer_compare(ctx_a: dict, ctx_b: dict) -> str:
         f"**{faster}** is currently degrading faster by {fade_diff:.2f} mAh/cycle.\n"
     )
 
-    if ctx_a["is_nasa"] != ctx_b["is_nasa"]:
-        nasa_cell  = a if ctx_a["is_nasa"] else b
-        synth_cell = b if ctx_a["is_nasa"] else a
+    if ctx_a["source_kind"] != ctx_b["source_kind"]:
         lines.append(
-            f"**Source note:** {nasa_cell} is real measured data (NASA PCoE); "
-            f"{synth_cell} is physics-informed synthetic data. SOH % is directly "
-            f"comparable — both are relative to each cell's own initial capacity. "
-            f"Absolute resistance values are not comparable across measurement methods.\n"
+            f"**Source note:** {a} is {ctx_a['source']}; {b} is {ctx_b['source']}. "
+            f"SOH % is directly comparable — both are relative to each cell's own "
+            f"initial capacity. Absolute resistance values are not comparable across "
+            f"measurement methods or model training boundaries.\n"
         )
 
     def _rul_str(ctx: dict) -> str:
@@ -659,11 +652,11 @@ def answer_compare(ctx_a: dict, ctx_b: dict) -> str:
 def answer_anomaly(ctx: dict, fleet_stats: dict) -> str:
     """
     Is this cell behaving unusually compared to its peers?
-    Peers are cells from the same data source (nasa or synth) to avoid
-    the resistance-scale incompatibility between the two datasets.
+    Peers are cells from the same data source (nasa/severson/synth/upload) to
+    avoid the resistance-scale incompatibility across measurement methods.
     """
     cell   = ctx["cell_id"]
-    source = "nasa" if ctx["is_nasa"] else "synth"
+    source = ctx["source_kind"]
 
     peers = [r for r in fleet_stats["rows"] if r["source"] == source and r["cell_id"] != cell]
 
@@ -852,7 +845,7 @@ def answer_fleet_compare(ctx: dict, fleet_stats: dict) -> str:
     incompatible across measurement methods and model training boundaries.
     """
     cell      = ctx["cell_id"]
-    cell_mode = ctx.get("data_mode", "nasa" if ctx["is_nasa"] else "synth")
+    cell_mode = ctx.get("data_mode", ctx["source_kind"])
 
     # Filter to same-mode peers only
     rows = [r for r in fleet_stats["rows"] if r.get("source", "nasa") == cell_mode]
