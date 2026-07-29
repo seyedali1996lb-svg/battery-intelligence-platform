@@ -186,7 +186,7 @@ def test_parse_hourly_consumption_csv_valid_and_invalid_inputs():
     widget simulation isn't reliably supported, so this exercises the pure
     parsing logic directly instead)."""
     import io
-    from _pages.consequences import _parse_hourly_consumption_csv
+    from _pages._consequences_solar import _parse_hourly_consumption_csv
 
     valid_no_header = io.StringIO("\n".join(str(1.0) for _ in range(8760)))
     assert _parse_hourly_consumption_csv(valid_no_header) == [1.0] * 8760
@@ -206,7 +206,7 @@ def test_parse_hourly_consumption_csv_two_column_timestamp_format():
     """Real smart-meter-style export: timestamp,kWh, hourly cadence, header row."""
     import io
     import pandas as pd
-    from _pages.consequences import _parse_hourly_consumption_csv
+    from _pages._consequences_solar import _parse_hourly_consumption_csv
 
     idx = pd.date_range("2023-01-01", periods=8760, freq="h")
     lines = ["timestamp,kWh"] + [f"{ts.isoformat()},1.5" for ts in idx]
@@ -222,7 +222,7 @@ def test_parse_hourly_consumption_csv_two_column_sub_hourly_resamples():
     dropped or misinterpreted as a malformed file."""
     import io
     import pandas as pd
-    from _pages.consequences import _parse_hourly_consumption_csv
+    from _pages._consequences_solar import _parse_hourly_consumption_csv
 
     idx = pd.date_range("2023-01-01", periods=8760 * 4, freq="15min")
     lines = ["timestamp,kWh"] + [f"{ts.isoformat()},0.5" for ts in idx]
@@ -238,7 +238,7 @@ def test_parse_hourly_consumption_csv_two_column_header_less():
     no 'timestamp,kWh' row) must still parse via the header-less retry."""
     import io
     import pandas as pd
-    from _pages.consequences import _parse_hourly_consumption_csv
+    from _pages._consequences_solar import _parse_hourly_consumption_csv
 
     idx = pd.date_range("2023-01-01", periods=8760, freq="h")
     lines = [f"{ts.isoformat()},3.25" for ts in idx]  # no header row at all
