@@ -108,11 +108,23 @@ class TrajectoryMatch:
 # ---------------------------------------------------------------------------
 
 def _source_from_id(cell_id: str) -> str:
-    if cell_id.startswith("B"):
-        return "nasa"
-    if cell_id.startswith("S-"):
-        return "severson"
-    return "synthetic"
+    """Classifies which dataset a cell belongs to for the "same source only"
+    trajectory-matching restriction below (cosine similarity on degradation
+    slopes is only physically meaningful within one chemistry). Used to fall
+    through to "synthetic" for anything that wasn't NASA/Severson -- silently
+    including uploaded cells, even though the type comment above already
+    documented "uploaded" as a real category. Delegates to
+    ChemistryProfile.for_cell() now so uploaded (and Oxford) cells get their
+    own bucket instead of being spuriously matched against synthetic
+    failure signatures.
+    """
+    from chemistry_profiles import ChemistryProfile
+    kind = ChemistryProfile.for_cell(cell_id).source_kind
+    if kind == "synth":
+        return "synthetic"
+    if kind == "upload":
+        return "uploaded"
+    return kind  # "nasa" / "severson" / "oxford"
 
 
 def _classify_failure_mode(window: pd.DataFrame) -> str:

@@ -83,8 +83,11 @@ def test_match_never_crosses_chemistry_sources():
     same-shaped trajectory in a *different* source must never be offered
     as a match, even when its trend vector is identical."""
     tm = TrajectoryMemory()
-    # An NASA-sourced signature ("B..." id) with a very steep, distinctive fade.
-    tm.build({"B0001": _eol_cell(fade_per_cycle=0.003, n_cycles=300)})
+    # A real NASA cell ID with a very steep, distinctive fade. (Not "B0001" --
+    # _source_from_id() used to loosely treat any "B"-prefixed id as NASA;
+    # now it delegates to ChemistryProfile.for_cell(), which only recognizes
+    # the 4 real NASA PCoE ids, so the fixture must use one of those.)
+    tm.build({"B0005": _eol_cell(fade_per_cycle=0.003, n_cycles=300)})
     assert tm._signatures[0].source == "nasa"
 
     # A Severson-sourced cell ("S-..." id) with the exact same fade profile —
