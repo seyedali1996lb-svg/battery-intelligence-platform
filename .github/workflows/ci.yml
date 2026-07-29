@@ -46,43 +46,11 @@ jobs:
         run: python scripts/audit_knowledge_graph_provenance.py
 
       - name: Check MODEL_VERSION bumped when model training code changed
-        run: |
-          python -c "
-          import subprocess, sys
-
-          # Get list of changed files
-          result = subprocess.run(
-              ['git', 'diff', '--name-only', 'HEAD~1', 'HEAD'],
-              capture_output=True, text=True
-          )
-          if result.returncode != 0:
-              print('MODEL_VERSION check skipped (no prior commit).')
-              sys.exit(0)
-          changed = result.stdout.strip().splitlines()
-
-          # FEATURE_VERSION used to be duplicated between src/bundle_cache.py and
-          # batlab/validation/manifest.py, kept in sync only by this CI warning.
-          # It now lives once in batlab/features/engineering.py and both modules
-          # import it directly, so it is structurally impossible for it to drift
-          # -- nothing to check here anymore for that half.
-          #
-          # What's left: src/bundle_cache.py's disk cache also stores trained
-          # model bundles (batlab/models/gbrt.py), tracked by its own
-          # MODEL_VERSION. That one genuinely can't be centralized -- nothing
-          # else depends on gbrt.py's output shape -- so it still needs a human
-          # to remember to bump it, and this check still only warns.
-          model_changed  = any(f == 'batlab/models/gbrt.py' for f in changed)
-          bundle_changed = any(f == 'src/bundle_cache.py' for f in changed)
-
-          if model_changed and not bundle_changed:
-              print('WARNING: batlab/models/gbrt.py changed but src/bundle_cache.py')
-              print('(app disk-cache MODEL_VERSION) was not updated. Stale cached')
-              print('bundles may silently serve predictions from the old model code.')
-              print('Bump MODEL_VERSION in src/bundle_cache.py.')
-              sys.exit(1)
-          else:
-              print('MODEL_VERSION check passed.')
-          "
+        # Logic lives in scripts/check_model_version_bump.py (unit-tested in
+        # tests/test_check_model_version_bump.py) rather than inline here --
+        # an inline-only check has no way to verify it actually still catches
+        # what it's meant to catch.
+        run: python scripts/check_model_version_bump.py
         continue-on-error: true   # warning only, not blocking
 
   notebooks:
