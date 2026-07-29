@@ -11,6 +11,7 @@ import streamlit as st
 import plotly.graph_objects as go
 
 from utils import _md_html, _empty_state, _action_bar, base_layout
+from chemistry_profiles import ChemistryProfile
 
 
 def page_live_monitor(cell_ids: list, active_fdfs: dict):
@@ -94,7 +95,10 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             _clear_pybamm_cache(_replay_cell)
             # Start subscriber first, then publisher
             _data_mode = st.session_state.get("data_mode", "synthetic")
-            _chem_map  = {cid: ("LFP" if cid.startswith("S-") else "LiCoO2")
+            # ChemistryProfile.for_cell() also correctly wires up "NCA" for
+            # Oxford cells — src/mqtt_stream.py's _VOLTAGE_LIMITS already had
+            # an NCA entry that nothing ever fed before this.
+            _chem_map  = {cid: ChemistryProfile.for_cell(cid).short_name
                           for cid in cell_ids}
             _ok_sub = start_subscriber(
                 host=_broker_host, port=_broker_port,

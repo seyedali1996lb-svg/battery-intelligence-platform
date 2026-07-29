@@ -13,11 +13,12 @@ import plotly.graph_objects as go
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
     soh_status, _cell_provenance, _analysis_provenance, _resample_df,
-    PLOTLY_CONFIG, NASA_CELL_IDS, render_card, metric_tile_html, cached_detect_knee,
+    PLOTLY_CONFIG, render_card, metric_tile_html, cached_detect_knee,
 )
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
 from batlab.features.knee_detection import degradation_phases
+from chemistry_profiles import ChemistryProfile
 
 
 # ---------------------------------------------------------------------------
@@ -32,13 +33,21 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # ── Data provenance declaration ──────────────────────────────────────────
     _cp = _cell_provenance(cell_id)
-    if cell_id.startswith("S-"):
+    _source_kind = ChemistryProfile.for_cell(cell_id).source_kind
+    if _source_kind == "severson":
         _prov_detail = (
             f"Capacity and resistance data for <strong>{cell_id}</strong> are real measurements "
             f"from the Severson 2019 LFP dataset (Nature Energy, 2019). "
             f"Derived analyses (Resistance Component Proxy, rate capability) use physics models "
             f"applied to these measurements and are labelled ◐ SIMULATED individually. "
             f"dQ/dV analysis is not shown — the LiCoO₂ simulation is not applicable to LFP chemistry."
+        )
+    elif _source_kind == "oxford":
+        _prov_detail = (
+            f"Capacity data for <strong>{cell_id}</strong> are real measurements from the Oxford "
+            f"Path-Dependent Battery Degradation Dataset (Raj et al., 2020) — sparse checkpoints, "
+            f"not dense per-cycle data. Derived analyses on this page are not applicable to this "
+            f"source; see Explore's Reference Datasets tab instead."
         )
     elif _cp == "measured":
         _prov_detail = (
@@ -681,7 +690,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # LFP cells (Severson) have a flat discharge plateau — the LiCoO₂ OCV
     # polynomial used in simulate_vq_curve() does not apply to LFP chemistry.
     # Showing simulated LiCoO₂ dQ/dV peaks for an LFP cell is physically wrong.
-    _is_lfp = cell_id.startswith("S-")   # Severson cells are all LFP
+    _is_lfp = not ChemistryProfile.for_cell(cell_id).dqdv_applicable   # LFP (Severson) and NCA (Oxford) both lack the LiCoO2 dqdv model
     _dqdv_prov = _analysis_provenance(cell_id, "derived")
     _dqdv_badge = {"measured": "◐ SIMULATED", "simulated": "◐ SIMULATED", "synthetic": "○ SYNTHETIC"}[_dqdv_prov]
     _dqdv_title = (
@@ -915,7 +924,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # ── 📈 Energy Throughput ─────────────────────────────────────────────────
     if "cumulative_kwh" in df.columns:
-        _thru_badge = "● MEASURED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
+        _thru_badge = "● MEASURED" if _cell_provenance(cell_id) == "measured" else "○ SYNTHETIC"
         with st.expander(f"📈 Energy & Capacity Throughput — {_thru_badge}", expanded=False):
             try:
                 total_kwh = float(df["cumulative_kwh"].iloc[-1])
@@ -1082,12 +1091,12 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     )
 
     # ── 🔬 Resistance Component Proxy ──────────────────────────────────────
-    _eis_badge = "◐ SIMULATED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
+    _eis_badge = "◐ SIMULATED" if _analysis_provenance(cell_id) == "simulated" else "○ SYNTHETIC"
     with st.expander(f"🔬 Resistance Component Proxy (simulated) — {_eis_badge}", expanded=False):
         try:
             import numpy as _np_eis
             _md_html(provenance_banner(
-                "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+                _analysis_provenance(cell_id),
                 "Impedance components (R_ohm, R_SEI, R_ct, σ_w) are derived from DC resistance via "
                 "fixed physics-attribution fractions, <strong>not from frequency-domain impedance "
                 "spectroscopy measurements</strong>. The Nyquist plot is computed from a Randles "
@@ -1191,12 +1200,12 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             st.info(f"EIS analysis unavailable: {_eis_e}")
 
     # ── 🧪 Formation Protocol Analysis ─────────────────────────────────────
-    _form_badge = "◐ SIMULATED" if cell_id in NASA_CELL_IDS else "○ SYNTHETIC"
+    _form_badge = "◐ SIMULATED" if _analysis_provenance(cell_id) == "simulated" else "○ SYNTHETIC"
     with st.expander(f"🧪 Formation Protocol Analysis — {_form_badge}", expanded=False):
         try:
             import numpy as _np_form
             _md_html(provenance_banner(
-                "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+                _analysis_provenance(cell_id),
                 "Formation metrics (ICL, CE stabilisation) are read from the first cycles of "
                 "this cell's cycle-summary data. For synthetic cells this data was generated, "
                 "not measured. For NASA cells it is measured cycle capacity — "
@@ -1257,12 +1266,12 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             st.info(f"Formation analysis unavailable: {_form_e}")
 
     # ── 📊 Rate Capability Analysis ─────────────────────────────────────────
-    _rate_badge = "○ SYNTHETIC" if (cell_id not in NASA_CELL_IDS and not cell_id.startswith("S-")) else "◐ SIMULATED"
+    _rate_badge = "◐ SIMULATED" if _analysis_provenance(cell_id) == "simulated" else "○ SYNTHETIC"
     with st.expander(f"📊 Rate Capability — {_rate_badge}", expanded=False):
         try:
             import numpy as _np_rate
             _md_html(provenance_banner(
-                "simulated" if cell_id in NASA_CELL_IDS else "synthetic",
+                _analysis_provenance(cell_id),
                 "Capacity retention at each C-rate is computed from "
                 "<code>Q(C) = Q_nom × SOH × exp(−k_rate × C^1.4)</code>, where k_rate scales "
                 "with measured internal resistance. <strong>No multi-rate characterisation test was "
