@@ -126,6 +126,7 @@ This is public-data validation, not industrial validation — the 0.806 describe
 - An **EU Battery Passport** generator, with a "regenerate this report" action that replays the exact recorded pipeline (dataset, feature set, hyperparameters, seed) behind any displayed result
 - A **Benchmark** leaderboard across every logged training run — filterable by dataset/chemistry, sortable by any metric, with fold-level drill-down — including an honest cross-chemistry generalization study (train on NASA, zero-shot evaluate on Severson) reporting the real transfer error, not a flattering one
 - A **second-life / Solar + Storage Sizing calculator** — a real hour-by-hour (8760 hours/year) dispatch simulation against PVGIS solar data, with temperature-aware battery derating cited to real cell documentation (BU-410), not a monthly approximation
+- **Multi-tenant accounts** (bcrypt-hashed passwords, per-org data isolation, `src/db.py`) with a session logout control and a per-username login lockout (5 failed attempts locks the account for 15 minutes) — see [Production Readiness Roadmap](docs/history.md#production-readiness-roadmap) for what's still demo-grade versus production-ready in the auth layer
 
 Currently demonstrated using public datasets and simulated telemetry. Real BMS integration requires real hardware data.
 
