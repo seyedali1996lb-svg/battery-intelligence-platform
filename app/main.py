@@ -31,6 +31,7 @@ from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
 from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cached, cached_match_fleet
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
+from chemistry_profiles import ChemistryProfile
 
 
 # ---------------------------------------------------------------------------
@@ -1018,14 +1019,16 @@ def main():
     trajectory_memory: TrajectoryMemory = st.session_state["trajectory_memory"]
 
     # ── Separate built-in cells by type ──────────────────────────────────────
-    nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if k in NASA_CELL_IDS}
-    sev_fdfs   = {k: v for k, v in featured_dfs_all.items() if k.startswith("S-")}
-    synth_fdfs = {k: v for k, v in featured_dfs_all.items()
-                  if k not in NASA_CELL_IDS and not k.startswith("S-")}
-    nasa_sc    = {k: v for k, v in split_cycles_all.items() if k in NASA_CELL_IDS}
-    sev_sc     = {k: v for k, v in split_cycles_all.items() if k.startswith("S-")}
-    synth_sc   = {k: v for k, v in split_cycles_all.items()
-                  if k not in NASA_CELL_IDS and not k.startswith("S-")}
+    # load_everything() only ever merges synth+NASA+Severson into
+    # featured_dfs_all/split_cycles_all (Oxford and uploaded data are kept
+    # out of this pipeline entirely) so ChemistryProfile.for_cell().source_kind
+    # only ever resolves to one of these 3 buckets here.
+    nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "nasa"}
+    sev_fdfs   = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "severson"}
+    synth_fdfs = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "synth"}
+    nasa_sc    = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "nasa"}
+    sev_sc     = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "severson"}
+    synth_sc   = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "synth"}
 
     # ── Session state init (first run per session only) ───────────────────────
     if "data_mode" not in st.session_state:
