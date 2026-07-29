@@ -13,6 +13,7 @@ public demo link keeps working with the same documented credentials.
 
 import datetime
 import json
+import logging
 import os
 import pathlib
 
@@ -51,6 +52,24 @@ _SECRET_SETTING_KEYS = frozenset({
 })
 
 _fernet: Fernet | None = None
+_FALLBACK_ENCRYPTION_KEY = "4S2b-Ok94fVLdI9xbEQVoIr2Aw3s7Tqo2YAcc1zYUaw="  # dev-only, insecure
+_logger = logging.getLogger(__name__)
+
+
+def using_fallback_encryption_key() -> bool:
+    """True if SETTINGS_ENCRYPTION_KEY isn't set and stored credentials are
+    being encrypted with the fallback key that's public in this repo's
+    source -- anyone with read access to the source can decrypt them. Used
+    by _get_fernet() to log a warning and by the Settings page to show an
+    admin-visible banner, so this doesn't stay silent on a real deployment
+    the way src/api.py's equivalent JWT_SECRET gap did before it was fixed
+    to hard-fail. Unlike that fix, this one can't hard-fail here: this
+    module backs the live Streamlit Cloud deployment, and forcing the key
+    would lock the deployer out rather than just refuse to start a
+    not-yet-deployed API layer -- confirmed with the user that
+    SETTINGS_ENCRYPTION_KEY is not currently set there before choosing warn
+    over fail."""
+    return "SETTINGS_ENCRYPTION_KEY" not in os.environ
 
 
 def _get_fernet() -> Fernet:
@@ -62,10 +81,15 @@ def _get_fernet() -> Fernet:
     the fallback key."""
     global _fernet
     if _fernet is None:
-        _key = os.environ.get(
-            "SETTINGS_ENCRYPTION_KEY",
-            "4S2b-Ok94fVLdI9xbEQVoIr2Aw3s7Tqo2YAcc1zYUaw=",  # dev-only, insecure
-        )
+        if using_fallback_encryption_key():
+            _logger.warning(
+                "SETTINGS_ENCRYPTION_KEY is not set -- stored credentials "
+                "(VRM/Orion/Circunomics/CMMS API keys, webhook secret) are "
+                "being encrypted with a fallback key that is public in this "
+                "repo's source. Set SETTINGS_ENCRYPTION_KEY via a real "
+                "secrets manager before storing real credentials."
+            )
+        _key = os.environ.get("SETTINGS_ENCRYPTION_KEY", _FALLBACK_ENCRYPTION_KEY)
         _fernet = Fernet(_key.encode() if isinstance(_key, str) else _key)
     return _fernet
 

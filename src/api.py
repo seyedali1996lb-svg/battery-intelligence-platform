@@ -109,10 +109,25 @@ app.add_middleware(
 
 
 # ── Auth (JWT) ────────────────────────────────────────────────────────────────
-# Demo-grade secret, same honesty pattern as this app's other secrets (see
-# README's Production Readiness Roadmap "Secrets management" row) — set
-# JWT_SECRET in the environment for anything beyond local development.
-_JWT_SECRET = os.environ.get("JWT_SECRET", "dev-only-insecure-secret-change-in-production")
+# Same honesty pattern as this app's other secrets (see README's Production
+# Readiness Roadmap "Secrets management" row). Unlike src/db.py's Fernet key,
+# nothing depends on this API layer being reachable today (no deployed
+# frontend target, no live traffic — see frontend/README.md) so it's safe to
+# refuse to start rather than silently issue tokens signed with a secret
+# that's public in this repo's source. Exempted under pytest so the test
+# suite (which imports this module directly, not via a real server process)
+# doesn't need its own secrets-manager setup.
+if "pytest" in sys.modules:
+    _JWT_SECRET = os.environ.get("JWT_SECRET", "dev-only-insecure-secret-change-in-production")
+else:
+    _JWT_SECRET = os.environ.get("JWT_SECRET")
+    if not _JWT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET is not set. Refusing to start src/api.py with the "
+            "insecure demo-grade fallback secret that's public in this repo's "
+            "source — set JWT_SECRET in the environment (a real secrets "
+            "manager for any real deployment) before running this API."
+        )
 _JWT_ALGORITHM = "HS256"
 _JWT_EXPIRY_HOURS = 24
 

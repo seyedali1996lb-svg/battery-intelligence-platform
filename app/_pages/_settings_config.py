@@ -36,6 +36,29 @@ def _section(title: str):
     st.markdown(section_header_html(title), unsafe_allow_html=True)
 
 
+def render_encryption_key_warning() -> None:
+    """Admin-only banner surfacing src/db.py's using_fallback_encryption_key()
+    -- a server log line alone is easy to miss on a live deployment; an
+    admin who actually opens Settings should see this directly. Not shown
+    to non-admin roles since it names a real security gap in this org's
+    deployment, not something every viewer needs surfaced."""
+    if st.session_state.get("auth_role") != "admin":
+        return
+    if not db.using_fallback_encryption_key():
+        return
+    st.markdown(
+        "<div style='background:rgba(252,129,129,0.08);border:1px solid rgba(252,129,129,0.3);"
+        "border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#fed7d7;line-height:1.6'>"
+        "⚠ <strong>SETTINGS_ENCRYPTION_KEY is not set.</strong> Stored credentials below "
+        "(VRM/Orion/Circunomics/CMMS API keys, webhook secret) are being encrypted with a "
+        "fallback key that is public in this repo's source — anyone with read access to the "
+        "source can decrypt them. Set SETTINGS_ENCRYPTION_KEY via a real secrets manager "
+        "before storing real credentials on this deployment."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_application_profile_and_eol() -> None:
     _section("Application Profile")
     _PROFILES = {
@@ -773,8 +796,8 @@ def render_production_roadmap() -> None:
         ("Real BMS integration", "Victron VRM and Orion Jr2 adapters target the real public/documented API shapes — untested against a live account, credential UI in Settings", "User supplies real VRM/Orion credentials to validate end-to-end"),
         ("Second-life marketplace", "Circunomics adapter targets the generic REST shape a B2B marketplace API would expose — untested against a live partner account, credential UI in Settings", "User supplies a real Circunomics partner API key to validate end-to-end and adjust the request shape to match their actual docs"),
         ("Solar + Storage Sizing", "PVGIS (EU Commission public solar API, no key required) provides real hourly PV yield. Default weather source is 'typical year' (PVGIS's TMY irradiance pattern shapes real PVcalc monthly totals — TMY has no PV-power calculation of its own, confirmed live), falling back automatically to a single-reference-year mode (year 2013, verified live valid across PVGIS's European/Americas/rest-of-world radiation databases — the previous 2019 default only worked for Europe) if TMY is unavailable; simulate_hourly_dispatch() runs a real 8760-hour/year dispatch simulation with mode-aware (charge/discharge) temperature power derating cited to Battery University/Cadex's BU-410 industry reference — a true LP/MILP optimizer was considered and explicitly declined (different order of engineering investment than this tool's honest-estimate premise warrants). Timezone is user-overridable (longitude-estimate default; a TMY 'irradiance_time_offset' field was investigated and found to be an unrelated sub-hour solar-time correction, not a usable timezone offset); supports weekday/weekend load shapes (a holiday calendar was considered and explicitly declined — new dependency for marginal gain), dated country-preset PV install costs, an NPV-vs-payback scatter chart plus full candidate-grid results table, and a real hourly/smart-meter consumption CSV upload (bare column or timestamp+kWh with or without a header, sub-hourly resampled) — see src/deployment_sizing.py's module docstring", "Install cost assumptions (PV €/kWp localized by country; BESS €/kWh remains EU-wide — no reliable per-country breakdown found) are cited market averages, not vendor quotes, and will drift out of date — replace with current quotes for any production use; a true LP/MILP dispatcher remains the main precision gap if ever needed beyond a sizing estimate"),
-        ("REST API", "8 endpoints, Swagger UI, Dockerfile, JWT bearer-token auth gating every data endpoint — demo-grade fallback secret, same honesty pattern as the Copilot API key", "Set a real JWT secret via a secrets manager in any non-local deployment; deploy via Dockerfile.api to Cloud Run / ECS"),
-        ("Credential storage", "Credential-shaped Settings (VRM/Orion/Circunomics/CMMS API keys, webhook secret) are envelope-encrypted at rest — demo-grade fallback encryption key, same honesty pattern as the JWT secret", "Set a real encryption key via a secrets manager in any non-local deployment; rotate it with a re-encryption migration if ever changed"),
+        ("REST API", "8 endpoints, Swagger UI, Dockerfile, JWT bearer-token auth gating every data endpoint — JWT_SECRET is now required outside tests (src/api.py refuses to start without it, rather than silently falling back to a public default), safe to enforce since no live deployment depends on this API layer", "Set JWT_SECRET before running src/api.py outside tests; deploy via Dockerfile.api to Cloud Run / ECS"),
+        ("Credential storage", "Credential-shaped Settings (VRM/Orion/Circunomics/CMMS API keys, webhook secret) are envelope-encrypted at rest — SETTINGS_ENCRYPTION_KEY is not currently set on this deployment, so the fallback key (public in this repo's source) is in use; unlike JWT_SECRET this can't hard-fail without risking locking you out of this live app, so it logs a warning and shows the banner above instead", "Set SETTINGS_ENCRYPTION_KEY via Streamlit Cloud secrets; rotate it with a re-encryption migration if ever changed"),
         ("React frontend scope", "Deliberately frozen proof-of-concept (3 views, no routing/state library) demonstrating the REST API works end to end — Streamlit remains the primary product, not developed toward feature parity", "If ever commissioned as a real frontend, treat as a resourced initiative from scratch, not a continuation of these 3 views"),
         ("Scheduled reports", "UI configuration only (no-op in demo)", "Wire to APScheduler / Celery worker; SMTP for delivery; S3 for PDF storage"),
         ("MQTT production", "Connects to public test.mosquitto.org broker", "Point MQTT_HOST / MQTT_PORT at BMS broker; add TLS + broker auth credentials"),
@@ -856,6 +879,7 @@ def render_about() -> None:
 # ---------------------------------------------------------------------------
 
 def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
+    render_encryption_key_warning()
     render_application_profile_and_eol()
     render_alert_thresholds()
     render_rul_reliability_threshold(bundles)
