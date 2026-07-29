@@ -37,6 +37,15 @@ class ChemistryProfile:
     must resolve them via ChemistryProfile.for_cell(cell_id) instead of
     re-deriving them from an is_nasa-style boolean, so a newly added
     chemistry can never fall through to the wrong label by default.
+
+    source_kind/source_label are the same rule applied to plain "which
+    dataset is this cell from" UI logic (Fleet's source column, bundle
+    dispatch, Copilot SHAP lookups, etc.) — this exact class of bug (a
+    hand-rolled is_nasa/startswith("S-") chain missing a branch for a
+    newly added dataset) has recurred multiple times across this
+    project's history. Resolve via ChemistryProfile.for_cell(cell_id)
+    instead of re-deriving; tests/test_source_classification_guard.py
+    enforces this structurally.
     """
 
     display_name:     str  = "Unknown"
@@ -44,6 +53,15 @@ class ChemistryProfile:
     dqdv_applicable:  bool = False
     provenance:       str  = "synthetic"
     dataset_citation: str  = ""
+
+    # Canonical dataset identity — source_kind matches app/main.py's bundle
+    # dict keys exactly ("nasa"/"severson"/"synth"/"upload"; "oxford" has no
+    # bundle since it's deliberately not wired into the training pipeline —
+    # see docs/history.md). source_label is the short human-facing string
+    # already used across Fleet/Settings/Passport UI ("NASA"/"Severson"/
+    # "Oxford"/"Synthetic"/"Uploaded").
+    source_kind:  str = "upload"
+    source_label: str = "Uploaded"
 
     # Battery Passport identity fields — override in every subclass.
     nominal_capacity_kwh_key: str | None = None   # key into CELL_NOMINAL_KWH, or None
@@ -81,6 +99,9 @@ class LFPSeversonProfile(ChemistryProfile):
     dqdv_applicable = False
     provenance      = "measured"
     dataset_citation = "Severson et al., Nature Energy 2019"
+
+    source_kind  = "severson"
+    source_label = "Severson"
 
     nominal_capacity_kwh_key = "severson"
     passport_chemistry       = "LFP (lithium iron phosphate), A123 APR18650M1A cylindrical"
@@ -124,6 +145,9 @@ class LiCoO2NASAProfile(ChemistryProfile):
     dqdv_applicable = True
     provenance      = "measured"
     dataset_citation = "NASA PCoE Battery Aging Dataset, Saha & Goebel 2007"
+
+    source_kind  = "nasa"
+    source_label = "NASA"
 
     nominal_capacity_kwh_key = "nasa"
     passport_chemistry       = "LiCoO₂ (lithium cobalt oxide), 18650 cylindrical"
@@ -183,6 +207,9 @@ class NCAOxfordProfile(ChemistryProfile):
     provenance      = "measured"
     dataset_citation = "Raj et al., Batteries & Supercaps 2020 (ODC-ODbL)"
 
+    source_kind  = "oxford"
+    source_label = "Oxford"
+
     nominal_capacity_kwh_key = "oxford"
     passport_chemistry       = "NCA (lithium nickel cobalt aluminium oxide), NCR18650BD cylindrical"
     passport_capacity_note   = "NCR18650BD datasheet spec (Raj et al. 2020)"
@@ -235,6 +262,9 @@ class LiCoO2SyntheticProfile(ChemistryProfile):
     provenance      = "synthetic"
     dataset_citation = "Physics-informed synthetic model"
 
+    source_kind  = "synth"
+    source_label = "Synthetic"
+
     nominal_capacity_kwh_key = "synth"
     passport_chemistry       = "Synthetic Li-ion model (physics-informed, not a real cell)"
     passport_capacity_note   = "Oxford-style 18650 dataset spec (synthetic model baseline)"
@@ -275,6 +305,9 @@ class UserDefinedProfile(ChemistryProfile):
     dqdv_applicable = True
     provenance      = "measured"
     dataset_citation = "User upload"
+
+    source_kind  = "upload"
+    source_label = "Uploaded"
 
     nominal_capacity_kwh_key = None  # unknown chemistry -- passport falls back to measured capacity
     passport_chemistry       = "Not specified — chemistry is not captured at upload in this demonstration"
