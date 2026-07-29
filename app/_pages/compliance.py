@@ -12,13 +12,14 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from utils import (
-    _action_bar, _md_html, base_layout, LEGEND_H, NASA_CELL_IDS, render_card,
+    _action_bar, _md_html, base_layout, LEGEND_H, render_card,
     render_regenerate_report_button,
 )
 from design_system import (
     make_badge, make_state_badge, section_header_html,
     BADGE_ESTIMATE, BADGE_ILLUST,
 )
+from chemistry_profiles import ChemistryProfile
 
 
 @st.cache_data(show_spinner=False)
@@ -326,8 +327,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     from passport import build_passport
     from consequences import ASSUMPTIONS, application_fit, financial_comparison
 
-    is_nasa = selected in NASA_CELL_IDS
-    source  = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
+    source  = ChemistryProfile.for_cell(selected).source_kind
     p       = build_passport(selected, df, bundle, rul_reliable)
 
     latest  = df.iloc[-1]
@@ -422,12 +422,14 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         material_content_for_cell,
     )
 
-    is_nasa = selected in NASA_CELL_IDS
-    source  = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
+    _profile = ChemistryProfile.for_cell(selected)
+    source   = _profile.source_kind
     latest  = df.iloc[-1]
     soh     = float(latest["soh_pct"])
     cycles  = int(latest["cycle_number"])
-    cell_kwh = CELL_NOMINAL_KWH[source]
+    # .get() with the same generic fallback decision.py uses — direct indexing
+    # would KeyError for an uploaded cell, which has no dedicated entry.
+    cell_kwh = CELL_NOMINAL_KWH.get(source, 0.0057)
 
     # ── Badge helpers ──
     def _section(title: str):
@@ -696,7 +698,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     # ────────────────────────────────────────────────────────────────────────
     _section("Critical Materials Tracker")
 
-    if not is_nasa:
+    if _profile.provenance != "measured":
         st.markdown(
             "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
             "font-size:12px;color:#8896a8;margin-bottom:12px'>"

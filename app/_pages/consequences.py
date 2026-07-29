@@ -10,7 +10,8 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from utils import _action_bar, _md_html, _empty_state, base_layout, render_card, metric_tile_html, NASA_CELL_IDS
+from utils import _action_bar, _md_html, _empty_state, base_layout, render_card, metric_tile_html
+from chemistry_profiles import ChemistryProfile
 from design_system import make_badge, BADGE_VALIDATED, BADGE_ESTIMATE, BADGE_ILLUST
 
 
@@ -235,13 +236,13 @@ def page_consequences(
     fade_30          = float(latest.get("fade_rate_30cy", 0.0))
     rul_pred_raw     = latest.get("rul_pred", None)
     rul_pred         = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
-    is_nasa          = selected in NASA_CELL_IDS
-    source           = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
+    _profile         = ChemistryProfile.for_cell(selected)
+    source           = _profile.source_kind
 
     peer_fades = [
         float(fdf.iloc[-1].get("fade_30_mah_cy", 0))
         for cid, fdf in featured_dfs.items()
-        if (cid in NASA_CELL_IDS) == is_nasa and cid != selected
+        if ChemistryProfile.for_cell(cid).source_kind == _profile.source_kind and cid != selected
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
 
@@ -448,7 +449,10 @@ def page_consequences(
 
         cell_kwh    = fin["cell_kwh"]
         current_kwh = fin["current_kwh"]
-        src_label   = "NASA PCoE datasheet, ~2 Ah" if is_nasa else "Oxford dataset spec, 0.74 Ah"
+        # Was a hardcoded NASA-vs-"Oxford dataset spec" ternary that mislabeled
+        # every Severson cell (LFP, 1.1 Ah) as Oxford NCA spec — now resolved
+        # per-cell from the same canonical capacity note the Passport uses.
+        src_label   = _profile.passport_capacity_note
         kwh_note    = (
             f"Cell: {cell_kwh*1000:.1f} Wh nominal ({src_label}) · "
             f"Current: {current_kwh*1000:.1f} Wh at {soh:.1f}% SOH"

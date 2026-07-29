@@ -10,7 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 
 from design_system import make_badge, section_header_html
-from utils import _md_html, _action_bar, _empty_state, NASA_CELL_IDS, render_card
+from utils import _md_html, _action_bar, _empty_state, render_card
+from chemistry_profiles import ChemistryProfile
 import db
 
 
@@ -75,10 +76,16 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # ────────────────────────────────────────────────────────────────────────
     _section("Data Sources")
 
-    synth_ids = [c for c in featured_dfs if c not in NASA_CELL_IDS and c not in cell_ids_up]
-    nasa_ids  = [c for c in featured_dfs if c in NASA_CELL_IDS and c not in cell_ids_up]
+    # featured_dfs always merges synth+NASA+Severson unconditionally (see
+    # app/main.py's load_everything()) — this used to bucket every real
+    # Severson cell into "Synthetic cells" below ("not in NASA_CELL_IDS" was
+    # the only test), captioned "Not real measured data." Classified via
+    # ChemistryProfile.for_cell() now so each real dataset gets its own count.
+    synth_ids    = [c for c in featured_dfs if ChemistryProfile.for_cell(c).source_kind == "synth" and c not in cell_ids_up]
+    nasa_ids     = [c for c in featured_dfs if ChemistryProfile.for_cell(c).source_kind == "nasa" and c not in cell_ids_up]
+    severson_ids = [c for c in featured_dfs if ChemistryProfile.for_cell(c).source_kind == "severson" and c not in cell_ids_up]
 
-    src_col1, src_col2 = st.columns(2)
+    src_col1, src_col2, src_col3 = st.columns(3)
     with src_col1:
         render_card(
             f"<div style='font-size:12px;font-weight:600;color:#fc8181;text-transform:uppercase;"
@@ -103,6 +110,18 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"Source: Saha &amp; Goebel (2007), NASA PCoE dataset.</div>"
             f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
             f"{', '.join(nasa_ids) if nasa_ids else 'Not loaded — run python -m batlab.datasets.nasa'}</div>",
+            padding="18px 20px",
+        )
+    with src_col3:
+        render_card(
+            f"<div style='font-size:12px;font-weight:600;color:#63b3ed;text-transform:uppercase;"
+            f"letter-spacing:0.07em;margin-bottom:8px'>Severson real cells</div>"
+            f"<div style='font-size:26px;font-weight:700;color:#e2e8f0'>{len(severson_ids)}</div>"
+            f"<div style='font-size:12px;color:#8896a8;margin-top:4px;line-height:1.6'>"
+            f"LFP (A123 APR18650M1A) cells, 1.1 Ah, 30°C chamber, fast-charging protocols. "
+            f"Source: Severson et al. (2019), Nature Energy.</div>"
+            f"<div style='font-size:11px;color:#4a5568;margin-top:8px'>"
+            f"{', '.join(severson_ids) if severson_ids else 'Not loaded — run python -m batlab.datasets.severson'}</div>",
             padding="18px 20px",
         )
 
@@ -131,14 +150,22 @@ def page_settings(featured_dfs: dict, bundles: dict):
         unsafe_allow_html=True,
     )
 
+    # Keyed by the same source_kind vocabulary as ChemistryProfile.for_cell()
+    # — was a binary "nasa"/else-"Synthetic" check that mislabeled the
+    # Severson and uploaded-data models as "Synthetic" (wrong colour too).
+    _SOURCE_KEY_META = {
+        "nasa":     ("NASA PCoE", "#48bb78"),
+        "severson": ("Severson LFP", "#63b3ed"),
+        "synth":    ("Synthetic", "#fc8181"),
+        "upload":   ("Uploaded", "#f6ad55"),
+    }
     for source_key, bundle in bundles.items():
         if bundle is None:
             continue
         m = bundle["metrics"]
         lco_per = m.get("lco_per_cell", {})
         per_cell_ok = m.get("per_cell_rul_reliable", {})
-        label = "NASA PCoE" if source_key == "nasa" else "Synthetic"
-        colour = "#48bb78" if source_key == "nasa" else "#fc8181"
+        label, colour = _SOURCE_KEY_META.get(source_key, (source_key.title(), "#8896a8"))
 
         st.markdown(
             f"<div style='font-size:12px;font-weight:600;color:{colour};"

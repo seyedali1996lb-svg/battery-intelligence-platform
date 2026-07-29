@@ -13,10 +13,11 @@ import plotly.graph_objects as go
 
 from utils import (
     _action_bar, _md_html, _empty_state, base_layout, LEGEND_H,
-    soh_status, NASA_CELL_IDS, render_pack_builder, render_card, cached_detect_knee,
+    soh_status, render_pack_builder, render_card, cached_detect_knee,
     cached_match_fleet,
 )
 from design_system import make_badge
+from chemistry_profiles import ChemistryProfile
 from data_loader import CELL_STRESS_PROFILES
 
 from _pages.grading import page_grading
@@ -82,16 +83,9 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     # populated stats while the ranking table said "No cells loaded").
     import numpy as _np_fleet
     rows = []
-    _synth_ids = set(CELL_STRESS_PROFILES.keys())
 
     def _bundle_for_cell(cid: str) -> dict | None:
-        if cid in NASA_CELL_IDS:
-            return bundles.get("nasa")
-        if cid.startswith("S-"):
-            return bundles.get("severson")
-        if cid in _synth_ids:
-            return bundles.get("synth")
-        return bundles.get("upload")      # uploaded cell
+        return bundles.get(ChemistryProfile.for_cell(cid).source_kind)
 
     for cell_id, df in featured_dfs.items():
         bndl      = _bundle_for_cell(cell_id)
@@ -99,7 +93,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             continue
         per_cell  = bndl["metrics"].get("per_cell_rul_reliable", {})
         rul_ok    = per_cell.get(cell_id, bndl["metrics"].get("rul_reliable", False))
-        is_nasa   = cell_id in NASA_CELL_IDS
+        _profile  = ChemistryProfile.for_cell(cell_id)
         latest    = df.iloc[-1]
         soh       = latest["soh_pct"]
         cycle     = int(latest["cycle_number"])
@@ -109,8 +103,6 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         eol_at    = int(eol_row["cycle_number"].iloc[0]) if len(eol_row) else None
         cycles_to_eol = max(0, eol_at - cycle) if eol_at else None
 
-        is_severson = cell_id.startswith("S-")
-        is_upload = not is_nasa and not is_severson and cell_id not in _synth_ids
         status_label, _ = soh_status(soh)
 
         # Knee-point detection per cell (cached — see utils.cached_detect_knee)
@@ -145,7 +137,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
 
         rows.append({
             "cell_id":      cell_id,
-            "source":       "NASA" if is_nasa else ("Severson" if is_severson else ("Uploaded" if is_upload else "Synthetic")),
+            "source":       _profile.source_label,
             "soh":          soh,
             "status":       status_label,
             "cycle":        cycle,

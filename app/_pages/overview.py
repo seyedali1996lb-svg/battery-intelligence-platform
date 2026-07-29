@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 
 from utils import (
     _md_html, _action_bar, base_layout, soh_status, _soh_sparkline_svg,
-    _cell_provenance, _resample_df, NASA_CELL_IDS, LEGEND_H,
+    _cell_provenance, _resample_df, LEGEND_H,
 )
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
@@ -290,10 +290,11 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         import html as _html_mod
         import experiment_registry as _reg
 
-        _is_nasa      = cell_id in NASA_CELL_IDS
-        _is_severson  = cell_id.startswith("S-")
-        _is_synth     = (not _is_nasa) and (not _is_severson) and (cell_id in CELL_STRESS_PROFILES)
-        _cell_dataset = "nasa" if _is_nasa else ("severson" if _is_severson else ("synth" if _is_synth else None))
+        # cross_chemistry_runs_for_train_dataset() only knows "nasa"/"severson"/
+        # "synth" (the one real transfer study logged) — Oxford/uploaded map to
+        # None (no logged run) rather than a hand-rolled is_nasa/startswith chain.
+        _kind         = ChemistryProfile.for_cell(cell_id).source_kind
+        _cell_dataset = _kind if _kind in ("nasa", "severson", "synth") else None
 
         if _cell_dataset:
             _transfer_runs = _reg.cross_chemistry_runs_for_train_dataset(_cell_dataset)
@@ -377,7 +378,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         p  = CELL_STRESS_PROFILES.get(cell_id, {})
         sf = _stress_factor(p.get("temp_mean",25), p.get("c_rate",1.0), p.get("dod",1.0))
         source_tag = f"Synthetic · Stress {sf:.2f}x baseline"
-    elif cell_id in NASA_CELL_IDS:
+    elif _profile.source_kind == "nasa":
         source_tag = "NASA real · 24°C · 2A discharge"
     else:
         source_tag = f"{_profile.display_name} · real measured data"
@@ -823,8 +824,11 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         )
         st.plotly_chart(fig, use_container_width=True)
         _ov_prov = _cell_provenance(cell_id)
-        if cell_id.startswith("S-"):
+        _ov_kind = ChemistryProfile.for_cell(cell_id).source_kind
+        if _ov_kind == "severson":
             _ov_caption = "Capacity data: ● MEASURED (Severson 2019, Nature Energy). Projections: ◐ SIMULATED (linear extrapolation)."
+        elif _ov_kind == "oxford":
+            _ov_caption = "Capacity data: ● MEASURED (Raj et al. 2020, Oxford dataset). Projections: ◐ SIMULATED (linear extrapolation)."
         elif _ov_prov == "measured":
             _ov_caption = "Capacity data: ● MEASURED (NASA PCoE). Projections: ◐ SIMULATED (linear extrapolation)."
         else:

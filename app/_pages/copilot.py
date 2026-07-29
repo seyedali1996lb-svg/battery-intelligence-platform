@@ -9,9 +9,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import plotly.graph_objects as go
 
-from utils import _action_bar, _md_html, PLOTLY_CONFIG, NASA_CELL_IDS, friendly
+from utils import _action_bar, _md_html, PLOTLY_CONFIG, friendly
 from batlab.models.gbrt import top_drivers, feature_importance_df
 from design_system import make_badge
+from chemistry_profiles import ChemistryProfile
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +291,7 @@ def page_copilot(
         with st.expander("Feature attribution — why does the model predict this?", expanded=False):
             try:
                 _shap_bundle = bundles.get(
-                    "nasa" if selected in NASA_CELL_IDS else
-                    ("severson" if selected.startswith("S-") else "synth"),
+                    ChemistryProfile.for_cell(selected).source_kind,
                     list(bundles.values())[0],
                 )
                 _drivers = top_drivers(_shap_bundle, model="soh", top_n=8)

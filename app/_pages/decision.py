@@ -10,9 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import pandas as pd
 
-from utils import _action_bar, _md_html, _empty_state, NASA_CELL_IDS, render_card, metric_tile_html
+from utils import _action_bar, _md_html, _empty_state, render_card, metric_tile_html
 from design_system import make_badge, ACTION_META, CONF_META
-from data_loader import CELL_STRESS_PROFILES
+from chemistry_profiles import ChemistryProfile
 
 from _pages.consequences import page_consequences
 
@@ -50,15 +50,15 @@ def page_decision(
     soh             = float(latest["soh_pct"])
     fade_30         = float(latest.get("fade_rate_30cy", 0.0))
     fade_50         = float(latest.get("fade_rate_50cy", 0.0))
-    is_nasa         = selected in NASA_CELL_IDS
-    source          = "nasa" if is_nasa else ("severson" if selected.startswith("S-") else "synth")
+    _profile        = ChemistryProfile.for_cell(selected)
+    source          = _profile.source_kind
     rul_pred_raw    = latest.get("rul_pred", None)
     rul_pred        = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
 
     peer_fades = [
         float(fdf.iloc[-1].get("fade_rate_30cy", 0))
         for cid, fdf in featured_dfs.items()
-        if (cid in NASA_CELL_IDS) == is_nasa and cid != selected
+        if ChemistryProfile.for_cell(cid).source_kind == _profile.source_kind and cid != selected
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
     fit_scores = application_fit(soh, fade_30, fleet_fade_median)
@@ -313,7 +313,7 @@ def page_decision(
                     help="Opens second-life battery exchange (demo — not a live API call)",
                     use_container_width=True,
                 ):
-                    _circ_chemistry = "LFP" if selected.startswith("S-") else "LiCoO2"
+                    _circ_chemistry = ChemistryProfile.for_cell(selected).short_name
                     _circ_capacity_ah = round(_cap_now * (soh / 100) * 1000 / 3.7, 2)
                     _circ_asking_usd = round(_c_npv * 0.4, 2)
                     _circ_api_key = st.session_state.get("circunomics_api_key", "")
@@ -521,14 +521,7 @@ def page_decision(
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
     st.markdown("<div class='section-header'>Ask about this cell</div>", unsafe_allow_html=True)
     st.caption("Explains the recommendation above in plain language — grounded only on values already computed by the model pipeline. It does not make the decision; the recommendation engine above does.")
-    if selected in NASA_CELL_IDS:
-        _dc_bundle = bundles.get("nasa")
-    elif selected.startswith("S-"):
-        _dc_bundle = bundles.get("severson")
-    elif selected in CELL_STRESS_PROFILES:
-        _dc_bundle = bundles.get("synth")
-    else:
-        _dc_bundle = bundles.get("upload")
+    _dc_bundle = bundles.get(ChemistryProfile.for_cell(selected).source_kind)
     if _dc_bundle:
         try:
             from battery_copilot import build_cell_context, answer_query
