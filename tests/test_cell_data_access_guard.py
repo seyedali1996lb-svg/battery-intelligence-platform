@@ -67,7 +67,7 @@ _ALLOWLIST = {
         "SOH distribution-shift histogram -- needs every cell's full "
         "soh_pct/cycle_number series to build historical snapshots."
     ),
-    "app/_pages/_fleet_diagnostics.py:1027": (
+    "app/_pages/_fleet_diagnostics.py:1036": (
         "Anomaly Alert History -- needs each cell's full "
         "capacity_anomaly/resistance_anomaly boolean columns to count "
         "total flags and recent-window flags, not just the latest value."

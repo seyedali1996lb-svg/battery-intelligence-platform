@@ -756,6 +756,15 @@ def render_distribution_shift_histogram(featured_dfs: dict) -> None:
                 for i in range(_n_snapshots)
             ]
             _snap_colours = ["#4a5568", "#718096", "#63b3ed", "#f6ad55", "#fc8181"]
+            # Plotly's fillcolor rejects 8-digit (CSS4-style) hex -- it only
+            # accepts rgba()/rgb()/6-digit hex/named colors (confirmed via
+            # its own error message) -- so translucency needs real rgba(),
+            # not a hex+alpha-suffix concatenation. Same alpha (0x44/255)
+            # the old string was reaching for.
+            _snap_rgba = [
+                "rgba(74,85,104,0.27)", "rgba(113,128,150,0.27)", "rgba(99,179,237,0.27)",
+                "rgba(246,173,85,0.27)", "rgba(252,129,129,0.27)",
+            ]
             _fig_hist = go.Figure()
             for _si, _snap_cy in enumerate(_snap_cycles):
                 _snap_sohs = []
@@ -772,7 +781,7 @@ def render_distribution_shift_histogram(featured_dfs: dict) -> None:
                         side="positive",
                         meanline_visible=True,
                         line_color=_snap_colours[_si],
-                        fillcolor=_snap_colours[_si] + "44",
+                        fillcolor=_snap_rgba[_si],
                         opacity=0.7,
                         width=0.8,
                         points=False,
