@@ -901,29 +901,44 @@ def render_whatif_scenario_planner(rows: list) -> None:
 # ---------------------------------------------------------------------------
 
 def render_second_life_screening(rows: list) -> None:
+    from consequences import application_fit
+
     st.markdown("<h4 class='section-header'>Second-Life Readiness Screening</h4>", unsafe_allow_html=True)
     st.markdown(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:20px;line-height:1.6'>"
-        "Conventional second-life assessment window: <strong style='color:#e2e8f0'>SOH 70–85%</strong>. "
-        "Cells above 85% are still in primary life. Below 70% is below most application floors. "
-        "Click a cell in the sidebar to open the EOL Economics page for detailed economics.</div>",
+        "Cells above 85% SOH are still in primary life. Below that, each cell's fit for "
+        "second-life reuse is checked against real application thresholds (SOH band + fade "
+        "rate vs. the fleet), not SOH alone -- see the EOL Economics page for the full "
+        "per-application breakdown. Click a cell in the sidebar to open it.</div>",
         unsafe_allow_html=True,
     )
 
     SL_BUCKETS = {
-        "primary":    ("Primary Life",          "SOH > 85%",    "#4a5568", "#1a202c"),
-        "candidate":  ("Second-Life Candidate", "SOH 70–85%",   "#48bb78", "#1a2e22"),
-        "below_floor":("Below Floor",           "SOH < 70%",    "#fc8181", "#2d0f0f"),
+        "primary":    ("Primary Life",          "SOH > 85%",                 "#4a5568", "#1a202c"),
+        "candidate":  ("Second-Life Fit",        "Fits at least one application", "#48bb78", "#1a2e22"),
+        "below_floor":("Recycle Recommended",   "No application fit found", "#fc8181", "#2d0f0f"),
     }
 
-    def _sl_bucket(r_soh):
-        if r_soh > 85.0:  return "primary"
-        if r_soh >= 70.0: return "candidate"
-        return "below_floor"
+    # fleet_fade_median computed once across the already-loaded rows (no
+    # extra DataFrame/DB access -- consistent with this project's
+    # CellSummary-based fleet-view performance discipline).
+    _fleet_fades = [r["fade_30"] for r in rows if r.get("fade_30") is not None]
+    _fleet_fade_median = float(pd.Series(_fleet_fades).median()) if _fleet_fades else None
+
+    def _sl_bucket(r):
+        if r["soh"] > 85.0:
+            return "primary"
+        # Circular Economy Coverage fix: bucketed on real application_fit()
+        # results, not a flat SOH band -- a cell in the old 70-85% "always
+        # candidate" window can still have every application score
+        # not_fit if its fade rate is too fast relative to the fleet.
+        fit = application_fit(r["soh"], r.get("fade_30") or 0.0, _fleet_fade_median)
+        _, best_app = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+        return "candidate" if best_app["fit"] in ("fit", "marginal") else "below_floor"
 
     bucketed = {"primary": [], "candidate": [], "below_floor": []}
     for r in rows:
-        bucketed[_sl_bucket(r["soh"])].append(r)
+        bucketed[_sl_bucket(r)].append(r)
 
     sl_cols = st.columns(3)
     for col, (bkey, (blabel, brange, bfg, bbg)) in zip(sl_cols, SL_BUCKETS.items()):
