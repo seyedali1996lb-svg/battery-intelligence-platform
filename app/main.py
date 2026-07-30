@@ -31,6 +31,7 @@ from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from trajectory_memory import TrajectoryMemory
 from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cached, cached_match_fleet
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
+import cell_store
 from chemistry_profiles import ChemistryProfile
 
 
@@ -318,8 +319,32 @@ def load_everything():
     """
     import concurrent.futures as _cf
 
-    def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict, dict]:
-        """3-tier cache: full bundle → features-only → full pipeline. Thread-safe — no st.* calls."""
+    def _persist_cell_data(featured_dfs: dict) -> None:
+        """Write each cell's full per-cycle DataFrame to cell_store's
+        Parquet store + a precomputed CellSummary row -- called whenever
+        featured_dfs is freshly computed (a bundle-cache miss). A cache HIT
+        means this already happened on the run that originally populated
+        the cache, so it's not repeated. Only 3 threads ever call this
+        concurrently (synth/nasa/severson below), each writing a disjoint
+        set of cell_ids, so no explicit locking is added -- cell_store's
+        LRU dict operations are individually atomic under the GIL and never
+        touch the same key from two threads at once here."""
+        import db as _db_persist
+        from experiment_registry import PLATFORM_ORG_ID as _PLATFORM_ORG_ID
+
+        for cell_id, df in featured_dfs.items():
+            cell_store.save_cell_df(cell_id, df)
+            _db_persist.upsert_cell_summary(
+                _PLATFORM_ORG_ID, cell_id, cell_store.build_summary(cell_id, df),
+            )
+
+    def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict]:
+        """2-tier cache: full bundle → features-only → full pipeline.
+        Returns (bundle, split_cycles) -- per-cell DataFrames are persisted
+        to cell_store (see _persist_cell_data above) instead of being kept
+        in this return value, so load_everything() never has to hold every
+        cell's full data resident just to satisfy this function's return
+        contract. Thread-safe — no st.* calls."""
         import experiment_registry as _reg
 
         cached = load_cached(key, cell_dict)
@@ -328,14 +353,15 @@ def load_everything():
         feat_cached = load_features_cached(key, cell_dict)
         if feat_cached is not None:
             raw_fdfs, model_inputs = feat_cached
-            result = _train_and_predict(cell_dict, raw_fdfs, model_inputs,
-                                        dataset=key, org_id=_reg.PLATFORM_ORG_ID)
-            save_cached(key, cell_dict, result)
-            return result
-        raw_fdfs, model_inputs = _compute_features_only(cell_dict)
-        save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
-        result = _train_and_predict(cell_dict, raw_fdfs, model_inputs,
-                                    dataset=key, org_id=_reg.PLATFORM_ORG_ID)
+        else:
+            raw_fdfs, model_inputs = _compute_features_only(cell_dict)
+            save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
+
+        bundle, featured_dfs, split_cycles = _train_and_predict(
+            cell_dict, raw_fdfs, model_inputs, dataset=key, org_id=_reg.PLATFORM_ORG_ID,
+        )
+        _persist_cell_data(featured_dfs)
+        result = (bundle, split_cycles)
         save_cached(key, cell_dict, result)
         return result
 
@@ -371,9 +397,9 @@ def load_everything():
 
         _prog.progress(90, text="Merging results…")
 
-        bundle_synth, fdfs_synth, sc_synth = futures["synth"].result()
-        bundle_nasa,  fdfs_nasa,  sc_nasa  = futures["nasa"].result()  if "nasa"     in futures else (None, {}, {})
-        bundle_sev,   fdfs_sev,   sc_sev   = futures["severson"].result() if "severson" in futures else (None, {}, {})
+        bundle_synth, sc_synth = futures["synth"].result()
+        bundle_nasa,  sc_nasa  = futures["nasa"].result()  if "nasa"     in futures else (None, {})
+        bundle_sev,   sc_sev   = futures["severson"].result() if "severson" in futures else (None, {})
 
         _prog.progress(100, text="Platform ready ✓")
         # st.status()/st.progress() return None when called outside a real
@@ -382,9 +408,15 @@ def load_everything():
         if _status is not None:
             _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
-    featured_dfs = {**fdfs_synth, **fdfs_nasa, **fdfs_sev}
+    sev_ids = list(sev_cell_dicts.keys())
     split_cycles = {**sc_synth, **sc_nasa, **sc_sev}
     bundles = {"synth": bundle_synth, "nasa": bundle_nasa, "severson": bundle_sev}
+    # Lazily-loaded, LRU-bounded view over cell_store's Parquet files instead
+    # of a dict holding every cell's full DataFrame resident for the whole
+    # process lifetime -- see cell_store.py's module docstring. Every cell
+    # listed here was persisted by _persist_cell_data() above (on a cache
+    # miss) or on the earlier run that populated bundle_cache (on a hit).
+    featured_dfs = cell_store.LazyCellFrameMap(synth_ids + nasa_ids + sev_ids)
 
     return featured_dfs, bundles, split_cycles
 
@@ -884,23 +916,52 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
                 st.rerun()
 
         # ── Fleet alerts (directly after Prev/Next) ──
-        if active_fdfs:
+        # Runs on every page render, uncached -- the highest-frequency
+        # full-fleet touch point in the app, so reference-fleet modes read
+        # precomputed CellSummary rows instead of every cell's full
+        # per-cycle DataFrame (see cell_store.py's module docstring).
+        # "uploaded" mode's fleet is a real, session-scoped dict, out of
+        # scope for this migration -- unchanged.
+        if mode == "uploaded":
+            _cell_records = [
+                (
+                    _cid,
+                    _fdf.iloc[-1].get("soh_pct"),
+                    float(_fdf["resistance_ohm"].iloc[0]) if "resistance_ohm" in _fdf.columns and len(_fdf) > 1 else None,
+                    _fdf.iloc[-1].get("resistance_ohm") if "resistance_ohm" in _fdf.columns and len(_fdf) > 1 else None,
+                )
+                for _cid, _fdf in (active_fdfs or {}).items()
+            ]
+        else:
+            import db as _db_alerts
+            _org_id = st.session_state.get("auth_org_id")
+            _summaries_by_id = {r["cell_id"]: r for r in _db_alerts.get_cell_summaries(_org_id)} if _org_id else {}
+            _cell_records = [
+                (
+                    _cid,
+                    _summaries_by_id[_cid].get("soh_pct"),
+                    _summaries_by_id[_cid].get("resistance_ohm_initial"),
+                    _summaries_by_id[_cid].get("resistance_ohm"),
+                )
+                for _cid in cell_ids if _cid in _summaries_by_id
+            ]
+
+        if _cell_records:
             _soh_thresh  = float(st.session_state.get("soh_alert_pct", 85))
             _res_mult    = float(st.session_state.get("resistance_alert_mult", 1.8))
             _spread_thresh = float(st.session_state.get("spread_alert_pct", 5.0))
             _alert_msgs  = []
-            for _cid, _fdf in active_fdfs.items():
-                _latest = _fdf.iloc[-1]
-                if float(_latest.get("soh_pct", 100)) < _soh_thresh:
-                    _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_latest['soh_pct']):.1f}% — below {_soh_thresh:.0f}%"))
-                if "resistance_ohm" in _fdf.columns and len(_fdf) > 1:
-                    _r_init = float(_fdf["resistance_ohm"].iloc[0])
-                    _r_now  = float(_latest.get("resistance_ohm", 0))
-                    if _r_init > 0 and _r_now > _r_init * _res_mult:
-                        _alert_msgs.append(("error", f"**{_cid}** R = {_r_now/_r_init:.2f}× initial"))
-            if len(active_fdfs) > 1:
-                _soh_vals = [float(fdf["soh_pct"].iloc[-1]) for fdf in active_fdfs.values()]
-                _spread   = max(_soh_vals) - min(_soh_vals)
+            _soh_vals = []
+            for _cid, _soh, _r_init, _r_now in _cell_records:
+                if _soh is None:
+                    continue
+                _soh_vals.append(float(_soh))
+                if float(_soh) < _soh_thresh:
+                    _alert_msgs.append(("warn", f"**{_cid}** SOH {float(_soh):.1f}% — below {_soh_thresh:.0f}%"))
+                if _r_init and _r_now and float(_r_init) > 0 and float(_r_now) > float(_r_init) * _res_mult:
+                    _alert_msgs.append(("error", f"**{_cid}** R = {float(_r_now)/float(_r_init):.2f}× initial"))
+            if len(_soh_vals) > 1:
+                _spread = max(_soh_vals) - min(_soh_vals)
                 if _spread > _spread_thresh:
                     _alert_msgs.append(("warn", f"**Fleet spread** {_spread:.1f}% SOH range"))
             if _alert_msgs:
@@ -1041,9 +1102,12 @@ def main():
     # featured_dfs_all/split_cycles_all (Oxford and uploaded data are kept
     # out of this pipeline entirely) so ChemistryProfile.for_cell().source_kind
     # only ever resolves to one of these 3 buckets here.
-    nasa_fdfs  = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "nasa"}
-    sev_fdfs   = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "severson"}
-    synth_fdfs = {k: v for k, v in featured_dfs_all.items() if ChemistryProfile.for_cell(k).source_kind == "synth"}
+    # Filtered by cell_id only (never touches a cell's full DataFrame just to
+    # bucket it by source) -- iterating a LazyCellFrameMap yields keys, same
+    # as a real dict, and each filtered bucket stays lazy too.
+    nasa_fdfs  = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "nasa"])
+    sev_fdfs   = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "severson"])
+    synth_fdfs = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "synth"])
     nasa_sc    = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "nasa"}
     sev_sc     = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "severson"}
     synth_sc   = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "synth"}

@@ -217,18 +217,23 @@ def _patch_load_cached_unchecked(monkeypatch, fake_fn):
 
 
 def test_load_bundle_from_disk_cache_shapes_dict_from_per_source_triples(monkeypatch):
+    """bundle_cache's "nasa"/"severson"/"synth" keys now cache
+    (bundle, split_cycles) pairs, not (bundle, featured_dfs, split_cycles)
+    triples -- featured_dfs is reconstructed as a lazy cell_store.LazyCellFrameMap
+    over the cell IDs split_cycles' keys give (see src/api.py's
+    _load_bundle_from_disk_cache() docstring)."""
     import api as api_module
 
     fake_cache = {
-        "nasa": ({"metrics": {"soh_r2": 0.9}}, {"B0005": "nasa_df"}, {"B0005": 80}),
-        "severson": ({"metrics": {"soh_r2": 0.8}}, {"S-b1c2": "severson_df"}, {"S-b1c2": 400}),
+        "nasa": ({"metrics": {"soh_r2": 0.9}}, {"B0005": 80}),
+        "severson": ({"metrics": {"soh_r2": 0.8}}, {"S-b1c2": 400}),
     }
     _patch_load_cached_unchecked(monkeypatch, fake_cache.get)
 
     result = api_module._load_bundle_from_disk_cache()
 
     assert set(result.keys()) == {"featured_dfs", "bundles"}
-    assert result["featured_dfs"] == {"B0005": "nasa_df", "S-b1c2": "severson_df"}
+    assert set(result["featured_dfs"].keys()) == {"B0005", "S-b1c2"}
     assert set(result["bundles"]) == {"nasa", "severson"}
     assert result["bundles"]["nasa"]["metrics"]["soh_r2"] == 0.9
 

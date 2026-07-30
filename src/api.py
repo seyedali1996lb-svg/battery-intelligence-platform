@@ -215,23 +215,35 @@ def _load_bundle_from_disk_cache() -> dict:
     _get_bundle() result — previously this returned {"severson": ...,
     "nasa": ...}, which doesn't have either key, so even a successful
     fallback would have silently served zero cells to every endpoint.
+
+    bundle_cache's "nasa"/"severson"/"synth" keys now cache (bundle,
+    split_cycles) pairs, not (bundle, featured_dfs, split_cycles) triples
+    (see src/cell_store.py / src/bundle_cache.py's module docstrings) —
+    featured_dfs is reconstructed here as a lazy, LRU-bounded
+    cell_store.LazyCellFrameMap over the cell IDs split_cycles' keys give
+    us, same as app/main.py's load_everything() itself now returns, rather
+    than a real dict of every cell's full DataFrame.
     """
     try:
         from src.bundle_cache import load_cached_unchecked  # type: ignore
     except ImportError:
         from bundle_cache import load_cached_unchecked  # type: ignore
+    try:
+        from src.cell_store import LazyCellFrameMap  # type: ignore
+    except ImportError:
+        from cell_store import LazyCellFrameMap  # type: ignore
 
-    featured_dfs: dict = {}
+    cell_ids: list = []
     bundles: dict = {}
     for key in ("nasa", "severson", "synth"):
         cached = load_cached_unchecked(key)
         if cached is None:
             continue
-        bundle, fdfs, _split_cycles = cached
+        bundle, split_cycles = cached
         bundles[key] = bundle
-        featured_dfs.update(fdfs)
+        cell_ids.extend(split_cycles.keys())
 
-    return {"featured_dfs": featured_dfs, "bundles": bundles}
+    return {"featured_dfs": LazyCellFrameMap(cell_ids), "bundles": bundles}
 
 
 def _get_org_bundle(org_id: "int | None"):
