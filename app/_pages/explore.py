@@ -466,11 +466,26 @@ def _page_explore_cohort(active_fdfs: dict):
         for cid in active_fdfs:
             if cid not in _tagged:
                 _cohorts.setdefault("(untagged)", []).append(cid)
+        # Avg-SOH/fade stats read precomputed CellSummary rows instead of
+        # every cell's full per-cycle DataFrame (see src/cell_store.py's
+        # module docstring) -- the trajectory chart below still needs each
+        # member cell's full cycle_number/soh_pct series, so it stays on
+        # active_fdfs, unchanged.
+        import db as _db_cohort
+        _summaries_explore = {
+            r["cell_id"]: r for r in _db_cohort.get_cell_summaries(st.session_state["auth_org_id"])
+            if r["cell_id"] in active_fdfs
+        }
         _cohort_stats = []
         for _ctag, _ccids in _cohorts.items():
-            _sohs  = [float(active_fdfs[c]["soh_pct"].iloc[-1]) for c in _ccids if c in active_fdfs]
-            _fades = [float(active_fdfs[c]["fade_rate_30cy"].iloc[-1]) * 1000
-                      for c in _ccids if c in active_fdfs and "fade_rate_30cy" in active_fdfs[c].columns]
+            _sohs  = [
+                float(_summaries_explore[c]["soh_pct"]) for c in _ccids
+                if c in _summaries_explore and _summaries_explore[c].get("soh_pct") is not None
+            ]
+            _fades = [
+                float(_summaries_explore[c]["fade_rate_30cy"]) * 1000 for c in _ccids
+                if c in _summaries_explore and _summaries_explore[c].get("fade_rate_30cy") is not None
+            ]
             if not _sohs:
                 continue
             _cohort_stats.append({
