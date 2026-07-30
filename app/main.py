@@ -1101,6 +1101,21 @@ def main():
     if not render_login():
         return   # login form rendered; stop until credentials provided
 
+    # load_everything() writes to the experiment_runs/cell_summaries tables
+    # (via _train_and_predict()/_persist_cell_data()) -- it must never run
+    # before the schema exists. render_login() only calls db.init_db() on
+    # the script run where the user isn't authenticated yet; every later
+    # run (including this one, reached only because authenticated is
+    # already True) skips that call entirely, relying on an earlier run
+    # having created the tables first. That's true in the common case but
+    # not guaranteed (e.g. concurrent sessions racing a cold, empty
+    # deployment) -- call it unconditionally here too. init_db() is
+    # idempotent and already called unconditionally elsewhere in this same
+    # function (the settings-hydration block below), so this adds no new
+    # per-rerun cost pattern.
+    import db as _db_init
+    _db_init.init_db()
+
     _train_placeholder = st.empty()
     _train_placeholder.markdown(
         "<div style='text-align:center;padding:40px;color:#a0aec0;font-size:14px'>"
