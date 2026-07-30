@@ -325,7 +325,9 @@ def page_decision(
                             selected, soh, _circ_chemistry, _circ_capacity_ah,
                             _circ_asking_usd, _circ_api_key,
                         )
-                    if _circ_result is not None and "error" not in _circ_result:
+                    from adapter_contract import classify_result
+                    _circ_state = classify_result(_circ_result)
+                    if _circ_state == "success":
                         st.success(
                             f"Listing submitted to Circunomics for {selected} at "
                             f"${_circ_asking_usd:.2f}."
@@ -344,7 +346,7 @@ def page_decision(
                         if "sl_listings" not in st.session_state:
                             st.session_state["sl_listings"] = []
                         st.session_state["sl_listings"].append(_listing)
-                        if _circ_result is not None:
+                        if _circ_state == "error":
                             st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")
                         else:
                             st.success(
@@ -422,6 +424,7 @@ def page_decision(
              "Creates a maintenance ticket in your configured CMMS/ERP system.",
     ):
         from cmms_adapter import create_maintenance_ticket
+        from adapter_contract import classify_result
         _cmms_base_url = st.session_state.get("cmms_api_base_url", "") or "https://api.example-cmms.com/v1"
         _cmms_title = f"{action_label} — {selected}"
         _cmms_desc = (
@@ -433,9 +436,10 @@ def page_decision(
             selected, _cmms_title, _cmms_desc, _cmms_priority, _cmms_api_key,
             api_base_url=_cmms_base_url,
         )
-        if _cmms_result is None:
+        _cmms_state = classify_result(_cmms_result)
+        if _cmms_state == "unconfigured":
             st.warning("No CMMS API key configured — set one up in Settings first.")
-        elif "error" in _cmms_result:
+        elif _cmms_state == "error":
             st.error(f"CMMS ticket creation failed: {_cmms_result['error']}")
         else:
             st.success(f"CMMS ticket created for {selected}.")

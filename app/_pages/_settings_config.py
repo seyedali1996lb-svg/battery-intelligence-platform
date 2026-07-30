@@ -593,12 +593,14 @@ def render_second_life_marketplace() -> None:
     else:
         if st.button("Test Circunomics connection", key="circ_test_btn"):
             from circunomics_adapter import list_cell_on_circunomics
+            from adapter_contract import classify_result
             _circ_result = list_cell_on_circunomics(
                 "TEST-CELL", 80.0, "LiCoO2", 2.0, 50.0, _circ_key,
             )
-            if _circ_result is None:
+            _circ_state = classify_result(_circ_result)
+            if _circ_state == "unconfigured":
                 st.warning("No API key configured.")
-            elif "error" in _circ_result:
+            elif _circ_state == "error":
                 st.error(f"Circunomics connection failed: {_circ_result['error']}")
             else:
                 st.success("Circunomics connection succeeded.")
@@ -638,14 +640,16 @@ def render_maintenance_writeback() -> None:
     else:
         if st.button("Test CMMS connection", key="cmms_test_btn"):
             from cmms_adapter import create_maintenance_ticket
+            from adapter_contract import classify_result
             _cmms_result = create_maintenance_ticket(
                 "TEST-CELL", "Connection test", "Test ticket from Battery Intelligence Platform",
                 "low", _cmms_key,
                 api_base_url=_cmms_base_url or "https://api.example-cmms.com/v1",
             )
-            if _cmms_result is None:
+            _cmms_state = classify_result(_cmms_result)
+            if _cmms_state == "unconfigured":
                 st.warning("No API key configured.")
-            elif "error" in _cmms_result:
+            elif _cmms_state == "error":
                 st.error(f"CMMS connection failed: {_cmms_result['error']}")
             else:
                 st.success("CMMS connection succeeded.")

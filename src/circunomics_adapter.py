@@ -12,6 +12,11 @@ asking price) and posts it to a partner-supplied endpoint. It returns None
 rather than raising when unconfigured, and never raises on request failure —
 callers should treat None/False as "not configured or not reachable" and
 keep showing the existing demo-listing UI, not a stack trace.
+
+This is the write-back adapter contract now named explicitly in
+src/adapter_contract.py — see that module before writing a new write-back
+connector, and use its classify_result() helper at call sites instead of
+re-deriving the None/"error"/success branch by hand.
 """
 
 import datetime

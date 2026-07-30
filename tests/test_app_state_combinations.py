@@ -149,6 +149,79 @@ def test_decide_and_ask_spine_export_button_renders(isolated_db, data_mode):
     assert "Export for grid modeling" in labels
 
 
+def test_decision_cmms_ticket_button_reports_error_for_unreachable_endpoint(isolated_db):
+    """
+    Click-through regression test for the src/adapter_contract.py refactor
+    of decision.py's "Create CMMS ticket" button: with a CMMS API key
+    configured but pointed at an unreachable endpoint, the button must
+    still classify the result as "error" (via classify_result(), not the
+    old hand-rolled `if _cmms_result is None: ... elif "error" in
+    _cmms_result: ...` branch) and show the same user-facing message as
+    before the refactor.
+    """
+    # Reserved .invalid TLD (RFC 2606, guaranteed never to resolve) — same
+    # convention tests/test_cmms_adapter.py's own network-failure test uses.
+    at = _logged_in_app(
+        role="Engineer", page="decision", data_mode="nasa", selected_cell="B0006",
+        cmms_api_key="fake-test-key",
+        cmms_api_base_url="https://this-host-does-not-exist.invalid/v1",
+    )
+    at.run()
+    assert not at.exception
+    at.button(key="dec_cmms_btn").click().run()
+    assert not at.exception, f"CMMS ticket button crashed: {at.exception}"
+    # st.error()/st.success() render as their own element types, not
+    # markdown -- _all_text() (which only joins at.markdown) won't see them.
+    errors = [e.value for e in at.error]
+    assert any("CMMS ticket creation failed" in e for e in errors), errors
+
+
+def test_settings_cmms_test_connection_reports_error_for_unreachable_endpoint(isolated_db):
+    """
+    Same refactor, same coverage for the other of the 4 call sites that
+    used to duplicate the None/"error"/success branch by hand — Settings'
+    "Test CMMS connection" button.
+    """
+    isolated_db.set_setting(1, "cmms_api_base_url", "https://this-host-does-not-exist.invalid/v1")
+    at = _logged_in_app(
+        role="Fleet Manager", page="settings", data_mode="synthetic",
+        cmms_api_key="fake-test-key", cmms_api_base_url="https://this-host-does-not-exist.invalid/v1",
+    )
+    at.run()
+    assert not at.exception
+    at.button(key="cmms_test_btn").click().run()
+    assert not at.exception, f"CMMS test-connection button crashed: {at.exception}"
+    errors = [e.value for e in at.error]
+    assert any("CMMS connection failed" in e for e in errors), errors
+
+
+def test_settings_circunomics_test_connection_reports_error_for_unreachable_endpoint(isolated_db, monkeypatch):
+    """
+    Same refactor, same coverage for Settings' "Test Circunomics
+    connection" button. Unlike the CMMS call sites, circunomics_adapter.py's
+    api_base_url isn't exposed as a Settings field (always the module's
+    real-domain default) -- monkeypatch requests.post itself instead of
+    relying on real network resolution, so this stays fully offline.
+    """
+    import requests
+
+    def _raise(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("simulated network failure")
+
+    monkeypatch.setattr(requests, "post", _raise)
+
+    at = _logged_in_app(
+        role="Fleet Manager", page="settings", data_mode="synthetic",
+        circunomics_api_key="fake-test-key",
+    )
+    at.run()
+    assert not at.exception
+    at.button(key="circ_test_btn").click().run()
+    assert not at.exception, f"Circunomics test-connection button crashed: {at.exception}"
+    errors = [e.value for e in at.error]
+    assert any("Circunomics connection failed" in e for e in errors), errors
+
+
 def test_overview_hero_severson_cell_not_mislabeled_synthetic(isolated_db):
     """
     Regression test: page_overview()'s hero card built its source tag from

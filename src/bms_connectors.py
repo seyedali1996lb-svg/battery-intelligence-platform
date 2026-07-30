@@ -14,6 +14,12 @@ API shape but is NOT a verified integration — it will only ever be
 called with user-supplied credentials (never hardcoded), and returns
 None rather than raising when unconfigured, so the UI can show a clear
 empty state instead of a stack trace.
+
+BMSAdapter (below) is this project's *object*-level connector contract —
+a reusable, stateful instance for repeated fetches. See
+src/adapter_contract.py for the sibling *function*-level contract used by
+one-shot write-back connectors (circunomics_adapter.py, cmms_adapter.py);
+that module's docstring explains when a new connector should use each shape.
 """
 
 from typing import Protocol, runtime_checkable
