@@ -42,10 +42,20 @@ def page_consequences(
     _profile         = ChemistryProfile.for_cell(selected)
     source           = _profile.source_kind
 
+    # Reads precomputed CellSummary rows instead of every peer cell's full
+    # per-cycle DataFrame -- see src/cell_store.py's module docstring. Also
+    # fixes a latent bug found in the process: "fade_30_mah_cy" was never a
+    # real column anywhere in the feature pipeline (only "fade_rate_30cy"
+    # is), so this always silently read the iloc[-1].get(...) default of 0
+    # -- fleet_fade_median below was always 0.0, not a real peer comparison.
+    import db as _db_consequences
+    _active_ids_cons = set(featured_dfs.keys())
     peer_fades = [
-        float(fdf.iloc[-1].get("fade_30_mah_cy", 0))
-        for cid, fdf in featured_dfs.items()
-        if ChemistryProfile.for_cell(cid).source_kind == _profile.source_kind and cid != selected
+        float(r["fade_rate_30cy"] or 0)
+        for r in _db_consequences.get_cell_summaries(st.session_state["auth_org_id"])
+        if r["cell_id"] in _active_ids_cons
+        and ChemistryProfile.for_cell(r["cell_id"]).source_kind == _profile.source_kind
+        and r["cell_id"] != selected
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
 

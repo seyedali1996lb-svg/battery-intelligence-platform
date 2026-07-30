@@ -59,10 +59,16 @@ def page_decision(
     rul_q90_raw     = latest.get("rul_q90", None)
     rul_q90         = float(rul_q90_raw) if (rul_reliable and rul_q90_raw is not None) else None
 
+    # Reads precomputed CellSummary rows instead of every peer cell's full
+    # per-cycle DataFrame -- see src/cell_store.py's module docstring.
+    import db as _db_decision
+    _active_ids_dec = set(featured_dfs.keys())
     peer_fades = [
-        float(fdf.iloc[-1].get("fade_rate_30cy", 0))
-        for cid, fdf in featured_dfs.items()
-        if ChemistryProfile.for_cell(cid).source_kind == _profile.source_kind and cid != selected
+        float(r["fade_rate_30cy"] or 0)
+        for r in _db_decision.get_cell_summaries(st.session_state["auth_org_id"])
+        if r["cell_id"] in _active_ids_dec
+        and ChemistryProfile.for_cell(r["cell_id"]).source_kind == _profile.source_kind
+        and r["cell_id"] != selected
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
     fit_scores = application_fit(soh, fade_30, fleet_fade_median)
