@@ -56,6 +56,21 @@ _FALLBACK_ENCRYPTION_KEY = "4S2b-Ok94fVLdI9xbEQVoIr2Aw3s7Tqo2YAcc1zYUaw="  # dev
 _logger = logging.getLogger(__name__)
 
 
+class InsecureCredentialStorageError(RuntimeError):
+    """Raised by set_setting() when asked to store a *new* value for a
+    _SECRET_SETTING_KEYS entry while SETTINGS_ENCRYPTION_KEY is unset --
+    externally flagged by GitGuardian (2026-07-30) as a real exposure: the
+    fallback key is public in this repo's source, so anything newly
+    encrypted with it is effectively unencrypted to anyone with source
+    access. Re-saving a value unchanged from what's already stored does
+    NOT raise -- every caller in app/_pages/_settings_config.py writes on
+    every Streamlit rerun (not just on an explicit Save), not gated behind
+    a submit button, so raising on unchanged re-saves would break the
+    Settings page outright for every org that already configured a
+    credential under the fallback key, for no additional security benefit
+    (it would just re-encrypt with the same insecure key)."""
+
+
 def using_fallback_encryption_key() -> bool:
     """True if SETTINGS_ENCRYPTION_KEY isn't set and stored credentials are
     being encrypted with the fallback key that's public in this repo's
@@ -564,6 +579,14 @@ def get_settings(org_id: int, keys: "list[str] | None" = None) -> dict:
 def set_setting(org_id: int, key: str, value) -> None:
     encoded = json.dumps(value)
     if key in _SECRET_SETTING_KEYS:
+        if value and using_fallback_encryption_key() and get_setting(org_id, key) != value:
+            raise InsecureCredentialStorageError(
+                f"Refusing to store a new value for {key!r} while "
+                "SETTINGS_ENCRYPTION_KEY is unset -- it would be encrypted "
+                "with the fallback key that's public in this repo's source. "
+                "Set SETTINGS_ENCRYPTION_KEY via a real secrets manager "
+                "before storing real credentials."
+            )
         encoded = _get_fernet().encrypt(encoded.encode()).decode()
     with Session() as s:
         s.merge(Setting(org_id=org_id, key=key, value=encoded))

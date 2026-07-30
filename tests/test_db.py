@@ -12,9 +12,20 @@ import pytest
 import db as db_module
 
 
+_TEST_ENCRYPTION_KEY = "03ZJHIomd1hhT9w4FWvNxoN2wqPUnjfg3bSycZqUmgY="  # test-only, not the fallback
+
+
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    """Point src/db.py at a throwaway SQLite file for the duration of one test."""
+    """Point src/db.py at a throwaway SQLite file for the duration of one
+    test, with a real (test-only) SETTINGS_ENCRYPTION_KEY set -- so tests
+    exercise the same "properly configured" path a real deployment would,
+    rather than incidentally hitting the InsecureCredentialStorageError
+    guard meant for the unset-key case (see
+    test_set_setting_refuses_new_secret_under_fallback_key below, which
+    deliberately unsets it). _fernet is a process-global cache in db.py,
+    so it's reset here too -- otherwise a Fernet built from a *different*
+    test's key (or the real fallback) would leak into this test."""
     test_db_path = tmp_path / "test_app.db"
     monkeypatch.setattr(db_module, "DB_PATH", test_db_path)
     monkeypatch.setattr(
@@ -22,6 +33,8 @@ def db(tmp_path, monkeypatch):
         db_module.create_engine(f"sqlite:///{test_db_path}", connect_args={"check_same_thread": False}),
     )
     monkeypatch.setattr(db_module, "Session", db_module.sessionmaker(bind=db_module.engine))
+    monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", _TEST_ENCRYPTION_KEY)
+    monkeypatch.setattr(db_module, "_fernet", None)
     db_module.init_db()
     return db_module
 
@@ -171,6 +184,51 @@ def test_secret_setting_is_not_plaintext_in_the_raw_db_row(db):
         row = s.query(db.Setting).filter_by(org_id=DEMO_ORG_ID, key="cmms_api_key").one()
         assert "plaintext-should-not-appear" not in row.value
         assert row.value != db.json.dumps("plaintext-should-not-appear")
+
+
+def test_set_setting_refuses_new_secret_under_fallback_key(db, monkeypatch):
+    """GitGuardian flagged (2026-07-30) that the fallback encryption key is
+    public in this repo's source -- set_setting() must refuse to newly
+    encrypt a real credential with it rather than silently doing so."""
+    monkeypatch.delenv("SETTINGS_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(db, "_fernet", None)
+    with pytest.raises(db.InsecureCredentialStorageError):
+        db.set_setting(DEMO_ORG_ID, "vrm_api_token", "a-real-looking-token")
+    # And it must not have been written at all.
+    assert db.get_setting(DEMO_ORG_ID, "vrm_api_token") is None
+
+
+def test_set_setting_allows_resaving_unchanged_secret_under_fallback_key(db, monkeypatch):
+    """A value already stored under the fallback key (e.g. configured
+    before SETTINGS_ENCRYPTION_KEY was ever set) must still be re-savable
+    -- app/_pages/_settings_config.py calls set_setting() on every rerun,
+    not just on a change, so raising here would break the Settings page
+    outright for every already-configured org, for no security benefit
+    (re-encrypting with the same insecure key exposes nothing new)."""
+    monkeypatch.delenv("SETTINGS_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(db, "_fernet", None)
+    # Seed a row already encrypted under the fallback key directly, bypassing
+    # set_setting() -- that's precisely what the guard would refuse as a
+    # brand-new write, so this simulates a value configured before this
+    # guard existed rather than exercising the guard itself.
+    ciphertext = db.Fernet(db._FALLBACK_ENCRYPTION_KEY.encode()).encrypt(
+        db.json.dumps("already-stored-token").encode()
+    ).decode()
+    with db.Session() as s:
+        s.merge(db.Setting(org_id=DEMO_ORG_ID, key="orion_bms_api_key", value=ciphertext))
+        s.commit()
+
+    db.set_setting(DEMO_ORG_ID, "orion_bms_api_key", "already-stored-token")  # must not raise
+    assert db.get_setting(DEMO_ORG_ID, "orion_bms_api_key") == "already-stored-token"
+
+
+def test_set_setting_allows_clearing_secret_to_empty_under_fallback_key(db, monkeypatch):
+    """Clearing a credential field to "" must not raise -- text_input
+    widgets call set_setting() on every rerun including when a field is
+    empty, and an empty string carries nothing to newly expose."""
+    monkeypatch.delenv("SETTINGS_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(db, "_fernet", None)
+    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "")  # must not raise
 
 
 def test_non_secret_setting_remains_plain_json_at_rest(db):

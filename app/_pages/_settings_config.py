@@ -36,6 +36,23 @@ def _section(title: str):
     st.markdown(section_header_html(title), unsafe_allow_html=True)
 
 
+def _set_secret_setting(org_id: int, key: str, value) -> None:
+    """Wraps db.set_setting() for the 5 credential-shaped keys, surfacing
+    db.InsecureCredentialStorageError as a page error instead of an
+    uncaught exception -- these calls fire on every Streamlit rerun (not
+    behind a Save button), so a new credential typed in while
+    SETTINGS_ENCRYPTION_KEY is unset would otherwise crash the whole
+    Settings page rather than just fail to save."""
+    try:
+        db.set_setting(org_id, key, value)
+    except db.InsecureCredentialStorageError:
+        st.error(
+            f"Not saved: SETTINGS_ENCRYPTION_KEY must be set before a new "
+            f"{key.replace('_', ' ')} can be stored securely (see the "
+            "warning banner above)."
+        )
+
+
 def render_encryption_key_warning() -> None:
     """Admin-only banner surfacing src/db.py's using_fallback_encryption_key()
     -- a server log line alone is easy to miss on a live deployment; an
@@ -426,7 +443,7 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
              "alerts, not a real background cron.",
     )
     db.set_setting(st.session_state["auth_org_id"], "webhook_url", _wh_url)
-    db.set_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret)
+    _set_secret_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret)
     db.set_setting(st.session_state["auth_org_id"], "webhook_events", _wh_events)
     if _wh_url:
         from notifications import send_webhook
@@ -486,7 +503,7 @@ def render_bms_connector_victron() -> None:
         "VRM installation ID", value=st.session_state.get("vrm_installation_id", ""),
         key="vrm_installation_id",
     )
-    db.set_setting(st.session_state["auth_org_id"], "vrm_api_token", _vrm_token)
+    _set_secret_setting(st.session_state["auth_org_id"], "vrm_api_token", _vrm_token)
     db.set_setting(st.session_state["auth_org_id"], "vrm_installation_id", _vrm_install_id)
     if not (_vrm_token and _vrm_install_id):
         _empty_state(
@@ -529,7 +546,7 @@ def render_bms_connector_orion() -> None:
         "Cell ID to monitor", value=st.session_state.get("orion_bms_cell_id", ""),
         key="orion_bms_cell_id",
     )
-    db.set_setting(st.session_state["auth_org_id"], "orion_bms_api_key", _orion_key)
+    _set_secret_setting(st.session_state["auth_org_id"], "orion_bms_api_key", _orion_key)
     db.set_setting(st.session_state["auth_org_id"], "orion_bms_cell_id", _orion_cell_id)
     if not (_orion_key and _orion_cell_id):
         _empty_state(
@@ -565,7 +582,7 @@ def render_second_life_marketplace() -> None:
         type="password", key="circunomics_api_key",
         help="Issued by Circunomics after partner onboarding — not a public self-serve key.",
     )
-    db.set_setting(st.session_state["auth_org_id"], "circunomics_api_key", _circ_key)
+    _set_secret_setting(st.session_state["auth_org_id"], "circunomics_api_key", _circ_key)
     if not _circ_key:
         _empty_state(
             "Not yet connected",
@@ -610,7 +627,7 @@ def render_maintenance_writeback() -> None:
         type="password", key="cmms_api_key",
         help="Issued by your CMMS/ERP provider — not a public self-serve key.",
     )
-    db.set_setting(st.session_state["auth_org_id"], "cmms_api_key", _cmms_key)
+    _set_secret_setting(st.session_state["auth_org_id"], "cmms_api_key", _cmms_key)
     if not _cmms_key:
         _empty_state(
             "Not yet connected",

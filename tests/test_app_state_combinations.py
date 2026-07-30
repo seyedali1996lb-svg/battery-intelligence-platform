@@ -35,7 +35,12 @@ _MAIN_PY = str(pathlib.Path(__file__).parent.parent / "app" / "main.py")
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
-    """Point src/db.py at a throwaway SQLite file for this test only."""
+    """Point src/db.py at a throwaway SQLite file for this test only, with
+    a real (test-only) SETTINGS_ENCRYPTION_KEY set so tests that write a
+    fresh secret-setting value (e.g. the webhook regression test below)
+    don't hit InsecureCredentialStorageError, which is meant to guard the
+    unset-key case, not ordinary test fixtures. _fernet is a process-global
+    cache in db.py -- reset it too, or a previous test's key could leak in."""
     test_db_path = tmp_path / "test_app.db"
     monkeypatch.setattr(db_module, "DB_PATH", test_db_path)
     monkeypatch.setattr(
@@ -43,6 +48,8 @@ def isolated_db(tmp_path, monkeypatch):
         db_module.create_engine(f"sqlite:///{test_db_path}", connect_args={"check_same_thread": False}),
     )
     monkeypatch.setattr(db_module, "Session", db_module.sessionmaker(bind=db_module.engine))
+    monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", "03ZJHIomd1hhT9w4FWvNxoN2wqPUnjfg3bSycZqUmgY=")
+    monkeypatch.setattr(db_module, "_fernet", None)
     db_module.init_db()
     return db_module
 
