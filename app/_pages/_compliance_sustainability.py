@@ -30,8 +30,8 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     _action_bar("sustainability")
     from consequences import ASSUMPTIONS, sustainability_snapshot, CELL_NOMINAL_KWH
     from sustainability import (
-        CRITICAL_MATERIALS, EU_RECYCLED_TARGETS, EU_GREEN_DEAL_FIELDS,
-        material_content_for_cell,
+        EU_RECYCLED_TARGETS, EU_GREEN_DEAL_FIELDS,
+        critical_materials_for_chemistry, material_content_for_cell,
     )
 
     _profile = ChemistryProfile.for_cell(selected)
@@ -310,27 +310,34 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     # ────────────────────────────────────────────────────────────────────────
     _section("Critical Materials Tracker")
 
-    if _profile.short_name != "LiCoO2":
-        # CRITICAL_MATERIALS is LiCoO2-specific (Harper et al. 2019 teardown
-        # data) -- these g-per-cell/recovery-% figures do not describe this
-        # cell's real composition for any other chemistry. This used to only
-        # warn for synthetic cells ("not the simulation"), which silently
-        # showed a real LFP cell (Severson -- cobalt-free) or NCA cell
-        # (Oxford -- nickel-dominant, not "trace only") a Cobalt/Nickel
-        # breakdown that is flatly wrong for that cell's actual chemistry,
-        # not just imprecise for a simulation.
-        if _profile.provenance == "measured":
-            _mat_note = (
-                f"This cell is <strong style='color:#e2e8f0'>{_profile.short_name}</strong> chemistry — "
-                "the material figures below are LiCoO₂ 18650 reference data (Harper et al. 2019) and do "
-                "not describe this cell's actual composition (e.g. LFP cells contain no cobalt; NCA cells "
-                "are nickel-dominant, not \"trace only\"). Shown for reference/comparison only."
-            )
-        else:
-            _mat_note = (
-                "Synthetic cells model electrochemical behaviour only — material content "
-                "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
-            )
+    _cell_materials = critical_materials_for_chemistry(_profile.short_name)
+
+    # LiCoO2 (real, either NASA-measured or synthetic-equivalent), LFP, and
+    # NCA all now have chemistry-specific figures (see each material's
+    # "source" field for provenance — LiCoO2 is Harper et al. 2019 teardown
+    # data, LFP/NCA are stoichiometric derivations from real datasheet cell
+    # masses). Only genuinely unspecified chemistries (no chemistry captured
+    # at upload) and synthetic cells (which model electrochemistry only, not
+    # a real manufactured cell) still fall back to the LiCoO2 reference
+    # figures and need a banner explaining that.
+    if _profile.short_name not in ("LiCoO2", "LFP", "NCA"):
+        _mat_note = (
+            "This cell's chemistry is not specified — the material figures below are LiCoO₂ "
+            "18650 reference data (Harper et al. 2019) and may not describe this cell's actual "
+            "composition. Shown for reference/comparison only."
+        )
+        st.markdown(
+            "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
+            "font-size:12px;color:#8896a8;margin-bottom:12px'>"
+            f"{_mat_note}"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    elif _profile.provenance == "synthetic":
+        _mat_note = (
+            "Synthetic cells model electrochemical behaviour only — material content "
+            "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
+        )
         st.markdown(
             "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
             "font-size:12px;color:#8896a8;margin-bottom:12px'>"
@@ -339,18 +346,21 @@ def page_sustainability(selected: str, df: pd.DataFrame):
             unsafe_allow_html=True,
         )
 
-    primary_materials = [m for m in CRITICAL_MATERIALS if m["name"] != "Nickel (Ni)"]
-    mat_cols = st.columns(len(primary_materials))
-    for col, mat in zip(mat_cols, primary_materials):
+    mat_cols = st.columns(len(_cell_materials))
+    for col, mat in zip(mat_cols, _cell_materials):
         scaled_g = material_content_for_cell(mat["g_per_2ah"], cell_kwh)
-        badge_html = make_badge(mat["label"], "#b7791f" if "Cited" in mat["label"] else "#718096")
+        badge_html = make_badge(
+            mat["label"],
+            "#48bb78" if "Verified" in mat["label"] else
+            "#b7791f" if "Cited" in mat["label"] else "#718096",
+        )
         rec_html = (
             f"<div style='font-size:12px;color:#48bb78;margin-top:4px'>"
             f"~{mat['recovery_pct']}% recovery<br>"
             f"<span style='font-size:11px;color:#a0aec0'>{mat['recovery_note']}</span></div>"
             if mat["recovery_pct"] is not None else
-            "<div style='font-size:12px;color:#a0aec0;margin-top:4px'>Not recovered<br>"
-            "<span style='font-size:11px'>Not primary material in LiCoO₂</span></div>"
+            f"<div style='font-size:12px;color:#a0aec0;margin-top:4px'>Not recovered<br>"
+            f"<span style='font-size:11px'>{mat['recovery_note']}</span></div>"
         )
         eu_dot = (
             "<span style='color:#63b3ed;font-size:10px;margin-left:4px'>"
@@ -369,20 +379,6 @@ def page_sustainability(selected: str, df: pd.DataFrame):
                 f"<div style='margin-top:10px'>{badge_html}</div>",
                 padding="14px 16px",
             )
-
-    ni_mat = next((m for m in CRITICAL_MATERIALS if m["name"] == "Nickel (Ni)"), None)
-    if ni_mat:
-        ni_g = material_content_for_cell(ni_mat["g_per_2ah"], cell_kwh)
-        st.markdown(
-            f"<div style='font-size:11px;color:#a0aec0;margin-top:10px;padding:8px 14px;"
-            f"background:#1a202c;border-radius:6px;border-left:3px solid #2d3748'>"
-            f"<strong style='color:#8896a8'>Nickel (Ni)</strong> — EU critical material, but trace-only in LiCoO₂ chemistry "
-            f"(est. {ni_g:.2f} g per cell, {BADGE_ILLUST}). "
-            f"EU 2023/1542 nickel recycled-content targets apply to NMC/NCA chemistries where nickel is a primary cathode material, "
-            f"not to LiCoO₂. Shown here for completeness only."
-            f"</div>",
-            unsafe_allow_html=True,
-        )
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 4: EU regulation recycled content targets

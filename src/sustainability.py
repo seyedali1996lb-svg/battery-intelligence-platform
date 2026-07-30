@@ -1,22 +1,50 @@
 """
 Phase 7 — Sustainability module constants.
 
-Material content and recovery figures for LiCoO₂ 18650 cells, and EU Battery
-Regulation (EU) 2023/1542 recycled-content targets. All figures carry explicit
-provenance labels — no aggregated index, no invented circularity scores.
+Material content and recovery figures for LiCoO₂, LFP, and NCA 18650 cells,
+and EU Battery Regulation (EU) 2023/1542 recycled-content targets. All figures
+carry explicit provenance labels — no aggregated index, no invented
+circularity scores.
 
 Synthetic cells model electrochemical behavior only — material content figures
 apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation.
 """
 
 # ---------------------------------------------------------------------------
-# Critical material content per 18650 LiCoO₂ cell (~2 Ah, ~46 g total)
+# Critical material content per 18650 cell (~2 Ah reference), by chemistry
 # ---------------------------------------------------------------------------
-# Source: Harper et al. (2019) Nature Reviews Materials — LiCoO₂ cell teardown
-# and composition analysis. Figures are per-cell for a nominal 2 Ah 18650.
-# Synthetic cells (0.74 Ah) scale proportionally by Ah capacity.
+# LiCoO2 figures are directly measured teardown data (Harper et al. 2019).
+# LFP and NCA figures are derived, not measured: real stoichiometry for each
+# chemistry's cathode formula (LiFePO4; LiNi0.8Co0.15Al0.05O2 — the standard
+# formula for both the Severson A123 APR18650M1A cell and the Oxford
+# NCR18650BD-family cell) applied to that cell's real manufacturer-datasheet
+# mass, using the ~23.5% cathode-active-material mass fraction implied by
+# Harper et al.'s own LiCoO2 figures (6.5 g Co / 60.2% Co-in-LiCoO2 = 10.8 g
+# CAM; 10.8 g / 46 g cell = 23.5%). This is a transparent derivation, not a
+# teardown measurement — see each entry's "source" for the exact chain, and
+# its "label" ("Estimated — stoichiometric" vs "Cited estimate") for how much
+# to trust it. It excludes electrolyte lithium (unlike the LiCoO2 Li figure,
+# which Harper et al. report as cathode + electrolyte combined), so LFP/NCA
+# lithium figures are a lower bound, not a full-cell total.
+#
+# All chemistries scale proportionally by Ah capacity via
+# material_content_for_cell() below.
 
-CRITICAL_MATERIALS = [
+_GRAPHITE = {
+    "name":     "Graphite (C)",
+    "formula":  "anode active material",
+    "g_per_2ah": 7.0,           # mid-point of 6–8 g range
+    "g_range":  "6–8 g",
+    "recovery_pct": 40,
+    "recovery_note": "not commercially prioritised; lower recovery than metals",
+    "label":    "Illustrative — not sourced",
+    "source":   "No per-cell figure for 18650 specifically; estimate from anode mass fraction. "
+                "Not chemistry-specific — the same graphite anode family is used across "
+                "LiCoO₂/LFP/NCA/NMC 18650 cells, so this figure is shared across chemistries.",
+    "eu_critical": False,
+}
+
+CRITICAL_MATERIALS_LICOO2 = [
     {
         "name":     "Cobalt (Co)",
         "formula":  "LiCoO₂ cathode",
@@ -39,17 +67,7 @@ CRITICAL_MATERIALS = [
         "source":   "Harper et al. (2019) Nature Reviews Materials",
         "eu_critical": True,
     },
-    {
-        "name":     "Graphite (C)",
-        "formula":  "anode active material",
-        "g_per_2ah": 7.0,           # mid-point of 6–8 g range
-        "g_range":  "6–8 g",
-        "recovery_pct": 40,
-        "recovery_note": "not commercially prioritised; lower recovery than metals",
-        "label":    "Illustrative — not sourced",
-        "source":   "No per-cell figure for 18650 specifically; estimate from anode mass fraction",
-        "eu_critical": False,
-    },
+    _GRAPHITE,
     {
         "name":     "Nickel (Ni)",
         "formula":  "trace only in LiCoO₂",
@@ -62,6 +80,119 @@ CRITICAL_MATERIALS = [
         "eu_critical": True,
     },
 ]
+
+CRITICAL_MATERIALS_LFP = [
+    {
+        "name":     "Cobalt (Co)",
+        "formula":  "not present — LiFePO₄ (olivine) cathode",
+        "g_per_2ah": 0.0,
+        "g_range":  "0 g",
+        "recovery_pct": None,
+        "recovery_note": "not present in this chemistry",
+        "label":    "Verified",
+        "source":   "LiFePO₄'s olivine cathode structure contains no cobalt — a well-established "
+                    "chemistry fact, not an estimate.",
+        "eu_critical": True,
+    },
+    {
+        "name":     "Lithium (Li)",
+        "formula":  "LiFePO₄ cathode (excludes electrolyte)",
+        "g_per_2ah": 0.73,
+        "g_range":  "~0.6–0.8 g (derived)",
+        "recovery_pct": None,
+        "recovery_note": "recovery economics for cobalt-free cathodes are less mature — no Co/Ni "
+                          "credit to offset hydrometallurgical processing cost",
+        "label":    "Estimated — stoichiometric",
+        "source":   "LiFePO₄ stoichiometry (Li = 4.4% of cathode mass by molar mass) applied to the "
+                    "A123 APR18650M1A datasheet cell mass (39 g, 1.1 Ah — the cell used in the "
+                    "Severson et al. 2019 dataset) using the ~23.5% cathode-mass-fraction derived "
+                    "above from Harper et al. (2019). Cathode-only — excludes electrolyte lithium, "
+                    "unlike the LiCoO₂ figure, which includes it.",
+        "eu_critical": True,
+    },
+    _GRAPHITE,
+    {
+        "name":     "Nickel (Ni)",
+        "formula":  "not present — LiFePO₄ (olivine) cathode",
+        "g_per_2ah": 0.0,
+        "g_range":  "0 g",
+        "recovery_pct": None,
+        "recovery_note": "not present in this chemistry",
+        "label":    "Verified",
+        "source":   "LiFePO₄'s olivine cathode structure contains no nickel — a well-established "
+                    "chemistry fact, not an estimate.",
+        "eu_critical": True,
+    },
+]
+
+CRITICAL_MATERIALS_NCA = [
+    {
+        "name":     "Cobalt (Co)",
+        "formula":  "LiNi₀.₈Co₀.₁₅Al₀.₀₅O₂ cathode",
+        "g_per_2ah": 0.62,
+        "g_range":  "~0.5–0.7 g (derived)",
+        "recovery_pct": 95,
+        "recovery_note": "hydrometallurgical process",
+        "label":    "Estimated — stoichiometric",
+        "source":   "LiNi0.8Co0.15Al0.05O2 stoichiometry (Co = 9.2% of cathode mass by molar mass) "
+                    "applied to the Panasonic NCR18650B datasheet cell mass (48.5 g, 3.4 Ah — same "
+                    "NCA family as the NCR18650BD cell used in the Oxford Path-Dependent dataset) "
+                    "using the ~23.5% cathode-mass-fraction derived above from Harper et al. (2019). "
+                    "Lower Co share than LiCoO2 by design.",
+        "eu_critical": True,
+    },
+    {
+        "name":     "Lithium (Li)",
+        "formula":  "LiNi₀.₈Co₀.₁₅Al₀.₀₅O₂ cathode (excludes electrolyte)",
+        "g_per_2ah": 0.48,
+        "g_range":  "~0.4–0.6 g (derived)",
+        "recovery_pct": 80,
+        "recovery_note": "hydromet; lower than Co/Ni due to electrolyte loss",
+        "label":    "Estimated — stoichiometric",
+        "source":   "LiNi0.8Co0.15Al0.05O2 stoichiometry (Li = 7.2% of cathode mass by molar mass) "
+                    "applied to the Panasonic NCR18650B datasheet cell mass (48.5 g, 3.4 Ah) using "
+                    "the ~23.5% cathode-mass-fraction derived above from Harper et al. (2019). "
+                    "Cathode-only — excludes electrolyte lithium, unlike the LiCoO₂ figure, which "
+                    "includes it.",
+        "eu_critical": True,
+    },
+    _GRAPHITE,
+    {
+        "name":     "Nickel (Ni)",
+        "formula":  "LiNi₀.₈Co₀.₁₅Al₀.₀₅O₂ cathode — primary material",
+        "g_per_2ah": 3.28,
+        "g_range":  "~2.8–3.8 g (derived)",
+        "recovery_pct": 90,
+        "recovery_note": "hydrometallurgical process",
+        "label":    "Estimated — stoichiometric",
+        "source":   "LiNi0.8Co0.15Al0.05O2 stoichiometry (Ni = 48.9% of cathode mass by molar mass) "
+                    "applied to the Panasonic NCR18650B datasheet cell mass (48.5 g, 3.4 Ah) using "
+                    "the ~23.5% cathode-mass-fraction derived above from Harper et al. (2019). "
+                    "NCA's primary cathode material by mass, unlike LiCoO2 where nickel is "
+                    "trace-only.",
+        "eu_critical": True,
+    },
+]
+
+
+def critical_materials_for_chemistry(short_name: str) -> list:
+    """Return the 4 tracked critical-material entries for a chemistry.
+
+    LiCoO2, LFP, and NCA have chemistry-specific figures (see each entry's
+    "source" for provenance — LiCoO2 is measured teardown data, LFP/NCA are
+    stoichiometric derivations). Any other chemistry (e.g. an unspecified
+    user upload) falls back to the LiCoO2 reference figures, since no
+    chemistry-specific data exists for it.
+    """
+    return {
+        "LiCoO2": CRITICAL_MATERIALS_LICOO2,
+        "LFP":    CRITICAL_MATERIALS_LFP,
+        "NCA":    CRITICAL_MATERIALS_NCA,
+    }.get(short_name, CRITICAL_MATERIALS_LICOO2)
+
+
+# Backward-compatible alias — the original LiCoO2-only list.
+CRITICAL_MATERIALS = CRITICAL_MATERIALS_LICOO2
 
 
 # ---------------------------------------------------------------------------
