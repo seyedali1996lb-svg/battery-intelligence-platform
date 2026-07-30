@@ -421,6 +421,39 @@ def load_everything():
     return featured_dfs, bundles, split_cycles
 
 
+def _ensure_cell_summaries_synced(cell_ids: list) -> None:
+    """CellSummary rows are normally written once, during the training run
+    that populates cell_store's Parquet files (see load_everything()'s
+    _persist_cell_data(), above) -- @st.cache_resource means that only runs
+    once per process, and in a real deployment db.py's SQLite file persists
+    across restarts, so this is a no-op after the very first real run.
+
+    It matters for tests: each isolated_db-style fixture swaps in a fresh,
+    empty database per test, while load_everything()'s cache (and
+    cell_store's already-written Parquet files) stay warm across the whole
+    pytest session -- without this, a fresh test's database would never get
+    CellSummary rows even though the underlying per-cell data already
+    exists on disk. Gated on session_state (reset per browser/AppTest
+    session, unlike the process-wide st.cache_resource) so the missing-rows
+    check runs at most once per session, not on every rerun -- and even
+    then only backfills cell_ids actually missing a row, not a full re-sync.
+    """
+    if st.session_state.get("_cell_summaries_synced"):
+        return
+    import db as _db_sync
+    from experiment_registry import PLATFORM_ORG_ID as _PID
+
+    existing = {r["cell_id"] for r in _db_sync.get_cell_summaries(_PID, include_platform=False)}
+    for cid in cell_ids:
+        if cid in existing:
+            continue
+        df = cell_store.get_cell_df(cid)
+        if df is None:
+            continue
+        _db_sync.upsert_cell_summary(_PID, cid, cell_store.build_summary(cid, df))
+    st.session_state["_cell_summaries_synced"] = True
+
+
 @st.cache_resource(show_spinner=False)
 def get_platform_graph(_featured_dfs_all: dict, _bundles: dict):
     """Build (once per process, same caching pattern as load_everything()
@@ -1068,6 +1101,7 @@ def main():
     )
     featured_dfs_all, bundles, split_cycles_all = load_everything()
     _train_placeholder.empty()
+    _ensure_cell_summaries_synced(list(featured_dfs_all.keys()))
     graph = get_platform_graph(featured_dfs_all, bundles)
 
     # ── Guided tour (once per session, first-time visitors) ───────────────────

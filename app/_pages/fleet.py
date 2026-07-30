@@ -20,7 +20,7 @@ import streamlit as st
 
 from utils import (
     _action_bar, _md_html, _empty_state,
-    soh_status, render_card, cached_detect_knee,
+    soh_status, render_card,
 )
 from design_system import make_badge
 from chemistry_profiles import ChemistryProfile
@@ -45,7 +45,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     st.caption("Routes to grounded fleet-level answers — not open-ended reasoning. If your question doesn't match a known topic, it says so rather than guessing.")
     if _af_input:
         from battery_copilot import build_fleet_stats, answer_fleet_query
-        _af_stats = build_fleet_stats(featured_dfs, bundles)
+        _af_stats = build_fleet_stats(st.session_state["auth_org_id"], featured_dfs, bundles)
         _af_answer = answer_fleet_query(_af_input, _af_stats)
         render_card(
             f"<div style='font-size:10px;color:#a0aec0;margin-bottom:8px'>{make_badge('Template', '#718096')} · Fleet</div>"
@@ -57,24 +57,32 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     # ── Best-effort daily fleet digest (session/page-load-triggered, not a
     # real background cron — this app has no daemon process available) ──────
     import db as _db_fleet
+    _org_id = st.session_state["auth_org_id"]
+    # cell_store.LazyCellFrameMap.keys() lists cell_ids without touching any
+    # cell's full DataFrame -- used throughout this file to scope
+    # CellSummary reads to the currently active data-mode fleet, since
+    # get_cell_summaries() otherwise returns every platform cell across
+    # every data source combined.
+    _active_ids = set(featured_dfs.keys())
     _wh_url_f  = st.session_state.get("webhook_url", "")
     _wh_evts_f = st.session_state.get("webhook_events", [])
     if _wh_url_f and "FLEET_DIGEST" in _wh_evts_f:
         _today = datetime.date.today().isoformat()
-        if _db_fleet.get_setting(st.session_state["auth_org_id"], "last_digest_sent") != _today:
+        if _db_fleet.get_setting(_org_id, "last_digest_sent") != _today:
             from notifications import send_webhook
-            _n_cells_f = len(featured_dfs)
+            _digest_summaries = [r for r in _db_fleet.get_cell_summaries(_org_id) if r["cell_id"] in _active_ids]
+            _n_cells_f = len(_digest_summaries)
             _n_flagged_f = sum(
-                1 for _df in featured_dfs.values()
-                if len(_df) and "soh_pct" in _df.columns
-                and float(_df["soh_pct"].iloc[-1]) < st.session_state.get("eol_threshold_pct", 80.0)
+                1 for r in _digest_summaries
+                if r.get("soh_pct") is not None
+                and float(r["soh_pct"]) < st.session_state.get("eol_threshold_pct", 80.0)
             )
             send_webhook(
                 "FLEET_DIGEST",
                 {"n_cells": _n_cells_f, "n_flagged_below_eol": _n_flagged_f, "trigger": "fleet_page_load"},
                 _wh_url_f, st.session_state.get("webhook_secret", ""),
             )
-            _db_fleet.set_setting(st.session_state["auth_org_id"], "last_digest_sent", _today)
+            _db_fleet.set_setting(_org_id, "last_digest_sent", _today)
 
     # ── Build fleet summary row per cell ──
     # Bundle and per-cell reliability lookup is source-aware; uploaded cells use
@@ -86,59 +94,50 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     # from the ranking table whenever a cell's bundle lookup failed (that
     # exact divergence was a real bug found in review: the exec bar showed
     # populated stats while the ranking table said "No cells loaded").
-    import numpy as _np_fleet
+    #
+    # Reads precomputed CellSummary rows (src/cell_store.py's build_summary())
+    # instead of every cell's full per-cycle DataFrame -- knee detection,
+    # fade trend, and the early-life grade were previously all recomputed
+    # here on every render; they're now computed once, when a cell's data is
+    # (re)trained, and stored. See cell_store.py's module docstring.
+    import db as _db_rows
     rows = []
 
     def _bundle_for_cell(cid: str) -> dict | None:
         return bundles.get(ChemistryProfile.for_cell(cid).source_kind)
 
-    for cell_id, df in featured_dfs.items():
+    _summaries_by_id = {
+        r["cell_id"]: r for r in _db_rows.get_cell_summaries(_org_id) if r["cell_id"] in _active_ids
+    }
+    for cell_id in featured_dfs.keys():
+        _r = _summaries_by_id.get(cell_id)
+        if _r is None:
+            continue  # not yet summarized (e.g. race with cell_store population)
         bndl      = _bundle_for_cell(cell_id)
         if bndl is None:
             continue
         per_cell  = bndl["metrics"].get("per_cell_rul_reliable", {})
         rul_ok    = per_cell.get(cell_id, bndl["metrics"].get("rul_reliable", False))
         _profile  = ChemistryProfile.for_cell(cell_id)
-        latest    = df.iloc[-1]
-        soh       = latest["soh_pct"]
-        cycle     = int(latest["cycle_number"])
-        fade_30   = latest.get("fade_rate_30cy", float("nan")) * 1000  # mSOH/cy
-        rul       = latest["rul_pred"] if rul_ok else None
-        eol_row   = df[df["is_eol"]]
-        eol_at    = int(eol_row["cycle_number"].iloc[0]) if len(eol_row) else None
+        soh       = _r["soh_pct"]
+        cycle     = _r["cycle_number"]
+        fade_30   = (_r["fade_rate_30cy"] if _r["fade_rate_30cy"] is not None else float("nan")) * 1000  # mSOH/cy
+        rul       = _r["rul_pred"] if rul_ok else None
+        eol_at    = _r["eol_at_cycle"]
         cycles_to_eol = max(0, eol_at - cycle) if eol_at else None
 
         status_label, _ = soh_status(soh)
 
-        # Knee-point detection per cell (cached — see utils.cached_detect_knee)
-        knee_result = cached_detect_knee(df["soh_pct"], df["cycle_number"])
+        knee_result = {
+            "detected":    _r["knee_detected"],
+            "cycle":       _r["knee_cycle"],
+            "soh_at_knee": _r["knee_soh"],
+            "confidence":  _r["knee_confidence"],
+            "phase":       _r["knee_phase"],
+        }
 
-        # Degradation trend: compare current 30-cy fade rate vs 30 cycles earlier
-        trend = "Stable"
-        if "fade_rate_30cy" in df.columns and len(df) >= 31:
-            fade_now  = df["fade_rate_30cy"].iloc[-1]
-            fade_prev = df["fade_rate_30cy"].iloc[-31]
-            delta_pct = (fade_now - fade_prev) / (abs(fade_prev) + 1e-9) * 100
-            if delta_pct > 20:
-                trend = "Accelerating"
-            elif delta_pct < -20:
-                trend = "Decelerating"
-
-        # A5: early-cycle grade (Severson method, first 100 cycles)
-        _early = df[df["cycle_number"] <= 100]
-        if len(_early) >= 20 and "capacity_ah" in _early.columns:
-            _cap0  = float(_early["capacity_ah"].iloc[0])
-            _res0  = max(float(_early["resistance_ohm"].iloc[0]), 1e-6) if "resistance_ohm" in _early.columns else 1e-6
-            _gfade = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
-            _gvar  = float(_early["capacity_ah"].var())
-            _gslope = float(_np_fleet.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0]) if "resistance_ohm" in _early.columns else 0.0
-            _gfp   = _gfade / _cap0 * 100
-            _gcv2  = _gvar / (_cap0 ** 2) * 1e4
-            _grsp  = abs(_gslope) / _res0 * 100
-            _gscore = float(_np_fleet.clip(100 - _gfp * 400 - _gcv2 * 8 - _grsp * 150, 0, 100))
-            _grade  = "A" if _gscore >= 75 else ("B" if _gscore >= 50 else "C")
-        else:
-            _grade  = "—"
+        trend  = _r["fade_trend"]
+        _grade = _r["grade"]
 
         rows.append({
             "cell_id":      cell_id,
