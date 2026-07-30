@@ -681,6 +681,14 @@ _TOUR_STEPS = [
         "backed by an NPV comparison. Every decision you log is kept in an auditable trail.",
     ),
     (
+        "Physics-informed diagnostics, not just a fitted model",
+        "Open <strong>Engineering details</strong> on Health for a real PyBaMM electrochemical "
+        "re-fit (SEI vs. active-material-loss decomposition), cross-checked against the ML "
+        "verdict — the two are flagged explicitly whenever they disagree. Explore → "
+        "<strong>Related Cells</strong> uses the Battery Knowledge Graph to find cells sharing "
+        "this one's degradation mechanism, each edge traceable to the literature that supports it.",
+    ),
+    (
         "Compliance — EU Battery Passport",
         "The Compliance page tracks EU Battery Passport completeness field-by-field, so you "
         "can see exactly what regulatory data is available, estimated, or still missing.",
