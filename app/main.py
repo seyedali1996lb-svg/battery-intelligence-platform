@@ -1426,7 +1426,7 @@ def main():
         "<div style='text-align:right;margin-bottom:4px'>"
         "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
         "style='font-size:10px;color:#a0aec0;cursor:default'>demo mode</span>"
-        "<div style='font-size:9px;color:#718096;margin-top:1px'>"
+        "<div style='font-size:9px;color:#a0aec0;margin-top:1px'>"
         "No auth · session-scoped uploads · data not persisted</div></div>",
         unsafe_allow_html=True,
     )

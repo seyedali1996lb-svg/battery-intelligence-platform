@@ -459,9 +459,9 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     if _transfer_reason:
         st.markdown(
-            f"<div style='font-size:12px;color:#4a5568;margin:-8px 0 12px;"
+            f"<div style='font-size:12px;color:#a0aec0;margin:-8px 0 12px;"
             f"padding:6px 12px;background:#1a202c;border-radius:6px;"
-            f"border-left:3px solid #4a5568'>{html.escape(_transfer_reason)}</div>",
+            f"border-left:3px solid #a0aec0'>{html.escape(_transfer_reason)}</div>",
             unsafe_allow_html=True,
         )
 

@@ -55,19 +55,19 @@ _ALLOWLIST = {
         "ce_rolling_30cy (not in CellSummary's schema, and not worth "
         "growing it for one tab; see cell_store.py's module docstring)."
     ),
-    "app/_pages/_fleet_diagnostics.py:671": (
+    "app/_pages/_fleet_diagnostics.py:675": (
         "Spread trending -- needs every cell's full soh_pct/cycle_number "
         "series to interpolate cross-fleet SOH spread over cycle number, "
         "not reducible to a last-value scalar."
     ),
-    "app/_pages/_fleet_diagnostics.py:682": (
-        "Spread trending (same function as :671)."
+    "app/_pages/_fleet_diagnostics.py:686": (
+        "Spread trending (same function as :675)."
     ),
-    "app/_pages/_fleet_diagnostics.py:745": (
+    "app/_pages/_fleet_diagnostics.py:749": (
         "SOH distribution-shift histogram -- needs every cell's full "
         "soh_pct/cycle_number series to build historical snapshots."
     ),
-    "app/_pages/_fleet_diagnostics.py:1008": (
+    "app/_pages/_fleet_diagnostics.py:1012": (
         "Anomaly Alert History -- needs each cell's full "
         "capacity_anomaly/resistance_anomaly boolean columns to count "
         "total flags and recent-window flags, not just the latest value."
