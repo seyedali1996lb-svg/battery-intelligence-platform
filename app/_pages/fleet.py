@@ -260,4 +260,13 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         """
     )
 
+    # Plain-English fleet risk narrative -- battery_copilot.answer_fleet_risk()
+    # already builds this from the same fleet_stats "Ask the fleet" uses, but
+    # previously only appeared if someone typed a question. Surfaced
+    # un-collapsed here so every visitor gets the "so what" synthesis, not
+    # just a sortable table they have to interpret themselves.
+    with st.expander("📊 Fleet Business Risk Assessment", expanded=True):
+        from battery_copilot import build_fleet_stats as _build_fleet_stats, answer_fleet_risk
+        st.markdown(answer_fleet_risk(_build_fleet_stats(_org_id, featured_dfs, bundles)))
+
     render_fleet_diagnostics(rows, featured_dfs, bundles, trajectory_memory)

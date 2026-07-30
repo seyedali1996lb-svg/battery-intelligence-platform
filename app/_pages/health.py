@@ -180,6 +180,11 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             ),
         )
         st.plotly_chart(fig, use_container_width=True)
+        _cap_lost_mah = float(_rdf["capacity_fade_ah"].iloc[-1]) * 1000
+        _cap_caption = f"{_cap_lost_mah:.0f} mAh lost over {int(_rdf['cycle_number'].iloc[-1])} cycles — {knee['phase'].lower()} phase"
+        if len(cap_anomalies) > 0:
+            _cap_caption += f", {len(cap_anomalies)} anomalous cycle{'s' if len(cap_anomalies) != 1 else ''} flagged"
+        st.caption(_cap_caption)
 
     with col2:
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
@@ -212,6 +217,14 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             ),
         )
         st.plotly_chart(fig2, use_container_width=True)
+        _res0 = float(_rdf["resistance_ohm"].iloc[0])
+        _res_now = float(_rdf["resistance_ohm"].iloc[-1])
+        _res_growth_pct = (_res_now / _res0 - 1) * 100 if _res0 > 0 else 0.0
+        _res_trend_word = "growing" if _res_growth_pct > 5 else ("stable" if _res_growth_pct > -5 else "improving")
+        _res_caption = f"{_res_trend_word.capitalize()} — {_res_growth_pct:+.0f}% vs. cycle 1"
+        if len(res_anomalies) > 0:
+            _res_caption += f", {len(res_anomalies)} spike{'s' if len(res_anomalies) != 1 else ''} flagged"
+        st.caption(_res_caption)
 
     # ── Section 2: Mechanism (always visible) ───────────────────────────────
     _mech_v, _mech_c, _mech_icon = "Insufficient data", "#718096", "○"
