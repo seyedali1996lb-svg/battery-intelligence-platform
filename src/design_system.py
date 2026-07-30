@@ -115,7 +115,7 @@ def provenance_banner(
         f"<div style='background:{c}18;border:1px solid {c}44;"
         f"border-radius:8px;padding:9px 14px;margin-bottom:12px;"
         f"display:flex;align-items:flex-start;gap:10px'>"
-        f"<span style='background:{c}33;color:{c};font-size:10px;font-weight:800;"
+        f"<span role='img' aria-label='{label}' style='background:{c}33;color:{c};font-size:10px;font-weight:800;"
         f"padding:2px 8px;border-radius:6px;letter-spacing:0.07em;white-space:nowrap;"
         f"margin-top:1px'>{label}</span>"
         f"<span style='font-size:12px;color:{c}cc;line-height:1.5'>{msg}</span>"
@@ -139,7 +139,7 @@ def make_state_badge(state: str) -> str:
     c, label, italic = _STATE_CFG[state]
     extra = ";font-style:italic" if italic else ""
     return (
-        f"<span style='background:{c}22;border:1px solid {c}55;color:{c};"
+        f"<span role='img' aria-label='{label}' style='background:{c}22;border:1px solid {c}55;color:{c};"
         f"font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;"
         f"letter-spacing:0.04em{extra}'>{label}</span>"
     )
@@ -150,11 +150,16 @@ def make_state_badge(state: str) -> str:
 # ---------------------------------------------------------------------------
 
 def section_header_html(title: str) -> str:
-    """Return styled section-divider HTML for use with unsafe_allow_html."""
+    """Return styled section-divider HTML for use with unsafe_allow_html.
+
+    Renders as a real <h4> (not a <div>) so screen-reader heading
+    navigation (NVDA/JAWS "H" key, VoiceOver rotor) can jump to it -- see
+    the accessibility audit that added this.
+    """
     return (
-        f"<div style='font-size:11px;font-weight:600;color:#4a5568;"
+        f"<h4 style='font-size:11px;font-weight:600;color:#4a5568;"
         f"text-transform:uppercase;letter-spacing:0.08em;padding-bottom:8px;"
-        f"border-bottom:1px solid #2d3748;margin:28px 0 16px'>{title}</div>"
+        f"border-bottom:1px solid #2d3748;margin:28px 0 16px'>{title}</h4>"
     )
 
 
