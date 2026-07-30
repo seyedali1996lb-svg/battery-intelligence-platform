@@ -237,7 +237,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         _df_telem = _df_telem[_df_telem["cell_id"] == _replay_cell] if "cell_id" in _df_telem.columns else _df_telem
 
         # ── Live metrics strip ──────────────────────────────────────────────────
-        st.markdown("<div class='section-header'>Live Readings</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Live Readings</h4>", unsafe_allow_html=True)
         _latest_row = _telem[-1]
         _lm1, _lm2, _lm3, _lm4, _lm5 = st.columns(5)
         _lm1.metric("Voltage",     f"{_latest_row.get('voltage_v', '—'):.3f} V"     if _latest_row.get('voltage_v')     is not None else "—")
@@ -256,7 +256,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         # per-cell physics twin" a real Siemens/ABB-grade twin would be — the
         # PyBaMM parameter set itself is still fixed per chemistry, not fitted
         # from telemetry — so it's labelled accordingly rather than oversold.
-        st.markdown("<div class='section-header'>⚛ Physics Twin Check (PyBaMM)</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>⚛ Physics Twin Check (PyBaMM)</h4>", unsafe_allow_html=True)
         _PB_RECOMPUTE_EVERY = 15  # readings — a full SPM run takes ~2-3s; too slow to redo every 1s rerun
         _cycle_vals = [t.get("cycle") for t in _telem if t.get("cycle") is not None]
         _soh_vals   = [t.get("soh_pct") for t in _telem if t.get("soh_pct") is not None]
@@ -303,7 +303,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 )
 
         # ── Real-time charts ────────────────────────────────────────────────────
-        st.markdown("<div class='section-header'>Telemetry Stream</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Telemetry Stream</h4>", unsafe_allow_html=True)
 
         _x_axis = _df_telem["seq"].tolist() if "seq" in _df_telem.columns else list(range(len(_df_telem)))
 
@@ -402,9 +402,16 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 )
             return "Monitor subsequent readings. If pattern repeats, correlate with SOH trend."
 
-        st.markdown("<div class='section-header'>Anomaly Log</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Anomaly Log</h4>", unsafe_allow_html=True)
         if _anom:
             _anom_recent = list(reversed(_anom[-50:]))
+            # aria-live: a screen reader is otherwise never notified when a
+            # new (possibly safety-relevant, e.g. THERMAL_RUNAWAY) anomaly
+            # appears during the 0.5s auto-refresh -- see the accessibility
+            # audit that added this. Scoped to this log only, not the
+            # faster-changing metrics strip above, since making a
+            # sub-second-refreshing region aria-live would spam-announce.
+            _anom_html = "<div aria-live='polite' aria-relevant='additions'>"
             for _a in _anom_recent:
                 _sev   = _a.get("severity", "warning")
                 _ac    = "#fc8181" if _sev == "critical" else "#f6ad55"
@@ -412,7 +419,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 _adet  = _a.get("detail", "")
                 _ats   = _a.get("ts", "")[:19].replace("T", " ")
                 _diag  = _anomaly_diagnosis(_akind, _adet, _a.get("value"), _a.get("threshold"))
-                st.markdown(
+                _anom_html += (
                     f"<div style='background:{_ac}11;border-left:3px solid {_ac};"
                     f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
                     f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
@@ -423,9 +430,10 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                     f"<div style='color:#a0aec0;font-size:11px;border-top:1px solid {_ac}22;"
                     f"padding-top:4px;margin-top:4px'>"
                     f"<span style='color:{_ac};font-weight:600'>Diagnosis: </span>{_diag}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
+                    f"</div>"
                 )
+            _anom_html += "</div>"
+            st.markdown(_anom_html, unsafe_allow_html=True)
             # CSV export
             _df_anom_exp = _pd_lm.DataFrame(_anom)
             _anom_csv    = _df_anom_exp.to_csv(index=False).encode()
