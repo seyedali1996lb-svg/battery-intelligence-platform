@@ -140,9 +140,26 @@ def page_decision(
 
     # ── 2. NPV Decision Table (3 options, no chart) ─────────────────────────
     st.markdown("<h4 class='section-header'>Financial Decision</h4>", unsafe_allow_html=True)
+    # This 5-yr NPV Scenario Planner deliberately uses its own assumption set,
+    # NOT consequences.ASSUMPTIONS — verified this is intentional, not drift,
+    # before touching it: _repl_cost is a BNEF 2024 *installed/system-level*
+    # replacement-cost estimate ($100-200/cell) for a long-run operational
+    # DCF decision, while ASSUMPTIONS["new_cell_cost"] ($20, range $5-60) is
+    # a *bare-cell spot price* citation used by the separate, point-in-time
+    # Reuse/Recycle/Buy-new comparison (financial_comparison(), also shown
+    # on this platform — e.g. EOL Economics' top cards, the Copilot's
+    # "business case" chip). Both figures are real and correctly sourced for
+    # their own purpose; they are not the same real-world quantity, so they
+    # are NOT unified here — see the "ⓘ Assumptions" popover below, which
+    # now says so explicitly, so a reader bouncing between the two doesn't
+    # mistake this for the same bug class as consequences.best_fit_application()
+    # (an independently re-derived ladder that SHOULD agree with the original).
+    # consequences.py's own NPV Scenario Planner section uses the identical
+    # $80/$150/$30 figures for the same reason — keep both in sync if either
+    # changes.
     _npv_rate   = 0.08
-    _energy_usd = 80.0
-    _repl_cost  = 150.0
+    _energy_usd = 80.0   # IEA 2024 LCOS range $60-140/kWh·yr — NPV Scenario Planner only
+    _repl_cost  = 150.0  # BNEF 2024 range $100-200/cell (installed) — NPV Scenario Planner only
     _years      = list(range(1, 6))
     def _pv(r, t): return 1.0 / ((1 + r) ** t)
     _rul_yrs = min((rul_pred / 200.0 / 12.0) if rul_pred else 1.5, 5.0)
@@ -158,7 +175,7 @@ def page_decision(
     )
 
     _sl_cap   = _cap_now * (soh / 100.0) * 0.85
-    _repack   = 30.0
+    _repack   = 30.0   # NPV Scenario Planner only — see note above _npv_rate; not ASSUMPTIONS["repack_cost"]
     _c_npv    = sum(_sl_cap * _energy_usd * 0.6 * _pv(_npv_rate, t) for t in _years) - _repack
 
     _opts = [
@@ -239,12 +256,43 @@ def page_decision(
             f"<strong style='color:#e2e8f0'>${_repack:.0f} repack cost</strong> "
             f"{make_badge('Illustrative', '#718096')}<br>"
             f"Engineering estimate.<br><br>"
+            f"<span style='color:#8896a8;font-size:11px'>These figures are a separate, longer-run "
+            f"assumption set for this 5-yr NPV model — not the same as the "
+            f"${ASSUMPTIONS['new_cell_cost']['value']:.0f}/cell "
+            f"bare-cell spot price used in the Reuse/Recycle/Buy-new comparison elsewhere on this "
+            f"platform (EOL Economics, the Copilot's \"business case\" chip). ${_repl_cost:.0f} here reflects "
+            f"an installed/system-level replacement estimate, not a component price — the two are "
+            f"intentionally different figures for different decisions, not a discrepancy.</span><br><br>"
             f"<em style='color:#a0aec0'>Not financial advice.</em>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    # ── The story: one paragraph synthesizing the hero, mechanism, fit, and ──
+    # NPV cards above (Data Storytelling review finding — these used to sit
+    # as 4 unconnected cards with no "here's what's happening and why"
+    # narrative tying them together). Reads only already-computed values, so
+    # it can't drift from what the cards above already say.
+    from battery_copilot import answer_cell_story
+    _story_text = answer_cell_story({
+        "cell_id": selected,
+        "soh": soh,
+        "action_label": action_label,
+        "confidence_label": conf_label,
+        "mechanism": _dec_mech,
+        "fit_scores": fit_scores,
+        "financial_best_label": _best_lbl,
+        "financial_best_npv": _best_npv_v,
+        "financial_disagrees": _financial_disagrees,
+        "npv_max_label": _npv_max[0],
+        "npv_max_value": _npv_max[1],
+    })
+    st.markdown(
+        f"<div style='font-size:13px;color:#a0aec0;line-height:1.7;margin:12px 0 16px;"
+        f"padding:14px 18px;background:#1a202c;border-radius:8px;"
+        f"border-left:3px solid #2d3748'>{_story_text}</div>",
+        unsafe_allow_html=True,
+    )
 
     # ── 📋 Supporting details (U2 density reduction): maintenance calendar, ──
     # application fit, second-life marketplace, confidence-reason callouts ──

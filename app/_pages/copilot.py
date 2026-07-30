@@ -239,7 +239,31 @@ def page_copilot(
         response = answer_fleet_risk(fleet_stats)
         contexts = []
     elif query == "business_case":
-        response = answer_business_case(ctx, fleet_stats)
+        # Grounded in the same classify()/financial_comparison() results
+        # Decide & Ask itself uses, not an independent SOH/cost ladder --
+        # see answer_business_case()'s docstring for the bug this replaced.
+        from consequences import application_fit, financial_comparison, ASSUMPTIONS, CELL_NOMINAL_KWH
+        from recommendations import classify
+        _bc_latest = featured_dfs[selected].iloc[-1]
+        _bc_soh = float(_bc_latest["soh_pct"])
+        _bc_fade_30 = float(_bc_latest.get("fade_rate_30cy", 0.0))
+        _bc_fade_50 = float(_bc_latest.get("fade_rate_50cy", 0.0))
+        _bc_fit = application_fit(_bc_soh, _bc_fade_30, fleet_fade_median=None)
+        _bc_result = classify(
+            _bc_soh, _bc_fade_30, _bc_fade_50,
+            ctx["rul_reliable"], ctx["rul_pred"], _bc_fit,
+        )
+        _bc_assumptions = {k: v["value"] for k, v in ASSUMPTIONS.items()}
+        _bc_financials = None
+        if ctx["source_kind"] in CELL_NOMINAL_KWH:
+            _bc_financials = financial_comparison(
+                soh=_bc_soh, source=ctx["source_kind"],
+                recycling_value=_bc_assumptions["recycling_value"],
+                new_cell_cost=_bc_assumptions["new_cell_cost"],
+                sl_value_per_kwh=_bc_assumptions["second_life_value_per_kwh"],
+                repack_cost=_bc_assumptions["repack_cost"],
+            )
+        response = answer_business_case(ctx, _bc_result, _bc_financials, _bc_assumptions)
         contexts = [ctx]
     else:
         response = f"Unknown query: {query}"

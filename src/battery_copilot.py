@@ -1074,10 +1074,7 @@ def answer_alerts(fleet_stats: dict) -> str:
 # Business-surface answers (plain English, no technical jargon)
 # ---------------------------------------------------------------------------
 
-_REPLACEMENT_COST_USD = 150   # per cell — matches Executive Dashboard constant
-_CYCLES_PER_MONTH     = 200
-_CELL_KWH             = 0.0057
-_CO2_KG_PER_KWH       = 0.85
+_REPLACEMENT_COST_USD = 150   # per cell — used by fleet-level budget/risk narratives below
 
 
 def answer_replacement_budget(fleet_stats: dict) -> str:
@@ -1180,54 +1177,149 @@ def answer_fleet_risk(fleet_stats: dict) -> str:
     return "\n".join(lines)
 
 
-def answer_business_case(ctx: dict, fleet_stats: dict) -> str:
-    """Replace vs. wait vs. repurpose decision in plain English."""
-    cell_id  = ctx["cell_id"]
-    soh      = ctx["soh"]
-    rul      = ctx.get("rul_cycles")
-    reliable = ctx.get("rul_reliable", False)
+def answer_cell_story(story: dict) -> str:
+    """Plain-English single-cell narrative for the Decide & Ask page.
 
-    months_left = (rul / _CYCLES_PER_MONTH) if (rul and reliable) else None
+    Mirrors answer_fleet_risk()'s job at the single-cell decision level
+    (Data Storytelling review finding, the one item left open in the
+    2026-07-30 self-audit: Decide & Ask showed 4 separate cards -- hero
+    recommendation, mechanism verdict, application fit scores, NPV
+    comparison -- with no synthesized "here's the story" paragraph tying
+    them together. A reader had to piece together *why* a recommendation
+    was made and whether the financial numbers actually agreed with it.
 
-    replace_cost    = _REPLACEMENT_COST_USD
-    repurpose_value = round(replace_cost * 0.35)   # ~35% of new cost for second-life
-    wait_penalty    = round(replace_cost * 0.15)   # risk premium for unplanned failure
+    This function performs NO new classification, thresholding, or
+    financial math of its own -- it only narrates values the caller already
+    computed via classify()/diagnose_mechanism()/application_fit()/the
+    page's own NPV comparison, so it can never drift from or disagree with
+    the cards it summarizes (the exact bug class this project has fixed
+    repeatedly elsewhere: a second independent derivation of the same
+    verdict).
 
-    lines = [f"## Replace or Repurpose? — {cell_id}\n"]
+    story: {
+        "cell_id": str, "soh": float, "action_label": str,
+        "confidence_label": str,        # a design_system.CONF_META display
+                                         # string, e.g. "High confidence" --
+                                         # already reads naturally in "(...)"
+        "mechanism": dict | None,       # diagnose_mechanism() output
+        "fit_scores": dict,             # application_fit() output
+        "financial_best_label": str, "financial_best_npv": float,
+        "financial_disagrees": bool,
+        "npv_max_label": str, "npv_max_value": float,
+    }
+    """
+    cell_id          = story["cell_id"]
+    soh               = story["soh"]
+    action_label      = story["action_label"]
+    confidence_label  = story["confidence_label"]
+    mechanism         = story.get("mechanism")
+    fit_scores        = story.get("fit_scores") or {}
 
-    if soh >= 90:
-        lines += [
-            f"**Recommendation: Wait** — {cell_id} is healthy at {soh:.1f}% SOH.\n",
-            f"No action needed now. Continue normal monitoring and revisit when SOH drops below 85%.",
-        ]
-    elif soh >= 80:
-        lines += [
-            f"**Recommendation: Plan replacement** — {cell_id} is degrading at {soh:.1f}% SOH.\n",
-        ]
-        if months_left:
-            lines.append(
-                f"At the current fade rate, estimated **{months_left:.0f} months** of useful life remain. "
-                f"Schedule replacement before the next major operational cycle to avoid unplanned downtime."
+    sentences = [
+        f"**{cell_id}** is at **{soh:.1f}% SOH** — the recommended action is "
+        f"**{action_label}** ({confidence_label})."
+    ]
+
+    if mechanism and mechanism.get("verdict") not in (None, "Insufficient data") \
+            and mechanism.get("confidence_label") not in (None, "No data"):
+        sentences.append(
+            f"Degradation is driven primarily by **{mechanism['verdict']}** "
+            f"({mechanism['confidence_label']} confidence)."
+        )
+
+    if fit_scores:
+        fit_apps = [v["name"] for v in fit_scores.values() if v["fit"] == "fit"]
+        marginal_apps = [v["name"] for v in fit_scores.values() if v["fit"] == "marginal"]
+        if fit_apps:
+            sentences.append(
+                f"For second-life reuse, it is a good fit for {', '.join(fit_apps)}."
             )
+        elif marginal_apps:
+            sentences.append(
+                f"For second-life reuse, it is a marginal fit for {', '.join(marginal_apps)} "
+                f"— worth evaluating case by case."
+            )
+        else:
+            sentences.append("It does not fit any tracked second-life application today.")
+
+    fb_label = story.get("financial_best_label")
+    fb_npv   = story.get("financial_best_npv")
+    if fb_label is not None and fb_npv is not None:
+        if story.get("financial_disagrees"):
+            sentences.append(
+                f"Financially, **{story['npv_max_label']}** has the higher 5-yr NPV "
+                f"(${story['npv_max_value']:,.0f}), but the recommendation above is followed "
+                f"instead of the pure NPV-maximizing option — see \"Compare alternatives\" "
+                f"below for the full picture."
+            )
+        else:
+            sentences.append(
+                f"Financially, **{fb_label}** is also the highest-NPV option "
+                f"(${fb_npv:,.0f} over 5 years) — the operational and financial "
+                f"recommendations agree."
+            )
+
+    return " ".join(sentences)
+
+
+def answer_business_case(ctx: dict, result: dict, financials: "dict | None", assumptions: dict) -> str:
+    """Replace vs. wait vs. repurpose decision in plain English.
+
+    Grounded in the same classify()/financial_comparison() results Decide &
+    Ask itself uses -- not an independent SOH/cost ladder. This used to
+    hardcode its own 90%/80% SOH thresholds and a flat replacement cost via
+    _REPLACEMENT_COST_USD, entirely separate from
+    consequences.ASSUMPTIONS/application_fit()/classify()/
+    financial_comparison() -- the same "independently recomputed ladder"
+    bug class this project has fixed repeatedly elsewhere (e.g.
+    consequences.best_fit_application()). A cell could get one action from
+    Decide & Ask and a different-sounding recommendation from this Copilot
+    chip for the same cell. (It also silently read a "rul_cycles" key
+    build_cell_context() never sets -- always None -- so the months-
+    remaining estimate below never actually fired; classify()'s own
+    action_reasons replace that entirely now.)
+
+    ctx: build_cell_context() output — only cell_id/soh are read (raw
+        facts); the decision itself comes from `result`, not from ctx.
+    result: classify()'s output — action, action_reasons, confidence.
+    financials: financial_comparison()'s output, or None when this cell's
+        chemistry has no CELL_NOMINAL_KWH entry (e.g. an unspecified user
+        upload) — financial framing is omitted rather than guessing a
+        capacity or crashing.
+    assumptions: {key: value} flattened from consequences.ASSUMPTIONS.
+    """
+    cell_id = ctx["cell_id"]
+    soh     = ctx["soh"]
+    action  = result["action"]
+
+    from design_system import ACTION_META
+    action_label = ACTION_META[action][0]
+
+    lines = [
+        f"## Replace or Repurpose? — {cell_id}\n",
+        f"**Recommendation: {action_label}** — {cell_id} is at {soh:.1f}% SOH.\n",
+    ]
+    for reason in result.get("action_reasons", []):
+        lines.append(f"- {reason}")
+
+    if financials is not None:
         lines += [
-            f"\n**Option A — Replace now:** ${replace_cost} upfront. Eliminates unplanned failure risk.",
-            f"**Option B — Wait:** saves cash short-term but carries ~${wait_penalty} risk premium "
-            f"if the cell fails in service.",
-            f"**Option C — Repurpose:** second-life use (e.g. stationary storage) could recover "
-            f"~${repurpose_value} in residual value if the application tolerates lower capacity.",
+            f"\n**Replace now:** ${financials['new_cell_cost']:.0f} upfront. "
+            f"Eliminates unplanned failure risk.",
+            f"**Wait:** carries the risk of continuing to operate a degrading cell.",
+            f"**Repurpose (second-life):** ~${financials['sl_net']:.2f} residual value "
+            f"if the application tolerates this cell's remaining capacity.",
+            f"**Recycle instead:** ~${financials['recycle_value']:.2f} material recovery value.",
         ]
     else:
-        lines += [
-            f"**Recommendation: Replace immediately** — {cell_id} is at {soh:.1f}% SOH, "
-            f"below the 80% end-of-life threshold.\n",
-            f"Continuing operation risks in-service failure and may breach IEC 62619 safety limits.",
-            f"\n**Replace:** ${replace_cost}. At this SOH, repurposing is marginal — "
-            f"second-life value is approximately ${repurpose_value}, but remaining capacity "
-            f"limits viable applications.",
-        ]
+        lines.append(
+            "\n*Financial figures aren't available for this cell's chemistry — "
+            "nominal capacity isn't specified for this data source.*"
+        )
 
     lines.append(
-        f"\n*All figures use ${_REPLACEMENT_COST_USD}/cell default. Update in Settings.*"
+        f"\n*Figures use this platform's assumption defaults "
+        f"(${assumptions.get('new_cell_cost', 0):.0f}/cell replacement). Update in Settings.*"
     )
     return "\n".join(lines)
 
