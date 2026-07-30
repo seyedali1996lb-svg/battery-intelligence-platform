@@ -36,21 +36,26 @@ def _section(title: str):
     st.markdown(section_header_html(title), unsafe_allow_html=True)
 
 
-def _set_secret_setting(org_id: int, key: str, value) -> None:
+def _set_secret_setting(org_id: int, key: str, value, role: "str | None" = None) -> None:
     """Wraps db.set_setting() for the 5 credential-shaped keys, surfacing
-    db.InsecureCredentialStorageError as a page error instead of an
-    uncaught exception -- these calls fire on every Streamlit rerun (not
-    behind a Save button), so a new credential typed in while
-    SETTINGS_ENCRYPTION_KEY is unset would otherwise crash the whole
-    Settings page rather than just fail to save."""
+    db.InsecureCredentialStorageError/db.InsufficientRoleError as a page
+    error instead of an uncaught exception -- these calls fire on every
+    Streamlit rerun (not behind a Save button), so either failure would
+    otherwise crash the whole Settings page rather than just fail to save.
+    role is forwarded to db.set_setting() -- every one of these 5 keys is
+    also in db._ADMIN_ONLY_SETTING_KEYS, enforced there, not just by the
+    orchestrator hiding this section's widgets from non-admins (defense in
+    depth -- see db.InsufficientRoleError's docstring)."""
     try:
-        db.set_setting(org_id, key, value)
+        db.set_setting(org_id, key, value, role=role)
     except db.InsecureCredentialStorageError:
         st.error(
             f"Not saved: SETTINGS_ENCRYPTION_KEY must be set before a new "
             f"{key.replace('_', ' ')} can be stored securely (see the "
             "warning banner above)."
         )
+    except db.InsufficientRoleError:
+        st.error(f"Not saved: {key.replace('_', ' ')} is org-wide configuration, restricted to the admin role.")
 
 
 def render_encryption_key_warning() -> None:
@@ -96,10 +101,10 @@ def render_application_profile_and_eol() -> None:
     )
     if _new_profile != _cur_profile:
         st.session_state["app_profile"] = _new_profile
-        db.set_setting(st.session_state["auth_org_id"], "app_profile", _new_profile)
+        db.set_setting(st.session_state["auth_org_id"], "app_profile", _new_profile, role=st.session_state.get("auth_role"))
         if _PROFILES[_new_profile] is not None:
             st.session_state["eol_threshold_pct"] = _PROFILES[_new_profile]
-            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", _PROFILES[_new_profile])
+            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", _PROFILES[_new_profile], role=st.session_state.get("auth_role"))
         st.rerun()
     if _PROFILES.get(_new_profile) is not None:
         st.caption(
@@ -134,13 +139,13 @@ def render_application_profile_and_eol() -> None:
         st.markdown("<div style='padding-top:26px'>", unsafe_allow_html=True)
         if st.button("Reset to 80%", key="settings_eol_reset"):
             st.session_state["eol_threshold_pct"] = 80.0
-            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", 80.0)
+            db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", 80.0, role=st.session_state.get("auth_role"))
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     if new_eol != int(st.session_state.get("eol_threshold_pct", 80)):
         st.session_state["eol_threshold_pct"] = float(new_eol)
-        db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", float(new_eol))
+        db.set_setting(st.session_state["auth_org_id"], "eol_threshold_pct", float(new_eol), role=st.session_state.get("auth_role"))
         st.rerun()
 
     if new_eol != 80:
@@ -394,7 +399,7 @@ def render_cost_of_delay() -> None:
     )
     if _cod_mult != st.session_state.get("cost_of_delay_mult", 2.0):
         st.session_state["cost_of_delay_mult"] = _cod_mult
-        db.set_setting(st.session_state["auth_org_id"], "cost_of_delay_mult", _cod_mult)
+        db.set_setting(st.session_state["auth_org_id"], "cost_of_delay_mult", _cod_mult, role=st.session_state.get("auth_role"))
         st.rerun()
 
 
@@ -442,9 +447,9 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
              "TRAJECTORY_MATCH/PASSPORT_GAP are session/page-load-triggered best-effort "
              "alerts, not a real background cron.",
     )
-    db.set_setting(st.session_state["auth_org_id"], "webhook_url", _wh_url)
-    _set_secret_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret)
-    db.set_setting(st.session_state["auth_org_id"], "webhook_events", _wh_events)
+    db.set_setting(st.session_state["auth_org_id"], "webhook_url", _wh_url, role=st.session_state.get("auth_role"))
+    _set_secret_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret, role=st.session_state.get("auth_role"))
+    db.set_setting(st.session_state["auth_org_id"], "webhook_events", _wh_events, role=st.session_state.get("auth_role"))
     if _wh_url:
         from notifications import send_webhook
         _wh_test_col, _wh_digest_col, _ = st.columns([1, 1, 3])
@@ -507,8 +512,8 @@ def render_bms_connector_victron() -> None:
         "VRM installation ID", value=st.session_state.get("vrm_installation_id", ""),
         key="vrm_installation_id",
     )
-    _set_secret_setting(st.session_state["auth_org_id"], "vrm_api_token", _vrm_token)
-    db.set_setting(st.session_state["auth_org_id"], "vrm_installation_id", _vrm_install_id)
+    _set_secret_setting(st.session_state["auth_org_id"], "vrm_api_token", _vrm_token, role=st.session_state.get("auth_role"))
+    db.set_setting(st.session_state["auth_org_id"], "vrm_installation_id", _vrm_install_id, role=st.session_state.get("auth_role"))
     if not (_vrm_token and _vrm_install_id):
         _empty_state(
             "Not yet connected",
@@ -550,8 +555,8 @@ def render_bms_connector_orion() -> None:
         "Cell ID to monitor", value=st.session_state.get("orion_bms_cell_id", ""),
         key="orion_bms_cell_id",
     )
-    _set_secret_setting(st.session_state["auth_org_id"], "orion_bms_api_key", _orion_key)
-    db.set_setting(st.session_state["auth_org_id"], "orion_bms_cell_id", _orion_cell_id)
+    _set_secret_setting(st.session_state["auth_org_id"], "orion_bms_api_key", _orion_key, role=st.session_state.get("auth_role"))
+    db.set_setting(st.session_state["auth_org_id"], "orion_bms_cell_id", _orion_cell_id, role=st.session_state.get("auth_role"))
     if not (_orion_key and _orion_cell_id):
         _empty_state(
             "Not yet connected",
@@ -586,7 +591,7 @@ def render_second_life_marketplace() -> None:
         type="password", key="circunomics_api_key",
         help="Issued by Circunomics after partner onboarding — not a public self-serve key.",
     )
-    _set_secret_setting(st.session_state["auth_org_id"], "circunomics_api_key", _circ_key)
+    _set_secret_setting(st.session_state["auth_org_id"], "circunomics_api_key", _circ_key, role=st.session_state.get("auth_role"))
     if not _circ_key:
         _empty_state(
             "Not yet connected",
@@ -627,13 +632,13 @@ def render_maintenance_writeback() -> None:
         key="cmms_api_base_url",
         help="e.g. https://your-instance.example-cmms.com/v1",
     )
-    db.set_setting(st.session_state["auth_org_id"], "cmms_api_base_url", _cmms_base_url)
+    db.set_setting(st.session_state["auth_org_id"], "cmms_api_base_url", _cmms_base_url, role=st.session_state.get("auth_role"))
     _cmms_key = st.text_input(
         "CMMS/ERP API key", value=st.session_state.get("cmms_api_key", ""),
         type="password", key="cmms_api_key",
         help="Issued by your CMMS/ERP provider — not a public self-serve key.",
     )
-    _set_secret_setting(st.session_state["auth_org_id"], "cmms_api_key", _cmms_key)
+    _set_secret_setting(st.session_state["auth_org_id"], "cmms_api_key", _cmms_key, role=st.session_state.get("auth_role"))
     if not _cmms_key:
         _empty_state(
             "Not yet connected",
@@ -684,13 +689,18 @@ def render_team_members() -> None:
         elif len(_tm_password) < 6:
             st.error("Password must be at least 6 characters.")
         else:
-            _invite_result = db.create_user(
-                st.session_state["auth_org_id"], _tm_username, _tm_password, _tm_role, _tm_display,
-            )
-            if "error" in _invite_result:
-                st.error(_invite_result["error"])
+            try:
+                _invite_result = db.create_user(
+                    st.session_state["auth_org_id"], _tm_username, _tm_password, _tm_role, _tm_display,
+                    caller_role=st.session_state.get("auth_role"),
+                )
+            except db.InsufficientRoleError:
+                st.error("Not added: inviting teammates is restricted to the admin role.")
             else:
-                st.success(f"Added {_tm_username} ({_tm_role}) to {st.session_state.get('auth_org_name', 'this organization')}.")
+                if "error" in _invite_result:
+                    st.error(_invite_result["error"])
+                else:
+                    st.success(f"Added {_tm_username} ({_tm_role}) to {st.session_state.get('auth_org_name', 'this organization')}.")
 
 
 def render_sites_and_fleets(featured_dfs: dict) -> None:
@@ -713,8 +723,12 @@ def render_sites_and_fleets(featured_dfs: dict) -> None:
     _new_site_name = _sf_col1.text_input("New site name", key="new_site_name", placeholder="Warehouse B")
     if _sf_col1.button("Add site", key="add_site_btn"):
         if _new_site_name.strip():
-            db.create_site(_org_id_sf, _new_site_name)
-            st.rerun()
+            try:
+                db.create_site(_org_id_sf, _new_site_name, caller_role=st.session_state.get("auth_role"))
+            except db.InsufficientRoleError:
+                st.error("Not added: creating sites is restricted to the admin role.")
+            else:
+                st.rerun()
         else:
             st.error("Site name is required.")
 
@@ -727,8 +741,12 @@ def render_sites_and_fleets(featured_dfs: dict) -> None:
         _new_fleet_name = _sf_col3.text_input("New fleet name", key="new_fleet_name", placeholder="Forklift Fleet")
         if _sf_col3.button("Add fleet", key="add_fleet_btn"):
             if _new_fleet_name.strip():
-                db.create_fleet(_org_id_sf, _sel_site_id, _new_fleet_name)
-                st.rerun()
+                try:
+                    db.create_fleet(_org_id_sf, _sel_site_id, _new_fleet_name, caller_role=st.session_state.get("auth_role"))
+                except db.InsufficientRoleError:
+                    st.error("Not added: creating fleets is restricted to the admin role.")
+                else:
+                    st.rerun()
             else:
                 st.error("Fleet name is required.")
 
@@ -741,8 +759,12 @@ def render_sites_and_fleets(featured_dfs: dict) -> None:
             _new_pack_name = st.text_input("New pack name", key="new_pack_name", placeholder="Pack 1")
             if st.button("Add pack", key="add_pack_btn"):
                 if _new_pack_name.strip():
-                    db.create_pack(_org_id_sf, _sel_fleet_id, _new_pack_name)
-                    st.rerun()
+                    try:
+                        db.create_pack(_org_id_sf, _sel_fleet_id, _new_pack_name, caller_role=st.session_state.get("auth_role"))
+                    except db.InsufficientRoleError:
+                        st.error("Not added: creating packs is restricted to the admin role.")
+                    else:
+                        st.rerun()
                 else:
                     st.error("Pack name is required.")
 
@@ -761,8 +783,13 @@ def render_sites_and_fleets(featured_dfs: dict) -> None:
                             "Assign a cell", _assignable, key=f"sf_assign_cell_{_pack['id']}",
                         )
                         if st.button("Assign", key=f"sf_assign_btn_{_pack['id']}"):
-                            db.add_cell_to_pack(_org_id_sf, _pack["id"], _sf_pick_cell, position=len(_pack_cells))
-                            st.rerun()
+                            try:
+                                db.add_cell_to_pack(_org_id_sf, _pack["id"], _sf_pick_cell, position=len(_pack_cells),
+                                                     caller_role=st.session_state.get("auth_role"))
+                            except db.InsufficientRoleError:
+                                st.error("Not assigned: managing pack cells is restricted to the admin role.")
+                            else:
+                                st.rerun()
         else:
             st.caption("No fleets in this site yet — add one above.")
     else:
@@ -905,17 +932,26 @@ def render_about() -> None:
 
 def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
     render_encryption_key_warning()
-    render_application_profile_and_eol()
     render_alert_thresholds()
     render_rul_reliability_threshold(bundles)
-    render_model_cache()
     render_crm_configuration()
-    render_cost_of_delay()
-    render_webhook_notifications(featured_dfs)
-    render_bms_connector_victron()
-    render_bms_connector_orion()
-    render_second_life_marketplace()
-    render_maintenance_writeback()
+    # Org-wide configuration (integration credentials, alert/threshold
+    # config) and the platform-wide model-cache clear -- restricted to
+    # admin in the UI (matching Team Members/Sites & Fleets' existing
+    # pattern below) *and* enforced underneath in src/db.py itself (see
+    # db.InsufficientRoleError's docstring for why hiding these widgets
+    # alone was never a real security boundary). Hiding them here as well
+    # avoids a confusing "you can see the field but saving it always
+    # errors" experience for non-admin roles.
+    if st.session_state.get("auth_role") == "admin":
+        render_application_profile_and_eol()
+        render_model_cache()
+        render_cost_of_delay()
+        render_webhook_notifications(featured_dfs)
+        render_bms_connector_victron()
+        render_bms_connector_orion()
+        render_second_life_marketplace()
+        render_maintenance_writeback()
     render_team_members()
     render_sites_and_fleets(featured_dfs)
     render_ai_copilot_key()

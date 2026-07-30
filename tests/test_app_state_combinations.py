@@ -182,7 +182,7 @@ def test_settings_cmms_test_connection_reports_error_for_unreachable_endpoint(is
     used to duplicate the None/"error"/success branch by hand — Settings'
     "Test CMMS connection" button.
     """
-    isolated_db.set_setting(1, "cmms_api_base_url", "https://this-host-does-not-exist.invalid/v1")
+    isolated_db.set_setting(1, "cmms_api_base_url", "https://this-host-does-not-exist.invalid/v1", role="admin")
     at = _logged_in_app(
         role="Fleet Manager", page="settings", data_mode="synthetic",
         cmms_api_key="fake-test-key", cmms_api_base_url="https://this-host-does-not-exist.invalid/v1",
@@ -546,9 +546,9 @@ def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warni
     calls = []
     monkeypatch.setattr(_policies._LOGGER, "warning", lambda *a, **k: calls.append(a))
 
-    isolated_db.set_setting(1, "webhook_url", "https://example.com/hook")
-    isolated_db.set_setting(1, "webhook_secret", "s3cr3t")
-    isolated_db.set_setting(1, "webhook_events", ["CAPACITY_PLUNGE"])
+    isolated_db.set_setting(1, "webhook_url", "https://example.com/hook", role="admin")
+    isolated_db.set_setting(1, "webhook_secret", "s3cr3t", role="admin")
+    isolated_db.set_setting(1, "webhook_events", ["CAPACITY_PLUNGE"], role="admin")
 
     at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic")
     at.run()
