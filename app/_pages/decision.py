@@ -54,6 +54,10 @@ def page_decision(
     source          = _profile.source_kind
     rul_pred_raw    = latest.get("rul_pred", None)
     rul_pred        = float(rul_pred_raw) if (rul_reliable and rul_pred_raw is not None) else None
+    rul_q10_raw     = latest.get("rul_q10", None)
+    rul_q10         = float(rul_q10_raw) if (rul_reliable and rul_q10_raw is not None) else None
+    rul_q90_raw     = latest.get("rul_q90", None)
+    rul_q90         = float(rul_q90_raw) if (rul_reliable and rul_q90_raw is not None) else None
 
     peer_fades = [
         float(fdf.iloc[-1].get("fade_rate_30cy", 0))
@@ -388,7 +392,7 @@ def page_decision(
 
     # ── 5. Log Decision ─────────────────────────────────────────────────────
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    _log_col, _cmms_col, _ = st.columns([1, 1, 2])
+    _log_col, _cmms_col, _spine_col, _ = st.columns([1, 1, 1, 1])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
         import db as _db
         _entry = {
@@ -435,6 +439,31 @@ def page_decision(
             st.error(f"CMMS ticket creation failed: {_cmms_result['error']}")
         else:
             st.success(f"CMMS ticket created for {selected}.")
+
+    # Spine-compatible second-life data export — lets a grid-modeling team
+    # import this cell's health + second-life economics into a SpineDB-backed
+    # model (e.g. SpineOpt/FlexTool) instead of hand-transcribing values off
+    # this page. See src/spine_export.py's module docstring for schema
+    # provenance and explicit scope boundaries (no trajectory, no live DB link).
+    import json as _json_spine
+    from spine_export import build_second_life_export, to_export_document
+    _spine_data = build_second_life_export(
+        selected, source, _profile.passport_chemistry, soh, fade_30,
+        fleet_fade_median, rul_reliable,
+        rul_q10=rul_q10, rul_pred=rul_pred, rul_q90=rul_q90,
+        mechanism=_dec_mech,
+    )
+    _spine_col.download_button(
+        "Export for grid modeling",
+        data=_json_spine.dumps(to_export_document(_spine_data, selected), indent=2).encode(),
+        file_name=f"{selected}_spine_export.json",
+        mime="application/json",
+        key="dec_spine_export_btn",
+        use_container_width=True,
+        help="Download this cell's SOH/RUL/second-life economics as a Spine "
+             "Toolbox-compatible JSON file (spinedb_api import_data() format) "
+             "for use in a grid-storage modeling tool.",
+    )
 
     # E4: Audit trail with status chips and outcome tracking
     _dlog = st.session_state.get("decision_log", [])

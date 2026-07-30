@@ -133,6 +133,22 @@ def test_decide_and_ask_no_crash_for_degraded_cell(isolated_db):
     assert not at.exception, f"Decide & Ask crashed for a degraded cell: {at.exception}"
 
 
+@pytest.mark.parametrize("data_mode", ["nasa", "severson"])
+def test_decide_and_ask_spine_export_button_renders(isolated_db, data_mode):
+    """
+    Smoke test for the new Spine-compatible second-life export
+    (src/spine_export.py): the "Export for grid modeling" download button
+    must render on the Decide & Ask page without an exception across data
+    sources, including a degraded NASA cell (the same crash class as
+    test_decide_and_ask_no_crash_for_degraded_cell above).
+    """
+    at = _logged_in_app(role="Engineer", page="decision", data_mode=data_mode)
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed building the Spine export in {data_mode} mode: {at.exception}"
+    labels = [b.label for b in at.button] + [d.label for d in at.download_button]
+    assert "Export for grid modeling" in labels
+
+
 def test_overview_hero_severson_cell_not_mislabeled_synthetic(isolated_db):
     """
     Regression test: page_overview()'s hero card built its source tag from
