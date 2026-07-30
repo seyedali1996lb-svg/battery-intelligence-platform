@@ -1,11 +1,12 @@
-"""Unit tests for src/consequences.py's eol_r_code_recommendation()."""
+"""Unit tests for src/consequences.py's eol_r_code_recommendation() and
+best_fit_application()."""
 
 import sys
 import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
-from consequences import eol_r_code_recommendation, application_fit
+from consequences import eol_r_code_recommendation, application_fit, best_fit_application
 
 
 def test_high_soh_yields_r0_reuse():
@@ -49,3 +50,52 @@ def test_boundary_soh_90_is_r0_not_r3():
     ("SOH >= 90% required")."""
     result = eol_r_code_recommendation(soh=90.0, fade_30_mah_cy=0.0)
     assert result["r_code"].startswith("R0")
+
+
+# ---------------------------------------------------------------------------
+# best_fit_application() -- the single ranking helper that replaced 5
+# independently re-typed copies of the same {"fit": 2, "marginal": 1,
+# "not_fit": 0} + max() selection across consequences.py, compliance.py,
+# _fleet_diagnostics.py, and recommendations.py (x2).
+# ---------------------------------------------------------------------------
+
+def test_best_fit_application_picks_fit_over_marginal_and_not_fit():
+    fit_scores = {
+        "a": {"fit": "not_fit"},
+        "b": {"fit": "marginal"},
+        "c": {"fit": "fit"},
+    }
+    key, best = best_fit_application(fit_scores)
+    assert key == "c"
+    assert best["fit"] == "fit"
+
+
+def test_best_fit_application_picks_marginal_over_not_fit():
+    fit_scores = {
+        "a": {"fit": "not_fit"},
+        "b": {"fit": "marginal"},
+    }
+    key, best = best_fit_application(fit_scores)
+    assert key == "b"
+
+
+def test_best_fit_application_tie_keeps_first_insertion_order():
+    """Ties should resolve to the first-inserted key -- matches every prior
+    caller's behaviour before this was unified (Python's max() and a
+    reverse-sorted list's [0] both pick the first-encountered maximal item
+    when the input order is the same)."""
+    fit_scores = {
+        "first":  {"fit": "fit"},
+        "second": {"fit": "fit"},
+    }
+    key, _ = best_fit_application(fit_scores)
+    assert key == "first"
+
+
+def test_best_fit_application_matches_real_application_fit_output():
+    """Sanity check against application_fit()'s real dict shape, not just a
+    hand-rolled stub."""
+    fit = application_fit(78.0, 0.05, fleet_fade_median=None)
+    key, best = best_fit_application(fit)
+    assert key in fit
+    assert best is fit[key]

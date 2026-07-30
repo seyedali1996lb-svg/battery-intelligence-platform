@@ -49,7 +49,7 @@ def _cached_build_report_pdf(cache_key: str, _passport: dict, _second_life: dict
 
 def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
     from passport import build_passport
-    from consequences import ASSUMPTIONS, application_fit, financial_comparison
+    from consequences import ASSUMPTIONS, application_fit, financial_comparison, best_fit_application
 
     source  = ChemistryProfile.for_cell(selected).source_kind
     p       = build_passport(selected, df, bundle, rul_reliable)
@@ -66,7 +66,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     if soh <= 85.0:
         fade_30 = float(latest.get("fade_rate_30cy", 0.0))
         fit     = application_fit(soh, fade_30, fleet_fade_median=None)
-        best_key, best = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+        best_key, best = best_fit_application(fit)
 
         a   = {k: v["value"] for k, v in ASSUMPTIONS.items()}
         fc  = financial_comparison(

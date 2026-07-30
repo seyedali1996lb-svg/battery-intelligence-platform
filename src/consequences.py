@@ -248,6 +248,29 @@ def application_fit(
     return results
 
 
+# Rank used to pick the single best-scored application out of
+# application_fit()'s output. This exact {"fit": 2, "marginal": 1,
+# "not_fit": 0} dict + max()/sorted() selection was independently
+# re-typed in 5 places (eol_r_code_recommendation() below, compliance.py's
+# page_reports(), _fleet_diagnostics.py's second-life screening, and
+# recommendations.py's action derivation + mechanism_second_life_caution())
+# before this fix -- the same "single source of truth, not independently
+# recomputed" bug class this module's own eol_r_code_recommendation()
+# docstring already called out. best_fit_application() is now the one
+# place that ranking lives.
+_FIT_RANK = {"fit": 2, "marginal": 1, "not_fit": 0}
+
+
+def best_fit_application(fit_scores: dict) -> tuple:
+    """Return (key, result) for the highest-ranked application_fit() result.
+
+    Rank order: fit > marginal > not_fit. Ties keep fit_scores' own
+    insertion order (application_fit() always returns SECOND_LIFE_APPS'
+    key order), matching every prior caller's tie-breaking behaviour.
+    """
+    return max(fit_scores.items(), key=lambda kv: _FIT_RANK[kv[1]["fit"]])
+
+
 # ---------------------------------------------------------------------------
 # End-of-life R-code recommendation (IEC 62902 / EU Art. 70)
 # ---------------------------------------------------------------------------
@@ -274,7 +297,7 @@ def eol_r_code_recommendation(soh: float, fade_30_mah_cy: float) -> dict:
         return {"r_code": "R0 — Reuse (primary life)", "color": "#48bb78", "best_app": None}
 
     fit = application_fit(soh, fade_30_mah_cy, fleet_fade_median=None)
-    _, best_app = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+    _, best_app = best_fit_application(fit)
     if best_app["fit"] in ("fit", "marginal"):
         return {"r_code": "R3 — Remanufacture / Second-life application", "color": "#48bb78", "best_app": best_app}
     if soh >= 60:

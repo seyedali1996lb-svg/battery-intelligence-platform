@@ -910,7 +910,7 @@ def render_whatif_scenario_planner(rows: list) -> None:
 # ---------------------------------------------------------------------------
 
 def render_second_life_screening(rows: list) -> None:
-    from consequences import application_fit
+    from consequences import application_fit, best_fit_application
 
     st.markdown("<h4 class='section-header'>Second-Life Readiness Screening</h4>", unsafe_allow_html=True)
     st.markdown(
@@ -942,7 +942,7 @@ def render_second_life_screening(rows: list) -> None:
         # candidate" window can still have every application score
         # not_fit if its fade rate is too fast relative to the fleet.
         fit = application_fit(r["soh"], r.get("fade_30") or 0.0, _fleet_fade_median)
-        _, best_app = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+        _, best_app = best_fit_application(fit)
         return "candidate" if best_app["fit"] in ("fit", "marginal") else "below_floor"
 
     bucketed = {"primary": [], "candidate": [], "below_floor": []}

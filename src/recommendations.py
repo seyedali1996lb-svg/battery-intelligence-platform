@@ -86,13 +86,9 @@ def classify(
             action_reasons.append(f"Fade rate is stable ({fade_ratio:.1f}× baseline).")
 
     elif soh >= SOH_SECONDLIFE_FLOOR:
+        from consequences import best_fit_application
         fit_driven = True
-        ranked = sorted(
-            fit_scores.items(),
-            key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]],
-            reverse=True,
-        )
-        best_app_key, best_app = ranked[0]
+        best_app_key, best_app = best_fit_application(fit_scores)
         if best_app["fit"] in ("fit", "marginal"):
             action = "second_life"
             action_reasons.append(f"SOH {soh:.1f}% is in the second-life evaluation window ({SOH_SECONDLIFE_FLOOR:.0f}–{SOH_INSPECT_FLOOR:.0f}%).")
@@ -358,10 +354,8 @@ def mechanism_second_life_caution(fit_scores: dict, mechanism: dict) -> "str | N
         return None
     if not fit_scores:
         return None
-    _, best_app = max(
-        fit_scores.items(),
-        key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]],
-    )
+    from consequences import best_fit_application
+    _, best_app = best_fit_application(fit_scores)
     if best_app["fit"] not in ("fit", "marginal"):
         return None
     verdict = mechanism.get("verdict", "")
