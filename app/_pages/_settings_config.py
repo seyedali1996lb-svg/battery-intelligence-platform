@@ -806,11 +806,14 @@ def render_ai_copilot_key() -> None:
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "<strong style='color:#e2e8f0'>The Copilot explains decisions in plain language — it does not make "
         "decisions.</strong> The recommendation itself always comes from the deterministic model pipeline "
-        "(leave-cell-out validated GBRT + the recommendation engine); the Copilot only narrates that output. "
-        "When an Anthropic API key is set, narration uses <strong style='color:#e2e8f0'>Claude Haiku</strong> "
-        "— strictly constrained to rephrasing values already in this platform's model bundle, instructed to "
-        "never add a fact or number the template doesn't already contain. Without a key, the underlying "
-        "template text is shown as-is."
+        "(leave-cell-out validated GBRT + the recommendation engine). Topic-button questions always use "
+        "<strong style='color:#e2e8f0'>Claude Haiku</strong> to rephrase a fixed template, instructed to "
+        "never add a fact or number the template doesn't already contain. When an Anthropic API key is set, "
+        "typed free-text questions instead use <strong style='color:#e2e8f0'>Claude Sonnet 5 with real "
+        "tool-calling</strong> — the model decides which of a handful of data-fetching tools to call (across "
+        "multiple cells for compositional questions), but every tool returns only values already computed "
+        "by the pipeline, never a number the model invents itself. Without a key, both paths show the "
+        "underlying template text as-is."
         "</div>"
     )
     _llm_key = st.text_input(
@@ -822,7 +825,7 @@ def render_ai_copilot_key() -> None:
     )
     if _llm_key:
         if _llm_key.startswith("sk-ant-"):
-            st.success("Claude Haiku active — Copilot will use natural language responses.")
+            st.success("Claude Haiku + Sonnet 5 active — topic buttons use Haiku narration, typed questions use real tool-calling.")
         else:
             st.warning("Key doesn't look like an Anthropic key (expected sk-ant-...). Check and re-enter.")
     else:

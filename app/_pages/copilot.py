@@ -53,7 +53,7 @@ def page_copilot(
 
     # ── Disclosure banner ──
     _md_html(
-        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#8896a8;line-height:1.6"><strong style="color:#63b3ed">Grounded narration only.</strong> Every sentence is derived from values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. The Copilot never calculates, estimates, or infers a value not already in the bundle. If a number is not there, it says so.</div>"""
+        """<div style="background:rgba(99,179,237,0.06);border:1px solid rgba(99,179,237,0.18);border-radius:10px;padding:14px 20px;margin-bottom:24px;font-size:13px;color:#8896a8;line-height:1.6"><strong style="color:#63b3ed">Grounded, and now tool-calling on free-text questions.</strong> Topic buttons always use fixed templates over values already computed by the model pipeline — SOH, feature importances, per-cell RUL reliability, fade rates. Typed questions that don't match a topic use real Claude tool-calling (when a personal API key is configured, see Settings): the model decides which of a handful of real data-fetching tools to call — including across multiple cells for compositional questions — but every tool returns only already-computed values, never a number the model invents itself. Without a key, typed questions fall back to the same grounded template shown for topic buttons. Either way, the Copilot never calculates, estimates, or infers a value not returned by a tool or already in the bundle.</div>"""
     )
 
     query = st.session_state.get("copilot_query", None)
@@ -135,28 +135,40 @@ def page_copilot(
         )
         return
 
-    # D3: Free-text path — route to LLM (or template summary as fallback)
+    # D3: Free-text path — real Claude tool-use (Sonnet 5) when a personal
+    # API key is configured, since the model needs to decide for itself
+    # which real data-fetching tools a compositional question needs; falls
+    # back to today's template+retrieval path with no key, or on any
+    # failure -- answer_with_tools() never raises, it returns (None, []).
     if _free_text_query and not query:
         _api_key_ft = st.session_state.get("anthropic_api_key", "")
-        _ctx_ft = build_cell_context(selected, featured_dfs, bundles)
-        _template_ft = answer_query(_free_text_query, _ctx_ft)
-        _llm_key_ft = "claude-haiku-4-5-20251001"
+        _ft_answer = None
+        _tools_used_ft: list = []
+        if _api_key_ft:
+            from copilot_agent import answer_with_tools
+            with st.spinner("Thinking…"):
+                _ft_answer, _tools_used_ft = answer_with_tools(
+                    _free_text_query, selected, st.session_state["auth_org_id"],
+                    featured_dfs, bundles, graph, _api_key_ft,
+                )
+        _used_agent = _ft_answer is not None
+        if not _used_agent:
+            _ctx_ft = build_cell_context(selected, featured_dfs, bundles)
+            _ft_answer = answer_query(_free_text_query, _ctx_ft)
         st.markdown(
             f"<div style='font-size:11px;color:#a0aec0;margin-bottom:8px'>"
             f"Answering: <em style='color:#8896a8'>{_free_text_query}</em>"
-            + (" · Claude Haiku" if _api_key_ft else " · Template fallback")
+            + (" · Claude Sonnet 5, tool-calling" if _used_agent else " · Template fallback")
             + "</div>",
             unsafe_allow_html=True,
         )
-        with st.spinner("Thinking…"):
-            try:
-                _ft_answer = llm_answer(_free_text_query, _template_ft, _api_key_ft)
-            except Exception as _e:
-                _ft_answer = _template_ft
         _md_html(
             f"<div style='background:#1a202c;border:1px solid #2d3748;border-radius:10px;"
             f"padding:18px 22px;font-size:14px;color:#a0aec0;line-height:1.7'>{_ft_answer}</div>"
         )
+        if _tools_used_ft:
+            with st.expander(f"🔧 Tools used ({len(_tools_used_ft)})"):
+                st.caption(", ".join(_tools_used_ft))
         if st.button("Clear", key="cpft_clear"):
             st.session_state.pop("copilot_free_text", None)
             st.session_state.pop("_last_ask", None)

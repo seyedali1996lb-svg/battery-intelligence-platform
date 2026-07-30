@@ -930,3 +930,30 @@ def test_health_page_no_physics_metrics_for_synthetic_cell(isolated_db):
     metric_labels = {m.label for m in at.metric}
     assert "β SEI (√n)" not in metric_labels
 
+
+def test_copilot_page_renders_without_exception(isolated_db):
+    """Basic smoke test -- this page had zero AppTest coverage before the
+    real tool-use Copilot build (src/copilot_agent.py); confirms the page
+    loads cleanly with no query selected (the empty-state prompt) and no
+    Anthropic API key configured."""
+    at = _logged_in_app(role="Engineer", page="copilot", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Copilot page raised an exception: {at.exception}"
+
+
+def test_copilot_free_text_falls_back_to_template_without_api_key(isolated_db):
+    """Real tool-use only runs when a personal Anthropic API key is
+    configured (copilot_agent.answer_with_tools() returns (None, []) with
+    no key) -- without one, the free-text ask box must fall back to
+    exactly the pre-existing template+retrieval path, not crash or
+    silently show nothing."""
+    at = _logged_in_app(
+        role="Engineer", page="copilot", data_mode="nasa",
+        copilot_free_text="Why is the RUL uncertain?",
+    )
+    at.run()
+    assert not at.exception, f"Copilot free-text fallback raised an exception: {at.exception}"
+    text = "\n".join(m.value for m in at.markdown)
+    assert "Template fallback" in text
+    assert "Claude Sonnet 5" not in text
+
