@@ -69,6 +69,7 @@ The platform is organized into five engineering modules:
 - An EU Battery Passport (Regulation 2023/1542 field structure) generator
 - Fleet-level lifecycle tracking across multiple cells
 - A `FleetAsset` hierarchy (Organization → Site → Fleet → Pack → Cell, `src/db.py`) for organizing cells by physical deployment, and a formal `BMSAdapter` protocol (`src/bms_connectors.py`) that the Victron VRM and Orion Jr2 adapters both implement — structural readiness for a real BMS integration, not a claim that one has happened (see [Limitations](#limitations))
+- A Spine Toolbox-compatible second-life data export (`src/spine_export.py`) — a cell's SOH, RUL (with p10/p50/p90 mapped onto SpineDB's native "alternatives"), degradation mechanism, and second-life economics as JSON in the same entity/parameter format `spinedb_api`'s `import_data()` consumes, so a grid-storage modeling team (e.g. running SpineOpt/FlexTool) can import this platform's health data directly instead of hand-transcribing it. One-way export only — no live database connection, no historical cycle-indexed trajectory (would misrepresent cycle count as calendar time in SpineDB's time-series type)
 
 ## Architecture
 
