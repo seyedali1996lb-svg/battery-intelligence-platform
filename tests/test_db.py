@@ -91,14 +91,24 @@ def test_create_organization_dedupes_slug(db):
 def test_create_user_invites_teammate_into_same_org(db):
     res = db.create_organization_with_admin("Acme Batteries", "alice", "secret123")
     org_id = res["org_id"]
-    invite = db.create_user(org_id, "bob", "bobpass1", "fleet", "Bob Chen")
+    invite = db.create_user(org_id, "bob", "bobpass1", "fleet", "Bob Chen", caller_role="admin")
     assert "user_id" in invite
     bob = db.get_user_by_username("bob")
     assert bob["org_id"] == org_id
     assert bob["role"] == "fleet"
 
-    dup = db.create_user(org_id, "bob", "x", "engineer")
+    dup = db.create_user(org_id, "bob", "x", "engineer", caller_role="admin")
     assert "error" in dup
+
+
+def test_create_user_refuses_non_admin_caller(db):
+    res = db.create_organization_with_admin("Acme Batteries", "alice2", "secret123")
+    org_id = res["org_id"]
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_user(org_id, "carol", "carolpass1", "engineer", caller_role="engineer")
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_user(org_id, "carol", "carolpass1", "engineer")  # caller_role defaults to None -- fail closed
+    assert db.get_user_by_username("carol") is None
 
 
 def test_decision_round_trip(db):
@@ -176,17 +186,46 @@ def test_cell_summary_platform_rows_visible_alongside_tenant_rows(db):
 
 def test_settings_round_trip_and_default(db):
     assert db.get_setting(DEMO_ORG_ID, "webhook_url", "") == ""
-    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
+    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook", role="admin")
     assert db.get_setting(DEMO_ORG_ID, "webhook_url") == "https://example.com/hook"
-    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 85.0)
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 85.0, role="admin")
     assert db.get_setting(DEMO_ORG_ID, "eol_threshold_pct") == 85.0
-    db.set_setting(DEMO_ORG_ID, "webhook_events", ["A", "B"])
+    db.set_setting(DEMO_ORG_ID, "webhook_events", ["A", "B"], role="admin")
     assert db.get_setting(DEMO_ORG_ID, "webhook_events") == ["A", "B"]
+
+
+def test_set_setting_refuses_admin_only_key_for_non_admin_caller(db):
+    """Enterprise Readiness audit finding (2026-07-30): org-wide config
+    (webhook URL, integration credentials, EOL threshold, etc.) used to be
+    writable by any authenticated role -- the only gate was the Settings UI
+    hiding the widgets from non-admins, nothing in src/db.py itself."""
+    assert "eol_threshold_pct" in db._ADMIN_ONLY_SETTING_KEYS
+    with pytest.raises(db.InsufficientRoleError):
+        db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 50.0, role="engineer")
+    with pytest.raises(db.InsufficientRoleError):
+        db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 50.0)  # role defaults to None -- fail closed
+    # Confirm nothing was actually written.
+    assert db.get_setting(DEMO_ORG_ID, "eol_threshold_pct") is None
+
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 82.0, role="admin")
+    assert db.get_setting(DEMO_ORG_ID, "eol_threshold_pct") == 82.0
+
+
+def test_set_setting_admin_only_check_does_not_affect_operational_keys(db):
+    """A key that ISN'T org-wide config (e.g. pinned_cell, a per-user
+    convenience) must stay writable by any role, with no role kwarg at
+    all -- this check must not become a blanket "everything needs admin"
+    regression."""
+    assert "pinned_cell" not in db._ADMIN_ONLY_SETTING_KEYS
+    db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0005")  # no role passed, must not raise
+    assert db.get_setting(DEMO_ORG_ID, "pinned_cell") == "B0005"
+    db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0006", role="engineer")  # non-admin role, must also not raise
+    assert db.get_setting(DEMO_ORG_ID, "pinned_cell") == "B0006"
 
 
 def test_secret_setting_round_trips_through_encryption(db):
     assert "vrm_api_token" in db._SECRET_SETTING_KEYS
-    db.set_setting(DEMO_ORG_ID, "vrm_api_token", "super-secret-token-123")
+    db.set_setting(DEMO_ORG_ID, "vrm_api_token", "super-secret-token-123", role="admin")
     assert db.get_setting(DEMO_ORG_ID, "vrm_api_token") == "super-secret-token-123"
 
 
@@ -194,8 +233,8 @@ def test_get_settings_batches_multiple_keys_matching_get_setting(db):
     """get_settings() must return exactly what N calls to get_setting() would,
     for both plain and encrypted keys, in one query instead of N."""
     db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0005")
-    db.set_setting(DEMO_ORG_ID, "webhook_secret", "shh-its-a-secret")
-    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 85.0)
+    db.set_setting(DEMO_ORG_ID, "webhook_secret", "shh-its-a-secret", role="admin")
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 85.0, role="admin")
 
     batched = db.get_settings(
         DEMO_ORG_ID, keys=["pinned_cell", "webhook_secret", "eol_threshold_pct", "never_set_key"]
@@ -220,14 +259,14 @@ def test_get_settings_respects_org_isolation(db):
 
 def test_get_settings_unfiltered_returns_all_keys_for_org(db):
     db.set_setting(DEMO_ORG_ID, "pinned_cell", "B0005")
-    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
+    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook", role="admin")
     result = db.get_settings(DEMO_ORG_ID)
     assert result["pinned_cell"] == "B0005"
     assert result["webhook_url"] == "https://example.com/hook"
 
 
 def test_secret_setting_is_not_plaintext_in_the_raw_db_row(db):
-    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "plaintext-should-not-appear")
+    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "plaintext-should-not-appear", role="admin")
     with db.Session() as s:
         row = s.query(db.Setting).filter_by(org_id=DEMO_ORG_ID, key="cmms_api_key").one()
         assert "plaintext-should-not-appear" not in row.value
@@ -241,7 +280,7 @@ def test_set_setting_refuses_new_secret_under_fallback_key(db, monkeypatch):
     monkeypatch.delenv("SETTINGS_ENCRYPTION_KEY", raising=False)
     monkeypatch.setattr(db, "_fernet", None)
     with pytest.raises(db.InsecureCredentialStorageError):
-        db.set_setting(DEMO_ORG_ID, "vrm_api_token", "a-real-looking-token")
+        db.set_setting(DEMO_ORG_ID, "vrm_api_token", "a-real-looking-token", role="admin")
     # And it must not have been written at all.
     assert db.get_setting(DEMO_ORG_ID, "vrm_api_token") is None
 
@@ -266,7 +305,7 @@ def test_set_setting_allows_resaving_unchanged_secret_under_fallback_key(db, mon
         s.merge(db.Setting(org_id=DEMO_ORG_ID, key="orion_bms_api_key", value=ciphertext))
         s.commit()
 
-    db.set_setting(DEMO_ORG_ID, "orion_bms_api_key", "already-stored-token")  # must not raise
+    db.set_setting(DEMO_ORG_ID, "orion_bms_api_key", "already-stored-token", role="admin")  # must not raise
     assert db.get_setting(DEMO_ORG_ID, "orion_bms_api_key") == "already-stored-token"
 
 
@@ -276,11 +315,11 @@ def test_set_setting_allows_clearing_secret_to_empty_under_fallback_key(db, monk
     empty, and an empty string carries nothing to newly expose."""
     monkeypatch.delenv("SETTINGS_ENCRYPTION_KEY", raising=False)
     monkeypatch.setattr(db, "_fernet", None)
-    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "")  # must not raise
+    db.set_setting(DEMO_ORG_ID, "cmms_api_key", "", role="admin")  # must not raise
 
 
 def test_non_secret_setting_remains_plain_json_at_rest(db):
-    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
+    db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook", role="admin")
     with db.Session() as s:
         row = s.query(db.Setting).filter_by(org_id=DEMO_ORG_ID, key="webhook_url").one()
         assert row.value == db.json.dumps("https://example.com/hook")
@@ -310,7 +349,7 @@ def test_legacy_plaintext_secret_row_is_still_readable():
     try:
         assert db_module.get_setting(1, "circunomics_api_key") == "legacy-plaintext-key"
         # Writing again should re-encrypt it going forward.
-        db_module.set_setting(1, "circunomics_api_key", "legacy-plaintext-key")
+        db_module.set_setting(1, "circunomics_api_key", "legacy-plaintext-key", role="admin")
         with Session() as s:
             row = s.query(db_module.Setting).filter_by(org_id=1, key="circunomics_api_key").one()
             assert row.value != _json.dumps("legacy-plaintext-key")
@@ -402,8 +441,8 @@ def test_cross_org_isolation(db):
     assert db.load_cohort_tags(org_a) == {"B0005": "batch-A"}
     assert db.load_cohort_tags(org_b) == {"B0005": "batch-Z"}
 
-    db.set_setting(org_a, "eol_threshold_pct", 75.0)
-    db.set_setting(org_b, "eol_threshold_pct", 90.0)
+    db.set_setting(org_a, "eol_threshold_pct", 75.0, role="admin")
+    db.set_setting(org_b, "eol_threshold_pct", 90.0, role="admin")
     assert db.get_setting(org_a, "eol_threshold_pct") == 75.0
     assert db.get_setting(org_b, "eol_threshold_pct") == 90.0
 
@@ -471,7 +510,7 @@ def test_migration_does_not_disturb_pre_existing_data(db):
     """Adding the FleetAsset tables/backfill must not alter any
     pre-existing decisions/settings/etc. -- purely additive."""
     db.save_decision(DEMO_ORG_ID, {"id": "d1", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"})
-    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 82.0)
+    db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 82.0, role="admin")
 
     db.init_db()  # re-run migration/backfill
 
@@ -481,20 +520,39 @@ def test_migration_does_not_disturb_pre_existing_data(db):
 
 
 def test_site_fleet_pack_hierarchy_crud(db):
-    site = db.create_site(DEMO_ORG_ID, "Warehouse A")
-    fleet = db.create_fleet(DEMO_ORG_ID, site["id"], "Forklift Fleet")
-    pack = db.create_pack(DEMO_ORG_ID, fleet["id"], "Pack 1")
+    site = db.create_site(DEMO_ORG_ID, "Warehouse A", caller_role="admin")
+    fleet = db.create_fleet(DEMO_ORG_ID, site["id"], "Forklift Fleet", caller_role="admin")
+    pack = db.create_pack(DEMO_ORG_ID, fleet["id"], "Pack 1", caller_role="admin")
 
     assert any(s["id"] == site["id"] for s in db.list_sites(DEMO_ORG_ID))
     assert db.list_fleets(DEMO_ORG_ID, site_id=site["id"]) == [fleet]
     assert db.list_packs(DEMO_ORG_ID, fleet_id=fleet["id"]) == [pack]
 
-    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0005", position=0)
-    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0006", position=1)
+    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0005", position=0, caller_role="admin")
+    db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0006", position=1, caller_role="admin")
     assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0005", "B0006"]
 
     db.remove_cell_from_pack(DEMO_ORG_ID, pack["id"], "B0005")
     assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0006"]
+
+
+def test_site_fleet_pack_hierarchy_refuses_non_admin_caller(db):
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_site(DEMO_ORG_ID, "Rogue Site", caller_role="engineer")
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_site(DEMO_ORG_ID, "Rogue Site")  # caller_role defaults to None -- fail closed
+    assert not any(s["name"] == "Rogue Site" for s in db.list_sites(DEMO_ORG_ID))
+
+    site = db.create_site(DEMO_ORG_ID, "Real Site", caller_role="admin")
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_fleet(DEMO_ORG_ID, site["id"], "Rogue Fleet", caller_role="fleet")
+    fleet = db.create_fleet(DEMO_ORG_ID, site["id"], "Real Fleet", caller_role="admin")
+    with pytest.raises(db.InsufficientRoleError):
+        db.create_pack(DEMO_ORG_ID, fleet["id"], "Rogue Pack", caller_role="compliance")
+    pack = db.create_pack(DEMO_ORG_ID, fleet["id"], "Real Pack", caller_role="admin")
+    with pytest.raises(db.InsufficientRoleError):
+        db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0005", caller_role="engineer")
+    assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == []
 
 
 def test_fleet_asset_hierarchy_is_org_scoped(db):
@@ -504,8 +562,8 @@ def test_fleet_asset_hierarchy_is_org_scoped(db):
     org_a = db.create_organization_with_admin("Org A", "siteadmin_a", "passwordA")["org_id"]
     org_b = db.create_organization_with_admin("Org B", "siteadmin_b", "passwordB")["org_id"]
 
-    site_a = db.create_site(org_a, "Site A")
-    site_b = db.create_site(org_b, "Site B")
+    site_a = db.create_site(org_a, "Site A", caller_role="admin")
+    site_b = db.create_site(org_b, "Site B", caller_role="admin")
 
     # Each org already has its own default site from signup, plus the new one
     assert {s["name"] for s in db.list_sites(org_a)} == {"Default Site", "Site A"}

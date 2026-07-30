@@ -51,6 +51,25 @@ _SECRET_SETTING_KEYS = frozenset({
     "webhook_secret", "orion_bms_api_key",
 })
 
+# Setting keys that are org-wide configuration (integration credentials,
+# alert/threshold config) rather than a per-user convenience (e.g.
+# "pinned_cell") -- see set_setting()'s role check below. Confirmed by
+# reading every real set_setting()/_set_secret_setting() call site in
+# app/_pages/_settings_config.py (an Enterprise Readiness audit finding:
+# these were previously writable by any authenticated role, with the only
+# gate being that non-admins couldn't *see* the widgets -- nothing stopped
+# a direct call). soh_alert_pct/resistance_alert_mult/spread_alert_pct are
+# deliberately absent -- they're Streamlit widget keys only, session-local,
+# never persisted via set_setting() at all.
+_ADMIN_ONLY_SETTING_KEYS = frozenset({
+    "app_profile", "eol_threshold_pct", "cost_of_delay_mult",
+    "webhook_url", "webhook_secret", "webhook_events",
+    "vrm_api_token", "vrm_installation_id",
+    "orion_bms_api_key", "orion_bms_cell_id",
+    "circunomics_api_key",
+    "cmms_api_base_url", "cmms_api_key",
+})
+
 _fernet: Fernet | None = None
 _FALLBACK_ENCRYPTION_KEY = "4S2b-Ok94fVLdI9xbEQVoIr2Aw3s7Tqo2YAcc1zYUaw="  # dev-only, insecure
 _logger = logging.getLogger(__name__)
@@ -69,6 +88,25 @@ class InsecureCredentialStorageError(RuntimeError):
     Settings page outright for every org that already configured a
     credential under the fallback key, for no additional security benefit
     (it would just re-encrypt with the same insecure key)."""
+
+
+class InsufficientRoleError(RuntimeError):
+    """Raised by set_setting()/create_user()/create_site()/create_fleet()/
+    create_pack()/add_cell_to_pack() when the caller's role isn't
+    "admin" but the action is org-wide (integration credentials,
+    alert/threshold config, teammate invites, site/fleet/pack management).
+
+    Enterprise Readiness audit finding (2026-07-30): before this, the only
+    gate on these actions was app/_pages/_settings_config.py hiding the
+    relevant UI section from non-admins at render time -- nothing in this
+    module (the actual multi-tenant trust boundary) verified caller
+    identity, so any code path that reached these functions directly
+    bypassed enforcement entirely. Callers pass the current user's role
+    explicitly (role=/caller_role=) rather than this module reading
+    st.session_state itself, since src/db.py has no Streamlit dependency
+    of its own -- same boundary this project already draws elsewhere
+    (e.g. src/battery_copilot.py takes org_id as an explicit parameter
+    instead of reading session state)."""
 
 
 def using_fallback_encryption_key() -> bool:
@@ -463,8 +501,17 @@ def create_organization_with_admin(org_name: str, username: str, password: str, 
         return {"org_id": org.id, "org_name": org.name, "user_id": user.id}
 
 
-def create_user(org_id: int, username: str, password: str, role: str, display_name: str = "") -> dict:
-    """Admin-invites-teammate: adds another user to an existing org."""
+def create_user(org_id: int, username: str, password: str, role: str,
+                 display_name: str = "", caller_role: "str | None" = None) -> dict:
+    """Admin-invites-teammate: adds another user to an existing org.
+
+    caller_role is the ROLE OF THE USER MAKING THIS CALL, distinct from
+    `role` (the new user's role being created) -- must be "admin"."""
+    if caller_role != "admin":
+        raise InsufficientRoleError(
+            "Refusing to create a user -- inviting teammates is restricted "
+            "to the admin role."
+        )
     with Session() as s:
         if s.query(User).filter_by(username=username.strip().lower()).one_or_none() is not None:
             return {"error": "That username is already taken."}
@@ -615,7 +662,13 @@ def get_settings(org_id: int, keys: "list[str] | None" = None) -> dict:
     return result
 
 
-def set_setting(org_id: int, key: str, value) -> None:
+def set_setting(org_id: int, key: str, value, role: "str | None" = None) -> None:
+    if key in _ADMIN_ONLY_SETTING_KEYS and role != "admin":
+        raise InsufficientRoleError(
+            f"Refusing to set {key!r} -- this is org-wide configuration, "
+            "restricted to the admin role. Pass role=<caller's actual role> "
+            "explicitly (fail-closed: a missing role is treated as unauthorized)."
+        )
     encoded = json.dumps(value)
     if key in _SECRET_SETTING_KEYS:
         if value and using_fallback_encryption_key() and get_setting(org_id, key) != value:
@@ -968,7 +1021,17 @@ class PackCell(Base):
 # FleetAsset hierarchy -- CRUD
 # ---------------------------------------------------------------------------
 
-def create_site(org_id: int, name: str) -> dict:
+def _require_admin(caller_role: "str | None", action: str) -> None:
+    """Shared role check for the FleetAsset hierarchy's write functions --
+    see InsufficientRoleError's docstring for why this exists."""
+    if caller_role != "admin":
+        raise InsufficientRoleError(
+            f"Refusing to {action} -- restricted to the admin role."
+        )
+
+
+def create_site(org_id: int, name: str, caller_role: "str | None" = None) -> dict:
+    _require_admin(caller_role, "create a site")
     with Session() as s:
         site = Site(org_id=org_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(site)
@@ -983,7 +1046,8 @@ def list_sites(org_id: int) -> list[dict]:
         return [{"id": r.id, "org_id": r.org_id, "name": r.name, "created_at": r.created_at} for r in rows]
 
 
-def create_fleet(org_id: int, site_id: int, name: str) -> dict:
+def create_fleet(org_id: int, site_id: int, name: str, caller_role: "str | None" = None) -> dict:
+    _require_admin(caller_role, "create a fleet")
     with Session() as s:
         fleet = Fleet(org_id=org_id, site_id=site_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(fleet)
@@ -1003,7 +1067,8 @@ def list_fleets(org_id: int, site_id: "int | None" = None) -> list[dict]:
                   "name": r.name, "created_at": r.created_at} for r in rows]
 
 
-def create_pack(org_id: int, fleet_id: int, name: str) -> dict:
+def create_pack(org_id: int, fleet_id: int, name: str, caller_role: "str | None" = None) -> dict:
+    _require_admin(caller_role, "create a pack")
     with Session() as s:
         pack = Pack(org_id=org_id, fleet_id=fleet_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(pack)
@@ -1023,7 +1088,9 @@ def list_packs(org_id: int, fleet_id: "int | None" = None) -> list[dict]:
                   "name": r.name, "created_at": r.created_at} for r in rows]
 
 
-def add_cell_to_pack(org_id: int, pack_id: int, cell_id: str, position: "int | None" = None) -> None:
+def add_cell_to_pack(org_id: int, pack_id: int, cell_id: str, position: "int | None" = None,
+                      caller_role: "str | None" = None) -> None:
+    _require_admin(caller_role, "add a cell to a pack")
     with Session() as s:
         s.merge(PackCell(org_id=org_id, pack_id=pack_id, cell_id=cell_id, position=position))
         s.commit()
