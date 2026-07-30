@@ -168,8 +168,8 @@ def page_copilot(
             st.rerun()
         return
 
-    # ── Pre-compute fleet stats (cheap: just iterates already-computed DataFrames) ──
-    fleet_stats = build_fleet_stats(featured_dfs, bundles)
+    # ── Pre-compute fleet stats (reads precomputed CellSummary rows) ──
+    fleet_stats = build_fleet_stats(st.session_state["auth_org_id"], featured_dfs, bundles)
 
     # ── Build context for the selected cell (not needed for fleet-only queries) ──
     fleet_only = query in ("alerts", "replacement_budget", "fleet_risk")

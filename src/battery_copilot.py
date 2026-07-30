@@ -329,18 +329,30 @@ def answer_query(query: str, ctx: dict) -> str:
 # Fleet stats builder — aggregates across all cells for anomaly & fleet answers
 # ---------------------------------------------------------------------------
 
-def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
+def build_fleet_stats(org_id: int, featured_dfs: dict, bundles: dict) -> dict:
     """
-    Compute fleet-level aggregates from already-computed DataFrames.
-    No new model inference — every value is a simple summary statistic
-    over values already present in featured_dfs and the bundles.
+    Compute fleet-level aggregates. Reads precomputed CellSummary rows
+    (src/cell_store.py's build_summary()) instead of every cell's full
+    per-cycle DataFrame -- see that module's docstring. featured_dfs is
+    still used to scope the read to the currently active data-mode fleet
+    (its .keys() list cell_ids without touching any full DataFrame).
 
     Source-split stats (nasa vs synth) are kept separate because resistance
     scales are incompatible across measurement methods.
     """
+    import db as _db_fs
+
+    active_ids = set(featured_dfs.keys())
+    summaries_by_id = {
+        r["cell_id"]: r for r in _db_fs.get_cell_summaries(org_id) if r["cell_id"] in active_ids
+    }
+
     rows: list[dict] = []
 
-    for cell_id, df in featured_dfs.items():
+    for cell_id in featured_dfs.keys():
+        summary = summaries_by_id.get(cell_id)
+        if summary is None:
+            continue
         # Same fix as build_cell_context() above -- Severson cells used to
         # fall through to the "uploaded" bucket here too, both picking the
         # wrong model bundle and grouping them with the wrong peers in
@@ -353,17 +365,19 @@ def build_fleet_stats(featured_dfs: dict, bundles: dict) -> dict:
         per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
         rul_reliable = per_cell_ok.get(cell_id, bundle["metrics"].get("rul_reliable", False))
 
-        latest   = df.iloc[-1]
-        soh      = float(latest["soh_pct"])
-        fade_30  = float(latest.get("fade_rate_30cy", float("nan"))) * 1000
-        resist   = float(latest.get("resistance_ohm", float("nan")))
-        cycle    = int(latest["cycle_number"])
-        rul_pred = float(latest["rul_pred"]) if rul_reliable else None
+        soh      = summary.get("soh_pct")
+        if soh is None:
+            continue
+        fade_30  = (summary.get("fade_rate_30cy") or float("nan")) * 1000
+        resist   = summary.get("resistance_ohm")
+        resist   = float(resist) if resist is not None else float("nan")
+        cycle    = summary["cycle_number"]
+        rul_pred = summary.get("rul_pred") if rul_reliable else None
 
         rows.append({
             "cell_id":     cell_id,
             "source":      source,
-            "soh":         soh,
+            "soh":         float(soh),
             "cycle":       cycle,
             "fade_30":     fade_30,
             "resistance":  resist,
