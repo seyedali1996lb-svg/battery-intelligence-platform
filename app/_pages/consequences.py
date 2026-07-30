@@ -450,6 +450,18 @@ def page_consequences(
     st.plotly_chart(bev_fig, use_container_width=True)
 
     # ── H1: NPV / Scenario Planner ──────────────────────────────────────────
+    # This 5-yr NPV Scenario Planner deliberately uses its own assumption set,
+    # NOT consequences.ASSUMPTIONS — verified intentional, not drift, before
+    # leaving it as-is: _repl_cost is a BNEF 2024 *installed/system-level*
+    # replacement-cost estimate ($100-200/cell) for a long-run operational
+    # DCF decision, while ASSUMPTIONS["new_cell_cost"] ($20, range $5-60) is
+    # a *bare-cell spot price* citation used by the point-in-time
+    # Reuse/Recycle/Buy-new comparison above (financial_comparison()) and by
+    # the Copilot's "business case" chip. Both figures are real and
+    # correctly sourced for their own purpose, not the same real-world
+    # quantity — see the caption below, which now says so explicitly.
+    # app/_pages/decision.py's own NPV table uses the identical $80/$150/$30
+    # figures for the same reason — keep both in sync if either changes.
     with st.expander("📈 NPV Scenario Planner — Replace / Wait / Repurpose", expanded=False):
         st.markdown(
             "<div style='font-size:12px;color:#8896a8;margin-bottom:12px'>"
@@ -459,9 +471,9 @@ def page_consequences(
         )
         _npv_rate = st.slider("Discount rate (WACC, %/yr)", 3.0, 20.0, 8.0, 0.5, key="npv_rate") / 100
 
-        _energy_usd  = 80.0   # IEA 2024 LCOS range $60–140/kWh·yr — illustrative midpoint
-        _repl_cost   = 150.0  # BNEF 2024 range $100–200/cell
-        _repack_approx = float(st.session_state.get("sl_repack_cost", 30.0))
+        _energy_usd  = 80.0   # IEA 2024 LCOS range $60–140/kWh·yr — NPV Scenario Planner only
+        _repl_cost   = 150.0  # BNEF 2024 range $100–200/cell (installed) — NPV Scenario Planner only
+        _repack_approx = 30.0  # NPV Scenario Planner only — not ASSUMPTIONS["repack_cost"] ($10)
         _years = list(range(1, 6))
 
         def _pv_factor(r, t):
@@ -508,7 +520,11 @@ def page_consequences(
         st.caption(
             f"Defaults: $80/kWh·yr energy {make_badge('IEA 2024', '#718096')} · "
             f"${_repl_cost:.0f}/cell replacement {make_badge('BNEF 2024', '#718096')} · "
-            f"${_repack_approx:.0f} repack. Illustrative — not financial advice."
+            f"${_repack_approx:.0f} repack. Illustrative — not financial advice. "
+            f"These are a separate, longer-run assumption set for this 5-yr NPV model — not the same "
+            f"as the ${ASSUMPTIONS['new_cell_cost']['value']:.0f}/cell bare-cell spot price used in the "
+            f"Reuse/Recycle/Buy-new comparison above; the two figures answer different questions, "
+            f"not a discrepancy."
         )
 
     # -- H1b: Solar + Storage Sizing (extracted to _consequences_solar.py) --
