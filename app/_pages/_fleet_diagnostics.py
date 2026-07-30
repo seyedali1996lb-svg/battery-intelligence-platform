@@ -160,17 +160,20 @@ def get_trajectory_matches_and_render_banner(featured_dfs: dict, trajectory_memo
             f"{'CELL' if _tm_total == 1 else 'CELLS'} FLAGGED</div>",
             unsafe_allow_html=True,
         )
-        for _priority_set, _icon, _col in [
-            (_tm_crit,  "🔴", "#fca5a5"),
-            (_tm_high,  "🟠", "#fcd34d"),
-            (_tm_watch, "🔵", "#93c5fd"),
+        # Literal tier text alongside each icon, not color/icon alone -- see
+        # overview.py's equivalent trajectory-match card (already correct)
+        # and the accessibility audit that ported the pattern here.
+        for _priority_set, _icon, _tier, _col in [
+            (_tm_crit,  "🔴", "CRITICAL", "#fca5a5"),
+            (_tm_high,  "🟠", "HIGH",     "#fcd34d"),
+            (_tm_watch, "🔵", "WATCH",    "#93c5fd"),
         ]:
             for _cid, _m in _priority_set.items():
                 _sim_pct = int(_m.best_similarity * 100)
                 st.markdown(
                     f"<div style='display:flex;gap:10px;align-items:baseline;padding:6px 0;"
                     f"border-bottom:1px solid #1e293b'>"
-                    f"<span>{_icon}</span>"
+                    f"<span>{_icon} {_tier}</span>"
                     f"<span style='font-weight:700;color:#e2e8f0;min-width:80px'>{_cid}</span>"
                     f"<span style='color:{_col}'>"
                     f"Matched {_m.best_cell_id} ({_sim_pct}% sim) · {_m.failure_mode}"
@@ -237,7 +240,7 @@ def render_alert_inbox(rows: list, _traj_matches: dict) -> None:
         _SEV_COLOR = {"critical": "#fc8181", "high": "#f6ad55", "medium": "#f6e05e"}
         _SEV_ICON  = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
         _alerts.sort(key=lambda a: _SEV_ORDER[a["severity"]])
-        st.markdown(f"<div class='section-header'>Alert Inbox — {len(_alerts)} Active</div>", unsafe_allow_html=True)
+        st.markdown(f"<h4 class='section-header'>Alert Inbox — {len(_alerts)} Active</h4>", unsafe_allow_html=True)
         _alert_html = ""
         for _al in _alerts:
             _sc = _SEV_COLOR[_al["severity"]]
@@ -246,7 +249,8 @@ def render_alert_inbox(rows: list, _traj_matches: dict) -> None:
                 f"<div style='display:flex;align-items:flex-start;gap:12px;padding:10px 14px;"
                 f"background:#1e2a38;border-left:3px solid {_sc};border-radius:0 8px 8px 0;margin-bottom:6px'>"
                 f"<span style='font-size:14px;margin-top:1px'>{_si}</span>"
-                f"<div><div style='font-size:12px;font-weight:700;color:{_sc}'>{_al['title']}"
+                f"<div><div style='font-size:12px;font-weight:700;color:{_sc}'>"
+                f"{_al['severity'].upper()} · {_al['title']}"
                 f"<span style='font-weight:400;color:#a0aec0;margin-left:8px'>· {_al['cell']}</span></div>"
                 f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{_al['body']}</div></div></div>"
             )
@@ -261,7 +265,7 @@ def render_filter_and_view_selector(rows: list, featured_dfs: dict, bundles: dic
     """Returns the filtered rows list, or None if the user picked "Cell
     Grading" (already fully rendered here) or the filter left zero rows --
     both cases mean the orchestrator should stop, nothing more to render."""
-    st.markdown("<div class='section-header'>Filter Fleet</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Filter Fleet</h4>", unsafe_allow_html=True)
     _fq1, _fq2, _fq3, _fq4 = st.columns([2, 2, 2, 2])
     _fq_soh_max = _fq1.number_input(
         "SOH below (%)", min_value=50.0, max_value=100.0,
@@ -365,7 +369,7 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
             f"{_bullets_html}</ul>"
         )
 
-    st.markdown("<div class='section-header'>Health Ranking — Worst First</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Health Ranking — Worst First</h4>", unsafe_allow_html=True)
     st.caption(
         "Est. RUL comes from leave-cell-out cross-validation on each cell's data source "
         "(NASA n=4, Severson n=12, synthetic n=8) — a thin population for any fleet-scale "
@@ -445,27 +449,27 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
         <table style="width:100%;border-collapse:collapse;font-family:sans-serif">
             <thead>
                 <tr style="border-bottom:2px solid #2d3748">
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">#</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cell</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">SOH</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Status</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Cycles</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Fade Rate</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Trend</th>
-                    <th style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Knee</th>
-                    <th style="padding:10px 12px;text-align:center;font-size:11px;color:#a0aec0;
+                    <th scope="col" style="padding:10px 12px;text-align:center;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Grade</th>
                 </tr>
             </thead>
@@ -805,7 +809,7 @@ def render_distribution_shift_histogram(featured_dfs: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def render_whatif_scenario_planner(rows: list) -> None:
-    st.markdown("<div class='section-header'>Fleet What-If Scenario Planner</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Fleet What-If Scenario Planner</h4>", unsafe_allow_html=True)
     st.markdown(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "Adjust operating conditions to see the projected impact on fleet-average RUL "
@@ -897,7 +901,7 @@ def render_whatif_scenario_planner(rows: list) -> None:
 # ---------------------------------------------------------------------------
 
 def render_second_life_screening(rows: list) -> None:
-    st.markdown("<div class='section-header'>Second-Life Readiness Screening</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Second-Life Readiness Screening</h4>", unsafe_allow_html=True)
     st.markdown(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:20px;line-height:1.6'>"
         "Conventional second-life assessment window: <strong style='color:#e2e8f0'>SOH 70–85%</strong>. "
@@ -953,7 +957,7 @@ def render_second_life_screening(rows: list) -> None:
 # ---------------------------------------------------------------------------
 
 def render_ranking_methodology_note() -> None:
-    st.markdown("<div class='section-header'>About This Ranking</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>About This Ranking</h4>", unsafe_allow_html=True)
     st.markdown(
         """
         **Ranking method:** Cells are ranked by current SOH %, fade rate (30-cycle rolling average),
@@ -1003,7 +1007,7 @@ def render_ranking_methodology_note() -> None:
 # ---------------------------------------------------------------------------
 
 def render_anomaly_alert_history(featured_dfs: dict) -> None:
-    st.markdown("<div class='section-header'>Anomaly Alert History</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Anomaly Alert History</h4>", unsafe_allow_html=True)
     _anom_log = []
     for _cid, _fdf in featured_dfs.items():
         if "capacity_anomaly" in _fdf.columns:
