@@ -310,12 +310,31 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     # ────────────────────────────────────────────────────────────────────────
     _section("Critical Materials Tracker")
 
-    if _profile.provenance != "measured":
+    if _profile.short_name != "LiCoO2":
+        # CRITICAL_MATERIALS is LiCoO2-specific (Harper et al. 2019 teardown
+        # data) -- these g-per-cell/recovery-% figures do not describe this
+        # cell's real composition for any other chemistry. This used to only
+        # warn for synthetic cells ("not the simulation"), which silently
+        # showed a real LFP cell (Severson -- cobalt-free) or NCA cell
+        # (Oxford -- nickel-dominant, not "trace only") a Cobalt/Nickel
+        # breakdown that is flatly wrong for that cell's actual chemistry,
+        # not just imprecise for a simulation.
+        if _profile.provenance == "measured":
+            _mat_note = (
+                f"This cell is <strong style='color:#e2e8f0'>{_profile.short_name}</strong> chemistry — "
+                "the material figures below are LiCoO₂ 18650 reference data (Harper et al. 2019) and do "
+                "not describe this cell's actual composition (e.g. LFP cells contain no cobalt; NCA cells "
+                "are nickel-dominant, not \"trace only\"). Shown for reference/comparison only."
+            )
+        else:
+            _mat_note = (
+                "Synthetic cells model electrochemical behaviour only — material content "
+                "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
+            )
         st.markdown(
             "<div style='background:#2d3748;border-radius:8px;padding:10px 16px;"
             "font-size:12px;color:#8896a8;margin-bottom:12px'>"
-            "Synthetic cells model electrochemical behaviour only — material content "
-            "figures below apply to the equivalent real LiCoO₂ 18650 chemistry, not the simulation."
+            f"{_mat_note}"
             "</div>",
             unsafe_allow_html=True,
         )

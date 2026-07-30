@@ -92,23 +92,34 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     with _e8_col2:
         if _e8_n_unavail > 0:
             with st.expander(f"Fill {_e8_n_unavail} gaps", expanded=False):
+                # Keyed by build_passport()'s real "label" text -- its field
+                # dicts never carry a "field" key (only label/value/state/
+                # note), so the previous version of this map (keyed by
+                # field-id strings like "manufacturer"/"carbon_footprint_kg_co2"
+                # that build_passport() never actually emits) always missed
+                # and silently fell through to the generic default tip for
+                # every single gap, regardless of which one it was.
                 _E8_HOW_TO: dict[str, str] = {
-                    "manufacturer": "Set in sidebar → Cell Metadata → Manufacturer",
-                    "chemistry":    "Detected automatically once enough cycle data is loaded",
-                    "carbon_footprint_kg_co2": "Upload manufacturer LCA document in Import page",
-                    "recycled_content_pct":    "Enter on Import page → Advanced → Recycled content",
-                    "supply_chain_due_diligence": "Link supplier declaration PDF in Import page",
-                    "hazardous_substances":    "Set on Import page → Advanced → Hazardous substances",
-                    "end_of_life_instructions": "Auto-populated once chemistry is confirmed",
-                    "second_life_status":       "Set on Decision page after repurpose decision is logged",
+                    "Manufacturer": "Set in sidebar → Cell Metadata → Manufacturer",
+                    "Serial number / production batch": "Set in sidebar → Cell Metadata → Serial number",
+                    "Chemistry type": "Detected automatically once enough cycle data is loaded",
+                    "Nominal capacity": "Detected automatically once the first full cycle is loaded",
+                    "Test date range": "Requires timestamped cycle data — not present in this dataset",
+                    "Usage profile / test conditions": "Set on Import page → Advanced → Usage profile",
+                    "Repair / refurbishment history": "Neither dataset models repair events — not fillable in this demonstration",
+                    "Prior-owner / installation history": "Not tracked by this platform — not fillable in this demonstration",
+                    "Full lifecycle carbon audit (mining → manufacture → transport → use → end-of-life)":
+                        "Requires a real third-party accredited audit — not fillable in this demonstration",
+                    "Verified carbon footprint declaration (Art. 7)":
+                        "Requires a real third-party accredited audit — not fillable in this demonstration",
                 }
                 _all_fields: list[dict] = []
                 for _grp_key in ("identity", "soh", "lifecycle", "carbon"):
                     _all_fields.extend(p.get(_grp_key, []))
                 _missing = [f for f in _all_fields if f.get("state") == "unavailable"]
                 for _mf in _missing:
-                    _fname  = _mf.get("label", _mf.get("field", "Unknown field"))
-                    _tip    = _E8_HOW_TO.get(str(_mf.get("field", "")), "Provide this data on the Import page")
+                    _fname  = _mf.get("label", "Unknown field")
+                    _tip    = _E8_HOW_TO.get(_fname, "Provide this data on the Import page")
                     st.markdown(
                         f"<div style='font-size:11px;padding:4px 0;border-bottom:1px solid #2d3748;'>"
                         f"<span style='color:#fc8181'>●</span> <strong style='color:#e2e8f0'>{_fname}</strong>"
