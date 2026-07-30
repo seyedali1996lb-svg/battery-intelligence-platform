@@ -233,6 +233,45 @@ class KGNode(Base):
     attrs     = Column(Text)  # JSON-encoded dict
 
 
+class CellSummary(Base):
+    """One cell's precomputed fleet-summary row -- src/cell_store.py's
+    build_summary() owns the reduction logic (full per-cycle DataFrame ->
+    these fields); this table only stores the result, same split-ownership
+    pattern as ExperimentRun/KGNode above. Fleet-wide views (Fleet's
+    ranking table, Grading, Compliance's regulatory alerts, etc.) read
+    these rows instead of touching every cell's full per-cycle DataFrame on
+    every render -- see src/cell_store.py's module docstring for why. org_id
+    uses PLATFORM_ORG_ID (imported at call time from experiment_registry.py,
+    not redefined here) for the shared reference fleets (NASA/synthetic/
+    Severson); real org_id values are used for an org's own uploaded cells."""
+    __tablename__ = "cell_summaries"
+    org_id                 = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    cell_id                = Column(String, primary_key=True)
+    soh_pct                = Column(Float)
+    cycle_number            = Column(Integer)
+    capacity_ah             = Column(Float)
+    resistance_ohm          = Column(Float)
+    resistance_ohm_initial  = Column(Float)
+    fade_rate_30cy          = Column(Float)
+    fade_rate_50cy          = Column(Float)
+    fade_trend               = Column(String)
+    eol_at_cycle             = Column(Integer)
+    rul_pred                = Column(Float)
+    rul_q10                 = Column(Float)
+    rul_q90                 = Column(Float)
+    knee_detected            = Column(Integer)  # 0/1 -- SQLite has no native bool
+    knee_cycle               = Column(Integer)
+    knee_soh                = Column(Float)
+    knee_confidence          = Column(Float)
+    knee_phase               = Column(String)
+    grade                    = Column(String)
+    grade_score              = Column(Float)
+    grade_fade               = Column(Float)
+    grade_var                = Column(Float)
+    grade_slope              = Column(Float)
+    updated_at                = Column(String)
+
+
 class KGEdge(Base):
     """One knowledge-graph edge. edge_id is a deterministic
     'src_key|dst_key|edge_type' string (see knowledge_graph.graph_to_rows())
@@ -662,6 +701,92 @@ def load_failure_signatures(org_id: int) -> list:
             )
             for r in rows
         ]
+
+
+# ---------------------------------------------------------------------------
+# Cell summaries (src/cell_store.py owns build_summary()'s reduction logic)
+# ---------------------------------------------------------------------------
+
+def upsert_cell_summary(org_id: int, cell_id: str, summary: dict) -> None:
+    """Insert or update one cell's precomputed summary row. summary keys
+    match cell_store.build_summary()'s return dict exactly."""
+    with Session() as s:
+        s.merge(CellSummary(
+            org_id=org_id,
+            cell_id=cell_id,
+            soh_pct=summary.get("soh_pct"),
+            cycle_number=summary.get("cycle_number"),
+            capacity_ah=summary.get("capacity_ah"),
+            resistance_ohm=summary.get("resistance_ohm"),
+            resistance_ohm_initial=summary.get("resistance_ohm_initial"),
+            fade_rate_30cy=summary.get("fade_rate_30cy"),
+            fade_rate_50cy=summary.get("fade_rate_50cy"),
+            fade_trend=summary.get("fade_trend"),
+            eol_at_cycle=summary.get("eol_at_cycle"),
+            rul_pred=summary.get("rul_pred"),
+            rul_q10=summary.get("rul_q10"),
+            rul_q90=summary.get("rul_q90"),
+            knee_detected=int(bool(summary.get("knee_detected"))),
+            knee_cycle=summary.get("knee_cycle"),
+            knee_soh=summary.get("knee_soh"),
+            knee_confidence=summary.get("knee_confidence"),
+            knee_phase=summary.get("knee_phase"),
+            grade=summary.get("grade"),
+            grade_score=summary.get("grade_score"),
+            grade_fade=summary.get("grade_fade"),
+            grade_var=summary.get("grade_var"),
+            grade_slope=summary.get("grade_slope"),
+            updated_at=datetime.datetime.now().isoformat(),
+        ))
+        s.commit()
+
+
+def _cell_summary_row_to_dict(r: "CellSummary") -> dict:
+    return {
+        "cell_id": r.cell_id,
+        "soh_pct": r.soh_pct,
+        "cycle_number": r.cycle_number,
+        "capacity_ah": r.capacity_ah,
+        "resistance_ohm": r.resistance_ohm,
+        "resistance_ohm_initial": r.resistance_ohm_initial,
+        "fade_rate_30cy": r.fade_rate_30cy,
+        "fade_rate_50cy": r.fade_rate_50cy,
+        "fade_trend": r.fade_trend,
+        "eol_at_cycle": r.eol_at_cycle,
+        "rul_pred": r.rul_pred,
+        "rul_q10": r.rul_q10,
+        "rul_q90": r.rul_q90,
+        "knee_detected": bool(r.knee_detected),
+        "knee_cycle": r.knee_cycle,
+        "knee_soh": r.knee_soh,
+        "knee_confidence": r.knee_confidence,
+        "knee_phase": r.knee_phase,
+        "grade": r.grade,
+        "grade_score": r.grade_score,
+        "grade_fade": r.grade_fade,
+        "grade_var": r.grade_var,
+        "grade_slope": r.grade_slope,
+        "updated_at": r.updated_at,
+    }
+
+
+def get_cell_summaries(org_id: int, include_platform: bool = True) -> list[dict]:
+    """Every precomputed CellSummary row for org_id, optionally combined
+    with the shared PLATFORM_ORG_ID reference-fleet rows (same
+    include-the-platform-sentinel pattern as load_experiment_runs())."""
+    from experiment_registry import PLATFORM_ORG_ID
+
+    ids = [PLATFORM_ORG_ID, org_id] if include_platform else [org_id]
+    ids = sorted(set(ids))
+    with Session() as s:
+        rows = s.query(CellSummary).filter(CellSummary.org_id.in_(ids)).all()
+        return [_cell_summary_row_to_dict(r) for r in rows]
+
+
+def get_cell_summary(org_id: int, cell_id: str) -> "dict | None":
+    with Session() as s:
+        row = s.query(CellSummary).filter_by(org_id=org_id, cell_id=cell_id).one_or_none()
+        return _cell_summary_row_to_dict(row) if row is not None else None
 
 
 # ---------------------------------------------------------------------------

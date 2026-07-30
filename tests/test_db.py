@@ -126,6 +126,54 @@ def test_cohort_tags_round_trip(db):
     assert db.load_cohort_tags(DEMO_ORG_ID)["Cell1"] == "Batch-C"
 
 
+def test_cell_summary_round_trip(db):
+    summary = {
+        "soh_pct": 82.5, "cycle_number": 340, "capacity_ah": 1.65,
+        "resistance_ohm": 0.06, "resistance_ohm_initial": 0.05,
+        "fade_rate_30cy": 0.02, "fade_rate_50cy": 0.018, "fade_trend": "Accelerating",
+        "eol_at_cycle": 420, "rul_pred": 80.0, "rul_q10": 60.0, "rul_q90": 100.0,
+        "knee_detected": True, "knee_cycle": 300, "knee_soh": 85.0,
+        "knee_confidence": 0.62, "knee_phase": "Accelerating",
+        "grade": "B", "grade_score": 61.0, "grade_fade": 0.001, "grade_var": 1e-5, "grade_slope": 0.0002,
+    }
+    db.upsert_cell_summary(DEMO_ORG_ID, "Cell1", summary)
+    rows = db.get_cell_summaries(DEMO_ORG_ID, include_platform=False)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["cell_id"] == "Cell1"
+    assert row["soh_pct"] == 82.5
+    assert row["cycle_number"] == 340
+    assert row["knee_detected"] is True
+    assert row["grade"] == "B"
+    assert row["updated_at"]  # non-empty timestamp string
+
+    single = db.get_cell_summary(DEMO_ORG_ID, "Cell1")
+    assert single["soh_pct"] == 82.5
+
+
+def test_cell_summary_upsert_overwrites_not_duplicates(db):
+    db.upsert_cell_summary(DEMO_ORG_ID, "Cell1", {"soh_pct": 90.0, "cycle_number": 10})
+    db.upsert_cell_summary(DEMO_ORG_ID, "Cell1", {"soh_pct": 88.0, "cycle_number": 20})
+    rows = db.get_cell_summaries(DEMO_ORG_ID, include_platform=False)
+    assert len(rows) == 1
+    assert rows[0]["soh_pct"] == 88.0
+    assert rows[0]["cycle_number"] == 20
+
+
+def test_cell_summary_platform_rows_visible_alongside_tenant_rows(db):
+    from experiment_registry import PLATFORM_ORG_ID
+
+    tenant_org = db.create_organization_with_admin("Tenant Org", "tenant_admin", "password123")["org_id"]
+    db.upsert_cell_summary(PLATFORM_ORG_ID, "B0005", {"soh_pct": 91.0, "cycle_number": 100})
+    db.upsert_cell_summary(tenant_org, "MyCell1", {"soh_pct": 95.0, "cycle_number": 5})
+
+    combined = db.get_cell_summaries(tenant_org, include_platform=True)
+    assert {r["cell_id"] for r in combined} == {"B0005", "MyCell1"}
+
+    tenant_only = db.get_cell_summaries(tenant_org, include_platform=False)
+    assert {r["cell_id"] for r in tenant_only} == {"MyCell1"}
+
+
 def test_settings_round_trip_and_default(db):
     assert db.get_setting(DEMO_ORG_ID, "webhook_url", "") == ""
     db.set_setting(DEMO_ORG_ID, "webhook_url", "https://example.com/hook")
