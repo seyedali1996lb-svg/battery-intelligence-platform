@@ -47,12 +47,7 @@ def page_copilot(
         QUERY_LABELS,
         FOLLOW_UP_MAP,
     )
-    try:
-        from battery_copilot import llm_answer as _llm_answer_fn
-    except ImportError:
-        def _llm_answer_fn(query, template_answer, api_key):  # type: ignore[misc]
-            return template_answer
-    llm_answer = _llm_answer_fn
+    from battery_copilot import llm_answer
 
     st.markdown("# Copilot")
 

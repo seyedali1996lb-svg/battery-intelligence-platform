@@ -313,7 +313,7 @@ def answer_query(query: str, ctx: dict) -> str:
     domain knowledge (src/copilot_retrieval.py) relevant to the question —
     real retrieval over an authored corpus, not keyword-to-template
     routing. Returns a plain-text answer usable directly, or as the
-    grounding template passed to copilot_llm.llm_answer() for rephrasing.
+    grounding template passed to this module's own llm_answer() for rephrasing.
     """
     from copilot_retrieval import retrieve
 

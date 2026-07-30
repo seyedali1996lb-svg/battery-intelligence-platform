@@ -560,8 +560,7 @@ def page_decision(
     _dc_bundle = bundles.get(ChemistryProfile.for_cell(selected).source_kind)
     if _dc_bundle:
         try:
-            from battery_copilot import build_cell_context, answer_query
-            from copilot_llm import llm_answer
+            from battery_copilot import build_cell_context, answer_query, llm_answer
             _dc_ctx = build_cell_context(selected, featured_dfs, bundles)
             _dc_input = st.text_input(
                 "Question", placeholder="e.g. 'Why is this cell degrading faster than others?'",
