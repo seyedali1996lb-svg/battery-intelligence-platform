@@ -4,6 +4,7 @@
 -e .
 
 pandas
+pyarrow
 openpyxl
 scikit-learn
 scipy
