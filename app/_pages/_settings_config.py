@@ -464,11 +464,15 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
             if "FLEET_DIGEST" not in _wh_events:
                 st.warning("Add FLEET_DIGEST to 'Fire on' above to enable this.")
             else:
-                _n_cells = len(featured_dfs)
+                # Reads precomputed CellSummary rows instead of every cell's
+                # full per-cycle DataFrame -- see src/cell_store.py's module
+                # docstring. Same digest logic as Fleet's own auto-digest.
+                _active_ids_wh = set(featured_dfs.keys())
+                _n_cells = len(_active_ids_wh)
                 _n_flagged = sum(
-                    1 for _df in featured_dfs.values()
-                    if len(_df) and "soh_pct" in _df.columns
-                    and float(_df["soh_pct"].iloc[-1]) < st.session_state.get("eol_threshold_pct", 80.0)
+                    1 for r in db.get_cell_summaries(st.session_state["auth_org_id"])
+                    if r["cell_id"] in _active_ids_wh and r.get("soh_pct") is not None
+                    and float(r["soh_pct"]) < st.session_state.get("eol_threshold_pct", 80.0)
                 )
                 _ok = send_webhook(
                     "FLEET_DIGEST",
