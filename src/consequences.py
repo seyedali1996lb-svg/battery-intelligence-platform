@@ -249,6 +249,40 @@ def application_fit(
 
 
 # ---------------------------------------------------------------------------
+# End-of-life R-code recommendation (IEC 62902 / EU Art. 70)
+# ---------------------------------------------------------------------------
+
+def eol_r_code_recommendation(soh: float, fade_30_mah_cy: float) -> dict:
+    """
+    Recommend an IEC 62902 R-code from application_fit(), not an
+    independently-hardcoded SOH ladder (Circular Economy Coverage
+    finding: the EU Passport page used to derive its R-code from its own
+    80/60 SOH cutoffs, unrelated to what application_fit()/classify()
+    would actually recommend for the same cell -- a cell at SOH=75% with
+    fast fade could show "R3 -- Second-life" here while every application
+    scored "not_fit". This is now the single source of truth both the
+    Passport page and any future caller should use.
+
+    R0 stays a pure SOH check (IEC's own primary-life threshold, outside
+    application_fit()'s domain). R4 vs. R5 (which recycling pathway) also
+    stays a raw SOH split -- application_fit() has no concept of that
+    distinction, only of second-life suitability.
+
+    Returns {"r_code": str, "color": str, "best_app": dict | None}.
+    """
+    if soh >= 90:
+        return {"r_code": "R0 — Reuse (primary life)", "color": "#48bb78", "best_app": None}
+
+    fit = application_fit(soh, fade_30_mah_cy, fleet_fade_median=None)
+    _, best_app = max(fit.items(), key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]])
+    if best_app["fit"] in ("fit", "marginal"):
+        return {"r_code": "R3 — Remanufacture / Second-life application", "color": "#48bb78", "best_app": best_app}
+    if soh >= 60:
+        return {"r_code": "R4 — Recycle (hydrometallurgical / direct)", "color": "#f6ad55", "best_app": best_app}
+    return {"r_code": "R5 — Recover (energy or material)", "color": "#fc8181", "best_app": best_app}
+
+
+# ---------------------------------------------------------------------------
 # Financial comparison
 # ---------------------------------------------------------------------------
 

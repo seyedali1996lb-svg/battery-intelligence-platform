@@ -193,19 +193,29 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         "margin-bottom:4px;margin-top:20px'>6 · End-of-Life R-Code Taxonomy (IEC 62902 / EU Art. 70)</div>",
         unsafe_allow_html=True,
     )
+    # R-code comes from consequences.eol_r_code_recommendation(), not an
+    # independent SOH ladder -- see that function's docstring for why
+    # (Circular Economy Coverage finding: this page used to hardcode its
+    # own 80/60 thresholds, unrelated to what application_fit()/classify()
+    # would actually recommend for the same cell).
+    from consequences import eol_r_code_recommendation
     _soh_now = float(df.iloc[-1]["soh_pct"]) if "soh_pct" in df.columns else 85.0
-    _eol_r_code = (
-        "R3 — Remanufacture / Second-life application" if _soh_now >= 80
-        else "R4 — Recycle (hydrometallurgical / direct)" if _soh_now >= 60
-        else "R5 — Recover (energy or material)"
-    )
-    _eol_color  = "#48bb78" if _soh_now >= 80 else "#f6ad55" if _soh_now >= 60 else "#fc8181"
+    _fade_30_now = float(df.iloc[-1].get("fade_rate_30cy", 0.0)) if "fade_rate_30cy" in df.columns else 0.0
+    _r_rec = eol_r_code_recommendation(_soh_now, _fade_30_now)
+    _eol_r_code = _r_rec["r_code"]
+    _eol_color  = _r_rec["color"]
+    # R3/R4 row states derive from the same _eol_r_code just computed above,
+    # not a second independent SOH check -- two parallel derivations of the
+    # same taxonomy is exactly the bug class this section was rewritten to
+    # close.
     _r_fields = [
         {"label": "Recommended R-code", "value": _eol_r_code, "state": "estimated",
-         "note": f"Based on current SOH = {_soh_now:.1f}%. IEC 62902 R0–R9 taxonomy."},
+         "note": f"Based on current SOH = {_soh_now:.1f}% and second-life application fit. IEC 62902 R0–R9 taxonomy."},
         {"label": "R0 — Reuse", "value": "SOH ≥ 90% required", "state": "estimated" if _soh_now >= 90 else "unavailable"},
-        {"label": "R3 — Second-life", "value": "SOH 80–90% (stationary storage)", "state": "available" if 80 <= _soh_now < 90 else "estimated"},
-        {"label": "R4 — Recycle", "value": "Hydromet / direct recycling pathway", "state": "estimated"},
+        {"label": "R3 — Second-life", "value": "Requires a fitting second-life application (see Consequences page)",
+         "state": "available" if _eol_r_code.startswith("R3") else "estimated"},
+        {"label": "R4 — Recycle", "value": "Hydromet / direct recycling pathway",
+         "state": "available" if _eol_r_code.startswith("R4") else "estimated"},
         {"label": "Recycled content declaration", "value": "IEC 63338 audit required", "state": "unavailable",
          "note": "Carbon footprint per kWh must be declared for market access (IEC 63338, from 2025)."},
     ]
