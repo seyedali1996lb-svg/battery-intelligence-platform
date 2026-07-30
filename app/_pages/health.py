@@ -277,7 +277,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         pass
 
     # ── E1: 12-month SOH trajectory forecast with uncertainty cone ──────────────
-    st.markdown("<div class='section-header'>12-Month SOH Forecast</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>12-Month SOH Forecast</h4>", unsafe_allow_html=True)
     import numpy as _np_e1
     _e1_last_cycle = int(df["cycle_number"].iloc[-1])
     _e1_last_soh   = float(df["soh_pct"].iloc[-1])

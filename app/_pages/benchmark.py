@@ -38,7 +38,7 @@ def page_benchmark(org_id: int) -> None:
     _action_bar("benchmark")
     st.markdown("# Model Benchmark")
     st.markdown(
-        "##### Every logged GBRT training run — filterable, sortable, "
+        "#### Every logged GBRT training run — filterable, sortable, "
         "with fold-level drill-down"
     )
 

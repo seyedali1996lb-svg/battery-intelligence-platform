@@ -61,7 +61,7 @@ def page_consequences(
 
     # ── Page header ──
     st.markdown("# EOL Economics")
-    st.markdown(f"##### Second-Life Economics + Sustainability · {selected}")
+    st.markdown(f"#### Second-Life Economics + Sustainability · {selected}")
 
     _md_html(
         f"""

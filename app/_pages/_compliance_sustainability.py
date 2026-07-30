@@ -49,7 +49,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
 
     # ── Page header ──
     st.markdown("# Sustainability")
-    st.markdown(f"##### Lifecycle carbon + circularity · {selected}")
+    st.markdown(f"#### Lifecycle carbon + circularity · {selected}")
 
     st.markdown(
         f"<div style='background:rgba(183,121,31,0.07);border:1px solid rgba(183,121,31,0.25);"

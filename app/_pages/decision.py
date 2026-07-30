@@ -137,7 +137,7 @@ def page_decision(
         )
 
     # ── 2. NPV Decision Table (3 options, no chart) ─────────────────────────
-    st.markdown("<div class='section-header'>Financial Decision</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Financial Decision</h4>", unsafe_allow_html=True)
     _npv_rate   = 0.08
     _energy_usd = 80.0
     _repl_cost  = 150.0
@@ -248,7 +248,7 @@ def page_decision(
     # application fit, second-life marketplace, confidence-reason callouts ──
     with st.expander("📋 Supporting details", expanded=False):
         # ── 3. Maintenance Calendar ─────────────────────────────────────────
-        st.markdown("<div class='section-header'>Maintenance Calendar</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Maintenance Calendar</h4>", unsafe_allow_html=True)
         _eol_thr    = float(st.session_state.get("eol_threshold_pct", 80.0))
         _cur_soh    = float(df["soh_pct"].iloc[-1])
         _fp_cy      = float(df["fade_rate_50cy"].iloc[-1]) * 100 / (float(df["capacity_ah"].iloc[0]) + 1e-9)
@@ -280,7 +280,7 @@ def page_decision(
 
         # ── 4. Application Fit ──────────────────────────────────────────────
         if soh <= 90:
-            st.markdown("<div class='section-header'>Application Fit Scores</div>", unsafe_allow_html=True)
+            st.markdown("<h4 class='section-header'>Application Fit Scores</h4>", unsafe_allow_html=True)
             _af_cols = st.columns(min(len(fit_scores), 4))
             _af_colour = {"fit": "#48bb78", "marginal": "#f6ad55", "not_fit": "#fc8181"}
             for _i, (_app_key, _app) in enumerate(fit_scores.items()):
@@ -294,7 +294,7 @@ def page_decision(
 
         # ── 4b. Second-life marketplace ──────────────────────────────────────
         if action in ("second_life", "recycle") or soh <= 85:
-            st.markdown("<div class='section-header'>Second-Life Marketplace</div>", unsafe_allow_html=True)
+            st.markdown("<h4 class='section-header'>Second-Life Marketplace</h4>", unsafe_allow_html=True)
             _sl_eligible = soh >= 70.0
             _sl_col = "#68d391" if _sl_eligible else "#718096"
             render_card(
@@ -555,7 +555,7 @@ def page_decision(
         page_consequences(selected, df, featured_dfs, bundles, rul_reliable)
 
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
-    st.markdown("<div class='section-header'>Ask about this cell</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Ask about this cell</h4>", unsafe_allow_html=True)
     st.caption("Explains the recommendation above in plain language — grounded only on values already computed by the model pipeline. It does not make the decision; the recommendation engine above does.")
     _dc_bundle = bundles.get(ChemistryProfile.for_cell(selected).source_kind)
     if _dc_bundle:

@@ -33,7 +33,7 @@ def page_settings(featured_dfs: dict, bundles: dict):
         st.markdown(section_header_html(title), unsafe_allow_html=True)
 
     st.markdown("# Settings")
-    st.markdown("##### Platform configuration · model transparency · reliability controls")
+    st.markdown("#### Platform configuration · model transparency · reliability controls")
 
     # ────────────────────────────────────────────────────────────────────────
     # Section 0: Uploaded data (shown only when uploaded data is in session)

@@ -269,7 +269,7 @@ def page_import():
 
     st.markdown("# Import Your Battery Data")
     st.warning("Uploaded data is processed in a shared session environment — do not upload proprietary or personal data in this demonstration.")
-    st.markdown("##### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
+    st.markdown("#### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
 
     # ── Section 1: Hero card ────────────────────────────────────────────────
     h1, h2 = st.columns(2)

@@ -50,7 +50,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     summ = p["summary"]
 
     st.markdown("# Battery Passport")
-    st.markdown(f"##### Battery Passport Interface · {selected}")
+    st.markdown(f"#### Battery Passport Interface · {selected}")
 
     # ── E8: Passport completeness score ───────────────────────────────────────
     _e8_n_avail = summ.get("n_available", 0)

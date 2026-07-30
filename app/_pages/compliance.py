@@ -58,7 +58,7 @@ def page_reports(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bo
     soh     = float(latest["soh_pct"])
 
     st.markdown("# Reports")
-    st.markdown(f"##### Demonstration report export · {selected}")
+    st.markdown(f"#### Demonstration report export · {selected}")
 
     _md_html("""<div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.25);border-radius:10px;padding:14px 20px;margin-bottom:28px;font-size:13px;color:#8896a8;line-height:1.7"><strong style="color:#63b3ed">Demonstration report</strong> — not a regulatory document. Exports the current battery's identity, SOH/RUL with reliability flags, second-life recommendation (if applicable), and the assumption register, with the same Available / Estimate / Not-available-in-demo labelling used throughout this platform.</div>""")
 
@@ -275,7 +275,7 @@ def _page_regulatory_alerts(
 
     # Affected cells
     if _at_risk or _approaching:
-        st.markdown("<div class='section-header'>Cells Requiring Action</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Cells Requiring Action</h4>", unsafe_allow_html=True)
         for _r in sorted(_at_risk + _approaching, key=lambda x: x["soh_now"]):
             _is_breach = _r["soh_now"] < _art14_floor
             _status_c  = "#fc8181" if _is_breach else "#f6ad55"
@@ -292,7 +292,7 @@ def _page_regulatory_alerts(
             )
 
         # Draft submission
-        st.markdown("<div class='section-header'>Draft Compliance Notice</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Draft Compliance Notice</h4>", unsafe_allow_html=True)
         _draft_cells = "\n".join(
             f"  - Cell {r['cell_id']}: SOH {r['soh_now']:.1f}% "
             f"({'below' if r['soh_now'] < _art14_floor else 'approaching'} 80% threshold)"
@@ -347,7 +347,7 @@ def page_compliance(
 ) -> None:
     _action_bar("compliance")
     st.markdown(f"# Is {selected} EU passport-ready?")
-    st.markdown("##### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
+    st.markdown("#### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
     _tab_passport, _tab_reports, _tab_sus, _tab_reg = st.tabs(
         ["EU Battery Passport", "Reports & Export", "Sustainability", "Regulatory Alerts"]
     )

@@ -437,7 +437,7 @@ def render_pack_builder(featured_dfs: dict, bundles: dict, key_prefix: str) -> N
     """
     from pack_builder import compute_pack_metrics, compute_matching_scores
 
-    st.markdown("<div class='section-header'>Virtual Pack Builder</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Virtual Pack Builder</h4>", unsafe_allow_html=True)
     _md_html(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "Select cells to model as a series or parallel pack. Capacity and resistance scale "

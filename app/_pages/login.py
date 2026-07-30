@@ -39,6 +39,8 @@ def render_login() -> bool:
 
     db.init_db()
 
+    st.markdown("# Battery Intelligence Platform")
+
     col_l, col_m, col_r = st.columns([1, 1.2, 1])
     with col_m:
         st.markdown("<div style='height:40px'></div>", unsafe_allow_html=True)

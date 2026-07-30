@@ -81,7 +81,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     _rdf_b = _resample_df(df_b)
 
     # ── Summary metrics comparison ──
-    st.markdown("<div class='section-header'>Key Metrics</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Key Metrics</h4>", unsafe_allow_html=True)
     _mc1, _mc2, _mc3, _mc4 = st.columns(4)
     _soh_a = float(df_a["soh_pct"].iloc[-1])
     _soh_b = float(df_b["soh_pct"].iloc[-1])
@@ -107,7 +107,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     _mc8.metric(f"Fade rate — {cell_b}", f"{_fade_b*1000:.2f} mSOH/cy")
 
     # ── SOH trajectory comparison ──
-    st.markdown("<div class='section-header'>SOH Trajectory Comparison (10-cycle rolling avg)</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>SOH Trajectory Comparison (10-cycle rolling avg)</h4>", unsafe_allow_html=True)
     _soh_col_a = "soh_rolling_avg" if "soh_rolling_avg" in df_a.columns else "soh_pct"
     _soh_col_b = "soh_rolling_avg" if "soh_rolling_avg" in df_b.columns else "soh_pct"
 
@@ -133,7 +133,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     st.plotly_chart(_fig_soh, use_container_width=True)
 
     # ── Resistance trajectory comparison ──
-    st.markdown("<div class='section-header'>Resistance Trajectory Comparison</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Resistance Trajectory Comparison</h4>", unsafe_allow_html=True)
     if "resistance_ohm" in df_a.columns and "resistance_ohm" in df_b.columns:
         _fig_res = go.Figure()
         _fig_res.add_trace(go.Scatter(
@@ -159,7 +159,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
         _empty_state("Resistance data unavailable", "One or both cells are missing resistance measurements.", icon="Ω")
 
     # ── Engineering Radar Chart (CATL / A123 format) ─────────────────────────
-    st.markdown("<div class='section-header'>Engineering Radar — Multi-Metric Health Profile</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Engineering Radar — Multi-Metric Health Profile</h4>", unsafe_allow_html=True)
     _md_html("""<div style="font-size:12px;color:#8896a8;margin-bottom:10px">Normalized 0–1 scale. <strong style="color:#e2e8f0">Outer = better</strong> for SOH, CE, dQ/dV; <strong style="color:#e2e8f0">Inner = better</strong> for resistance and fade rate (inverted). Standard CATL / A123 engineering review format.</div>""")
     try:
         def _radar_val(df, col, invert=False, scale=1.0, floor=0.0):
@@ -262,7 +262,7 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
 def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
     """Cross-fleet degradation clustering view."""
     st.markdown(
-        "<div class='section-header'>Cross-Fleet Degradation Clustering</div>",
+        "<h4 class='section-header'>Cross-Fleet Degradation Clustering</h4>",
         unsafe_allow_html=True,
     )
     _md_html(
@@ -438,7 +438,7 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
 def _page_explore_cohort(active_fdfs: dict):
     """Cohort analysis view — cells grouped by user-set tags."""
     # ── Inline cohort tagging ─────────────────────────────────────────────────
-    st.markdown("<div class='section-header'>Tag cells by batch, supplier, or site</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Tag cells by batch, supplier, or site</h4>", unsafe_allow_html=True)
     st.caption("Tags are applied immediately. Use cohort names like 'Batch-A', 'Site-London', 'Supplier-X'.")
     import db
     if "cell_cohort_tags" not in st.session_state:
@@ -458,7 +458,7 @@ def _page_explore_cohort(active_fdfs: dict):
     _e5_tags = st.session_state.get("cell_cohort_tags", {})
     _tagged  = {cid: tag for cid, tag in _e5_tags.items() if tag.strip() and cid in active_fdfs}
     if _tagged:
-        st.markdown("<div class='section-header'>Cohort Analysis</div>", unsafe_allow_html=True)
+        st.markdown("<h4 class='section-header'>Cohort Analysis</h4>", unsafe_allow_html=True)
         st.caption("Cells grouped by tag (set on Import page). Comparing avg SOH and fade rate across cohorts.")
         _cohorts: dict[str, list] = {}
         for cid, tag in _tagged.items():
@@ -524,7 +524,7 @@ def _page_explore_cohort(active_fdfs: dict):
                 for _cids in _cohort_cids.values() for c in _cids
             )
             if _has_temporal_data:
-                st.markdown("<div class='section-header'>Cohort SOH Trajectories</div>", unsafe_allow_html=True)
+                st.markdown("<h4 class='section-header'>Cohort SOH Trajectories</h4>", unsafe_allow_html=True)
                 st.caption("Bold line = cohort average SOH by cycle number. Thin lines = individual member cells.")
                 _fig_traj = go.Figure()
                 for _ci, _cs in enumerate(_cohort_stats):
@@ -619,7 +619,7 @@ def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
     This is a read-only query over the graph the platform already built —
     no new computation happens here.
     """
-    st.markdown("<div class='section-header'>Cells like this one</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Cells like this one</h4>", unsafe_allow_html=True)
     st.caption(
         "Graph query over the Battery Knowledge Graph: same chemistry, ranked by shared "
         "degradation mechanism first, then closest State of Health."
@@ -690,7 +690,7 @@ def _page_reference_datasets():
     own terms instead of forcing it through machinery built for dense
     per-cycle data.
     """
-    st.markdown("<div class='section-header'>Reference Datasets — Additional Chemistries</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Reference Datasets — Additional Chemistries</h4>", unsafe_allow_html=True)
     _md_html(
         "<div style='font-size:12px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
         "Real measured data from public datasets outside this platform's trained-model pipeline — "
