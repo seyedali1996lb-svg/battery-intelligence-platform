@@ -30,6 +30,47 @@ tenant's own uploaded-data training runs are logged under that tenant's
 actual org_id. leaderboard() takes both so a tenant's view combines its
 own runs with the shared platform benchmark, mirroring src/api.py's
 _get_featured_dfs()/_get_bundles() merge pattern.
+
+The replay contract — which RunRecord fields replay_run() actually uses
+------------------------------------------------------------------------
+RunRecord stores 15 fields, but replay_run() (via
+batlab.validation.manifest.evaluate_from_manifest() -> batlab.validation.
+lco.run_lco()) only ever feeds THREE of them back into the actual
+re-computation:
+
+  - cell_ids         (which cells' raw data to restrict to)
+  - feature_version  (raises if it doesn't match the installed batlab's
+                       FEATURE_VERSION — a stale-feature-code guard)
+  - seed             (passed through to run_lco()'s GradientBoostingRegressor)
+
+Every other field — dataset, chemistry, feature_set, hyperparams, n_cells,
+n_rows, fold_metrics, git_commit, timestamp, notes — is descriptive/audit
+metadata: shown on the Benchmark leaderboard and the "Regenerate this
+report" caption, logged for provenance, but NOT threaded into the replay
+computation itself. In particular, **hyperparams is not actually
+replayed**, despite reading as if it might be: run_lco() always trains
+with its own hardcoded module-level GBRT_PARAMS
+(batlab.validation.lco.GBRT_PARAMS) — it has no hyperparams argument at
+all. A run's own logged "hyperparams" field (usually a copy of batlab.
+models.gbrt.GBRT_PARAMS, a SEPARATE constant currently identical in value
+but not the same object, taken by the live training call sites in
+app/main.py / app/_pages/import_page.py) is recorded for the leaderboard's
+own display purposes only.
+
+This is a real, structurally-live fragility, not just a naming nitpick: if
+either GBRT_PARAMS constant is ever tuned without updating the other,
+replay_run() would silently train an old run's replay with different
+hyperparameters than that run actually used, and the "reproduced" vs
+"recorded" numbers on the Regenerate-report UI could diverge for a reason
+that has nothing to do with code/environment/data drift — the three
+things this contract's guards actually check. replay_run() below adds a
+hyperparams_match/hyperparams_diff check (same non-raising style as
+evaluate_from_manifest()'s environment_match/environment_diff) so that
+divergence is visible instead of silently misattributed. Unifying the two
+GBRT_PARAMS constants into one shared source of truth would close the gap
+at the root, but is a separate, larger refactor (touches batlab.models.gbrt
+and batlab.validation.lco and every caller of each) — flagged in
+pending_work, not done here.
 """
 
 from __future__ import annotations
@@ -222,8 +263,13 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     -------
     A dict with the reproduced metrics (from evaluate_from_manifest) plus
     "recorded" (the original logged soh_mae/soh_r2/rul_mae/rul_r2) so a
-    caller can show reproduced-vs-recorded side by side, and "run" (the
-    full logged run dict) for context.
+    caller can show reproduced-vs-recorded side by side, "run" (the full
+    logged run dict) for context, and "hyperparams_match"/"hyperparams_diff"
+    — see this module's docstring ("The replay contract") for why this
+    check exists: the actual replay always trains with the CURRENT
+    batlab.validation.lco.GBRT_PARAMS, not the run's own logged
+    "hyperparams" field, so this surfaces any divergence between the two
+    instead of leaving it invisible.
 
     Raises
     ------
@@ -231,6 +277,7 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     a required cell (propagated from evaluate_from_manifest).
     """
     from batlab.validation.manifest import evaluate_from_manifest
+    from batlab.validation.lco import GBRT_PARAMS as _CURRENT_REPLAY_GBRT_PARAMS
 
     run = get_run(org_id, run_id)
     if run is None:
@@ -248,6 +295,15 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
         "rul_mae": run["rul_mae"], "rul_r2": run["rul_r2"],
     }
     result["run"] = run
+
+    recorded_hyperparams = run.get("hyperparams") or {}
+    hyperparams_diff = {
+        k: (recorded_hyperparams.get(k), v)
+        for k, v in _CURRENT_REPLAY_GBRT_PARAMS.items()
+        if recorded_hyperparams.get(k) != v
+    }
+    result["hyperparams_match"] = not hyperparams_diff
+    result["hyperparams_diff"] = hyperparams_diff
     return result
 
 

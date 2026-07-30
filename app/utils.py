@@ -177,13 +177,16 @@ def metric_tile_html(label: str, value: str, sub: str = "",
 
 def render_regenerate_report_button(bundle: dict, org_id: "int | None", key_suffix: str) -> None:
     """
-    "Regenerate this report" — replays the exact recorded pipeline (dataset
-    + feature set + hyperparams + seed) behind a currently-displayed
-    bundle, via the experiment registry (src/experiment_registry.py).
-    Shared between the Cell Workbench and the EU Passport Reports page —
-    both just display a `bundle` whose training run was logged
-    automatically, so this is the single place that knows how to look
-    that run back up and re-run it, rather than each page reinventing it.
+    "Regenerate this report" — replays the recorded pipeline (cell_ids +
+    feature_version + seed — see experiment_registry.py's "The replay
+    contract" docstring section for exactly which logged fields actually
+    drive replay vs. are descriptive-only, notably hyperparams) behind a
+    currently-displayed bundle, via the experiment registry
+    (src/experiment_registry.py). Shared between the Cell Workbench and the
+    EU Passport Reports page — both just display a `bundle` whose training
+    run was logged automatically, so this is the single place that knows
+    how to look that run back up and re-run it, rather than each page
+    reinventing it.
 
     bundle["metrics"]["experiment_run_id"] is set by the training call
     sites themselves (app/main.py's _train_and_predict,
@@ -252,6 +255,17 @@ def render_regenerate_report_button(bundle: dict, org_id: "int | None", key_suff
                 )
             else:
                 st.caption("Same library versions as the original run — numbers match exactly.")
+
+            if not result["hyperparams_match"]:
+                st.warning(
+                    "The GBRT hyperparameters this platform currently trains with "
+                    f"differ from what this run's own logged record shows: "
+                    f"{result['hyperparams_diff']} (format: {{param: (recorded, current)}}). "
+                    "This replay used the CURRENT hyperparameters, not the "
+                    "recorded ones — any difference above is a real reason the "
+                    "reproduced numbers could diverge from the recorded ones, "
+                    "separate from environment or data drift."
+                )
 
 
 @st.cache_resource(show_spinner=False)

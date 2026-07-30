@@ -886,6 +886,13 @@ render_regenerate_report_button(bundle, org_id=1, key_suffix="test")
     assert "Reproduced now" in texts
     assert f"{lco['rul_mae']:.1f}" in texts  # the reproduced number matches the recorded one exactly
 
+    # This test's hyperparams={"random_state": 42} is a partial fixture dict
+    # (not a real dict(GBRT_PARAMS) copy), so the hyperparams-drift warning
+    # (src/experiment_registry.py's "The replay contract" section) must fire
+    # -- st.warning() is its own AppTest element type, not markdown.
+    warnings_ = [w.value for w in at.warning]
+    assert any("GBRT hyperparameters" in w for w in warnings_), warnings_
+
 
 # ---------------------------------------------------------------------------
 # Phase 6 — Physics-Informed Battery Intelligence (src/physics_calibration.py)

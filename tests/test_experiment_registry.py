@@ -208,6 +208,34 @@ def test_replay_run_reproduces_recorded_metrics(db):
     assert result["soh_r2"] == pytest.approx(lco["soh_r2"])
     assert result["rul_mae"] == pytest.approx(lco["rul_mae"])
     assert result["run"]["run_id"] == run_id
+    # This test's hyperparams={"random_state": 42} is a partial fixture dict,
+    # not a real dict(GBRT_PARAMS) copy -- it genuinely doesn't match every
+    # key in the current batlab.validation.lco.GBRT_PARAMS, so this is
+    # correctly False, not a bug.
+    assert result["hyperparams_match"] is False
+    assert result["hyperparams_diff"]["n_estimators"] == (None, 200)
+
+
+def test_replay_run_hyperparams_match_true_when_recorded_matches_current(db):
+    """The replay contract's hyperparams_match check (see
+    experiment_registry.py's "The replay contract" docstring section): a
+    run logged with the real current batlab.validation.lco.GBRT_PARAMS
+    values must classify as a match."""
+    from batlab.validation.lco import GBRT_PARAMS as CURRENT_GBRT_PARAMS
+
+    cell_data = {"CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006)}
+    lco = run_lco(cell_data, seed=42)
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number", "fade_rate_30cy"], feature_version=FEATURE_VERSION,
+        hyperparams=dict(CURRENT_GBRT_PARAMS), seed=42,
+        cell_ids=list(cell_data.keys()), n_rows=200, lco_metrics=lco,
+    )
+
+    result = reg.replay_run(reg.PLATFORM_ORG_ID, run_id, cell_data)
+
+    assert result["hyperparams_match"] is True
+    assert result["hyperparams_diff"] == {}
 
 
 def test_replay_run_raises_for_unknown_run_id(db):
