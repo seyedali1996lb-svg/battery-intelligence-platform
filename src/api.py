@@ -285,6 +285,65 @@ def _get_bundles(org_id: "int | None" = None) -> dict:
     return bundles
 
 
+def _cell_stat_rows(org_id: "int | None") -> list[dict]:
+    """Normalized per-cell stats for fleet_summary()/fleet_alerts(): the
+    shared reference fleet reads precomputed CellSummary rows (src/db.py --
+    see src/cell_store.py's module docstring) instead of every cell's full
+    per-cycle DataFrame; an org's own uploaded cells (never persisted to
+    CellSummary -- see cell_store.py's "explicitly out of scope" note) are
+    computed the same way this module always has, from the small,
+    session-bounded featured_dfs that load_tenant_bundle() returns. Both
+    are merged into one list with the same field names so both endpoints
+    below can iterate a single, uniform source."""
+    try:
+        import db as db_module  # type: ignore
+    except ImportError:
+        from src import db as db_module  # type: ignore
+    from experiment_registry import PLATFORM_ORG_ID
+
+    if org_id is not None:
+        summaries = db_module.get_cell_summaries(org_id, include_platform=True)
+    else:
+        summaries = db_module.get_cell_summaries(PLATFORM_ORG_ID, include_platform=False)
+
+    rows = [
+        {
+            "cell_id": r["cell_id"],
+            "soh_pct": r["soh_pct"],
+            "cycle_number": r["cycle_number"],
+            "eol_at_cycle": r["eol_at_cycle"],
+            "fade_trend": r["fade_trend"],
+        }
+        for r in summaries
+        if r.get("soh_pct") is not None
+    ]
+
+    org_bundle = _get_org_bundle(org_id)
+    if org_bundle is not None:
+        org_fdfs = org_bundle[0]
+        for cell_id, df in org_fdfs.items():
+            if len(df) == 0 or "soh_pct" not in df.columns:
+                continue
+            latest = df.iloc[-1]
+            eol_rows = df[df["is_eol"]] if "is_eol" in df.columns else df[df["soh_pct"] < 80.0]
+            eol_at = int(eol_rows["cycle_number"].iloc[0]) if len(eol_rows) else None
+            fade_trend = "Stable"
+            if "fade_rate_30cy" in df.columns and len(df) >= 31:
+                fade_now = df["fade_rate_30cy"].iloc[-1]
+                fade_prev = df["fade_rate_30cy"].iloc[-31]
+                delta_pct = (fade_now - fade_prev) / (abs(fade_prev) + 1e-9) * 100
+                fade_trend = "Accelerating" if delta_pct > 20 else ("Decelerating" if delta_pct < -20 else "Stable")
+            rows.append({
+                "cell_id": cell_id,
+                "soh_pct": float(latest["soh_pct"]),
+                "cycle_number": int(latest["cycle_number"]),
+                "eol_at_cycle": eol_at,
+                "fade_trend": fade_trend,
+            })
+
+    return rows
+
+
 # ── Response models ────────────────────────────────────────────────────────────
 
 class APIInfo(BaseModel):
@@ -611,18 +670,16 @@ def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -
 
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")
 def fleet_summary(current_user: dict = Depends(get_current_user)):
-    fdfs = _get_featured_dfs(current_user["org_id"])
-    bundles = _get_bundles(current_user["org_id"])
-    if not fdfs:
+    rows = _cell_stat_rows(current_user["org_id"])
+    if not rows:
         raise HTTPException(status_code=503, detail="No cells loaded.")
 
     sohs = []
     n_healthy = n_degrading = n_eol = 0
     eol_3m = eol_6m = eol_12m = 0
 
-    for cell_id, df in fdfs.items():
-        latest = df.iloc[-1]
-        soh = float(latest["soh_pct"])
+    for r in rows:
+        soh = float(r["soh_pct"])
         sohs.append(soh)
         status = _soh_status(soh)
         if status == "Healthy":
@@ -633,10 +690,9 @@ def fleet_summary(current_user: dict = Depends(get_current_user)):
             n_eol += 1
 
         # Cycles to EOL
-        eol_rows = df[df["is_eol"]] if "is_eol" in df.columns else df[df["soh_pct"] < 80.0]
-        if len(eol_rows) > 0:
-            eol_at = int(eol_rows["cycle_number"].iloc[0])
-            current_cy = int(latest["cycle_number"])
+        eol_at = r["eol_at_cycle"]
+        if eol_at is not None:
+            current_cy = int(r["cycle_number"])
             cycles_left = max(0, eol_at - current_cy)
             if cycles_left <= 3 * _CYCLES_PER_MONTH:
                 eol_3m += 1
@@ -646,7 +702,7 @@ def fleet_summary(current_user: dict = Depends(get_current_user)):
                 eol_12m += 1
 
     return FleetSummary(
-        total_cells=len(fdfs),
+        total_cells=len(rows),
         n_healthy=n_healthy,
         n_degrading=n_degrading,
         n_eol=n_eol,
@@ -661,20 +717,15 @@ def fleet_summary(current_user: dict = Depends(get_current_user)):
 
 @app.get("/fleet/alerts", summary="Active alert list — same logic as Alert Inbox UI")
 def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
-    fdfs = _get_featured_dfs(current_user["org_id"])
-    if not fdfs:
+    rows = _cell_stat_rows(current_user["org_id"])
+    if not rows:
         raise HTTPException(status_code=503, detail="No cells loaded.")
-
-    try:
-        from batlab.features.knee_detection import detect_knee
-    except ImportError:
-        detect_knee = None
 
     alerts: list[AlertItem] = []
 
-    for cell_id, df in fdfs.items():
-        latest = df.iloc[-1]
-        soh = float(latest["soh_pct"])
+    for r in rows:
+        cell_id = r["cell_id"]
+        soh = float(r["soh_pct"])
         status = _soh_status(soh)
 
         if status == "End of Life":
@@ -685,11 +736,8 @@ def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
             ))
 
         # Cycles to EOL
-        eol_rows = df[df["soh_pct"] < 80.0]
-        cycles_to_eol = None
-        if len(eol_rows) > 0:
-            eol_at = int(eol_rows["cycle_number"].iloc[0])
-            cycles_to_eol = max(0, eol_at - int(latest["cycle_number"]))
+        eol_at = r["eol_at_cycle"]
+        cycles_to_eol = max(0, eol_at - int(r["cycle_number"])) if eol_at is not None else None
 
         if cycles_to_eol is not None and cycles_to_eol <= 3 * _CYCLES_PER_MONTH and status != "End of Life":
             alerts.append(AlertItem(
@@ -698,37 +746,15 @@ def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
                 body=f"{cycles_to_eol} cycles remaining — SOH {soh:.1f}%.",
             ))
 
-        # Knee detection
-        if detect_knee is not None:
-            try:
-                knee = detect_knee(df["soh_pct"], df["cycle_number"])
-                if knee.get("status") == "past_knee":
-                    alerts.append(AlertItem(
-                        severity="high", cell_id=cell_id,
-                        title="Accelerated Degradation Phase",
-                        body=f"Cell has passed its knee point — fade rate accelerating. SOH {soh:.1f}%.",
-                    ))
-                elif knee.get("status") == "approaching":
-                    alerts.append(AlertItem(
-                        severity="medium", cell_id=cell_id,
-                        title="Approaching Knee Point",
-                        body=f"Fade acceleration detected — schedule inspection. SOH {soh:.1f}%.",
-                    ))
-            except Exception:
-                pass
-
-        # Fade acceleration
-        if "fade_rate_30cy" in df.columns and len(df) >= 31 and status != "End of Life":
-            fade_now = df["fade_rate_30cy"].iloc[-1]
-            fade_prev = df["fade_rate_30cy"].iloc[-31]
-            if abs(fade_prev) > 1e-9:
-                delta_pct = (fade_now - fade_prev) / abs(fade_prev) * 100
-                if delta_pct > 20:
-                    alerts.append(AlertItem(
-                        severity="medium", cell_id=cell_id,
-                        title="Fade Rate Accelerating",
-                        body=f"30-cycle fade rate increased {delta_pct:.0f}% vs prior window. SOH {soh:.1f}%.",
-                    ))
+        # Fade acceleration -- reads the same precomputed classification
+        # Fleet's own ranking table does (src/cell_store.py's build_summary()),
+        # rather than recomputing the >20%-vs-30-cycles-ago check here.
+        if r["fade_trend"] == "Accelerating" and status != "End of Life":
+            alerts.append(AlertItem(
+                severity="medium", cell_id=cell_id,
+                title="Fade Rate Accelerating",
+                body=f"30-cycle fade rate has accelerated vs the prior window. SOH {soh:.1f}%.",
+            ))
 
     _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2}
     alerts.sort(key=lambda a: _SEV_ORDER[a.severity])
