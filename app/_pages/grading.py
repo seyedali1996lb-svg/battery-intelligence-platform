@@ -18,7 +18,6 @@ from utils import _action_bar, _md_html, base_layout
 
 def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str):
     _action_bar("grading")
-    import numpy as _np_grade
 
     _md_html("""<div style="padding-top:32px;margin-bottom:8px"><div style="font-size:22px;font-weight:700;color:#e2e8f0">⏳ Cell Grading</div><div style="font-size:13px;color:#8896a8;margin-top:2px">Early-cycle lifetime prediction · Severson et al. (2019, Nature Energy)</div></div>""")
     st.caption(
@@ -38,33 +37,25 @@ def page_grading(cell_ids: list, active_fdfs: dict, bundles: dict, selected: str
               "label": "No data", "lifetime": "Insufficient data", "icon": "⚪"},
     }
 
+    # Reads the same precomputed grade fields fleet.py's ranking table does
+    # (src/cell_store.py's build_summary() -- the byte-for-byte-duplicated
+    # formula this page and fleet.py used to each maintain independently is
+    # now computed once, not on every render of either page).
+    import db as _db_grading
+    _summaries_by_id = {
+        r["cell_id"]: r for r in _db_grading.get_cell_summaries(st.session_state["auth_org_id"])
+        if r["cell_id"] in active_fdfs
+    }
+
     _grade_results = []
     for _cid in cell_ids:
-        _gdf = active_fdfs.get(_cid)
-        if _gdf is None:
+        _r = _summaries_by_id.get(_cid)
+        if _r is None:
             continue
-        _early = _gdf[_gdf["cycle_number"] <= 100]
-        if len(_early) < 20:
-            _grade_results.append({"cid": _cid, "grade": "—", "score": None,
-                                   "fade": None, "var": None, "slope": None})
-            continue
-        _cap0  = float(_early["capacity_ah"].iloc[0])
-        _res0  = max(float(_early["resistance_ohm"].iloc[0]), 1e-6)
-        _fade  = (float(_early["capacity_ah"].iloc[0]) - float(_early["capacity_ah"].iloc[-1])) / len(_early)
-        _var   = float(_early["capacity_ah"].var())
-        _slope = float(_np_grade.polyfit(_early["cycle_number"], _early["resistance_ohm"], 1)[0])
-        # Normalise metrics relative to cell's own initial values so the score
-        # is scale-independent (works for both 0.74 Ah synthetic and 1.8 Ah NASA cells)
-        _fade_pct_per_cy  = _fade / _cap0 * 100            # % capacity lost per cycle
-        _cv2              = _var / (_cap0 ** 2) * 1e4       # dimensionless variance × 1e4
-        _r_slope_pct      = abs(_slope) / _res0 * 100       # % resistance growth per cycle
-        _score = float(_np_grade.clip(
-            100 - _fade_pct_per_cy * 400 - _cv2 * 8 - _r_slope_pct * 150,
-            0, 100,
-        ))
-        _grade = "A" if _score >= 75 else ("B" if _score >= 50 else "C")
-        _grade_results.append({"cid": _cid, "grade": _grade, "score": _score,
-                                "fade": _fade, "var": _var, "slope": _slope})
+        _grade_results.append({
+            "cid": _cid, "grade": _r["grade"], "score": _r["grade_score"],
+            "fade": _r["grade_fade"], "var": _r["grade_var"], "slope": _r["grade_slope"],
+        })
 
     if not _grade_results:
         st.info("No cells available.")

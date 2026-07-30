@@ -213,6 +213,27 @@ def test_lazy_map_len_and_contains(isolated_store):
     assert "CellC" not in lazy
 
 
+def test_lazy_map_excludes_cells_that_exist_in_the_store_but_not_in_this_map(isolated_store):
+    """Regression test: get_cell_df() (the default loader) will happily load
+    ANY cell that exists anywhere in the global Parquet store -- membership
+    in a particular LazyCellFrameMap instance must be checked against that
+    instance's own cell_ids, not just "does the loader return non-None."
+    Found via app/_pages/grading.py's CellSummary migration: a NASA-only
+    LazyCellFrameMap incorrectly reported a Severson cell (saved earlier in
+    the same store) as a member, because `in` fell through to the loader."""
+    isolated_store.save_cell_df("NasaCell1", _make_df())
+    isolated_store.save_cell_df("SeversonCell1", _make_df())
+
+    nasa_only = cs.LazyCellFrameMap(["NasaCell1"])
+    assert "NasaCell1" in nasa_only
+    assert "SeversonCell1" not in nasa_only, (
+        "A cell that exists in the global store under a different map's "
+        "scope must not be reported as a member of this one"
+    )
+    with pytest.raises(KeyError):
+        nasa_only["SeversonCell1"]
+
+
 def test_lazy_map_items_and_values_behave_like_a_real_dict(isolated_store):
     dfs = {"CellA": _make_df(n_cycles=40), "CellB": _make_df(n_cycles=60)}
     for cid, df in dfs.items():

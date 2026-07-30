@@ -185,9 +185,20 @@ class LazyCellFrameMap(collections.abc.Mapping):
 
     def __init__(self, cell_ids, loader=get_cell_df):
         self._cell_ids = list(cell_ids)
+        self._cell_id_set = set(self._cell_ids)
         self._loader = loader
 
     def __getitem__(self, cell_id):
+        # Membership must be checked against this map's own cell_ids first --
+        # get_cell_df() looks up any cell that exists anywhere in the global
+        # Parquet store, not just the ones this particular filtered view
+        # (e.g. app/main.py's nasa_fdfs/sev_fdfs/synth_fdfs) is scoped to.
+        # Without this check, `"B0005" in nasa_only_map` would incorrectly
+        # return True for a cell that exists in the store under a different
+        # source's map, since Mapping's default __contains__ is built on
+        # __getitem__.
+        if cell_id not in self._cell_id_set:
+            raise KeyError(cell_id)
         df = self._loader(cell_id)
         if df is None:
             raise KeyError(cell_id)
