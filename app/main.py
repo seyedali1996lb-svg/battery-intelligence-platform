@@ -935,7 +935,7 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             st.session_state["selected_cell"] = cell_ids[0]
         _sel_idx = cell_ids.index(st.session_state["selected_cell"])
         selected = st.selectbox(
-            "Select cell",
+            "Cell",
             options=cell_ids,
             index=_sel_idx,
             key="selected_cell",
@@ -1419,10 +1419,15 @@ def main():
         st.session_state["_audit_last"] = f"{page}:{selected}"
 
     # ── Demo mode notice (footer-style, low visual weight) ────────────────────
+    # The caveat is also rendered as visible text, not just title= (hover-only,
+    # unreachable by keyboard/screen-reader) -- see the accessibility audit
+    # that added this.
     st.markdown(
         "<div style='text-align:right;margin-bottom:4px'>"
         "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
-        "style='font-size:10px;color:#a0aec0;cursor:default'>demo mode</span></div>",
+        "style='font-size:10px;color:#a0aec0;cursor:default'>demo mode</span>"
+        "<div style='font-size:9px;color:#718096;margin-top:1px'>"
+        "No auth · session-scoped uploads · data not persisted</div></div>",
         unsafe_allow_html=True,
     )
 

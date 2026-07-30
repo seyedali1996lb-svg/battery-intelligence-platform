@@ -2,6 +2,7 @@
 
 import sys
 import os
+import html
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -286,6 +287,11 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # model generalize to a held-out cell of the same chemistry" to "does
     # it generalize to a different chemistry at all".
     _transfer_html = ""
+    # Plain-text twin of _transfer_html's title= tooltip -- rendered visibly
+    # below the hero card (see conf_reason's existing render site) since a
+    # hover-only title= has no keyboard/screen-reader path. See the
+    # accessibility audit that added this.
+    _transfer_reason = ""
     try:
         import html as _html_mod
         import experiment_registry as _reg
@@ -311,6 +317,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                     f"<span class='tag-calibrating' title=\"{_html_mod.escape(_tooltip)}\">"
                     f"CROSS-CHEM TRANSFER: WEAK ({_eval_ds})</span>"
                 )
+                _transfer_reason = _tooltip
             elif _transfer_runs:
                 _t = _transfer_runs[0]
                 _eval_ds = _t["dataset"].split("_to_", 1)[1]
@@ -318,6 +325,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                     f"<span class='tag-calibrating' title=\"{_html_mod.escape(_t['notes'] or '')}\">"
                     f"CROSS-CHEM TRANSFER: NOT EVALUATED ({_eval_ds})</span>"
                 )
+                _transfer_reason = _t["notes"] or ""
     except Exception:
         _transfer_html = ""  # honesty badge is best-effort -- never block the page over it
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
@@ -446,6 +454,14 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"<div style='font-size:12px;color:{conf_c};margin:-8px 0 12px;"
             f"padding:6px 12px;background:#1a202c;border-radius:6px;"
             f"border-left:3px solid {conf_c}'>{conf_reason}</div>",
+            unsafe_allow_html=True,
+        )
+
+    if _transfer_reason:
+        st.markdown(
+            f"<div style='font-size:12px;color:#4a5568;margin:-8px 0 12px;"
+            f"padding:6px 12px;background:#1a202c;border-radius:6px;"
+            f"border-left:3px solid #4a5568'>{html.escape(_transfer_reason)}</div>",
             unsafe_allow_html=True,
         )
 
