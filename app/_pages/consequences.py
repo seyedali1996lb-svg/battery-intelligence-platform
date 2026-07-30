@@ -141,6 +141,19 @@ def page_consequences(
 
     fit_results = application_fit(soh, fade_30, fleet_fade_median)
 
+    # Mechanism-aware caution (Circular Economy Coverage finding:
+    # application_fit()'s SOH/fade-ratio bands have no visibility into
+    # *why* a cell is fading -- a cell scored fit/marginal here could
+    # still be LAM-dominant, structurally degraded, less predictable
+    # going forward than LLI. Additive only, same pattern as decision.py's
+    # mechanism_corroboration_note() -- never changes a fit score.
+    try:
+        from recommendations import diagnose_mechanism, mechanism_second_life_caution
+        _cons_mech = diagnose_mechanism(df)
+        _second_life_caution = mechanism_second_life_caution(fit_results, _cons_mech)
+    except Exception:
+        _second_life_caution = None
+
     FIT_STYLE = {
         "fit":      ("#48bb78", "#1a2e22", "Fit"),
         "marginal": ("#f6e05e", "#2d2a0a", "Marginal"),
@@ -178,6 +191,12 @@ def page_consequences(
                 </div>
                 """
             )
+
+    if _second_life_caution:
+        st.markdown(
+            f"<div style='font-size:12px;color:#f6ad55;margin-top:12px'>⚠ {_second_life_caution}</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
 

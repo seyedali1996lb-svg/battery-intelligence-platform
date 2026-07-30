@@ -90,7 +90,7 @@ def page_decision(
     # caution line inside the recommendation itself, not just displayed
     # adjacent to it as unrelated context.
     try:
-        from recommendations import mechanism_corroboration_note
+        from recommendations import mechanism_corroboration_note, mechanism_second_life_caution
         if graph is not None:
             from knowledge_graph import get_or_compute_mechanism
             _dec_mech = get_or_compute_mechanism(graph, selected, df)
@@ -98,9 +98,11 @@ def page_decision(
             from recommendations import diagnose_mechanism
             _dec_mech = diagnose_mechanism(df)
         _corroboration_note = mechanism_corroboration_note(action, _dec_mech)
+        _second_life_caution = mechanism_second_life_caution(fit_scores, _dec_mech)
     except Exception:
         _dec_mech = None
         _corroboration_note = None
+        _second_life_caution = None
 
     # ── 1. Hero recommendation ──────────────────────────────────────────────
     reason_html = "".join(
@@ -291,6 +293,11 @@ def page_decision(
                         f"{_app['fit'].replace('_', ' ').title()}</div>",
                         padding="14px 16px",
                     )
+            if _second_life_caution:
+                st.markdown(
+                    f"<div style='font-size:12px;color:#f6ad55;margin-top:8px'>⚠ {_second_life_caution}</div>",
+                    unsafe_allow_html=True,
+                )
 
         # ── 4b. Second-life marketplace ──────────────────────────────────────
         if action in ("second_life", "recycle") or soh <= 85:

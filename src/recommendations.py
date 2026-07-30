@@ -332,6 +332,49 @@ def mechanism_corroboration_note(action: str, mechanism: dict) -> "str | None":
     return None
 
 
+def mechanism_second_life_caution(fit_scores: dict, mechanism: dict) -> "str | None":
+    """
+    Cross-check consequences.application_fit()'s second-life fit scores
+    against the mechanism classifier's verdict (Circular Economy Coverage
+    finding: application_fit()'s SOH/fade-ratio bands have no way to see
+    *why* a cell is fading -- a cell scored "fit" or "marginal" for reuse
+    could still be LAM-dominant, meaning its active material/particle
+    structure is degraded, not just its lithium inventory. LAM's fade is
+    typically less predictable going forward than LLI's -- see
+    diagnose_mechanism()'s own verdict_body for the mechanistic detail --
+    so a second-life deployment sized around today's SOH/fade-rate numbers
+    carries more risk than those numbers alone suggest. Same additive,
+    non-score-changing pattern as mechanism_corroboration_note(): this
+    never changes a fit score, action, or confidence -- it only makes a
+    real disagreement visible where it was previously silent.
+
+    Returns a caution string when the best-ranked application in
+    fit_scores is "fit" or "marginal" and the mechanism verdict contains
+    "LAM" at Medium+ confidence. Returns None otherwise (including
+    whenever the mechanism classifier has too little signal to be worth
+    second-guessing the fit score over).
+    """
+    if mechanism.get("confidence_label") in ("No data", "Low"):
+        return None
+    if not fit_scores:
+        return None
+    _, best_app = max(
+        fit_scores.items(),
+        key=lambda kv: {"fit": 2, "marginal": 1, "not_fit": 0}[kv[1]["fit"]],
+    )
+    if best_app["fit"] not in ("fit", "marginal"):
+        return None
+    verdict = mechanism.get("verdict", "")
+    if "LAM" not in verdict:
+        return None
+    return (
+        f"Mechanism classifier detects {verdict} ({mechanism['confidence_label']} confidence) "
+        f"— {best_app['name']} is scored {best_app['fit']} on today's SOH/fade-rate numbers, but "
+        f"active-material degradation typically fades less predictably going forward than lithium-"
+        f"inventory loss. Treat this fit score as more uncertain than its badge alone conveys."
+    )
+
+
 def physics_ml_agreement_note(agreement: dict) -> "str | None":
     """
     Caution-note wrapper around src/physics_calibration.py's

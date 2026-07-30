@@ -2,7 +2,10 @@
 
 import numpy as np
 import pandas as pd
-from recommendations import diagnose_mechanism, mechanism_corroboration_note, physics_ml_agreement_note
+from recommendations import (
+    diagnose_mechanism, mechanism_corroboration_note, mechanism_second_life_caution,
+    physics_ml_agreement_note,
+)
 
 
 def _make_cell_df(n=100, ce_slope=0.0, ce_base=0.999, nonlinearity=0.0,
@@ -120,6 +123,50 @@ def test_no_note_when_mechanism_confidence_too_low():
     the recommendation over."""
     assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "Low")) is None
     assert mechanism_corroboration_note("continue", _mech("LAM — Loss of Active Material", "No data")) is None
+
+
+# ---------------------------------------------------------------------------
+# mechanism_second_life_caution() -- Circular Economy Coverage finding:
+# consequences.application_fit() scores second-life fit from SOH/fade-ratio
+# alone, with no visibility into *why* a cell is fading. A cell scored
+# "fit" could still be LAM-dominant (structurally degraded, less
+# predictable future fade than LLI) -- same additive caution-note pattern
+# as mechanism_corroboration_note() above, applied to fit_scores instead
+# of the recommended action.
+# ---------------------------------------------------------------------------
+
+def _fit_scores(best_fit="fit", best_name="Residential Energy Storage"):
+    return {
+        "residential_ess": {"name": best_name, "fit": best_fit},
+        "ups_backup": {"name": "UPS / Backup Power", "fit": "not_fit"},
+    }
+
+
+def test_no_caution_when_mechanism_confidence_too_low():
+    assert mechanism_second_life_caution(_fit_scores("fit"), _mech("LAM — Loss of Active Material", "Low")) is None
+    assert mechanism_second_life_caution(_fit_scores("fit"), _mech("LAM — Loss of Active Material", "No data")) is None
+
+
+def test_no_caution_when_best_fit_is_not_fit():
+    assert mechanism_second_life_caution(_fit_scores("not_fit"), _mech("LAM — Loss of Active Material", "High")) is None
+
+
+def test_no_caution_when_mechanism_is_lli():
+    assert mechanism_second_life_caution(_fit_scores("fit"), _mech("LLI — Loss of Lithium Inventory", "High")) is None
+
+
+def test_caution_when_lam_detected_with_fit_or_marginal_score():
+    note = mechanism_second_life_caution(_fit_scores("fit"), _mech("LAM — Loss of Active Material", "High"))
+    assert note is not None
+    assert "LAM" in note
+    assert "Residential Energy Storage" in note
+
+    note2 = mechanism_second_life_caution(_fit_scores("marginal"), _mech("Mixed LLI + LAM", "Medium"))
+    assert note2 is not None
+
+
+def test_no_caution_when_fit_scores_empty():
+    assert mechanism_second_life_caution({}, _mech("LAM — Loss of Active Material", "High")) is None
 
 
 # ---------------------------------------------------------------------------
