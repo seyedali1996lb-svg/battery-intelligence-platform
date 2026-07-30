@@ -216,18 +216,23 @@ def _page_regulatory_alerts(
         },
     ]
 
+    # Reads precomputed CellSummary rows instead of every cell's full
+    # per-cycle DataFrame -- see src/cell_store.py's module docstring.
+    import db as _db_reg
+    _active_ids_reg = set(featured_dfs.keys())
+
     _today = _dt_reg.date.today()
     _rows_reg = []
-    for _cid, _fdf in featured_dfs.items():
-        if _fdf.empty or "soh_pct" not in _fdf.columns:
+    for _r in _db_reg.get_cell_summaries(st.session_state["auth_org_id"]):
+        if _r["cell_id"] not in _active_ids_reg or _r.get("soh_pct") is None:
             continue
-        _soh_now = float(_fdf.iloc[-1]["soh_pct"])
-        _fade    = float(_fdf.iloc[-1].get("fade_rate_50cy", 0))
+        _soh_now = float(_r["soh_pct"])
+        _fade    = float(_r["fade_rate_50cy"] or 0)
         _eol_cy  = None
         if _fade > 1e-6:
             _eol_cy = int(max(0, (_soh_now - 80.0) / _fade * 50))
         _rows_reg.append({
-            "cell_id": _cid,
+            "cell_id": _r["cell_id"],
             "soh_now": _soh_now,
             "fade":    _fade,
             "cycles_to_eol": _eol_cy,
