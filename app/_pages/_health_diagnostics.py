@@ -66,7 +66,7 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
                     first_accel = int(accel_rows["cycle_number"].iloc[0])
 
     st.markdown(
-        "<div class='section-header'>Fade Rate — Is degradation accelerating?</div>",
+        "<h4 class='section-header'>Fade Rate — Is degradation accelerating?</h4>",
         unsafe_allow_html=True,
     )
     fig3 = go.Figure()
@@ -143,7 +143,7 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
         )
 
     # ── Degradation phase summary ──
-    st.markdown("<div class='section-header'>Degradation Phase Analysis</div>", unsafe_allow_html=True)
+    st.markdown("<h4 class='section-header'>Degradation Phase Analysis</h4>", unsafe_allow_html=True)
     phase_labels = degradation_phases(df["soh_pct"], df["cycle_number"])
     phase_counts = phase_labels.value_counts()
     n_early = int(phase_counts.get("Early", 0))
@@ -245,7 +245,6 @@ def render_prediction_drivers_expander(df: pd.DataFrame, cell_id: str, bundle: d
     if bundle is None:
         return
     with st.expander("🔎 Why the model predicts this SOH — top drivers", expanded=False):
-        import html as _html
         from battery_copilot import FEATURE_LABELS as _drv_labels, FEATURE_PHYSICS as _drv_physics
         from battery_knowledge import get_feature_citation
         from batlab.models.gbrt import top_drivers as _top_drivers
@@ -263,19 +262,18 @@ def render_prediction_drivers_expander(df: pd.DataFrame, cell_id: str, bundle: d
                     f"Source: {_citation['title']}, doi:{_citation['doi']}"
                 )
             _driver_rows.append({
-                "name":  _drv_labels.get(_fname, _fname),
-                "pct":   _d["importance_pct"],
-                "tooltip": _html.escape(_tooltip or "No physics explanation on file for this feature."),
+                "name":    _drv_labels.get(_fname, _fname),
+                "pct":     _d["importance_pct"],
+                "tooltip": _tooltip or "No physics explanation on file for this feature.",
             })
+        # st.popover(), not a raw HTML title= attribute -- a real,
+        # keyboard-focusable, screen-reader-exposed Streamlit widget, so the
+        # physical explanation + citation is reachable without a mouse. See
+        # the accessibility audit that replaced the old hover-only div here.
         for _row in _driver_rows:
-            _md_html(
-                f"<div title=\"{_row['tooltip']}\" style='padding:6px 0;border-bottom:1px solid #2d3748;"
-                f"cursor:help'>"
-                f"<span style='font-size:13px;color:#e2e8f0;font-weight:600'>{_row['name']}</span>"
-                f"<span style='font-size:12px;color:#8896a8;float:right'>{_row['pct']:.1f}%</span>"
-                f"</div>"
-            )
-        st.caption("Hover a driver for its physical explanation and literature citation (where one is on file).")
+            with st.popover(f"{_row['name']} — {_row['pct']:.1f}%", use_container_width=True):
+                st.caption(_row["tooltip"])
+        st.caption("Select a driver above for its physical explanation and literature citation (where one is on file).")
 
 
 # ---------------------------------------------------------------------------
