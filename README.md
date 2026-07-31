@@ -55,7 +55,7 @@ The platform is organized into five engineering modules:
 - Gradient-boosted regression tree (GBRT) models for point estimates
 - Remaining useful life (RUL) prediction
 - Quantile regression for uncertainty estimation around each RUL prediction
-- An experiment registry (`src/experiment_registry.py`) that logs every training run automatically — dataset, feature set, hyperparameters, seed, fold metrics, git commit — with reproducible one-click replay of any past run
+- An experiment registry (`src/experiment_registry.py`) that logs every training run automatically — dataset, feature set, hyperparameters, seed, fold metrics, git commit — with reproducible one-click replay of any past run, backed by a single GBRT hyperparameter constant shared by both the live training pipeline and leave-cell-out replay (not two independently-tunable copies that could silently drift apart)
 - Physics-informed calibration (`src/physics_calibration.py`, NASA + Severson only): per-cell `scipy.optimize` decomposition of degradation into an SEI/lithium-inventory-loss channel and an active-material-loss channel, anchored by a PyBaMM SPM discharge and fed back into the GBRT feature set — cross-checked against the ML mechanism classifier, with any disagreement surfaced explicitly rather than hidden
 
 **Battery Diagnostics**
