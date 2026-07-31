@@ -501,6 +501,48 @@ def test_live_monitor_ingestion_faults_panel_renders_seeded_faults(isolated_db):
     assert any("Export ingestion fault log CSV" in (b.label or "") for b in at.download_button)
 
 
+def test_live_monitor_anomaly_log_groups_consecutive_same_kind_readings(isolated_db):
+    """A sustained condition (the same anomaly kind tripping on many
+    consecutive readings) must render as one episode card with a reading
+    count and status, not one near-identical card per reading -- the exact
+    duplication a design review flagged from a live screenshot (two
+    identical OVERVOLTAGE cards seconds apart). A different kind, and the
+    same kind recurring non-consecutively, must still form separate cards."""
+    seeded_anomalies = [
+        {"cell_id": "B0005", "kind": "OVERVOLTAGE", "detail": "4.182 V above max 3.65 V",
+         "severity": "critical", "ts": "2026-01-01T00:00:00Z", "seq": 0},
+        {"cell_id": "B0005", "kind": "OVERVOLTAGE", "detail": "4.185 V above max 3.65 V",
+         "severity": "critical", "ts": "2026-01-01T00:00:01Z", "seq": 1},
+        {"cell_id": "B0005", "kind": "OVERVOLTAGE", "detail": "4.190 V above max 3.65 V",
+         "severity": "critical", "ts": "2026-01-01T00:00:02Z", "seq": 2},
+        {"cell_id": "B0005", "kind": "TEMP_RATE_HIGH", "detail": "Temperature rose 2.1°C in one reading",
+         "severity": "warning", "ts": "2026-01-01T00:00:03Z", "seq": 3},
+        {"cell_id": "B0005", "kind": "OVERVOLTAGE", "detail": "4.170 V above max 3.65 V",
+         "severity": "critical", "ts": "2026-01-01T00:00:04Z", "seq": 4},
+        {"cell_id": "B0005", "kind": "OVERVOLTAGE", "detail": "4.172 V above max 3.65 V",
+         "severity": "critical", "ts": "2026-01-01T00:00:05Z", "seq": 5},
+    ]
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(5),
+        lm_anomalies=seeded_anomalies, lm_faults=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed: {at.exception}"
+    text = _all_text(at)
+    # Two separate OVERVOLTAGE episodes (3 consecutive, then 2 consecutive
+    # after the TEMP_RATE_HIGH break) -- five raw readings must collapse
+    # into two cards, not five.
+    assert text.count("OVERVOLTAGE") == 2
+    assert "TEMP_RATE_HIGH" in text
+    assert "3 readings" in text
+    assert "2 readings" in text
+    # No live subscriber is connected in this test, so every episode --
+    # including the most recent -- must read as resolved, not active.
+    assert "ACTIVE" not in text
+    assert text.count("RESOLVED") == 3
+
+
 def test_health_mechanism_verdict_visible_to_non_engineer_by_default(isolated_db):
     """
     Regression test (Engineering Usability review finding): the mechanism

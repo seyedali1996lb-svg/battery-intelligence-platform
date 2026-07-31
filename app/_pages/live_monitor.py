@@ -402,9 +402,25 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 )
             return "Monitor subsequent readings. If pattern repeats, correlate with SOH trend."
 
+        def _group_anomalies(anom_list):
+            # Collapse consecutive readings of the same kind into one episode
+            # -- otherwise a sustained condition (e.g. overvoltage held across
+            # 40 readings) renders as 40 near-identical cards instead of one
+            # card with a status and reading count.
+            groups = []
+            for a in anom_list:
+                k = a.get("kind", "UNKNOWN")
+                if groups and groups[-1]["kind"] == k:
+                    groups[-1]["last"] = a
+                    groups[-1]["count"] += 1
+                else:
+                    groups.append({"kind": k, "first": a, "last": a, "count": 1})
+            return groups
+
         st.markdown("<h4 class='section-header'>Anomaly Log</h4>", unsafe_allow_html=True)
         if _anom:
-            _anom_recent = list(reversed(_anom[-50:]))
+            _groups_all    = _group_anomalies(_anom)
+            _groups_recent = list(reversed(_groups_all[-30:]))
             # aria-live: a screen reader is otherwise never notified when a
             # new (possibly safety-relevant, e.g. THERMAL_RUNAWAY) anomaly
             # appears during the 0.5s auto-refresh -- see the accessibility
@@ -412,20 +428,31 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             # faster-changing metrics strip above, since making a
             # sub-second-refreshing region aria-live would spam-announce.
             _anom_html = "<div aria-live='polite' aria-relevant='additions'>"
-            for _a in _anom_recent:
-                _sev   = _a.get("severity", "warning")
+            for _g in _groups_recent:
+                _first, _last = _g["first"], _g["last"]
+                _sev   = _first.get("severity", "warning")
                 _ac    = "#fc8181" if _sev == "critical" else "#f6ad55"
-                _akind = _a.get("kind", "UNKNOWN")
-                _adet  = _a.get("detail", "")
-                _ats   = _a.get("ts", "")[:19].replace("T", " ")
-                _diag  = _anomaly_diagnosis(_akind, _adet, _a.get("value"), _a.get("threshold"))
+                _akind = _g["kind"]
+                _adet  = _last.get("detail", "")
+                _ts_start = _first.get("ts", "")[:19].replace("T", " ")
+                _ts_end   = _last.get("ts", "")[:19].replace("T", " ")
+                _is_active = _sub_connected and (_g is _groups_all[-1])
+                _cnt_txt = f"{_g['count']} reading{'s' if _g['count'] != 1 else ''}"
+                if _is_active:
+                    _status = f"<span style='color:#68d391;font-weight:700'>● ACTIVE</span> — since {_ts_start} · {_cnt_txt}"
+                elif _g["count"] > 1:
+                    _status = f"<span style='color:#a0aec0;font-weight:700'>RESOLVED</span> — {_ts_start} → {_ts_end} · {_cnt_txt}"
+                else:
+                    _status = f"<span style='color:#a0aec0;font-weight:700'>RESOLVED</span> — {_ts_start} · {_cnt_txt}"
+                _diag  = _anomaly_diagnosis(_akind, _adet, _last.get("value"), _last.get("threshold"))
                 _anom_html += (
                     f"<div style='background:{_ac}11;border-left:3px solid {_ac};"
                     f"border-radius:4px;padding:8px 12px;margin-bottom:6px;font-size:12px'>"
                     f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
                     f"<span style='color:{_ac};font-weight:700'>{_akind}</span>"
-                    f"<span style='color:#a0aec0;font-size:11px'>{_ats}</span>"
+                    f"<span style='color:#a0aec0;font-size:11px'>{_ts_end}</span>"
                     f"</div>"
+                    f"<div style='font-size:11px;margin-bottom:4px'>{_status}</div>"
                     f"<div style='color:#a0aec0;margin-bottom:4px'>{_adet}</div>"
                     f"<div style='color:#a0aec0;font-size:11px;border-top:1px solid {_ac}22;"
                     f"padding-top:4px;margin-top:4px'>"
