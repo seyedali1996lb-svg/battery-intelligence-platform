@@ -18,11 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score
 
 from batlab.features.engineering import build_features, get_model_matrix
-
-GBRT_PARAMS = dict(
-    n_estimators=200, max_depth=4, learning_rate=0.05,
-    subsample=0.8, random_state=42,
-)
+from batlab.models.gbrt import GBRT_PARAMS
 
 RUL_RELIABLE_FLOOR = 0.3   # LCO R2 below this -> show "Not calibrated" in UI
 
