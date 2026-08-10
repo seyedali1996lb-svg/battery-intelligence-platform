@@ -87,7 +87,7 @@ PHYSICS_FEATURE_COLUMNS = [
 #     only on feature values, not on model training code.
 # Both now import it from here instead, so it is structurally impossible
 # for them to disagree with each other or with this module.
-FEATURE_VERSION = "v10-physics-calibration"
+FEATURE_VERSION = "v11-usage-profile"
 
 def build_features(
     df: pd.DataFrame, eol_threshold_pct: float = 80.0, cell_id: "str | None" = None,
@@ -171,6 +171,13 @@ def build_features(
     else:
         df["sop_pct"] = np.nan
 
+    # ── Power-fade threshold flag ──
+    # 70% of initial peak-power capability is a conventional power-fade EOL
+    # floor for pulse-power duty (UPS, frequency regulation) — structurally
+    # mirrors is_eol's 80% capacity floor above, not the same literature
+    # source. NaN sop_pct (no resistance data) compares False, not NaN.
+    df["is_power_limited"] = df["sop_pct"] < 70.0
+
     # ── RUL target ──
     eol_capacity = df["capacity_ah"].iloc[0] * (eol_threshold_pct / 100.0)
     eol_cycles = df.loc[df["capacity_ah"] <= eol_capacity, "cycle_number"]
@@ -252,6 +259,34 @@ def build_features(
         df["stress_index"]        = np.nan
         df["dod_proxy"]           = np.nan
 
+    # ── Usage-profile classification (duty-cycle regime) ──
+    # c_rate_rolling_10cy/dod_proxy above are raw, instantaneous values --
+    # neither captures *regime*. A cell alternating between 0.2C and 2C
+    # every few cycles looks identical, feature-by-feature, at any single
+    # snapshot to one held steady at a 1.1C average; only the ROLLING
+    # VARIABILITY of C-rate/DoD tells an EV-like duty cycle (fast, variable
+    # rate; partial, variable depth-of-discharge) apart from a
+    # stationary-storage-like one (slow, steady rate; consistent near-full
+    # depth-of-discharge) -- a real, previously-invisible signal since
+    # cells with the same instantaneous stress_index can still accumulate
+    # damage differently depending on how regular that stress is.
+    # usage_profile_code is the numeric (tree-friendly, ordinal) form fed
+    # to the model; usage_profile is the display-only string label.
+    if df["c_rate_rolling_10cy"].notna().any():
+        _c_mean = df["c_rate_rolling_10cy"].rolling(50, min_periods=5).mean()
+        _c_std  = df["c_rate_rolling_10cy"].rolling(50, min_periods=5).std()
+        _d_std  = df["dod_proxy"].rolling(50, min_periods=5).std()
+        _is_ev = (_c_mean > 0.8) & ((_c_std > 0.15) | (_d_std > 0.05))
+        _is_stationary = (_c_mean <= 0.5) & (_c_std <= 0.1) & (_d_std <= 0.03)
+        df["usage_profile_code"] = np.select([_is_ev, _is_stationary], [2.0, 0.0], default=1.0)
+        df.loc[_c_mean.isna(), "usage_profile_code"] = np.nan
+        df["usage_profile"] = df["usage_profile_code"].map(
+            {0.0: "Stationary-like", 1.0: "Mixed", 2.0: "EV-like"}
+        )
+    else:
+        df["usage_profile_code"] = np.nan
+        df["usage_profile"] = None
+
     # ── dQ/dV features ──
     df = add_dqdv_features(df)
 
@@ -319,6 +354,13 @@ FEATURE_COLUMNS = [
     "c_rate_rolling_10cy",
     "stress_index",
     "dod_proxy",
+    # usage_profile_code: 0=Stationary-like, 1=Mixed, 2=EV-like -- ordinal
+    # duty-cycle regime classification from the rolling variability of
+    # c_rate/dod_proxy above (see the usage-profile block for the full
+    # derivation). Absent (NaN, dropped by get_model_matrix) wherever
+    # c_rate_rolling_10cy itself is absent -- same cells that don't get
+    # stress_index/dod_proxy.
+    "usage_profile_code",
     # Physics calibration (src/physics_calibration.py) — per-cell scipy fit
     # of a two-term degradation model against this cell's OWN measured
     # history, refit causally every 25 cycles (no future leakage). Only

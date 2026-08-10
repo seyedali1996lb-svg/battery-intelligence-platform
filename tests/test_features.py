@@ -42,6 +42,52 @@ def test_missing_optional_columns_degrade_gracefully():
     assert out["stress_index"].isna().all()
 
 
+def test_is_power_limited_flags_when_resistance_has_grown_enough():
+    """sop_pct (peak-power capability, ∝ 1/R) drops below the 70% power-fade
+    floor once resistance has roughly grown ~43%+ over its initial value —
+    is_power_limited should flip True at that point, mirroring is_eol's
+    80%-capacity-floor pattern but for power instead of capacity."""
+    df = build_features(make_cycles_df(n_cycles=400, fade_per_cycle=0.001, resistance_rise_per_cycle=0.0002))
+    assert df["is_power_limited"].dtype == bool
+    assert not df["is_power_limited"].iloc[0]
+    assert df["is_power_limited"].iloc[-1]
+
+
+def test_is_power_limited_false_without_resistance_data():
+    df = make_cycles_df().drop(columns=["resistance_ohm"])
+    out = build_features(df)
+    assert out["sop_pct"].isna().all()
+    assert not out["is_power_limited"].any()
+
+
+def test_usage_profile_ev_like_when_fast_and_variable():
+    """Block-alternating C-rate (long stretches of 0.3C then 2.1C) survives
+    the 10-cycle rolling-mean smoothing that a continuous sine wave at this
+    amplitude/period would get averaged away by -- closer to a real EV duty
+    cycle (a day of driving vs. a day parked) than a smooth sinusoid anyway."""
+    df_raw = make_cycles_df(n_cycles=200)
+    block = np.concatenate([np.full(15, 0.3), np.full(15, 2.1)])
+    c_rate = np.tile(block, 200 // len(block) + 1)[:200]
+    df_raw = df_raw.assign(c_rate=c_rate)
+    out = build_features(df_raw)
+    assert out["usage_profile"].iloc[-1] == "EV-like"
+    assert out["usage_profile_code"].iloc[-1] == 2.0
+    assert "usage_profile_code" in FEATURE_COLUMNS
+
+
+def test_usage_profile_stationary_like_when_slow_and_steady():
+    df_raw = make_cycles_df(n_cycles=200).assign(c_rate=np.full(200, 0.3))
+    out = build_features(df_raw)
+    assert out["usage_profile"].iloc[-1] == "Stationary-like"
+    assert out["usage_profile_code"].iloc[-1] == 0.0
+
+
+def test_usage_profile_absent_without_c_rate_data():
+    out = build_features(make_cycles_df(n_cycles=100))
+    assert out["usage_profile_code"].isna().all()
+    assert out["usage_profile"].isna().all()
+
+
 def test_get_model_matrix_drops_allnan_and_incomplete_rows():
     df = build_features(make_cycles_df())
     X, y_soh, y_rul = get_model_matrix(df)
