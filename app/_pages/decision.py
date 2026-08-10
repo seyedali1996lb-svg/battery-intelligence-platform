@@ -477,6 +477,113 @@ def page_decision(
                         key="sl_listings_export",
                     )
 
+            # ── Buyer matching ───────────────────────────────────────────────
+            # Turns the scored second-life recommendation above into a
+            # trackable, closed-loop match against an org's own saved buyer
+            # profiles -- see src/marketplace_matching.py's module docstring
+            # for why this is a real transaction RECORD within this
+            # platform's own data, not a live external marketplace call
+            # (Circunomics/Battery-Lifecycle.com above have no real API to
+            # match a buyer against).
+            import db as _db_mkt
+            from marketplace_matching import rank_buyers_for_cell
+            _org_id_mkt = st.session_state["auth_org_id"]
+
+            with st.expander("Manage Buyer Profiles", expanded=False):
+                _bp_col1, _bp_col2 = st.columns(2)
+                _bp_name = _bp_col1.text_input("Buyer name", key="mkt_bp_name")
+                _bp_app  = _bp_col2.selectbox(
+                    "Application type", list(SECOND_LIFE_APPS.keys()),
+                    format_func=lambda k: SECOND_LIFE_APPS[k]["name"], key="mkt_bp_app",
+                )
+                _bp_col3, _bp_col4 = st.columns(2)
+                _bp_min_soh = _bp_col3.number_input("Min. SOH required (%)", 0.0, 100.0, 70.0, key="mkt_bp_soh")
+                _bp_price   = _bp_col4.number_input("Offered price ($/kWh)", 0.0, 1000.0, 40.0, key="mkt_bp_price")
+                _bp_contact = st.text_input("Contact info", key="mkt_bp_contact")
+                if st.button("Save buyer profile", key="mkt_bp_save"):
+                    if _bp_name:
+                        import uuid as _uuid_mkt
+                        _db_mkt.save_buyer_profile(_org_id_mkt, {
+                            "id": _uuid_mkt.uuid4().hex, "name": _bp_name,
+                            "application_type": _bp_app, "min_soh_pct": _bp_min_soh,
+                            "price_per_kwh_usd": _bp_price, "contact_info": _bp_contact,
+                            "created_at": datetime.datetime.now().isoformat(),
+                        })
+                        st.success(f"Saved buyer profile for {_bp_name}.")
+                        st.rerun()
+                    else:
+                        st.warning("Buyer name is required.")
+
+                _existing_buyers = _db_mkt.get_buyer_profiles(_org_id_mkt)
+                if _existing_buyers:
+                    for _b in _existing_buyers:
+                        _bcol1, _bcol2 = st.columns([5, 1])
+                        _bcol1.markdown(
+                            f"<div style='font-size:12px;color:#a0aec0;padding:4px 0'>"
+                            f"<strong style='color:#e2e8f0'>{_b['name']}</strong> — "
+                            f"{SECOND_LIFE_APPS.get(_b['application_type'], {}).get('name', _b['application_type'])} · "
+                            f"min {_b['min_soh_pct']:.0f}% SOH · ${_b['price_per_kwh_usd']:.0f}/kWh</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if _bcol2.button("Remove", key=f"mkt_bp_del_{_b['id']}"):
+                            _db_mkt.delete_buyer_profile(_org_id_mkt, _b["id"])
+                            st.rerun()
+
+            _buyers_for_match = _db_mkt.get_buyer_profiles(_org_id_mkt)
+            if _buyers_for_match:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:13px;font-weight:600;color:#a0aec0;margin-bottom:8px'>Buyer matches for {selected}</div>", unsafe_allow_html=True)
+                _ranked = rank_buyers_for_cell(soh, fade_30, fleet_fade_median, _buyers_for_match, cell_sop_pct=sop_pct_now)
+                for _rb in _ranked:
+                    _rb_colour = "#48bb78" if _rb["eligible"] else "#718096"
+                    _rb_col1, _rb_col2 = st.columns([5, 2])
+                    with _rb_col1:
+                        render_card(
+                            f"<div style='display:flex;justify-content:space-between;align-items:baseline'>"
+                            f"<div style='font-size:13px;font-weight:700;color:#e2e8f0'>{_rb['name']}</div>"
+                            f"<div style='font-size:11px;color:{_rb_colour}'>{'✓ Eligible' if _rb['eligible'] else '✗ Not eligible'}</div>"
+                            f"</div>"
+                            f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
+                            f"{SECOND_LIFE_APPS.get(_rb['application_type'], {}).get('name', _rb['application_type'])} · "
+                            f"${_rb['price_per_kwh_usd']:.0f}/kWh</div>"
+                            f"<div style='font-size:10px;color:#a0aec0;margin-top:4px'>{'; '.join(_rb['reasons'][:2])}</div>",
+                            padding="10px 14px",
+                        )
+                    with _rb_col2:
+                        if _rb["eligible"] and st.button("Record match", key=f"mkt_match_{_rb['id']}"):
+                            import uuid as _uuid_match, json as _json_match
+                            _db_mkt.save_marketplace_match(_org_id_mkt, {
+                                "id": _uuid_match.uuid4().hex, "cell_id": selected, "buyer_id": _rb["id"],
+                                "status": "proposed",
+                                "match_score": _json_match.dumps({
+                                    "application_fit": _rb["application_fit"], "soh_at_match": soh,
+                                }),
+                                "created_at": datetime.datetime.now().isoformat(),
+                                "updated_at": datetime.datetime.now().isoformat(),
+                            })
+                            st.success(f"Match proposed with {_rb['name']}.")
+                            st.rerun()
+
+            _cell_matches = _db_mkt.get_marketplace_matches(_org_id_mkt, cell_id=selected)
+            if _cell_matches:
+                with st.expander(f"Matches for {selected} ({len(_cell_matches)})", expanded=False):
+                    _buyer_names = {b["id"]: b["name"] for b in _buyers_for_match}
+                    for _m in _cell_matches:
+                        _mcol1, _mcol2 = st.columns([4, 2])
+                        _mcol1.markdown(
+                            f"<div style='font-size:12px;color:#a0aec0;padding:4px 0'>"
+                            f"{_buyer_names.get(_m['buyer_id'], _m['buyer_id'])} — "
+                            f"<span style='color:#e2e8f0'>{_m['status']}</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                        _next_status = {"proposed": "accepted", "accepted": "completed"}.get(_m["status"])
+                        if _next_status and _mcol2.button(f"Mark {_next_status}", key=f"mkt_advance_{_m['id']}"):
+                            _db_mkt.update_marketplace_match(
+                                _org_id_mkt, _m["id"], status=_next_status,
+                                updated_at=datetime.datetime.now().isoformat(),
+                            )
+                            st.rerun()
+
         # ── Confidence-reason callouts ────────────────────────────────────────
         if result["confidence_reasons"]:
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -593,6 +700,89 @@ def page_decision(
         help="Download this cell's chemistry/SOH/RUL/mechanism data as an "
              "OPTIMADE-shaped JSON:API resource object, for use with "
              "materials-database or interoperability tooling.",
+    )
+
+    # Multi-jurisdiction compliance-shaped exports (US IRA Section 30D,
+    # China's 2026 NEV battery recycling Interim Measures) — same static,
+    # field-structure-demonstration pattern as the Spine/OPTIMADE exports
+    # above, NOT a compliance claim. See src/us_ira_export.py and
+    # src/china_recycling_export.py's module docstrings for exactly which
+    # fields are genuinely computed vs. structurally unavailable (this
+    # platform has no supply-chain-of-custody or manufacturer EPR data).
+    _ira_col, _cn_col = st.columns(2)
+
+    import json as _json_ira
+    from us_ira_export import build_ira_30d_entry, to_ira_30d_document
+    from recycler_directory import recommend_recyclers
+    _na_recyclers = [r for r in recommend_recyclers(_profile.short_name, user_region="North America") if r["region"] == "North America"]
+    _ira_entry = build_ira_30d_entry(
+        selected, _profile.short_name, soh,
+        recycled_in_north_america_pathway_available=bool(_na_recyclers),
+    )
+    _ira_doc = to_ira_30d_document(_ira_entry, selected)
+    _ira_col.download_button(
+        "Export US IRA structure",
+        data=_json_ira.dumps(_ira_doc, indent=2).encode(),
+        file_name=f"{selected}_us_ira_30d_export.json",
+        mime="application/json",
+        key="dec_ira_export_btn",
+        use_container_width=True,
+        help="Download a Section 30D critical-minerals/battery-components "
+             "field-structure demonstration for this cell — not a compliance "
+             "claim, no supply-chain-of-custody data exists in this platform.",
+    )
+
+    import json as _json_cn
+    from china_recycling_export import build_china_recycling_entry, to_china_recycling_document
+    from consequences import eol_r_code_recommendation as _eol_r_code_rec_fn
+    _cn_r_code = _eol_r_code_rec_fn(soh, fade_30, sop_pct=sop_pct_now)["r_code"]
+    _cn_recyclers = recommend_recyclers(_profile.short_name, user_region="Asia")
+    _cn_top_recycler = _cn_recyclers[0]["name"] if (_cn_recyclers and _cn_r_code.startswith(("R4", "R5"))) else None
+    _cn_entry = build_china_recycling_entry(
+        selected, _profile.short_name, soh, _cn_r_code,
+        recommended_recycler_name=_cn_top_recycler,
+    )
+    _cn_doc = to_china_recycling_document(_cn_entry, selected)
+    _cn_col.download_button(
+        "Export China EPR structure",
+        data=_json_cn.dumps(_cn_doc, indent=2).encode(),
+        file_name=f"{selected}_china_recycling_export.json",
+        mime="application/json",
+        key="dec_cn_export_btn",
+        use_container_width=True,
+        help="Download a China 2026 Interim Measures traceability field-"
+             "structure demonstration for this cell — not a real registration "
+             "with China's national traceability platform.",
+    )
+
+    # Residual-value / bankability report — a financing-grade asset-condition
+    # PDF packaging SOH/RUL/second-life fit/NPV for anyone pricing or raising
+    # capital against a second-life deployment. See
+    # src/bankability_report.py's module docstring for what it does and
+    # does NOT claim to be (not investment advice, not a rating, not a
+    # guarantee).
+    from bankability_report import build_bankability_report
+    from report_pdf import build_bankability_pdf
+    from utils import _PACK_BUNDLE_KEY as _BANK_BUNDLE_KEY
+    _bank_bundle = bundles.get(_BANK_BUNDLE_KEY.get(source, "synth"), {}) or {}
+    _bank_metrics = _bank_bundle.get("metrics", {})
+    _bank_report = build_bankability_report(
+        cell_id=selected, source=source, chemistry=_profile.short_name, soh=soh,
+        fade_30_mah_cy=fade_30, fleet_fade_median=fleet_fade_median,
+        cycle_count=int(latest["cycle_number"]), n_lco_cells=len(_bank_metrics.get("lco_per_cell", {})) or None,
+        lco_soh_r2=_bank_metrics.get("lco_soh_r2"),
+        rul_reliable=rul_reliable, rul_q10=rul_q10, rul_pred=rul_pred, rul_q90=rul_q90,
+        mechanism=_dec_mech, sop_pct=sop_pct_now,
+        experiment_run_id=_bank_metrics.get("experiment_run_id"),
+    )
+    st.download_button(
+        "📄 Download Bankability Report (PDF)",
+        data=build_bankability_pdf(_bank_report),
+        file_name=f"{selected}_bankability_report.pdf",
+        mime="application/pdf",
+        key="dec_bankability_pdf_btn",
+        help="A financing-grade asset-condition summary (SOH, RUL, second-life fit, NPV) — "
+             "not investment advice, a credit rating, or a guarantee of future performance.",
     )
 
     # E4: Audit trail with status chips and outcome tracking
