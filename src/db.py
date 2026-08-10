@@ -49,6 +49,7 @@ DEMO_USERS = {
 _SECRET_SETTING_KEYS = frozenset({
     "vrm_api_token", "circunomics_api_key", "cmms_api_key",
     "webhook_secret", "orion_bms_api_key",
+    "ocpp_api_key",
 })
 
 # Setting keys that are org-wide configuration (integration credentials,
@@ -68,6 +69,9 @@ _ADMIN_ONLY_SETTING_KEYS = frozenset({
     "orion_bms_api_key", "orion_bms_cell_id",
     "circunomics_api_key",
     "cmms_api_base_url", "cmms_api_key",
+    "modbus_host", "modbus_port", "modbus_unit_id", "modbus_register_map", "modbus_cell_id",
+    "can_channel", "can_bustype", "can_node_id", "can_pgn_map", "can_cell_id",
+    "ocpp_central_system_url", "ocpp_api_key", "ocpp_charge_point_id",
 })
 
 _fernet: Fernet | None = None

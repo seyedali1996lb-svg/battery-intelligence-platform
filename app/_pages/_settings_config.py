@@ -21,6 +21,7 @@ original order from render_settings_configuration().
 import sys
 import os
 import datetime
+import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -576,6 +577,131 @@ def render_bms_connector_orion() -> None:
                 st.success(f"Fetched {len(_orion_result)} records for cell {_orion_cell_id}.")
 
 
+def render_bms_connector_modbus() -> None:
+    _section("BMS Connector (Modbus TCP)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Pull a live snapshot from a Modbus TCP BMS/inverter (Pylontech, Growatt, SMA, "
+        "Deye, ...). Modbus has no universal register layout across vendors — supply your "
+        "device's own register map as JSON below rather than relying on a guessed default "
+        "that could silently misread a real device. No live device exists to test this "
+        "integration against; it is built against pymodbus's documented API shape, not "
+        "verified end-to-end, and requires the optional <code>pymodbus</code> package."
+        "</div>"
+    )
+    _mb_col1, _mb_col2, _mb_col3 = st.columns(3)
+    _mb_host = _mb_col1.text_input("Modbus host/IP", value=st.session_state.get("modbus_host", ""), key="modbus_host")
+    _mb_port = _mb_col2.text_input("Port", value=st.session_state.get("modbus_port", "502"), key="modbus_port")
+    _mb_unit = _mb_col3.text_input("Unit/slave ID", value=st.session_state.get("modbus_unit_id", "1"), key="modbus_unit_id")
+    _mb_cell_id = st.text_input("Cell/pack ID to record readings under", value=st.session_state.get("modbus_cell_id", ""), key="modbus_cell_id")
+    _mb_map_raw = st.text_area(
+        "Register map (JSON)", value=st.session_state.get("modbus_register_map", ""),
+        key="modbus_register_map", height=90,
+        placeholder='{"capacity_ah": [100, 0.01], "resistance_ohm": [102, 0.0001], "temperature_c": [104, 0.1]}',
+        help="One entry per field: [register_address, scale_factor]. Omit a field your device doesn't expose.",
+    )
+    for _k, _v in [("modbus_host", _mb_host), ("modbus_port", _mb_port), ("modbus_unit_id", _mb_unit),
+                   ("modbus_cell_id", _mb_cell_id), ("modbus_register_map", _mb_map_raw)]:
+        db.set_setting(st.session_state["auth_org_id"], _k, _v, role=st.session_state.get("auth_role"))
+
+    if not (_mb_host and _mb_map_raw and _mb_cell_id):
+        _empty_state(
+            "Not yet connected",
+            "Enter a host, cell/pack ID, and your device's register map (JSON) above to enable "
+            "pulling live readings from a Modbus TCP BMS.",
+            icon="🔌",
+        )
+        return
+    try:
+        _mb_map = {k: tuple(v) for k, v in json.loads(_mb_map_raw).items()}
+    except (json.JSONDecodeError, AttributeError) as _mb_json_err:
+        st.error(f"Register map is not valid JSON: {_mb_json_err}")
+        return
+    if st.button("Test Modbus connection", key="modbus_test_btn"):
+        from bms_connectors import ModbusBMSAdapter
+        _mb_adapter = ModbusBMSAdapter(_mb_host, int(_mb_port or 502), int(_mb_unit or 1), _mb_map, _mb_cell_id)
+        _mb_result = _mb_adapter.test_connection()
+        (st.success if _mb_result["ok"] else st.error)(_mb_result["message"])
+
+
+def render_bms_connector_can() -> None:
+    _section("BMS Connector (CAN Bus)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Listen for battery telemetry on a CAN bus (common in EV packs) via a caller-supplied "
+        "PGN/CAN-ID map — the most assumption-heavy of this platform's BMS connectors, since "
+        "there is no universal frame layout across BMS vendors/DBC files and no real device "
+        "to confirm one against. Requires the optional <code>python-can</code> package."
+        "</div>"
+    )
+    _can_col1, _can_col2, _can_col3 = st.columns(3)
+    _can_channel = _can_col1.text_input("CAN channel", value=st.session_state.get("can_channel", ""), key="can_channel", placeholder="can0")
+    _can_bustype = _can_col2.text_input("python-can bustype", value=st.session_state.get("can_bustype", "socketcan"), key="can_bustype")
+    _can_node = _can_col3.text_input("Node ID", value=st.session_state.get("can_node_id", "0"), key="can_node_id")
+    _can_cell_id = st.text_input("Cell/pack ID to record readings under", value=st.session_state.get("can_cell_id", ""), key="can_cell_id")
+    _can_map_raw = st.text_area(
+        "PGN / CAN-ID map (JSON)", value=st.session_state.get("can_pgn_map", ""),
+        key="can_pgn_map", height=90,
+        placeholder='{"capacity_ah": [256, 0, 0.01], "resistance_ohm": [257, 2, 0.0001], "temperature_c": [258, 0, 0.1]}',
+        help="One entry per field: [can_id, byte_offset, scale_factor]. Omit a field your device doesn't broadcast.",
+    )
+    for _k, _v in [("can_channel", _can_channel), ("can_bustype", _can_bustype), ("can_node_id", _can_node),
+                   ("can_cell_id", _can_cell_id), ("can_pgn_map", _can_map_raw)]:
+        db.set_setting(st.session_state["auth_org_id"], _k, _v, role=st.session_state.get("auth_role"))
+
+    if not (_can_channel and _can_map_raw and _can_cell_id):
+        _empty_state(
+            "Not yet connected",
+            "Enter a CAN channel, cell/pack ID, and your device's PGN/CAN-ID map (JSON) above "
+            "to enable listening for live telemetry on a CAN bus.",
+            icon="🔌",
+        )
+        return
+    try:
+        _can_map = {k: tuple(v) for k, v in json.loads(_can_map_raw).items()}
+    except (json.JSONDecodeError, AttributeError) as _can_json_err:
+        st.error(f"PGN/CAN-ID map is not valid JSON: {_can_json_err}")
+        return
+    if st.button("Test CAN bus connection", key="can_test_btn"):
+        from bms_connectors import CANBusBMSAdapter
+        _can_adapter = CANBusBMSAdapter(_can_channel, _can_bustype, int(_can_node or 0), _can_map, _can_cell_id)
+        _can_result = _can_adapter.test_connection()
+        (st.success if _can_result["ok"] else st.error)(_can_result["message"])
+
+
+def render_bms_connector_ocpp() -> None:
+    _section("EV Charging Connector (OCPP)")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Pull completed charging-session records from an OCPP Central System's REST reporting "
+        "API (e.g. SteVe) for one charge point. This is charging-SESSION data, not per-cell "
+        "cycle data — capacity is approximated from energy delivered at an assumed nominal "
+        "voltage, and internal resistance is never reported by OCPP at all. No live Central "
+        "System exists to test this integration against."
+        "</div>"
+    )
+    _ocpp_col1, _ocpp_col2 = st.columns(2)
+    _ocpp_url = _ocpp_col1.text_input("Central System URL", value=st.session_state.get("ocpp_central_system_url", ""), key="ocpp_central_system_url")
+    _ocpp_cp_id = _ocpp_col2.text_input("Charge point ID", value=st.session_state.get("ocpp_charge_point_id", ""), key="ocpp_charge_point_id")
+    _ocpp_key = st.text_input("Central System API key", value=st.session_state.get("ocpp_api_key", ""), type="password", key="ocpp_api_key")
+    _set_secret_setting(st.session_state["auth_org_id"], "ocpp_api_key", _ocpp_key, role=st.session_state.get("auth_role"))
+    db.set_setting(st.session_state["auth_org_id"], "ocpp_central_system_url", _ocpp_url, role=st.session_state.get("auth_role"))
+    db.set_setting(st.session_state["auth_org_id"], "ocpp_charge_point_id", _ocpp_cp_id, role=st.session_state.get("auth_role"))
+
+    if not (_ocpp_url and _ocpp_key and _ocpp_cp_id):
+        _empty_state(
+            "Not yet connected",
+            "Enter your OCPP Central System's URL, API key, and a charge point ID above to "
+            "enable pulling completed charging sessions.",
+            icon="🔌",
+        )
+    else:
+        if st.button("Test OCPP connection", key="ocpp_test_btn"):
+            from bms_connectors import OCPPAdapter
+            _ocpp_result = OCPPAdapter(_ocpp_url, _ocpp_key, _ocpp_cp_id).test_connection()
+            (st.success if _ocpp_result["ok"] else st.error)(_ocpp_result["message"])
+
+
 def render_second_life_marketplace() -> None:
     _section("Second-Life Marketplace (Circunomics)")
     _md_html(
@@ -953,6 +1079,9 @@ def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
         render_webhook_notifications(featured_dfs)
         render_bms_connector_victron()
         render_bms_connector_orion()
+        render_bms_connector_modbus()
+        render_bms_connector_can()
+        render_bms_connector_ocpp()
         render_second_life_marketplace()
         render_maintenance_writeback()
     render_team_members()

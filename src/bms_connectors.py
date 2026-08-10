@@ -213,6 +213,149 @@ class VictronVRMAdapter:
         return {"ok": True, "message": f"Fetched {len(df)} records.", "n_records": len(df)}
 
 
+def fetch_modbus_bms(
+    host: str,
+    port: int,
+    unit_id: int,
+    register_map: dict,
+    cell_id: str,
+) -> "pd.DataFrame | None":
+    """
+    Read a single current-state snapshot from a Modbus TCP BMS/inverter.
+
+    Modbus has no vendor-agnostic register layout the way Victron VRM /
+    Orion Jr2's REST APIs do -- every vendor (Pylontech, Growatt, SMA,
+    Deye, ...) assigns its own register addresses and scaling factors for
+    capacity/resistance/temperature, and there is no real device available
+    to this project to confirm one against (see module docstring). Rather
+    than guess at a fixed layout that would silently misread a real
+    device, the caller supplies register_map: {"capacity_ah": (address,
+    scale), "resistance_ohm": (address, scale), "temperature_c": (address,
+    scale)}. A field missing from the map reads as NaN, not an error --
+    some devices don't expose internal resistance over Modbus at all.
+
+    Unlike fetch_victron_vrm()/fetch_orion_bms(), a Modbus read returns
+    holding-register values as they exist RIGHT NOW -- Modbus has no
+    concept of historical time series the way a REST stats endpoint does.
+    This returns exactly one row (cycle_number=0); building up per-cycle
+    history from repeated reads (e.g. a scheduled poll appending rows over
+    time) is the caller's responsibility, the same limitation any real
+    Modbus BMS integration has.
+
+    Returns None if host/port/register_map are not all supplied. Requires
+    the optional `pymodbus` package -- raises ImportError with a clear
+    message if it isn't installed, since this app doesn't otherwise depend
+    on it (unlike `requests`, already a hard dependency for VRM/Orion).
+
+    Not tested against a live device (see module docstring). Built against
+    pymodbus's documented ModbusTcpClient API shape.
+    """
+    if not (host and port and register_map):
+        return None
+
+    try:
+        from pymodbus.client import ModbusTcpClient
+    except ImportError as e:
+        raise ImportError(
+            "Modbus BMS support requires the optional 'pymodbus' package "
+            "(pip install pymodbus) -- not installed in this environment."
+        ) from e
+
+    client = ModbusTcpClient(host, port=port)
+    if not client.connect():
+        return None
+
+    try:
+        row = {"cell_id": cell_id, "cycle_number": 0, "test_date": None}
+        for field in ("capacity_ah", "resistance_ohm", "temperature_c"):
+            spec = register_map.get(field)
+            if spec is None:
+                row[field] = float("nan")
+                continue
+            address, scale = spec
+            result = client.read_holding_registers(address, count=1, slave=unit_id)
+            row[field] = float("nan") if result.isError() else result.registers[0] * scale
+    finally:
+        client.close()
+
+    return pd.DataFrame([row])
+
+
+def fetch_can_bus_bms(
+    channel: str,
+    bustype: str,
+    node_id: int,
+    pgn_map: dict,
+    cell_id: str,
+    timeout_s: float = 5.0,
+) -> "pd.DataFrame | None":
+    """
+    Read a single current-state snapshot from a CAN bus BMS (common in EV
+    packs) by listening for frames matching caller-supplied PGN/CAN IDs.
+
+    Like Modbus, CAN has no single universal frame layout -- SAE J1939
+    (the common heavy-EV/industrial convention), Tesla's, Orion Jr2's own
+    CAN mode, and countless BMS vendors' proprietary DBC files all encode
+    capacity/resistance/temperature at different CAN IDs with different
+    byte layouts. This is deliberately the MOST assumption-heavy of this
+    project's 3 new BMS adapters (Modbus/CAN/OCPP): pgn_map supplies which
+    CAN arbitration ID carries which field and how to decode it:
+    {"capacity_ah": (can_id, byte_offset, scale), "resistance_ohm": (...),
+    "temperature_c": (...)}. With no real device or vendor DBC file to
+    confirm frame layout against, this trusts the caller's map entirely --
+    there is no fallback default to fall back to that wouldn't just be a
+    guess.
+
+    Listens for up to timeout_s seconds and returns whichever of the 3
+    mapped fields it actually saw a frame for (NaN for the rest) -- a CAN
+    bus is a continuous broadcast stream, not a request/response protocol,
+    so "read now" means "listen briefly and take what arrives."
+
+    Returns None if channel/bustype/pgn_map are not all supplied. Requires
+    the optional `python-can` package -- raises ImportError with a clear
+    message if it isn't installed.
+
+    Not tested against a live device or a real vendor DBC file (see module
+    docstring). Built against python-can's documented Bus/Message API shape.
+    """
+    if not (channel and bustype and pgn_map):
+        return None
+
+    try:
+        import can
+    except ImportError as e:
+        raise ImportError(
+            "CAN bus BMS support requires the optional 'python-can' package "
+            "(pip install python-can) -- not installed in this environment."
+        ) from e
+
+    import time
+
+    id_to_field = {spec[0]: (field, spec[1], spec[2]) for field, spec in pgn_map.items()}
+    row = {"cell_id": cell_id, "cycle_number": 0, "test_date": None,
+           "capacity_ah": float("nan"), "resistance_ohm": float("nan"), "temperature_c": float("nan")}
+
+    bus = can.interface.Bus(channel=channel, bustype=bustype)
+    try:
+        deadline = time.monotonic() + timeout_s
+        seen = set()
+        while time.monotonic() < deadline and len(seen) < len(id_to_field):
+            msg = bus.recv(timeout=max(0.0, deadline - time.monotonic()))
+            if msg is None:
+                break
+            spec = id_to_field.get(msg.arbitration_id)
+            if spec is None:
+                continue
+            field, byte_offset, scale = spec
+            if byte_offset < len(msg.data):
+                row[field] = msg.data[byte_offset] * scale
+                seen.add(msg.arbitration_id)
+    finally:
+        bus.shutdown()
+
+    return pd.DataFrame([row])
+
+
 class OrionBMSAdapter:
     """BMSAdapter wrapping fetch_orion_bms(). fetch_orion_bms() already
     never raises (returns a dict with an "error" key instead) -- this
@@ -247,3 +390,202 @@ class OrionBMSAdapter:
         if isinstance(result, dict) and "error" in result:
             return {"ok": False, "message": f"Orion connection failed: {result['error']}", "n_records": None}
         return {"ok": True, "message": f"Fetched {len(result)} records.", "n_records": len(result)}
+
+
+def fetch_ocpp_sessions(
+    central_system_url: str,
+    api_key: str,
+    charge_point_id: str,
+) -> "pd.DataFrame | None":
+    """
+    Fetch completed charging-session records from an OCPP Central System's
+    REST query API (e.g. SteVe, or any Central System exposing transaction/
+    MeterValues history over REST) for one charge point.
+
+    A deliberate scope decision, not an oversight: OCPP itself (the
+    protocol between a charger and its Central System) is WebSocket-based
+    and stateful -- acting as a live Central System or Charge Point would
+    mean running a persistent async connection, a materially different
+    shape of integration than this app's other one-shot REST fetches, and
+    a much larger undertaking to build untested against a real charge
+    point. This instead queries a Central System's own REST reporting API
+    for already-completed sessions, the same way an operator dashboard
+    would, and is consistent with fetch_victron_vrm()/fetch_orion_bms()'s
+    shape (credential guard -> one REST call -> map onto this app's
+    columns).
+
+    Charging-session data is NOT cell-level cycle data, and this function
+    does not pretend otherwise: an OCPP transaction reports total energy
+    delivered (kWh) and duration for a charging session at the CHARGE
+    POINT level, not a per-cell capacity/resistance/temperature reading.
+    Each row maps one completed session onto the app's standard columns
+    as an approximation -- capacity_ah is derived from meterStop -
+    meterStart (Wh) at an assumed nominal voltage (a real limitation
+    inherent to what OCPP MeterValues expose, not this function's
+    modeling choice), resistance_ohm is always NaN (OCPP does not report
+    it at all), and cycle_number is the session's sequential index for
+    this charge point. This makes OCPP data usable as an approximate
+    capacity-trend input to the existing upload pipeline, not a
+    substitute for real per-cell BMS telemetry.
+
+    Returns None if central_system_url/api_key/charge_point_id are not
+    all supplied. Requires no extra dependency beyond `requests` (already
+    used by fetch_victron_vrm()) since this queries a REST reporting API,
+    not the OCPP WebSocket protocol itself.
+
+    Not tested against a live Central System (see module docstring). Built
+    against the shape a REST transaction-history endpoint would plausibly
+    expose (charge_point_id, transactions[] with meterStart/meterStop/
+    startTimestamp/stopTimestamp) -- no single Central System implementation
+    exposes an OCPP-standardized REST query API, so this is necessarily a
+    best-effort shape, not a spec-verified one.
+    """
+    if not (central_system_url and api_key and charge_point_id):
+        return None
+
+    import requests
+
+    url = f"{central_system_url.rstrip('/')}/chargepoints/{charge_point_id}/transactions"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    resp = requests.get(url, headers=headers, timeout=10)
+    resp.raise_for_status()
+    payload = resp.json()
+
+    ASSUMED_NOMINAL_VOLTAGE = 3.7  # LiCoO2 nominal -- same assumption src/consequences.py's kWh math uses
+    transactions = payload.get("transactions", payload.get("data", []))
+    rows = []
+    for i, tx in enumerate(transactions if isinstance(transactions, list) else []):
+        meter_start = tx.get("meterStart")
+        meter_stop = tx.get("meterStop")
+        energy_wh = (meter_stop - meter_start) if (meter_start is not None and meter_stop is not None) else None
+        rows.append({
+            "cell_id":        charge_point_id,
+            "cycle_number":   i,
+            "capacity_ah":    (energy_wh / 1000.0 / ASSUMED_NOMINAL_VOLTAGE) if energy_wh is not None else float("nan"),
+            "resistance_ohm": float("nan"),  # not reported by OCPP MeterValues
+            "temperature_c":  tx.get("temperature", float("nan")),
+            "test_date":      tx.get("stopTimestamp") or tx.get("startTimestamp"),
+        })
+
+    if not rows:
+        return None
+
+    return pd.DataFrame(rows)
+
+
+class ModbusBMSAdapter:
+    """BMSAdapter wrapping fetch_modbus_bms(). See that function's
+    docstring for the register_map contract and why one is required."""
+
+    name = "Modbus TCP"
+
+    def __init__(self, host: str, port: int, unit_id: int, register_map: dict, cell_id: str):
+        self.host = host
+        self.port = port
+        self.unit_id = unit_id
+        self.register_map = register_map or {}
+        self.cell_id = cell_id
+
+    def is_configured(self) -> bool:
+        return bool(self.host and self.port and self.register_map)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        try:
+            return fetch_modbus_bms(self.host, self.port, self.unit_id, self.register_map, self.cell_id)
+        except Exception:
+            return None
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        try:
+            df = fetch_modbus_bms(self.host, self.port, self.unit_id, self.register_map, self.cell_id)
+        except ImportError as e:
+            return {"ok": False, "message": str(e), "n_records": None}
+        except Exception as e:
+            return {"ok": False, "message": f"Modbus connection failed: {e}", "n_records": None}
+        if df is None or len(df) == 0:
+            return {"ok": True, "message": "Connected, but no records were returned.", "n_records": 0}
+        return {"ok": True, "message": f"Fetched {len(df)} record(s).", "n_records": len(df)}
+
+
+class CANBusBMSAdapter:
+    """BMSAdapter wrapping fetch_can_bus_bms(). See that function's
+    docstring for the pgn_map contract -- the most assumption-heavy of
+    this project's 3 new adapters since there's no real device or vendor
+    DBC file to confirm frame layout against."""
+
+    name = "CAN Bus"
+
+    def __init__(self, channel: str, bustype: str, node_id: int, pgn_map: dict, cell_id: str):
+        self.channel = channel
+        self.bustype = bustype
+        self.node_id = node_id
+        self.pgn_map = pgn_map or {}
+        self.cell_id = cell_id
+
+    def is_configured(self) -> bool:
+        return bool(self.channel and self.bustype and self.pgn_map)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        try:
+            return fetch_can_bus_bms(self.channel, self.bustype, self.node_id, self.pgn_map, self.cell_id)
+        except Exception:
+            return None
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        try:
+            df = fetch_can_bus_bms(self.channel, self.bustype, self.node_id, self.pgn_map, self.cell_id)
+        except ImportError as e:
+            return {"ok": False, "message": str(e), "n_records": None}
+        except Exception as e:
+            return {"ok": False, "message": f"CAN bus connection failed: {e}", "n_records": None}
+        if df is None or len(df) == 0:
+            return {"ok": True, "message": "Listened, but no matching frames arrived.", "n_records": 0}
+        return {"ok": True, "message": f"Fetched {len(df)} record(s).", "n_records": len(df)}
+
+
+class OCPPAdapter:
+    """BMSAdapter wrapping fetch_ocpp_sessions(). See that function's
+    docstring for why this queries a Central System's REST reporting API
+    rather than speaking live OCPP, and for the charging-session-to-cycle-
+    data mapping's real limitations (no resistance, capacity derived from
+    energy at an assumed voltage)."""
+
+    name = "OCPP Charge Point"
+
+    def __init__(self, central_system_url: str, api_key: str, charge_point_id: str):
+        self.central_system_url = central_system_url
+        self.api_key = api_key
+        self.charge_point_id = charge_point_id
+
+    def is_configured(self) -> bool:
+        return bool(self.central_system_url and self.api_key and self.charge_point_id)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        try:
+            return fetch_ocpp_sessions(self.central_system_url, self.api_key, self.charge_point_id)
+        except Exception:
+            return None
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        try:
+            df = fetch_ocpp_sessions(self.central_system_url, self.api_key, self.charge_point_id)
+        except Exception as e:
+            return {"ok": False, "message": f"OCPP Central System connection failed: {e}", "n_records": None}
+        if df is None or len(df) == 0:
+            return {"ok": True, "message": "Connected, but no sessions were returned.", "n_records": 0}
+        return {"ok": True, "message": f"Fetched {len(df)} session(s).", "n_records": len(df)}
