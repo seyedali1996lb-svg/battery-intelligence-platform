@@ -133,6 +133,20 @@ def test_decide_and_ask_no_crash_for_degraded_cell(isolated_db):
     assert not at.exception, f"Decide & Ask crashed for a degraded cell: {at.exception}"
 
 
+def test_explore_reference_datasets_condition_completeness_renders(isolated_db):
+    """
+    Smoke test for the new test-condition-documentation disclosure
+    (batlab.datasets.schema.condition_completeness(), rendered via
+    app/_pages/explore.py's _render_condition_completeness()) on the
+    Explore > Reference Datasets tab (Oxford NCA cells).
+    """
+    at = _logged_in_app(role="Engineer", page="compare", data_mode="nasa", explore_view_radio="Reference Datasets")
+    at.run()
+    assert not at.exception, f"Reference Datasets tab crashed: {at.exception}"
+    labels = [e.label for e in at.expander]
+    assert any("Test-condition documentation" in label for label in labels)
+
+
 @pytest.mark.parametrize("data_mode", ["nasa", "severson"])
 def test_decide_and_ask_spine_export_button_renders(isolated_db, data_mode):
     """

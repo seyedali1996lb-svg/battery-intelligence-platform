@@ -678,6 +678,46 @@ def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
         )
 
 
+_CONDITION_LABELS = {
+    "c_rate": "C-rate",
+    "temperature_c": "Measured temperature",
+    "voltage_charge_cutoff_v": "Charge voltage cutoff",
+    "voltage_discharge_cutoff_v": "Discharge voltage cutoff",
+    "test_temperature_c": "Test temperature setpoint",
+}
+
+
+def _render_condition_completeness(df):
+    """
+    Compact disclosure of which measurement CONDITIONS (not measurements
+    themselves) are documented for this cell's data source — reuses
+    make_state_badge()'s existing "Available"/"Not available in demo"
+    two-state row pattern from the Passport field table
+    (_compliance_passport.py's _passport_field_row), applied to
+    batlab.datasets.schema.condition_completeness()'s output instead of
+    inventing a new badge treatment.
+    """
+    from batlab.datasets.schema import condition_completeness
+    from design_system import make_state_badge
+
+    result = condition_completeness(df)
+    with st.expander(f"Test-condition documentation ({int(result['score'] * 100)}% known)", expanded=False):
+        for name, known in result["known"].items():
+            badge = make_state_badge("available" if known else "unavailable")
+            st.markdown(
+                f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                f"padding:4px 0;font-size:12px;color:#a0aec0'>"
+                f"<span>{_CONDITION_LABELS.get(name, name)}</span>{badge}</div>",
+                unsafe_allow_html=True,
+            )
+        if result["caveats"]:
+            _md_html(
+                "<div style='font-size:11px;color:#718096;margin-top:8px;line-height:1.5'>"
+                + "<br>".join(result["caveats"])
+                + "</div>"
+            )
+
+
 def _page_reference_datasets():
     """
     Real measured degradation data from additional public datasets that
@@ -736,6 +776,8 @@ def _page_reference_datasets():
     _mc1.metric("Beginning-of-life capacity", f"{_cp['capacity_ah'].iloc[0]:.2f} Ah")
     _mc2.metric("Latest measured SOH", f"{_cp['soh_pct'].iloc[-1]:.1f}%")
     _mc3.metric("Checkpoints observed", f"{len(_cp)}")
+
+    _render_condition_completeness(_cp)
 
     _fig = go.Figure()
     _fig.add_trace(go.Scatter(
