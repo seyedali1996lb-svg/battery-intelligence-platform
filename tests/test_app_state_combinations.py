@@ -133,6 +133,85 @@ def test_decide_and_ask_no_crash_for_degraded_cell(isolated_db):
     assert not at.exception, f"Decide & Ask crashed for a degraded cell: {at.exception}"
 
 
+def test_decide_and_ask_bankability_report_download_button_renders(isolated_db):
+    """Smoke test for src/bankability_report.py + report_pdf.build_bankability_pdf()'s
+    new wiring into Decide & Ask -- covers both a reliable-RUL cell (B0005)
+    and a cell whose RUL isn't yet reliable, to exercise both branches of
+    build_bankability_report()'s honest RUL-unavailable path."""
+    for cell_id in ("B0005", "B0006"):
+        at = _logged_in_app(role="Engineer", page="decision", data_mode="nasa", selected_cell=cell_id)
+        at.run()
+        assert not at.exception, f"Decide & Ask crashed rendering bankability report for {cell_id}: {at.exception}"
+        labels = [d.label for d in at.download_button]
+        assert "📄 Download Bankability Report (PDF)" in labels
+
+
+def test_decide_and_ask_multi_jurisdiction_exports_render(isolated_db):
+    """Smoke test for src/us_ira_export.py and src/china_recycling_export.py's
+    new download buttons on Decide & Ask -- must render for both a healthy
+    cell (B0005) and a degraded one that actually triggers the recycler
+    lookup path (B0006, R4/R5)."""
+    for cell_id in ("B0005", "B0006"):
+        at = _logged_in_app(role="Engineer", page="decision", data_mode="nasa", selected_cell=cell_id)
+        at.run()
+        assert not at.exception, f"Decide & Ask crashed rendering multi-jurisdiction exports for {cell_id}: {at.exception}"
+        labels = [d.label for d in at.download_button]
+        assert "Export US IRA structure" in labels
+        assert "Export China EPR structure" in labels
+
+
+def test_decide_and_ask_buyer_matching_section_renders_and_records_match(isolated_db):
+    """Smoke test + click-through for src/marketplace_matching.py's new
+    wiring into Decide & Ask -- saves a buyer profile, confirms it renders
+    a ranked match for a real cell, records a match, and confirms the
+    match shows up in the Matches expander."""
+    at = _logged_in_app(
+        role="Engineer", page="decision", data_mode="nasa", selected_cell="B0005",
+        mkt_bp_name="Acme Storage Co.", mkt_bp_soh=60.0, mkt_bp_price=40.0,
+    )
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed before saving a buyer profile: {at.exception}"
+    at.button(key="mkt_bp_save").click().run()
+    assert not at.exception, f"Decide & Ask crashed saving a buyer profile: {at.exception}"
+    text = _all_text(at)
+    assert "Acme Storage Co." in text
+
+    match_buttons = [b for b in at.button if b.key and b.key.startswith("mkt_match_")]
+    assert match_buttons, "expected at least one 'Record match' button for an eligible buyer"
+    match_buttons[0].click()
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed recording a match: {at.exception}"
+    assert "proposed" in _all_text(at)
+
+
+def test_passport_recycler_recommendation_renders_for_low_soh_cell(isolated_db):
+    """Smoke test for src/recycler_directory.py's wiring into the Passport's
+    EOL R-code section -- B0006 (NASA) is a real degraded cell (~58% SOH,
+    confirmed via prior session logs) that should land on R4/R5, triggering
+    the recycler recommendation block."""
+    at = _logged_in_app(role="Engineer", page="compliance", data_mode="nasa", selected_cell="B0006")
+    at.run()
+    assert not at.exception, f"Compliance page crashed rendering recycler recommendation: {at.exception}"
+    text = _all_text(at)
+    r_code_shown = "R4" in text or "R5" in text
+    assert r_code_shown, "expected B0006's low SOH to land on R4/R5"
+    # Recycler section only renders for R4/R5 -- confirm it actually fired,
+    # not just that the R-code happened to contain "R4"/"R5" elsewhere.
+    assert any(name in text for name in ["Redwood Materials", "Umicore", "Fortum Battery Recycling", "GEM Co."])
+
+
+def test_sustainability_cradle_to_grave_section_renders(isolated_db):
+    """Smoke test for src/sustainability.py's new cradle_to_grave_footprint()
+    wiring into the Compliance page's Sustainability tab -- st.tabs() renders
+    every tab's content in the underlying script run regardless of which is
+    visually active, so this executes on page='compliance' without needing
+    to simulate a tab click."""
+    at = _logged_in_app(role="Engineer", page="compliance", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Compliance page crashed rendering Cradle-to-Grave Footprint: {at.exception}"
+    assert "Cradle-to-Grave Footprint" in _all_text(at)
+
+
 def test_decide_and_ask_warranty_risk_section_renders(isolated_db):
     """Smoke test for src/warranty.py's new wiring into Decide & Ask's
     Supporting Details expander -- must render without crashing for both a
