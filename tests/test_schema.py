@@ -8,7 +8,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from batlab.datasets.schema import SchemaError, compute_soh_pct, concat_cells, validate_schema
+from batlab.datasets.schema import (
+    SchemaError,
+    compute_soh_pct,
+    concat_cells,
+    condition_completeness,
+    validate_schema,
+)
 
 
 def _cell_df(cell_id: str, source: str, chemistry: str, n: int = 5) -> pd.DataFrame:
@@ -101,3 +107,71 @@ def test_concat_cells_falls_back_to_dict_key_when_attrs_missing_cell_id():
     df = pd.DataFrame({"cycle_number": [1, 2], "capacity_ah": [2.0, 1.9], "soh_pct": [100.0, 95.0]})
     out = concat_cells({"fallback-id": df})
     assert list(out["cell_id"]) == ["fallback-id", "fallback-id"]
+
+
+# ---------------------------------------------------------------------------
+# Condition-aware schema: voltage/temperature protocol attrs + validation
+# ---------------------------------------------------------------------------
+
+def test_validate_schema_accepts_charge_above_discharge_cutoff():
+    df = _cell_df("A", "nasa", "LiCoO2")
+    df.attrs["voltage_charge_cutoff_v"] = 4.2
+    df.attrs["voltage_discharge_cutoff_v"] = 2.7
+    validate_schema(df, kind="cycle")  # must not raise
+
+
+def test_validate_schema_rejects_charge_at_or_below_discharge_cutoff():
+    df = _cell_df("A", "nasa", "LiCoO2")
+    df.attrs["voltage_charge_cutoff_v"] = 2.7
+    df.attrs["voltage_discharge_cutoff_v"] = 2.7
+    with pytest.raises(SchemaError, match="voltage_charge_cutoff_v"):
+        validate_schema(df, kind="cycle")
+
+
+def test_validate_schema_ignores_absent_voltage_attrs():
+    df = _cell_df("A", "nasa", "LiCoO2")  # neither voltage attr set
+    validate_schema(df, kind="cycle")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# condition_completeness()
+# ---------------------------------------------------------------------------
+
+def test_condition_completeness_all_known():
+    df = _cell_df("A", "nasa", "LiCoO2")
+    df["c_rate"] = 1.0
+    df["temperature_c"] = 24.0
+    df.attrs["voltage_charge_cutoff_v"] = 4.2
+    df.attrs["voltage_discharge_cutoff_v"] = 2.7
+    df.attrs["test_temperature_c"] = 24.0
+
+    result = condition_completeness(df)
+    assert all(result["known"].values())
+    assert result["score"] == 1.0
+    assert result["caveats"] == []
+
+
+def test_condition_completeness_nothing_known_is_not_an_error():
+    df = _cell_df("A", "some_new_source", "LFP")
+    result = condition_completeness(df)
+    assert not any(result["known"].values())
+    assert result["score"] == 0.0
+    assert result["caveats"] == []  # no caveat text for an unrecognized source — honest, not fabricated
+
+
+def test_condition_completeness_surfaces_known_gap_caveat_for_severson():
+    df = _cell_df("S-b1c2", "severson2019", "LFP")
+    df.attrs["voltage_discharge_cutoff_v"] = 2.0
+    df.attrs["test_temperature_c"] = 30.0
+    # voltage_charge_cutoff_v deliberately absent — multi-step SOC-based policy
+
+    result = condition_completeness(df)
+    assert result["known"]["voltage_charge_cutoff_v"] is False
+    assert any("multi-step" in c for c in result["caveats"])
+
+
+def test_condition_completeness_ignores_all_nan_row_column():
+    df = _cell_df("A", "nasa", "LiCoO2")
+    df["temperature_c"] = float("nan")
+    result = condition_completeness(df)
+    assert result["known"]["temperature_c"] is False

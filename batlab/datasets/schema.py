@@ -108,6 +108,31 @@ OPTIONAL_COLUMNS: dict[str, str] = {
 
 ALL_KNOWN_COLUMNS = {**REQUIRED_CYCLE_COLUMNS, **REQUIRED_CHECKPOINT_COLUMNS, **OPTIONAL_COLUMNS}
 
+# Optional df.attrs entries — protocol-level test CONDITIONS, distinct from
+# REQUIRED_ATTRS' per-cell identity facts (source/chemistry/citation/...) and
+# from OPTIONAL_COLUMNS' per-row MEASUREMENTS. These are per-cell protocol
+# constants (a cell is tested to one voltage window / one nominal chamber
+# setpoint for its whole life), so — same reasoning as REQUIRED_ATTRS above —
+# they belong in df.attrs, not as a column repeating the same value every row.
+#
+# Same non-fabrication contract as OPTIONAL_COLUMNS: a loader sets one of
+# these only when the source's own published protocol documentation states
+# it explicitly. Omit (do not guess a plausible-looking number) when a
+# dataset's protocol has no single value — e.g. a multi-step/SOC-based
+# charge policy that varies per cell, or a source that only says "room
+# temperature" with no numeric setpoint. See condition_completeness() below
+# for how this omission becomes a disclosed fact instead of a silent gap.
+OPTIONAL_ATTRS: dict[str, str] = {
+    "voltage_charge_cutoff_v":    "float — protocol charge voltage cutoff, volts (upper CC/CV "
+                                    "bound). Omit if the charge policy is multi-step/SOC-based "
+                                    "with no single cutoff.",
+    "voltage_discharge_cutoff_v": "float — protocol discharge voltage cutoff, volts (lower bound)",
+    "test_temperature_c":         "float — nominal ambient/chamber test-setpoint temperature, "
+                                    "Celsius. Distinct from the per-cycle MEASURED temperature_c "
+                                    "column (when present) — this is the protocol's target, not "
+                                    "a sensor reading.",
+}
+
 # DataFrame-level metadata every loader must set via df.attrs (not columns —
 # these are per-cell/per-source facts, not per-row measurements, so
 # duplicating them into every row would be wasteful and easy to typo out of
@@ -207,6 +232,15 @@ def validate_schema(df: pd.DataFrame, kind: str = "cycle") -> None:
             f"every DataFrame it returns, e.g. df.attrs['source'] = 'nasa'."
         )
 
+    _v_chg = df.attrs.get("voltage_charge_cutoff_v")
+    _v_dis = df.attrs.get("voltage_discharge_cutoff_v")
+    if _v_chg is not None and _v_dis is not None and _v_chg <= _v_dis:
+        raise SchemaError(
+            f"voltage_charge_cutoff_v ({_v_chg}) must be greater than "
+            f"voltage_discharge_cutoff_v ({_v_dis}) — a charge cutoff at or below the "
+            f"discharge cutoff describes no usable voltage window."
+        )
+
 
 def concat_cells(cells: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
@@ -249,3 +283,65 @@ def compute_soh_pct(capacity_ah: pd.Series) -> pd.Series:
     if first <= 0:
         raise SchemaError(f"First capacity_ah value must be > 0 to compute soh_pct, got {first}.")
     return capacity_ah / first * 100.0
+
+
+# Known, disclosed reasons a condition is genuinely absent (not a loader bug) —
+# keyed by df.attrs["source"], surfaced verbatim by condition_completeness()
+# below instead of leaving the gap unexplained. Only covers cases where the
+# source's own protocol documentation was checked and confirmed to have no
+# single value (see batlab/datasets/severson.py and calce.py docstrings).
+_KNOWN_GAP_CAVEATS: dict[str, dict[str, str]] = {
+    "severson2019": {
+        "voltage_charge_cutoff_v": (
+            "Severson 2019 used 72 distinct SOC-based multi-step fast-charge "
+            "policies (0-80% SOC), not a single charge voltage cutoff — no one "
+            "number would honestly represent the protocol."
+        ),
+    },
+    "calce": {
+        "test_temperature_c": (
+            "CALCE's CS2 protocol documentation states 'room temperature' with "
+            "no numeric setpoint — not recorded here rather than guessed."
+        ),
+    },
+    "oxford_pathdep_2020": {
+        "voltage_charge_cutoff_v": "No confirmed voltage cutoff found in the source's published documentation.",
+        "voltage_discharge_cutoff_v": "No confirmed voltage cutoff found in the source's published documentation.",
+    },
+}
+
+
+def condition_completeness(df: pd.DataFrame) -> dict:
+    """
+    Report which measurement CONDITIONS (as opposed to which measurements
+    themselves) are known for this cell's DataFrame — the checkable,
+    disclosed alternative to silently treating an unset condition as if it
+    didn't matter. Never raises; a DataFrame with no conditions at all is a
+    valid, fully-disclosed result, not an error.
+
+    Returns
+    -------
+    {
+        "known": {condition_name: bool, ...},   # row-level columns + OPTIONAL_ATTRS
+        "score": float,                          # fraction of the 4 tracked conditions known
+        "caveats": [str, ...],                   # plain-language reasons for known gaps
+    }
+    """
+    known = {
+        "c_rate": bool("c_rate" in df.columns and df["c_rate"].notna().any()),
+        "temperature_c": bool("temperature_c" in df.columns and df["temperature_c"].notna().any()),
+    }
+    for attr in OPTIONAL_ATTRS:
+        known[attr] = bool(attr in df.attrs and df.attrs[attr] is not None)
+
+    score = sum(known.values()) / len(known) if known else 0.0
+
+    source = df.attrs.get("source", "")
+    source_gaps = _KNOWN_GAP_CAVEATS.get(source, {})
+    caveats = [
+        source_gaps[name]
+        for name, is_known in known.items()
+        if not is_known and name in source_gaps
+    ]
+
+    return {"known": known, "score": round(score, 3), "caveats": caveats}
