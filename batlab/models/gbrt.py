@@ -16,6 +16,8 @@ Explainability:
   contributed to reducing prediction error.
 """
 
+import copy
+
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
@@ -161,6 +163,154 @@ def train_models(
             "rul_q10":   rul_q10_test,
             "rul_q90":   rul_q90_test,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Incremental (warm-start) updating
+# ---------------------------------------------------------------------------
+
+# How many new boosting estimators a single warm-start update adds. Fewer
+# trees than a full retrain (200/150) because this is meant to be called
+# repeatedly on each new batch of telemetry, not once — the ensemble grows
+# a little each time rather than being rebuilt.
+WARM_START_N_NEW_ESTIMATORS = 20
+
+# sklearn's GradientBoostingRegressor grows unboundedly under repeated
+# warm_start calls (each call only ever adds trees, never prunes). Past
+# this many total estimators, warm_start_update() refuses and the caller
+# should fall back to a full train_models() refit instead, which also
+# resets tree count back to GBRT_PARAMS' baseline.
+WARM_START_MAX_ESTIMATORS = 500
+
+
+def warm_start_update(
+    model_bundle: dict,
+    X: pd.DataFrame,
+    y_soh: pd.Series,
+    y_rul: pd.Series,
+    n_new_estimators: int = WARM_START_N_NEW_ESTIMATORS,
+    test_size: float = 0.2,
+) -> dict:
+    """
+    Incrementally extend an already-fitted model bundle with a few more
+    boosting estimators trained on new data, instead of a full
+    train_models() refit from scratch — the "warm-start incremental
+    refit" answer to why this exists (see README/pending-work: sklearn's
+    GBRT has no true partial_fit, only warm_start, which keeps existing
+    trees and only fits the newly-added ones).
+
+    Why the scaler is reused, never refit: the existing trees' splits were
+    learned in the old scaler's feature space. Refitting the scaler here
+    would silently shift every feature's scale out from under trees that
+    already exist, corrupting them without raising an error — so the new
+    trees are fit in the SAME space as the ones already grown.
+
+    This is not equivalent to a full retrain on the combined dataset — it
+    can drift from what train_models() would produce on the same
+    cumulative data, especially if the new batch's distribution has
+    shifted from what the original fit saw. Compare the result against
+    warm_start_vs_full_retrain_drift() before trusting it in place of an
+    occasional full refit; callers should also fall back to a full
+    train_models() call once WARM_START_MAX_ESTIMATORS is reached (see
+    that constant) rather than growing the ensemble forever.
+
+    Raises ValueError if the update would exceed WARM_START_MAX_ESTIMATORS
+    or if X's columns don't match the existing bundle's feature_names —
+    silently training on a shifted feature set is exactly the kind of
+    invisible failure this platform's honest-validation philosophy exists
+    to prevent.
+    """
+    if list(X.columns) != list(model_bundle["feature_names"]):
+        raise ValueError(
+            "warm_start_update(): X's columns don't match the existing bundle's "
+            "feature_names — a full train_models() refit is required when the "
+            "feature set has changed, not an incremental update."
+        )
+
+    current_n = model_bundle["soh_model"].n_estimators
+    if current_n + n_new_estimators > WARM_START_MAX_ESTIMATORS:
+        raise ValueError(
+            f"warm_start_update(): {current_n} + {n_new_estimators} estimators "
+            f"would exceed WARM_START_MAX_ESTIMATORS ({WARM_START_MAX_ESTIMATORS}) — "
+            "call train_models() for a full refit instead, which resets tree count."
+        )
+
+    new_bundle = copy.deepcopy(model_bundle)
+    scaler = new_bundle["scaler"]
+    X_scaled = scaler.transform(X)
+
+    # Chronological holdout on the NEW data only, same shuffle=False honesty
+    # rule as train_models() — this new batch is itself a time series.
+    if len(X) < max(4, int(1 / test_size) + 1):
+        train_idx = test_idx = slice(None)
+    else:
+        n_test = max(1, int(len(X) * test_size))
+        train_idx = slice(0, len(X) - n_test)
+        test_idx = slice(len(X) - n_test, None)
+
+    X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+    y_soh_train, y_soh_test = y_soh.iloc[train_idx], y_soh.iloc[test_idx]
+    y_rul_train, y_rul_test = y_rul.iloc[train_idx], y_rul.iloc[test_idx]
+
+    for key, y_train in (
+        ("soh_model", y_soh_train), ("rul_model", y_rul_train),
+        ("rul_q10_model", y_rul_train), ("rul_q90_model", y_rul_train),
+    ):
+        model = new_bundle[key]
+        model.set_params(warm_start=True, n_estimators=model.n_estimators + n_new_estimators)
+        model.fit(X_train, y_train)
+
+    soh_pred_test = new_bundle["soh_model"].predict(X_test)
+    rul_pred_test = new_bundle["rul_model"].predict(X_test)
+    rul_q10_test = np.clip(new_bundle["rul_q10_model"].predict(X_test), 0, None)
+    rul_q90_test = np.clip(new_bundle["rul_q90_model"].predict(X_test), 0, None)
+
+    new_bundle["metrics"] = {
+        "soh_mae": mean_absolute_error(y_soh_test, soh_pred_test),
+        "soh_r2":  r2_score(y_soh_test, soh_pred_test),
+        "rul_mae": mean_absolute_error(y_rul_test, rul_pred_test),
+        "rul_r2":  r2_score(y_rul_test, rul_pred_test),
+        "rul_interval_coverage": float(np.mean(
+            (y_rul_test.values >= rul_q10_test) & (y_rul_test.values <= rul_q90_test)
+        )),
+    }
+    new_bundle["test_data"] = {
+        "X_test": X.iloc[test_idx], "y_soh_test": y_soh_test, "y_rul_test": y_rul_test,
+        "soh_pred": soh_pred_test, "rul_pred": rul_pred_test,
+        "rul_q10": rul_q10_test, "rul_q90": rul_q90_test,
+    }
+    new_bundle["n_estimators_total"] = new_bundle["soh_model"].n_estimators
+    new_bundle["n_estimators_added"] = n_new_estimators
+    return new_bundle
+
+
+def warm_start_vs_full_retrain_drift(incremental_bundle: dict, full_bundle: dict) -> dict:
+    """
+    Compare a warm_start_update() result against a fresh train_models()
+    full refit on the same cumulative data, so a caller can tell whether
+    the faster incremental path is trustworthy enough to serve or whether
+    this update should fall back to a full refit. Mirrors
+    src/experiment_registry.py's replay_run() hyperparams_match/
+    hyperparams_diff pattern — additive, never silently swaps one for the
+    other, just makes the divergence visible.
+
+    Thresholds are deliberately conservative (2 percentage points of SOH
+    MAE, 15% relative RUL MAE) — a silently-drifted RUL number is exactly
+    the kind of quiet failure this platform's honest-validation philosophy
+    exists to catch, so acceptable=False errs toward "fall back to a full
+    refit" rather than toward trusting the cheaper path.
+    """
+    inc, full = incremental_bundle["metrics"], full_bundle["metrics"]
+    soh_mae_diff = abs(inc["soh_mae"] - full["soh_mae"])
+    rul_mae_diff = abs(inc["rul_mae"] - full["rul_mae"])
+    rul_mae_relative_diff = rul_mae_diff / max(full["rul_mae"], 1e-6)
+    acceptable = soh_mae_diff <= 2.0 and rul_mae_relative_diff <= 0.15
+    return {
+        "acceptable": acceptable,
+        "soh_mae_diff": soh_mae_diff,
+        "rul_mae_diff": rul_mae_diff,
+        "rul_mae_relative_diff": rul_mae_relative_diff,
     }
 
 

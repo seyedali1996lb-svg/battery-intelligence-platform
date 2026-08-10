@@ -15,7 +15,10 @@ from design_system import section_header_html
 from utils import _action_bar, base_layout, LEGEND_H, render_card, load_tenant_bundle_cached
 from import_adapter import adapt_upload_to_pipeline
 from batlab.features.engineering import build_features, get_model_matrix
-from batlab.models.gbrt import train_models, predict, GBRT_PARAMS
+from batlab.models.gbrt import (
+    train_models, predict, GBRT_PARAMS,
+    warm_start_update, warm_start_vs_full_retrain_drift, WARM_START_MAX_ESTIMATORS,
+)
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
@@ -34,6 +37,34 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
         ("reliability", "Computing per-cell reliability"),
         ("load",        "Loading results into dashboard"),
     ]
+
+    # Warm-start incremental update: only offered when a previous trained
+    # bundle for this org already exists (nothing to warm-start from on a
+    # first upload) — see batlab/models/gbrt.py's warm_start_update()
+    # docstring for why this is faster than but not equivalent to a full
+    # refit. Defaults on when available, matching the recommended approach;
+    # a full refit is always one click away by unchecking it.
+    _prev_bundle_triple = load_tenant_bundle_cached(st.session_state["auth_org_id"])
+    _use_warm_start = False
+    if _prev_bundle_triple is not None and _prev_bundle_triple[1] is not None:
+        _prev_n_est = _prev_bundle_triple[1]["soh_model"].n_estimators
+        _use_warm_start = st.checkbox(
+            "⚡ Incremental update (warm-start) instead of full retrain",
+            value=_prev_n_est < WARM_START_MAX_ESTIMATORS,
+            key="import_use_warm_start",
+            help=(
+                "Extends your existing trained model with new boosting estimators "
+                "fit on this upload's data, instead of retraining from scratch. "
+                "Faster, but can drift from a full refit — falls back to a full "
+                "retrain automatically if the feature set changed or the model has "
+                "grown too large to keep extending."
+            ),
+        )
+        if _prev_n_est >= WARM_START_MAX_ESTIMATORS:
+            st.caption(
+                f"Existing model has reached {_prev_n_est} estimators — next update will be a full retrain "
+                "regardless of the checkbox above, to reset tree count."
+            )
 
     if st.button(
         "⚡ Analyse this data",
@@ -114,11 +145,30 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 # 3+4 — Train (train_models trains both SOH and RUL in one call)
                 _step("soh", "⏳", "Training SOH model…")
                 _step("rul", "⏳", "Training RUL model…")
-                up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+                _training_mode = "full_refit"
+                _warm_start_note = None
+                if _use_warm_start and _prev_bundle_triple is not None:
+                    _prev_bundle = _prev_bundle_triple[1]
+                    try:
+                        up_bndl = warm_start_update(_prev_bundle, X_all, y_soh_all, y_rul_all)
+                        _training_mode = "warm_start"
+                        _warm_start_note = (
+                            f"training_mode=warm_start (+{up_bndl['n_estimators_added']} estimators, "
+                            f"{up_bndl['n_estimators_total']} total)"
+                        )
+                    except ValueError as _ws_exc:
+                        # Feature-set changed or estimator cap hit — an honest
+                        # fallback to a full refit, not a silent one (surfaced
+                        # via the step message below).
+                        up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+                        _warm_start_note = f"warm_start_update() fell back to full_refit: {_ws_exc}"
+                else:
+                    up_bndl = train_models(X_all, y_soh_all, y_rul_all)
                 up_bndl["metrics"]["n_cells"] = n_up
                 up_bndl["metrics"]["n_rows"]  = len(X_all)
-                _step("soh", "✓", "SOH model trained")
-                _step("rul", "✓", "RUL model trained")
+                up_bndl["metrics"]["training_mode"] = _training_mode
+                _step("soh", "✓", "SOH model trained" + (" (incremental)" if _training_mode == "warm_start" else ""))
+                _step("rul", "✓", "RUL model trained" + (" (incremental)" if _training_mode == "warm_start" else ""))
 
                 # 5 — LCO
                 _step("lco", "⏳", "Running leave-cell-out validation…")
@@ -162,6 +212,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                     cell_ids=list(battery["cells"].keys()),
                     n_rows=len(X_all),
                     lco_metrics=lco,
+                    notes=_warm_start_note,
                 )
 
                 # 7 — Build featured_dfs / split_cycles
@@ -231,6 +282,14 @@ def _show_upload_summary():
         if meta.get("lco_limited") else ""
     )
     rul_reliable_count = n - k
+    _training_mode = lco.get("training_mode", "full_refit")
+    _mode_badge = (
+        f"Training: <strong style='color:#e2e8f0'>Incremental update</strong> "
+        f"<span style='color:#a0aec0'>({lco.get('n_estimators_total', '?')} estimators, "
+        f"warm-started from the previous model)</span><br>"
+        if _training_mode == "warm_start" else
+        "Training: <strong style='color:#e2e8f0'>Full retrain</strong><br>"
+    )
 
     st.markdown(
         f"<div style='background:rgba(47,133,90,0.10);border:1px solid rgba(47,133,90,0.35);"
@@ -241,7 +300,8 @@ def _show_upload_summary():
         f"<strong style='color:#e2e8f0'>{n}</strong> cells loaded<br>"
         f"SOH model R²: <strong style='color:#e2e8f0'>{lco.get('lco_soh_r2', 0):.2f}</strong> "
         f"<span style='color:#a0aec0'>(leave-cell-out)</span><br>"
-        f"RUL reliable: <strong style='color:#e2e8f0'>{rul_reliable_count} of {n}</strong> cells"
+        f"RUL reliable: <strong style='color:#e2e8f0'>{rul_reliable_count} of {n}</strong> cells<br>"
+        f"{_mode_badge}"
         f"</div>"
         f"{lco_lim_html}"
         f"</div>",
