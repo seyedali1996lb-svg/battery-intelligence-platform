@@ -200,6 +200,20 @@ def test_passport_recycler_recommendation_renders_for_low_soh_cell(isolated_db):
     assert any(name in text for name in ["Redwood Materials", "Umicore", "Fortum Battery Recycling", "GEM Co."])
 
 
+def test_stakeholder_view_tab_renders_all_three_views(isolated_db):
+    """Smoke test for src/stakeholder_views.py's new Compliance tab -- must
+    render without crashing for all 3 stakeholder radio options, on a
+    real degraded cell (B0006) so the recycler branch's R4/R5 path fires."""
+    for stakeholder_label in ["OEM (manufacturer)", "Operator (current owner)", "Recycler"]:
+        at = _logged_in_app(
+            role="Engineer", page="compliance", data_mode="nasa", selected_cell="B0006",
+            stakeholder_view_radio=stakeholder_label,
+        )
+        at.run()
+        assert not at.exception, f"Compliance page crashed rendering {stakeholder_label} view: {at.exception}"
+        assert "Stakeholder View" in _all_text(at)
+
+
 def test_sustainability_cradle_to_grave_section_renders(isolated_db):
     """Smoke test for src/sustainability.py's new cradle_to_grave_footprint()
     wiring into the Compliance page's Sustainability tab -- st.tabs() renders
@@ -733,6 +747,48 @@ def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warni
     assert not at.exception, f"Settings page crashed: {at.exception}"
     duplication_warnings = [c for c in calls if "default value" in str(c[0])]
     assert duplication_warnings == [], f"session-state duplication warning fired: {duplication_warnings}"
+
+
+def test_settings_webhook_subscriptions_add_flow(isolated_db):
+    """Click-through for src/db.py's new WebhookSubscription CRUD +
+    render_webhook_subscriptions() UI -- add a destination and confirm it
+    renders with a Remove button. Delete itself is covered at the db-level
+    in tests/test_db.py (RBAC-gated CRUD, already exercised there)."""
+    at = _logged_in_app(
+        role="Fleet Manager", page="settings", data_mode="synthetic",
+        whsub_name="PagerDuty", whsub_url="https://events.pagerduty.invalid/v2/enqueue",
+    )
+    at.run()
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    assert "Additional Webhook Destinations" in _all_text(at)
+
+    at.button(key="whsub_add_btn").click().run()
+    assert not at.exception, f"Settings page crashed adding a webhook destination: {at.exception}"
+    assert "PagerDuty" in _all_text(at)
+    remove_buttons = [b for b in at.button if b.key and b.key.startswith("whsub_del_")]
+    assert remove_buttons, "expected a Remove button for the newly-added destination"
+
+
+def test_settings_generic_rest_bms_registry_adapter_renders(isolated_db):
+    """Smoke test for src/plugin_registry.py's generic
+    render_adapter_settings() wiring -- the Generic REST BMS section must
+    render (and, once filled in, its Test connection button must appear)
+    with zero adapter-specific Settings UI code."""
+    at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic")
+    at.run()
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    assert "BMS Connector (Generic REST BMS)" in _all_text(at)
+
+    at2 = _logged_in_app(
+        role="Fleet Manager", page="settings", data_mode="synthetic",
+        plugin_generic_rest_bms_generic_rest_base_url="https://api.example.invalid/cells/1",
+        plugin_generic_rest_bms_generic_rest_cell_id="CELL-1",
+        plugin_generic_rest_bms_generic_rest_field_map='{"capacity_ah": "data.capacity_ah"}',
+    )
+    at2.run()
+    assert not at2.exception, f"Settings page crashed with generic adapter configured: {at2.exception}"
+    test_buttons = [b for b in at2.button if b.key == "plugin_generic_rest_bms_test_btn"]
+    assert test_buttons, "expected the generic adapter's Test connection button to appear once required fields are filled"
 
 
 def test_settings_new_bms_connectors_render_for_admin(isolated_db):
