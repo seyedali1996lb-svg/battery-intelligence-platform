@@ -179,43 +179,39 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                 st.session_state["lm_anomalies"] = st.session_state["lm_anomalies"][-200:]
                 # ── Webhook push ────────────────────────────────────────────
                 if _wh_url_lm and _wh_evts_lm:
-                    from notifications import send_webhook
+                    from notifications import send_webhook, notify_subscribers
                     for _an in _new_anomaly:
                         _evt_type = _an.get("anomaly_type", "")
                         if _evt_type not in _wh_evts_lm:
                             continue
-                        send_webhook(
-                            _evt_type,
-                            {
-                                "cell_id":    _an.get("cell_id", _replay_cell),
-                                "severity":   _an.get("severity", "HIGH"),
-                                "value":      _an.get("value"),
-                                "threshold":  _an.get("threshold"),
-                                "message":    _an.get("message", ""),
-                                "standard":   "IEC 62619:2022",
-                                "timestamp":  _an.get("timestamp", datetime.datetime.now().isoformat()),
-                            },
-                            _wh_url_lm, _wh_sec_lm,
-                        )
+                        _an_payload = {
+                            "cell_id":    _an.get("cell_id", _replay_cell),
+                            "severity":   _an.get("severity", "HIGH"),
+                            "value":      _an.get("value"),
+                            "threshold":  _an.get("threshold"),
+                            "message":    _an.get("message", ""),
+                            "standard":   "IEC 62619:2022",
+                            "timestamp":  _an.get("timestamp", datetime.datetime.now().isoformat()),
+                        }
+                        send_webhook(_evt_type, _an_payload, _wh_url_lm, _wh_sec_lm)
+                        notify_subscribers(st.session_state["auth_org_id"], _evt_type, _an_payload)
             if _new_fault:
                 st.session_state["lm_faults"].extend(_new_fault)
                 st.session_state["lm_faults"] = st.session_state["lm_faults"][-200:]
                 # ── Webhook push (ingestion faults -- malformed/corrupted
                 # data, distinct from the anomaly push above) ──────────────
                 if _wh_url_lm and "INGESTION_FAULT" in _wh_evts_lm:
-                    from notifications import send_webhook
+                    from notifications import send_webhook, notify_subscribers
                     for _flt in _new_fault:
-                        send_webhook(
-                            "INGESTION_FAULT",
-                            {
-                                "cell_id":   _flt.get("cell_id", _replay_cell),
-                                "kind":      _flt.get("kind"),
-                                "severity":  _flt.get("severity", "warning"),
-                                "detail":    _flt.get("detail", ""),
-                                "timestamp": _flt.get("ts", datetime.datetime.now().isoformat()),
-                            },
-                            _wh_url_lm, _wh_sec_lm,
-                        )
+                        _flt_payload = {
+                            "cell_id":   _flt.get("cell_id", _replay_cell),
+                            "kind":      _flt.get("kind"),
+                            "severity":  _flt.get("severity", "warning"),
+                            "detail":    _flt.get("detail", ""),
+                            "timestamp": _flt.get("ts", datetime.datetime.now().isoformat()),
+                        }
+                        send_webhook("INGESTION_FAULT", _flt_payload, _wh_url_lm, _wh_sec_lm)
+                        notify_subscribers(st.session_state["auth_org_id"], "INGESTION_FAULT", _flt_payload)
 
         _telem  = st.session_state["lm_telemetry"]
         _anom   = st.session_state["lm_anomalies"]

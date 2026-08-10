@@ -128,21 +128,19 @@ def get_trajectory_matches_and_render_banner(featured_dfs: dict, trajectory_memo
     if _traj_matches and _wh_url_tm and "TRAJECTORY_MATCH" in _wh_evts_tm:
         if "_alerted_trajectory_cells" not in st.session_state:
             st.session_state["_alerted_trajectory_cells"] = set()
-        from notifications import send_webhook
+        from notifications import send_webhook, notify_subscribers
         for _tcid, _tm in _traj_matches.items():
             if _tcid in st.session_state["_alerted_trajectory_cells"]:
                 continue
-            send_webhook(
-                "TRAJECTORY_MATCH",
-                {
-                    "cell_id": _tcid, "warning_level": _tm.warning_level,
-                    "best_similarity": _tm.best_similarity, "best_cell_id": _tm.best_cell_id,
-                    "failure_mode": _tm.failure_mode,
-                    "cycles_remaining_min": _tm.cycles_remaining_min,
-                    "cycles_remaining_max": _tm.cycles_remaining_max,
-                },
-                _wh_url_tm, st.session_state.get("webhook_secret", ""),
-            )
+            _tm_payload = {
+                "cell_id": _tcid, "warning_level": _tm.warning_level,
+                "best_similarity": _tm.best_similarity, "best_cell_id": _tm.best_cell_id,
+                "failure_mode": _tm.failure_mode,
+                "cycles_remaining_min": _tm.cycles_remaining_min,
+                "cycles_remaining_max": _tm.cycles_remaining_max,
+            }
+            send_webhook("TRAJECTORY_MATCH", _tm_payload, _wh_url_tm, st.session_state.get("webhook_secret", ""))
+            notify_subscribers(st.session_state["auth_org_id"], "TRAJECTORY_MATCH", _tm_payload)
             st.session_state["_alerted_trajectory_cells"].add(_tcid)
 
     if _traj_matches:

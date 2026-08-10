@@ -69,7 +69,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     if _wh_url_f and "FLEET_DIGEST" in _wh_evts_f:
         _today = datetime.date.today().isoformat()
         if _db_fleet.get_setting(_org_id, "last_digest_sent") != _today:
-            from notifications import send_webhook
+            from notifications import send_webhook, notify_subscribers
             _digest_summaries = [r for r in _db_fleet.get_cell_summaries(_org_id) if r["cell_id"] in _active_ids]
             _n_cells_f = len(_digest_summaries)
             _n_flagged_f = sum(
@@ -77,11 +77,9 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
                 if r.get("soh_pct") is not None
                 and float(r["soh_pct"]) < st.session_state.get("eol_threshold_pct", 80.0)
             )
-            send_webhook(
-                "FLEET_DIGEST",
-                {"n_cells": _n_cells_f, "n_flagged_below_eol": _n_flagged_f, "trigger": "fleet_page_load"},
-                _wh_url_f, st.session_state.get("webhook_secret", ""),
-            )
+            _auto_digest_payload = {"n_cells": _n_cells_f, "n_flagged_below_eol": _n_flagged_f, "trigger": "fleet_page_load"}
+            send_webhook("FLEET_DIGEST", _auto_digest_payload, _wh_url_f, st.session_state.get("webhook_secret", ""))
+            notify_subscribers(_org_id, "FLEET_DIGEST", _auto_digest_payload)
             _db_fleet.set_setting(_org_id, "last_digest_sent", _today)
 
     # ── Build fleet summary row per cell ──

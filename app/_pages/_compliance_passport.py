@@ -67,16 +67,14 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         if "_alerted_passport_gap_cells" not in st.session_state:
             st.session_state["_alerted_passport_gap_cells"] = set()
         if selected not in st.session_state["_alerted_passport_gap_cells"]:
-            from notifications import send_webhook
-            send_webhook(
-                "PASSPORT_GAP",
-                {
-                    "cell_id": selected, "completeness_pct": _e8_score,
-                    "n_available": _e8_n_avail, "n_estimated": _e8_n_est,
-                    "n_unavailable": _e8_n_unavail,
-                },
-                _wh_url_pg, st.session_state.get("webhook_secret", ""),
-            )
+            from notifications import send_webhook, notify_subscribers
+            _gap_payload = {
+                "cell_id": selected, "completeness_pct": _e8_score,
+                "n_available": _e8_n_avail, "n_estimated": _e8_n_est,
+                "n_unavailable": _e8_n_unavail,
+            }
+            send_webhook("PASSPORT_GAP", _gap_payload, _wh_url_pg, st.session_state.get("webhook_secret", ""))
+            notify_subscribers(st.session_state["auth_org_id"], "PASSPORT_GAP", _gap_payload)
             st.session_state["_alerted_passport_gap_cells"].add(selected)
 
     _e8_col1, _e8_col2 = st.columns([3, 1])
