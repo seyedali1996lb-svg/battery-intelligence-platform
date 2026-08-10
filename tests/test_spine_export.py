@@ -130,4 +130,16 @@ def test_to_export_document_wraps_data_and_metadata():
     assert doc["data"] == data
     assert doc["metadata"]["cell_id"] == "TestCell"
     assert "disclaimer" in doc["metadata"]
+    assert "source_condition_completeness" not in doc["metadata"]
     json.dumps(doc)  # must round-trip as JSON too
+
+
+def test_to_export_document_includes_condition_completeness_when_given():
+    data = build_second_life_export(
+        "TestCell", "nasa", "LiCoO2", soh=82.0, fade_30_mah_cy=1.2,
+        fleet_fade_median=1.0, rul_reliable=False,
+    )
+    completeness = {"known": {"c_rate": True}, "score": 1.0, "caveats": []}
+    doc = to_export_document(data, "TestCell", condition_completeness=completeness)
+    assert doc["metadata"]["source_condition_completeness"] == completeness
+    json.dumps(doc)

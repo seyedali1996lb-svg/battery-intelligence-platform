@@ -168,33 +168,44 @@ def build_second_life_export(
     }
 
 
-def to_export_document(spine_data: dict, cell_id: str) -> dict:
+def to_export_document(spine_data: dict, cell_id: str, condition_completeness: "dict | None" = None) -> dict:
     """
     Wrap build_second_life_export()'s output with download-level metadata —
     same "wrap the core dict, don't reinvent it" pattern as
     passport_export.to_json_ld() wrapping build_passport(). The "data" key
     is the literal spinedb_api.import_data(db_map, **doc["data"]) payload;
     "metadata" is for a human reading the file, not part of the Spine schema.
+
+    condition_completeness, if given, is the source cell's
+    batlab.datasets.schema.condition_completeness() result — surfaced here
+    as disclosure/provenance (same category as "disclaimer" below), not as
+    a Spine parameter, since it describes how well-documented the
+    underlying measurement's test conditions are, not a value of the cell
+    itself. Optional and additive: omitting it changes nothing for existing
+    callers.
     """
+    metadata = {
+        "cell_id": cell_id,
+        "exported_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "format": "spine-toolbox-json",
+        "format_reference": (
+            "https://spine-toolbox.readthedocs.io/en/latest/"
+            "spine_db_editor/importing_and_exporting_data.html"
+        ),
+        "disclaimer": (
+            "One-way data export for use with Spine Toolbox / spinedb_api "
+            "import_data(db_map, **data) or the Spine Toolbox Data Store "
+            "JSON importer. Not a live database connection. Financial and "
+            "sustainability figures are the same cited estimates or "
+            "illustrative assumptions used elsewhere in this app (see "
+            "src/consequences.py ASSUMPTIONS for sourcing) — not validated "
+            "model outputs. No historical SOH-vs-cycle trajectory is "
+            "included — see this module's docstring for why."
+        ),
+    }
+    if condition_completeness is not None:
+        metadata["source_condition_completeness"] = condition_completeness
     return {
-        "metadata": {
-            "cell_id": cell_id,
-            "exported_at": datetime.datetime.now().isoformat(timespec="seconds"),
-            "format": "spine-toolbox-json",
-            "format_reference": (
-                "https://spine-toolbox.readthedocs.io/en/latest/"
-                "spine_db_editor/importing_and_exporting_data.html"
-            ),
-            "disclaimer": (
-                "One-way data export for use with Spine Toolbox / spinedb_api "
-                "import_data(db_map, **data) or the Spine Toolbox Data Store "
-                "JSON importer. Not a live database connection. Financial and "
-                "sustainability figures are the same cited estimates or "
-                "illustrative assumptions used elsewhere in this app (see "
-                "src/consequences.py ASSUMPTIONS for sourcing) — not validated "
-                "model outputs. No historical SOH-vs-cycle trajectory is "
-                "included — see this module's docstring for why."
-            ),
-        },
+        "metadata": metadata,
         "data": spine_data,
     }

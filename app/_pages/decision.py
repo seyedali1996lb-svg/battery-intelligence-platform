@@ -512,15 +512,18 @@ def page_decision(
     # provenance and explicit scope boundaries (no trajectory, no live DB link).
     import json as _json_spine
     from spine_export import build_second_life_export, to_export_document
+    from batlab.datasets.schema import condition_completeness
+    _condition_completeness = condition_completeness(df)
     _spine_data = build_second_life_export(
         selected, source, _profile.passport_chemistry, soh, fade_30,
         fleet_fade_median, rul_reliable,
         rul_q10=rul_q10, rul_pred=rul_pred, rul_q90=rul_q90,
         mechanism=_dec_mech,
     )
+    _spine_doc = to_export_document(_spine_data, selected, condition_completeness=_condition_completeness)
     _spine_col.download_button(
         "Export for grid modeling",
-        data=_json_spine.dumps(to_export_document(_spine_data, selected), indent=2).encode(),
+        data=_json_spine.dumps(_spine_doc, indent=2).encode(),
         file_name=f"{selected}_spine_export.json",
         mime="application/json",
         key="dec_spine_export_btn",
