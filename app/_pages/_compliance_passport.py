@@ -225,6 +225,40 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     st.markdown(f"<div style='margin-bottom:4px'><span style='color:{_eol_color};font-weight:700;font-size:13px'>Recommended: {_eol_r_code}</span></div>", unsafe_allow_html=True)
     st.markdown(f"<div>{_r_html}</div>", unsafe_allow_html=True)
 
+    # ── 6b: Recycler recommendation (only when R4/R5 recycling is the actual
+    # recommendation -- routing a cell that's actually second-life/reuse-fit
+    # to a recycler directory would contradict the R-code just shown above) ──
+    if _eol_r_code.startswith("R4") or _eol_r_code.startswith("R5"):
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        from recycler_directory import recommend_recyclers
+        from chemistry_profiles import ChemistryProfile as _ChemProfileRec
+        _rec_region = st.selectbox(
+            "Your region (for logistics preference only — not a real shipping calculation)",
+            ["North America", "Europe", "Asia"], key="passport_recycler_region",
+        )
+        _rec_chem = _ChemProfileRec.for_cell(selected).short_name
+        _rec_matches = recommend_recyclers(_rec_chem, user_region=_rec_region)
+        st.markdown(
+            "<div style='font-size:12px;color:#8896a8;margin-bottom:10px'>"
+            "Point-in-time research snapshot (2026-08) — verify current operating status "
+            "before actually routing a cell. Chemistry compatibility is based on each "
+            "company's publicly stated process focus, not a certified intake specification."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        for _rm in _rec_matches:
+            _region_badge = "📍 Same region" if _rm["same_region"] else _rm["region"]
+            render_card(
+                f"<div style='display:flex;justify-content:space-between;align-items:baseline'>"
+                f"<div style='font-size:14px;font-weight:700;color:#e2e8f0'>{_rm['name']}</div>"
+                f"<div style='font-size:11px;color:{'#48bb78' if _rm['same_region'] else '#a0aec0'}'>{_region_badge}</div>"
+                f"</div>"
+                f"<div style='font-size:12px;color:#a0aec0;margin-top:6px;line-height:1.6'>{_rm['process']}</div>"
+                f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>{_rm['recovery_note']}</div>",
+                padding="14px 18px",
+                extra_style="margin-bottom:8px",
+            )
+
     # ── 7: Compliance Status (prose, no badge) ──
     st.markdown(
         "<div style='font-size:11px;font-weight:600;color:#a0aec0;text-transform:uppercase;"
