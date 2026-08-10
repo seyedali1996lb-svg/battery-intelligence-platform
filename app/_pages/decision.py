@@ -455,7 +455,7 @@ def page_decision(
 
     # ── 5. Log Decision ─────────────────────────────────────────────────────
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    _log_col, _cmms_col, _spine_col, _ = st.columns([1, 1, 1, 1])
+    _log_col, _cmms_col, _spine_col, _optimade_col = st.columns([1, 1, 1, 1])
     if _log_col.button("Log Decision", key="dec_log_btn", use_container_width=True):
         import db as _db
         _entry = {
@@ -531,6 +531,32 @@ def page_decision(
         help="Download this cell's SOH/RUL/second-life economics as a Spine "
              "Toolbox-compatible JSON file (spinedb_api import_data() format) "
              "for use in a grid-storage modeling tool.",
+    )
+
+    # OPTIMADE-shaped export — a second static export target next to the
+    # Spine one above, for materials-database/interoperability tooling that
+    # consumes OPTIMADE's response conventions. See src/optimade_export.py's
+    # module docstring for schema provenance and scope boundaries (static
+    # entry export only, not a live filterable OPTIMADE API server).
+    import json as _json_optimade
+    from optimade_export import build_battery_cell_entry, to_optimade_document
+    _optimade_entry = build_battery_cell_entry(
+        selected, source, _profile.passport_chemistry, soh,
+        capacity_ah=float(latest["capacity_ah"]),
+        rul_reliable=rul_reliable, rul_q10=rul_q10, rul_pred=rul_pred, rul_q90=rul_q90,
+        mechanism=_dec_mech, condition_completeness=_condition_completeness,
+    )
+    _optimade_doc = to_optimade_document(_optimade_entry, selected)
+    _optimade_col.download_button(
+        "Export for materials database",
+        data=_json_optimade.dumps(_optimade_doc, indent=2).encode(),
+        file_name=f"{selected}_optimade_export.json",
+        mime="application/json",
+        key="dec_optimade_export_btn",
+        use_container_width=True,
+        help="Download this cell's chemistry/SOH/RUL/mechanism data as an "
+             "OPTIMADE-shaped JSON:API resource object, for use with "
+             "materials-database or interoperability tooling.",
     )
 
     # E4: Audit trail with status chips and outcome tracking

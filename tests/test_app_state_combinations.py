@@ -163,6 +163,21 @@ def test_decide_and_ask_spine_export_button_renders(isolated_db, data_mode):
     assert "Export for grid modeling" in labels
 
 
+@pytest.mark.parametrize("data_mode", ["nasa", "severson"])
+def test_decide_and_ask_optimade_export_button_renders(isolated_db, data_mode):
+    """
+    Smoke test for the OPTIMADE-shaped export (src/optimade_export.py),
+    the second static export target added alongside the Spine one — same
+    coverage shape as test_decide_and_ask_spine_export_button_renders above.
+    """
+    at = _logged_in_app(role="Engineer", page="decision", data_mode=data_mode)
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed building the OPTIMADE export in {data_mode} mode: {at.exception}"
+    labels = [b.label for b in at.button] + [d.label for d in at.download_button]
+    assert "Export for materials database" in labels
+    assert "Export for grid modeling" in labels
+
+
 def test_decision_cmms_ticket_button_reports_error_for_unreachable_endpoint(isolated_db):
     """
     Click-through regression test for the src/adapter_contract.py refactor
