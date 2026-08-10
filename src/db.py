@@ -314,6 +314,40 @@ class CellSummary(Base):
     updated_at                = Column(String)
 
 
+class BuyerProfile(Base):
+    """A saved second-life buyer contact/lead, org-scoped like every other
+    persistence table -- these are an org's own sales leads/contacts, not a
+    shared cross-tenant marketplace (no real external marketplace API
+    exists to source one from -- see src/circunomics_adapter.py's module
+    docstring). See src/marketplace_matching.py for the scoring logic that
+    ranks a cell against these profiles."""
+    __tablename__ = "buyer_profiles"
+    id                 = Column(String, primary_key=True)
+    org_id             = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    name               = Column(String, nullable=False)
+    application_type   = Column(String, nullable=False)  # matches consequences.SECOND_LIFE_APPS keys
+    min_soh_pct        = Column(Float, default=0.0)
+    price_per_kwh_usd  = Column(Float, default=0.0)
+    contact_info       = Column(String)
+    created_at         = Column(String)
+
+
+class MarketplaceMatch(Base):
+    """A recorded match between a cell and a BuyerProfile -- turns a scored
+    recommendation into a trackable, closed-loop transaction record within
+    this platform's own data, since no real external marketplace API exists
+    to actually transact against."""
+    __tablename__ = "marketplace_matches"
+    id          = Column(String, primary_key=True)
+    org_id      = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    cell_id     = Column(String, nullable=False)
+    buyer_id    = Column(String, nullable=False)
+    status      = Column(String, default="proposed")  # proposed | accepted | completed | declined
+    match_score = Column(String)  # JSON-encoded score dict (application_fit, price, reasons) at match time
+    created_at  = Column(String)
+    updated_at  = Column(String)
+
+
 class KGEdge(Base):
     """One knowledge-graph edge. edge_id is a deterministic
     'src_key|dst_key|edge_type' string (see knowledge_graph.graph_to_rows())
@@ -583,6 +617,88 @@ def load_decisions(org_id: int) -> list[dict]:
 def update_decision(org_id: int, decision_id: str, **fields) -> None:
     with Session() as s:
         row = s.query(Decision).filter_by(org_id=org_id, id=decision_id).one_or_none()
+        if row is None:
+            return
+        for k, v in fields.items():
+            setattr(row, k, v)
+        s.commit()
+
+
+# ---------------------------------------------------------------------------
+# Second-life buyer profiles + marketplace matches
+# ---------------------------------------------------------------------------
+
+def save_buyer_profile(org_id: int, entry: dict) -> None:
+    """Insert or update a buyer profile row. entry keys match BuyerProfile's
+    columns -- s.merge() so re-saving the same id updates in place, same
+    pattern as save_decision()."""
+    with Session() as s:
+        s.merge(BuyerProfile(
+            id=entry["id"], org_id=org_id,
+            name=entry.get("name"),
+            application_type=entry.get("application_type"),
+            min_soh_pct=entry.get("min_soh_pct", 0.0),
+            price_per_kwh_usd=entry.get("price_per_kwh_usd", 0.0),
+            contact_info=entry.get("contact_info"),
+            created_at=entry.get("created_at"),
+        ))
+        s.commit()
+
+
+def get_buyer_profiles(org_id: int) -> list[dict]:
+    with Session() as s:
+        rows = s.query(BuyerProfile).filter_by(org_id=org_id).order_by(BuyerProfile.created_at.desc()).all()
+        return [
+            {
+                "id": r.id, "name": r.name, "application_type": r.application_type,
+                "min_soh_pct": r.min_soh_pct, "price_per_kwh_usd": r.price_per_kwh_usd,
+                "contact_info": r.contact_info, "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+
+def delete_buyer_profile(org_id: int, buyer_id: str) -> None:
+    with Session() as s:
+        row = s.query(BuyerProfile).filter_by(org_id=org_id, id=buyer_id).one_or_none()
+        if row is not None:
+            s.delete(row)
+            s.commit()
+
+
+def save_marketplace_match(org_id: int, entry: dict) -> None:
+    with Session() as s:
+        s.merge(MarketplaceMatch(
+            id=entry["id"], org_id=org_id,
+            cell_id=entry.get("cell_id"),
+            buyer_id=entry.get("buyer_id"),
+            status=entry.get("status", "proposed"),
+            match_score=entry.get("match_score"),
+            created_at=entry.get("created_at"),
+            updated_at=entry.get("updated_at"),
+        ))
+        s.commit()
+
+
+def get_marketplace_matches(org_id: int, cell_id: "str | None" = None) -> list[dict]:
+    with Session() as s:
+        q = s.query(MarketplaceMatch).filter_by(org_id=org_id)
+        if cell_id is not None:
+            q = q.filter_by(cell_id=cell_id)
+        rows = q.order_by(MarketplaceMatch.created_at.desc()).all()
+        return [
+            {
+                "id": r.id, "cell_id": r.cell_id, "buyer_id": r.buyer_id,
+                "status": r.status, "match_score": r.match_score,
+                "created_at": r.created_at, "updated_at": r.updated_at,
+            }
+            for r in rows
+        ]
+
+
+def update_marketplace_match(org_id: int, match_id: str, **fields) -> None:
+    with Session() as s:
+        row = s.query(MarketplaceMatch).filter_by(org_id=org_id, id=match_id).one_or_none()
         if row is None:
             return
         for k, v in fields.items():

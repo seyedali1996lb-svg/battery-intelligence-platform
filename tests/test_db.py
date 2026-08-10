@@ -673,3 +673,91 @@ def test_login_lockout_columns_migrate_onto_pre_existing_users_table(tmp_path, m
     assert user is not None, "pre-existing row must survive the migration"
     assert db_module.is_login_locked_out("legacyuser") is None
     db_module.record_failed_login("legacyuser")  # must not raise on the newly-added columns
+
+
+# ---------------------------------------------------------------------------
+# Buyer profiles + marketplace matches
+# ---------------------------------------------------------------------------
+
+def _buyer_entry(bid="buyer-1", **overrides):
+    entry = {
+        "id": bid, "name": "Acme Storage Co.", "application_type": "ups_backup",
+        "min_soh_pct": 75.0, "price_per_kwh_usd": 40.0, "contact_info": "buyer@example.invalid",
+        "created_at": "2026-08-10T00:00:00",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_save_and_get_buyer_profile(db):
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry())
+    profiles = db.get_buyer_profiles(DEMO_ORG_ID)
+    assert len(profiles) == 1
+    assert profiles[0]["name"] == "Acme Storage Co."
+    assert profiles[0]["application_type"] == "ups_backup"
+
+
+def test_save_buyer_profile_upserts_on_same_id(db):
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry())
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry(name="Renamed Co."))
+    profiles = db.get_buyer_profiles(DEMO_ORG_ID)
+    assert len(profiles) == 1
+    assert profiles[0]["name"] == "Renamed Co."
+
+
+def test_buyer_profiles_scoped_per_org(db):
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry())
+    db.save_buyer_profile(DEMO_ORG_ID + 1, _buyer_entry(bid="buyer-2", name="Other Org Buyer"))
+    assert len(db.get_buyer_profiles(DEMO_ORG_ID)) == 1
+    assert len(db.get_buyer_profiles(DEMO_ORG_ID + 1)) == 1
+    assert db.get_buyer_profiles(DEMO_ORG_ID)[0]["name"] == "Acme Storage Co."
+
+
+def test_delete_buyer_profile(db):
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry())
+    db.delete_buyer_profile(DEMO_ORG_ID, "buyer-1")
+    assert db.get_buyer_profiles(DEMO_ORG_ID) == []
+
+
+def test_delete_nonexistent_buyer_profile_does_not_raise(db):
+    db.delete_buyer_profile(DEMO_ORG_ID, "does-not-exist")  # must not raise
+
+
+def test_save_and_get_marketplace_match(db):
+    db.save_buyer_profile(DEMO_ORG_ID, _buyer_entry())
+    db.save_marketplace_match(DEMO_ORG_ID, {
+        "id": "match-1", "cell_id": "B0005", "buyer_id": "buyer-1",
+        "status": "proposed", "match_score": "{}",
+        "created_at": "2026-08-10T00:00:00", "updated_at": "2026-08-10T00:00:00",
+    })
+    matches = db.get_marketplace_matches(DEMO_ORG_ID)
+    assert len(matches) == 1
+    assert matches[0]["cell_id"] == "B0005"
+    assert matches[0]["status"] == "proposed"
+
+
+def test_get_marketplace_matches_filters_by_cell_id(db):
+    db.save_marketplace_match(DEMO_ORG_ID, {
+        "id": "match-1", "cell_id": "B0005", "buyer_id": "buyer-1",
+        "created_at": "2026-08-10T00:00:00",
+    })
+    db.save_marketplace_match(DEMO_ORG_ID, {
+        "id": "match-2", "cell_id": "B0006", "buyer_id": "buyer-1",
+        "created_at": "2026-08-10T00:00:00",
+    })
+    assert len(db.get_marketplace_matches(DEMO_ORG_ID, cell_id="B0005")) == 1
+    assert len(db.get_marketplace_matches(DEMO_ORG_ID)) == 2
+
+
+def test_update_marketplace_match_status_transitions(db):
+    db.save_marketplace_match(DEMO_ORG_ID, {
+        "id": "match-1", "cell_id": "B0005", "buyer_id": "buyer-1",
+        "status": "proposed", "created_at": "2026-08-10T00:00:00",
+    })
+    db.update_marketplace_match(DEMO_ORG_ID, "match-1", status="accepted")
+    matches = db.get_marketplace_matches(DEMO_ORG_ID)
+    assert matches[0]["status"] == "accepted"
+
+
+def test_update_nonexistent_marketplace_match_does_not_raise(db):
+    db.update_marketplace_match(DEMO_ORG_ID, "does-not-exist", status="accepted")  # must not raise
