@@ -589,3 +589,109 @@ class OCPPAdapter:
         if df is None or len(df) == 0:
             return {"ok": True, "message": "Connected, but no sessions were returned.", "n_records": 0}
         return {"ok": True, "message": f"Fetched {len(df)} session(s).", "n_records": len(df)}
+
+
+def _get_by_dot_path(data, path: str):
+    """Walk a dotted path ("data.battery.capacity_ah") through nested
+    dicts/lists. Returns None on any missing key/wrong type instead of
+    raising -- a caller-supplied path pointing at a field a particular
+    response happens not to include should degrade to NaN, not crash."""
+    for part in path.split("."):
+        if isinstance(data, dict):
+            data = data.get(part)
+        elif isinstance(data, list) and part.isdigit():
+            idx = int(part)
+            data = data[idx] if 0 <= idx < len(data) else None
+        else:
+            return None
+        if data is None:
+            return None
+    return data
+
+
+def fetch_generic_rest_bms(
+    base_url: str,
+    auth_header_name: str,
+    auth_header_value: str,
+    field_map: dict,
+    cell_id: str,
+) -> "pd.DataFrame | None":
+    """
+    Fetch a single current-state snapshot from an arbitrary vendor's REST
+    API, for BMS vendors not specifically coded for elsewhere in this
+    module (Victron/Orion/Modbus/CAN/OCPP each target one real, named
+    vendor/protocol shape; this one targets none in particular).
+
+    field_map supplies which JSON field (dotted path, e.g.
+    "data.battery.capacity_ah") carries each of the app's standard
+    columns: {"capacity_ah": "...", "resistance_ohm": "...",
+    "temperature_c": "..."}. A field missing from the map, or a path
+    that doesn't resolve in a given response, reads as NaN rather than
+    raising -- the same graceful-degradation contract every other
+    adapter in this module uses.
+
+    Returns None if base_url/field_map are not both supplied. auth_header_name/
+    auth_header_value are optional (some internal/test APIs need no auth
+    at all); when only one of the pair is set, no auth header is sent
+    rather than sending a malformed one.
+
+    Not tested against any live device (no specific vendor is targeted,
+    so there's nothing to test against). Uses only `requests`, already a
+    hard dependency for the other REST-based adapters in this module.
+    """
+    if not (base_url and field_map):
+        return None
+
+    import requests
+
+    headers = {auth_header_name: auth_header_value} if (auth_header_name and auth_header_value) else {}
+    resp = requests.get(base_url, headers=headers, timeout=10)
+    resp.raise_for_status()
+    payload = resp.json()
+
+    row = {"cell_id": cell_id, "cycle_number": 0, "test_date": None}
+    for field in ("capacity_ah", "resistance_ohm", "temperature_c"):
+        path = field_map.get(field)
+        value = _get_by_dot_path(payload, path) if path else None
+        row[field] = float(value) if isinstance(value, (int, float)) else float("nan")
+
+    return pd.DataFrame([row])
+
+
+class GenericRESTBMSAdapter:
+    """BMSAdapter wrapping fetch_generic_rest_bms(). See that function's
+    docstring for the field_map contract. This is the adapter registered
+    in src/plugin_registry.py to prove that pattern eliminates bespoke
+    Settings UI code for a new integration — see that module's docstring."""
+
+    name = "Generic REST BMS"
+
+    def __init__(self, base_url: str, auth_header_name: str, auth_header_value: str, field_map: dict, cell_id: str):
+        self.base_url = base_url
+        self.auth_header_name = auth_header_name
+        self.auth_header_value = auth_header_value
+        self.field_map = field_map or {}
+        self.cell_id = cell_id
+
+    def is_configured(self) -> bool:
+        return bool(self.base_url and self.field_map)
+
+    def fetch(self) -> "pd.DataFrame | None":
+        if not self.is_configured():
+            return None
+        try:
+            return fetch_generic_rest_bms(self.base_url, self.auth_header_name, self.auth_header_value, self.field_map, self.cell_id)
+        except Exception:
+            return None
+
+    def test_connection(self) -> dict:
+        """Uniform {"ok", "message", "n_records"} result, never raises."""
+        if not self.is_configured():
+            return {"ok": False, "message": "Not configured.", "n_records": None}
+        try:
+            df = fetch_generic_rest_bms(self.base_url, self.auth_header_name, self.auth_header_value, self.field_map, self.cell_id)
+        except Exception as e:
+            return {"ok": False, "message": f"Connection failed: {e}", "n_records": None}
+        if df is None or len(df) == 0:
+            return {"ok": True, "message": "Connected, but no records were returned.", "n_records": 0}
+        return {"ok": True, "message": f"Fetched {len(df)} record(s).", "n_records": len(df)}

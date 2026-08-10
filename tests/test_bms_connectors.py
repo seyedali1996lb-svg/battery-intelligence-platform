@@ -12,6 +12,7 @@ import pytest
 from bms_connectors import (
     fetch_victron_vrm, fetch_orion_bms, fetch_modbus_bms, fetch_can_bus_bms, fetch_ocpp_sessions,
     ModbusBMSAdapter, CANBusBMSAdapter, OCPPAdapter,
+    fetch_generic_rest_bms, GenericRESTBMSAdapter, _get_by_dot_path,
 )
 
 
@@ -116,3 +117,51 @@ def test_ocpp_adapter_not_configured_without_all_three_fields():
     assert not OCPPAdapter("", "key", "CP-1").is_configured()
     assert not OCPPAdapter("https://cs.example.invalid", "", "CP-1").is_configured()
     assert not OCPPAdapter("https://cs.example.invalid", "key", "").is_configured()
+
+
+# ---------------------------------------------------------------------------
+# Generic REST BMS — the adapter registered purely through
+# src/plugin_registry.py (proves the registry pattern needs no bespoke
+# Settings UI code for a new integration).
+# ---------------------------------------------------------------------------
+
+def test_get_by_dot_path_resolves_nested_dict():
+    data = {"data": {"battery": {"capacity_ah": 1.85}}}
+    assert _get_by_dot_path(data, "data.battery.capacity_ah") == 1.85
+
+
+def test_get_by_dot_path_resolves_list_index():
+    data = {"readings": [{"temp": 25.0}, {"temp": 26.5}]}
+    assert _get_by_dot_path(data, "readings.1.temp") == 26.5
+
+
+def test_get_by_dot_path_missing_field_returns_none():
+    assert _get_by_dot_path({"data": {}}, "data.battery.capacity_ah") is None
+
+
+def test_generic_rest_returns_none_with_no_config():
+    assert fetch_generic_rest_bms("", "X", "y", {}, "CELL-1") is None
+    assert fetch_generic_rest_bms("https://api.example.invalid", "X", "y", {}, "CELL-1") is None
+
+
+def test_generic_rest_adapter_test_connection_reports_network_failure():
+    """Uses the .invalid TLD convention -- offline-safe, same pattern as
+    the other network-failure tests in this file."""
+    adapter = GenericRESTBMSAdapter(
+        "https://this-host-does-not-exist.invalid", "", "", {"capacity_ah": "data.capacity_ah"}, "CELL-1",
+    )
+    assert adapter.is_configured()
+    result = adapter.test_connection()
+    assert result["ok"] is False
+
+
+def test_generic_rest_adapter_fetch_never_raises_on_network_failure():
+    adapter = GenericRESTBMSAdapter(
+        "https://this-host-does-not-exist.invalid", "", "", {"capacity_ah": "data.capacity_ah"}, "CELL-1",
+    )
+    assert adapter.fetch() is None  # never raises, matches the module's contract
+
+
+def test_generic_rest_adapter_not_configured_without_field_map():
+    adapter = GenericRESTBMSAdapter("https://api.example.invalid", "", "", {}, "CELL-1")
+    assert not adapter.is_configured()
