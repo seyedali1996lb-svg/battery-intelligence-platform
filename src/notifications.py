@@ -46,3 +46,38 @@ def send_webhook(
         return resp.status_code < 300
     except Exception:
         return False
+
+
+def notify_subscribers(org_id: int, event_type: str, payload: dict, timeout: float = 3.0) -> list:
+    """
+    Fan an event out to every one of an org's additional webhook
+    destinations (src/db.py's WebhookSubscription rows) whose
+    event_types includes event_type (an empty event_types list means
+    "all events"). Purely additive to send_webhook() above — the single
+    legacy webhook_url/webhook_secret/webhook_events Setting rows keep
+    working exactly as before; this reaches whatever ELSE an org has
+    registered on top of that one destination.
+
+    Returns a list of {"subscription_id", "name", "ok"} — never raises
+    (send_webhook() itself never raises; a subscription lookup failure
+    here just yields an empty list), so callers can fire-and-forget the
+    same way they already do with send_webhook().
+    """
+    try:
+        import db
+    except ImportError:
+        from src import db  # type: ignore
+
+    try:
+        subscriptions = db.get_webhook_subscriptions(org_id)
+    except Exception:
+        return []
+
+    results = []
+    for sub in subscriptions:
+        event_types = sub.get("event_types") or []
+        if event_types and event_type not in event_types:
+            continue
+        ok = send_webhook(event_type, payload, sub["url"], sub.get("secret"), timeout=timeout)
+        results.append({"subscription_id": sub["id"], "name": sub["name"], "ok": ok})
+    return results
