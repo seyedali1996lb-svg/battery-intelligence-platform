@@ -712,7 +712,7 @@ def _render_condition_completeness(df):
             )
         if result["caveats"]:
             _md_html(
-                "<div style='font-size:11px;color:#718096;margin-top:8px;line-height:1.5'>"
+                "<div style='font-size:11px;color:#a0aec0;margin-top:8px;line-height:1.5'>"
                 + "<br>".join(result["caveats"])
                 + "</div>"
             )
