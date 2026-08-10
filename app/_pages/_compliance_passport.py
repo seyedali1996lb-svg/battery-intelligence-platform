@@ -201,7 +201,8 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
     from consequences import eol_r_code_recommendation
     _soh_now = float(df.iloc[-1]["soh_pct"]) if "soh_pct" in df.columns else 85.0
     _fade_30_now = float(df.iloc[-1].get("fade_rate_30cy", 0.0)) if "fade_rate_30cy" in df.columns else 0.0
-    _r_rec = eol_r_code_recommendation(_soh_now, _fade_30_now)
+    _sop_now = float(df.iloc[-1]["sop_pct"]) if "sop_pct" in df.columns and pd.notna(df.iloc[-1]["sop_pct"]) else None
+    _r_rec = eol_r_code_recommendation(_soh_now, _fade_30_now, sop_pct=_sop_now)
     _eol_r_code = _r_rec["r_code"]
     _eol_color  = _r_rec["color"]
     # R3/R4 row states derive from the same _eol_r_code just computed above,

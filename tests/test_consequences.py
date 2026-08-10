@@ -99,3 +99,41 @@ def test_best_fit_application_matches_real_application_fit_output():
     key, best = best_fit_application(fit)
     assert key in fit
     assert best is fit[key]
+
+
+# ---------------------------------------------------------------------------
+# application_fit()'s optional sop_pct (State-of-Power) parameter — additive
+# only: absent, every app's power_status stays "ok" and behaves exactly as
+# before. Present, it only affects apps flagged requires_power (ups_backup).
+# ---------------------------------------------------------------------------
+
+def test_sop_pct_omitted_leaves_power_status_ok_for_every_app():
+    fit = application_fit(80.0, 0.05, fleet_fade_median=None)
+    assert all(v["power_status"] == "ok" for v in fit.values())
+
+
+def test_healthy_soh_but_low_sop_fails_ups_backup_only():
+    """A cell at ups_backup-band SOH with badly degraded peak-power capability
+    (resistance grown a lot) should fail specifically the power check for
+    the one application that actually needs pulse power -- other apps that
+    don't require power shouldn't be affected by a low sop_pct at all."""
+    fit = application_fit(80.0, 0.0, fleet_fade_median=None, sop_pct=50.0)
+    assert fit["ups_backup"]["power_status"] == "fail"
+    assert fit["ups_backup"]["fit"] == "not_fit"
+    assert any("power" in r.lower() for r in fit["ups_backup"]["reasons"])
+    # residential_ess doesn't require_power -- unaffected by low sop_pct
+    assert fit["residential_ess"]["power_status"] == "ok"
+
+
+def test_marginal_sop_flags_marginal_not_fail():
+    fit = application_fit(80.0, 0.0, fleet_fade_median=None, sop_pct=70.0)
+    assert fit["ups_backup"]["power_status"] == "marginal"
+    assert fit["ups_backup"]["fit"] != "not_fit"
+
+
+def test_eol_r_code_recommendation_accepts_optional_sop_pct():
+    """sop_pct forwards through to application_fit() without breaking the
+    existing SOH/fade-only call shape."""
+    result_no_sop = eol_r_code_recommendation(soh=78.0, fade_30_mah_cy=0.05)
+    result_with_sop = eol_r_code_recommendation(soh=78.0, fade_30_mah_cy=0.05, sop_pct=95.0)
+    assert result_no_sop["r_code"] == result_with_sop["r_code"]

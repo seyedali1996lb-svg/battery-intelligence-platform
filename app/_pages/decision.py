@@ -71,7 +71,8 @@ def page_decision(
         and r["cell_id"] != selected
     ]
     fleet_fade_median = float(pd.Series(peer_fades).median()) if peer_fades else None
-    fit_scores = application_fit(soh, fade_30, fleet_fade_median)
+    sop_pct_now = float(latest["sop_pct"]) if "sop_pct" in latest.index and pd.notna(latest["sop_pct"]) else None
+    fit_scores = application_fit(soh, fade_30, fleet_fade_median, sop_pct=sop_pct_now)
     result     = classify(soh, fade_30, fade_50, rul_reliable, rul_pred, fit_scores)
 
     action          = result["action"]
@@ -327,6 +328,41 @@ def page_decision(
             )
 
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # ── 3b. Warranty Risk ────────────────────────────────────────────────
+        # A common illustrative EV/ESS capacity-retention warranty floor
+        # (many manufacturers publish something in this range) -- NOT this
+        # specific cell's actual contractual terms, which this platform has
+        # no way to know. Labeled the same "Illustrative" way
+        # src/consequences.py's ASSUMPTIONS dict labels un-sourced figures.
+        st.markdown("<h4 class='section-header'>Warranty Risk</h4>", unsafe_allow_html=True)
+        from warranty import warranty_breach_estimate
+        _warranty_floor = 70.0
+        _wr = warranty_breach_estimate(
+            current_soh_pct=_cur_soh, fade_rate_pct_per_cycle=_fp_cy,
+            warranty_floor_soh_pct=_warranty_floor,
+            rul_pred=rul_pred, rul_q10=rul_q10, rul_q90=rul_q90,
+            eol_threshold_pct=_eol_thr, rul_reliable=rul_reliable,
+        )
+        if _wr["breached"]:
+            st.error(f"⚠ Already at/below the {_warranty_floor:.0f}% illustrative warranty floor (SOH {_cur_soh:.1f}%).")
+        else:
+            _wr_cycles = _wr["model_scaled_estimate"] if _wr["confidence"] == "model" else _wr["linear_estimate"]
+            _wr_conf_note = (
+                "model-scaled RUL estimate" if _wr["confidence"] == "model"
+                else "linear extrapolation only — not leave-cell-out validated for this floor, generally optimistic near the knee point"
+            )
+            _wc1, _wc2 = st.columns(2)
+            _wc1.metric(
+                f"Cycles to {_warranty_floor:.0f}% floor",
+                f"{_wr_cycles:.0f}" if _wr_cycles is not None else "—",
+            )
+            if _wr["confidence"] == "model" and _wr["model_scaled_q10"] is not None and _wr["model_scaled_q90"] is not None:
+                _wc2.metric("80% interval", f"{_wr['model_scaled_q10']:.0f} – {_wr['model_scaled_q90']:.0f} cy")
+            st.caption(
+                f"{_warranty_floor:.0f}% is an illustrative default, not this cell's actual contractual warranty terms — "
+                f"estimate is a {_wr_conf_note}."
+            )
 
         # ── 4. Application Fit ──────────────────────────────────────────────
         if soh <= 90:

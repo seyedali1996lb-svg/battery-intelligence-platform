@@ -151,6 +151,8 @@ SECOND_LIFE_APPS = {
         "soh_max":     88.0,
         "fade_ratio_ok":       1.2,  # tighter — pulse power needs healthier cells
         "fade_ratio_marginal": 1.6,
+        "requires_power": True,
+        "sop_min":     75.0,  # % of initial peak-power capability
         "source":      "IEEE 1881-2019 (guide for reuse of Li-ion in stationary storage)",
     },
     "grid_peakshave": {
@@ -173,9 +175,19 @@ def application_fit(
     soh: float,
     fade_30_mah_cy: float,
     fleet_fade_median: float | None,
+    sop_pct: float | None = None,
 ) -> dict:
     """
     Score fit for each second-life application category.
+
+    sop_pct: State-of-Power (% of initial peak-power capability, from
+    batlab.features.engineering's sop_pct column). Optional and additive —
+    every existing caller that doesn't pass it keeps today's SOH/fade-only
+    behavior unchanged. Only applications flagged "requires_power": True
+    (currently just ups_backup) are affected: a cell can have healthy SOH
+    and fade rate but still be unfit for pulse-power duty if its internal
+    resistance has grown enough to cap peak power delivery — a real,
+    previously-invisible failure mode application_fit() had no way to see.
 
     Returns dict keyed by app key. Each value has:
       fit: "fit" | "marginal" | "not_fit"
@@ -206,8 +218,20 @@ def application_fit(
             fade_status = "ok"   # no comparison available — neutral
             ratio = None
 
+        # Power-capability check — only applies to pulse-power applications
+        # (requires_power: True) and only when a real sop_pct was passed.
+        # Absent either condition, power_status stays "ok" so it never
+        # affects apps or callers that don't opt into it.
+        power_status = "ok"
+        sop_min = app.get("sop_min")
+        if app.get("requires_power") and sop_pct is not None and sop_min is not None:
+            if sop_pct < sop_min - 10:
+                power_status = "fail"
+            elif sop_pct < sop_min:
+                power_status = "marginal"
+
         # Overall fit
-        statuses = {soh_status, fade_status}
+        statuses = {soh_status, fade_status, power_status}
         if "fail" in statuses:
             fit = "not_fit"
         elif "marginal" in statuses:
@@ -237,12 +261,18 @@ def application_fit(
         elif fade_status == "ok" and ratio is not None:
             reasons.append(f"Fade rate is within {ratio:.1f}× fleet median — acceptable for this application.")
 
+        if power_status == "fail":
+            reasons.append(f"Peak power capability {sop_pct:.0f}% is below the {sop_min:.0f}% floor this pulse-power application needs.")
+        elif power_status == "marginal":
+            reasons.append(f"Peak power capability {sop_pct:.0f}% is marginal for pulse-power duty — worth monitoring.")
+
         results[key] = {
             **app,
-            "fit":        fit,
-            "reasons":    reasons,
-            "soh_status": soh_status,
+            "fit":         fit,
+            "reasons":     reasons,
+            "soh_status":  soh_status,
             "fade_status": fade_status,
+            "power_status": power_status,
         }
 
     return results
@@ -275,7 +305,7 @@ def best_fit_application(fit_scores: dict) -> tuple:
 # End-of-life R-code recommendation (IEC 62902 / EU Art. 70)
 # ---------------------------------------------------------------------------
 
-def eol_r_code_recommendation(soh: float, fade_30_mah_cy: float) -> dict:
+def eol_r_code_recommendation(soh: float, fade_30_mah_cy: float, sop_pct: float | None = None) -> dict:
     """
     Recommend an IEC 62902 R-code from application_fit(), not an
     independently-hardcoded SOH ladder (Circular Economy Coverage
@@ -296,7 +326,7 @@ def eol_r_code_recommendation(soh: float, fade_30_mah_cy: float) -> dict:
     if soh >= 90:
         return {"r_code": "R0 — Reuse (primary life)", "color": "#48bb78", "best_app": None}
 
-    fit = application_fit(soh, fade_30_mah_cy, fleet_fade_median=None)
+    fit = application_fit(soh, fade_30_mah_cy, fleet_fade_median=None, sop_pct=sop_pct)
     _, best_app = best_fit_application(fit)
     if best_app["fit"] in ("fit", "marginal"):
         return {"r_code": "R3 — Remanufacture / Second-life application", "color": "#48bb78", "best_app": best_app}
