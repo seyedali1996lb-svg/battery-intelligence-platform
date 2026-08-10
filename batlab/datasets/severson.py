@@ -143,6 +143,15 @@ def _load_cached(key: str) -> pd.DataFrame | None:
     df.attrs["chemistry"] = CHEMISTRY
     df.attrs["citation"] = "severson2019"
     df.attrs["license"] = "Research use per data.matr.io terms"
+    # Protocol-known test conditions, verified against Severson et al. 2019
+    # (Nature Energy 4, 383-391): discharge cutoff 2.0V (uniform across all
+    # 124 cells) and 30C constant chamber temperature. voltage_charge_cutoff_v
+    # is deliberately NOT set — cells were charged 0-80% SOC under one of 72
+    # distinct multi-step fast-charging policies, not a single CC/CV voltage
+    # cutoff, so no one number would honestly represent the protocol (see
+    # condition_completeness()'s severson2019 caveat in batlab.datasets.schema).
+    df.attrs["voltage_discharge_cutoff_v"] = 2.0
+    df.attrs["test_temperature_c"] = 30.0
     return df
 
 

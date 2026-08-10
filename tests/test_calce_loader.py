@@ -19,7 +19,7 @@ from batlab.datasets.calce import (
     _cycle_summary_from_raw,
     load_calce_cells,
 )
-from batlab.datasets.schema import validate_schema
+from batlab.datasets.schema import condition_completeness, validate_schema
 
 FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "calce"
 
@@ -116,3 +116,17 @@ def test_load_calce_cells_missing_cell_id_yields_instructive_error(tmp_path):
     (tmp_path / "CS2_EMPTY").mkdir()
     with pytest.raises(CalceDataNotFoundError, match="no readable"):
         load_calce_cells(cell_ids=["CS2_EMPTY"], data_dir=tmp_path)
+
+
+def test_load_calce_cells_carries_confirmed_voltage_cutoffs_and_omits_temperature():
+    df = load_calce_cells(cell_ids=["CS2_TEST"], data_dir=FIXTURE_DIR)["CS2_TEST"]
+    assert df.attrs["voltage_charge_cutoff_v"] == 4.2
+    assert df.attrs["voltage_discharge_cutoff_v"] == 2.7
+    # CALCE's own docs only say "room temperature" — no numeric setpoint,
+    # so this is deliberately not guessed.
+    assert "test_temperature_c" not in df.attrs
+
+    result = condition_completeness(df)
+    assert result["known"]["voltage_charge_cutoff_v"] is True
+    assert result["known"]["test_temperature_c"] is False
+    assert any("room temperature" in c for c in result["caveats"])

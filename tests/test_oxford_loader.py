@@ -9,9 +9,10 @@ computation, and the group-aware zip filename matching.
 
 import numpy as np
 import pandas as pd
+import batlab.datasets.oxford as oxford_mod
 from batlab.datasets.oxford import (
     _capacity_ah_from_table, _add_soh_column, _find_zip_entry,
-    _CELL_GROUP, _PROCEDURE_LABELS, OXFORD_CELL_IDS,
+    _CELL_GROUP, _PROCEDURE_LABELS, OXFORD_CELL_IDS, _GROUP_C_RATE,
 )
 
 
@@ -102,3 +103,28 @@ def test_all_12_cells_across_4_groups_have_procedure_labels():
     assert len(_CELL_GROUP) == 12
     assert sorted(_CELL_GROUP.values()) == sorted([1] * 3 + [2] * 3 + [3] * 3 + [4] * 3)
     assert set(OXFORD_CELL_IDS) == {f"OX-{c}" for c in _CELL_GROUP}
+
+
+def test_load_cached_backfills_c_rate_for_a_legacy_csv_that_predates_it(tmp_path, monkeypatch):
+    """Every already-committed data/raw/oxford/*.csv predates the c_rate
+    column being added to _extract_group()'s row output — this exercises
+    the same backfill path _load_cached() applies to those real files,
+    without needing the 3GB+ source zips to regenerate them."""
+    monkeypatch.setattr(oxford_mod, "_RAW_DIR", tmp_path)
+    legacy_df = pd.DataFrame({
+        "checkpoint_index": [0, 1, 2],
+        "checkpoint_label": ["BoL", "RPT1", "RPT2"],
+        "capacity_ah": [3.0, 2.9, 2.8],
+        "soh_pct": [100.0, 96.7, 93.3],
+    })
+    legacy_df.to_csv(tmp_path / "cell9_checkpoints.csv", index=False)  # cell 9 -> Group 1
+
+    df = oxford_mod._load_cached(9)
+    assert "c_rate" in df.columns
+    assert (df["c_rate"] == _GROUP_C_RATE[1]).all()
+
+
+def test_group_c_rate_matches_module_docstring_c2_c4_split():
+    # Groups 1 & 3 cycle @ C/2, Groups 2 & 4 @ C/4 (see module docstring).
+    assert _GROUP_C_RATE[1] == _GROUP_C_RATE[3] == 0.5
+    assert _GROUP_C_RATE[2] == _GROUP_C_RATE[4] == 0.25

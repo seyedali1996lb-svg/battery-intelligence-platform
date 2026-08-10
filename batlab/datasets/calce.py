@@ -252,6 +252,16 @@ def load_calce_cells(cell_ids: list[str] | None = None, data_dir: str | pathlib.
             "Open access per CALCE's battery-data page; cite the requested CALCE "
             "reference for any publication use — see batlab.cite.cite(dataset='calce')."
         )
+        # Protocol-known test conditions, verified against CALCE's published
+        # CS2 protocol: 0.5C CC/CV charge to 4.2V (held until current <0.05A),
+        # 2.7V discharge cutoff ("unless specified" per CALCE's own docs —
+        # this is the CS2 series default, applied the same way this module's
+        # docstring already caveats its Arbin column-name assumptions as
+        # "verified on a real sample, not exhaustive"). No numeric temperature
+        # setpoint is set — CALCE's documentation only says "room temperature",
+        # and this module does not guess a number for that.
+        df.attrs["voltage_charge_cutoff_v"] = 4.2
+        df.attrs["voltage_discharge_cutoff_v"] = 2.7
         results[cell_id] = df
 
     if not results:

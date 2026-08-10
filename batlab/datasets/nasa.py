@@ -333,6 +333,14 @@ def load_nasa_cells(
         if os.path.exists(csv_path) and not force_download:
             df = pd.read_csv(csv_path)
             if "temperature_c" in df.columns and "capacity_ah" in df.columns:
+                if "c_rate" not in df.columns:
+                    # Backfill for CSVs cached before c_rate was added to
+                    # parse_mat_file()'s output (this codebase's own
+                    # data/raw/*.csv predate it) — same protocol-known
+                    # formula (2A discharge / nominal capacity), computed
+                    # here instead of requiring a fresh ~200MB re-download.
+                    _nominal_cap_ah = max(float(df["capacity_ah"].iloc[0]), 1.0)
+                    df["c_rate"] = 2.0 / _nominal_cap_ah
                 print(f"  [cache] {cell_id} already parsed ({len(df)} cycles)")
                 results[cell_id] = df
                 continue
@@ -375,6 +383,13 @@ def load_nasa_cells(
         df.attrs["chemistry"] = CHEMISTRY
         df.attrs["citation"] = "nasa"
         df.attrs["license"] = "Public domain / US government work"
+        # Protocol-known test conditions — see this module's docstring
+        # ("Cell operating conditions"). B0018 used a different discharge
+        # EOL cutoff (2.5V) than B0005-B0007 (2.7V); charge cutoff and
+        # ambient temperature were the same across all four cells.
+        df.attrs["voltage_charge_cutoff_v"] = 4.2
+        df.attrs["voltage_discharge_cutoff_v"] = 2.5 if cell_id == "B0018" else 2.7
+        df.attrs["test_temperature_c"] = 24.0
 
     return results
 

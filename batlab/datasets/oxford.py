@@ -84,6 +84,15 @@ _CELL_GROUP: dict[int, int] = {
     12: 4, 18: 4, 19: 4,
 }
 
+# Protocol-known cycling C-rate per group (see module docstring: "Group 1
+# ... 1-day cycling @ C/2", "Group 2 ... @ C/4", etc.) — already documented
+# in prose here, this makes it a real column instead of only a comment.
+# No confirmed voltage cutoffs were found in this dataset's published
+# documentation, so those two attrs are deliberately left unset (see
+# batlab.datasets.schema.condition_completeness()'s oxford_pathdep_2020
+# caveat) rather than guessed.
+_GROUP_C_RATE: dict[int, float] = {1: 0.5, 2: 0.25, 3: 0.5, 4: 0.25}
+
 OXFORD_CELL_IDS: list[str] = [f"OX-{c}" for c in sorted(_CELL_GROUP)]
 
 # Per-cell TPG-file-index -> procedure label, transcribed from the dataset's
@@ -307,6 +316,7 @@ def _extract_group(group: int, status_fn=None) -> None:
                     "checkpoint_index": checkpoint_index,
                     "checkpoint_label": labels[tpg_index],
                     "capacity_ah": capacity_ah,
+                    "c_rate": _GROUP_C_RATE[group],
                 })
             if not rows:
                 continue
@@ -333,6 +343,12 @@ def _load_cached(cell: int) -> pd.DataFrame | None:
     df = pd.read_csv(path)
     if len(df) < 3:
         return None
+    if "c_rate" not in df.columns:
+        # Backfill for CSVs cached before c_rate was added to _extract_group()'s
+        # row output — avoids requiring a fresh 3GB+ re-download/re-extraction
+        # just to pick up a value that's already fully known from the group
+        # (see _GROUP_C_RATE above).
+        df["c_rate"] = _GROUP_C_RATE[_CELL_GROUP[cell]]
     cell_id = f"OX-{cell}"
     df.attrs["cell_id"] = cell_id
     df.attrs["source"] = "oxford_pathdep_2020"
