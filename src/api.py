@@ -39,6 +39,7 @@ GET  /fleet/summary         — fleet-level KPIs (SOH distribution, EOL count)
 GET  /fleet/alerts          — active alert list (same logic as Alert Inbox UI)
 GET  /cells/{cell_id}/rul   — RUL prediction with reliability flag + band
 GET  /cells/{cell_id}/lineage — data lineage for a cell's metrics
+GET  /cells/{cell_id}/view/{oem|operator|recycler} — same cell, sliced for one real stakeholder (see src/stakeholder_views.py)
 
 All endpoints other than / and /auth/login require:
     Authorization: Bearer <token>
@@ -58,7 +59,7 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 try:
     from fastapi import FastAPI, HTTPException, Query, Depends, Header
@@ -477,6 +478,7 @@ def root():
             "GET /cells/{cell_id}/history",
             "GET /cells/{cell_id}/rul",
             "GET /cells/{cell_id}/lineage",
+            "GET /cells/{cell_id}/view/{oem|operator|recycler}",
             "GET /fleet/summary",
             "GET /fleet/alerts",
         ],
@@ -666,6 +668,70 @@ def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -
         "last_cycle": int(df["cycle_number"].iloc[-1]),
         "lineage": [r.model_dump() for r in rows],
     }
+
+
+@app.get(
+    "/cells/{cell_id}/view/{stakeholder}",
+    summary="Stakeholder-sliced view of one cell (OEM / operator / recycler)",
+)
+def cell_stakeholder_view(
+    cell_id: str,
+    stakeholder: Literal["oem", "operator", "recycler"],
+    region: Optional[str] = Query(None, description="Recycler-only: preferred region (North America/Europe/Asia)"),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    The real, external-facing mechanism behind src/stakeholder_views.py's
+    module docstring: the same cell's data, gated by this endpoint's own
+    JWT auth like every other route here, sliced for whichever real party
+    (manufacturer, current operator, or recycler) is asking. No new
+    login system, no new role -- a real integration partner authenticates
+    the same way any other API consumer does (POST /auth/login).
+    """
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    bundles = _get_bundles(current_user["org_id"])
+    rul_ok = _rul_reliable_for(cell_id, bundles)
+    latest = df.iloc[-1]
+
+    def _sf(col):
+        v = latest.get(col)
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
+        return float(v)
+
+    profile = ChemistryProfile.for_cell(cell_id)
+    soh = float(latest["soh_pct"])
+    fade_30 = _sf("fade_rate_30cy") or 0.0
+    sop_pct = _sf("sop_pct")
+
+    from stakeholder_views import build_oem_view, build_operator_view, build_recycler_view
+    from recommendations import diagnose_mechanism
+
+    if stakeholder == "oem":
+        fields = build_oem_view(
+            cell_id, profile.short_name, profile.source_kind, soh, int(latest["cycle_number"]), fade_30,
+            mechanism=diagnose_mechanism(df), rul_reliable=rul_ok,
+            rul_pred=_sf("rul_pred") if rul_ok else None,
+            rul_q10=_sf("rul_q10") if rul_ok else None,
+            rul_q90=_sf("rul_q90") if rul_ok else None,
+        )
+    elif stakeholder == "operator":
+        fields = build_operator_view(
+            cell_id, profile.short_name, profile.source_kind, soh, int(latest["cycle_number"]),
+            fade_30, _sf("fade_rate_50cy") or fade_30, None,
+            rul_reliable=rul_ok,
+            rul_pred=_sf("rul_pred") if rul_ok else None,
+            rul_q10=_sf("rul_q10") if rul_ok else None,
+            rul_q90=_sf("rul_q90") if rul_ok else None,
+            sop_pct=sop_pct,
+        )
+    else:
+        fields = build_recycler_view(cell_id, profile.short_name, soh, fade_30, sop_pct=sop_pct, user_region=region)
+
+    return {"cell_id": cell_id, "stakeholder": stakeholder, "fields": fields}
 
 
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")

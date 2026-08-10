@@ -103,6 +103,73 @@ def test_gated_endpoints_accept_valid_token_and_return_real_data():
 
 
 # ---------------------------------------------------------------------------
+# GET /cells/{cell_id}/view/{stakeholder} — src/stakeholder_views.py's real
+# external-facing mechanism.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stakeholder", ["oem", "operator", "recycler"])
+def test_stakeholder_view_endpoint_returns_real_fields(stakeholder):
+    login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    cells_resp = client.get("/cells", headers=headers)
+    first_cell = cells_resp.json()["cells"][0]
+
+    resp = client.get(f"/cells/{first_cell}/view/{stakeholder}", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cell_id"] == first_cell
+    assert body["stakeholder"] == stakeholder
+    assert len(body["fields"]) > 0
+    for f in body["fields"]:
+        assert set(f.keys()) >= {"label", "value", "state"}
+
+
+def test_stakeholder_view_endpoint_rejects_invalid_stakeholder():
+    login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    cells_resp = client.get("/cells", headers=headers)
+    first_cell = cells_resp.json()["cells"][0]
+
+    resp = client.get(f"/cells/{first_cell}/view/not-a-real-stakeholder", headers=headers)
+    assert resp.status_code == 422  # FastAPI's Literal-type path validation
+
+
+def test_stakeholder_view_endpoint_requires_auth():
+    resp = client.get("/cells/B0005/view/oem")
+    assert resp.status_code == 401
+
+
+def test_stakeholder_view_endpoint_404s_for_unknown_cell():
+    login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.get("/cells/NOT-A-REAL-CELL/view/oem", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_stakeholder_views_are_actually_different_slices():
+    """The core claim of this feature -- OEM/operator/recycler get
+    genuinely different fields, not the same payload with a different
+    label."""
+    login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    cells_resp = client.get("/cells", headers=headers)
+    first_cell = cells_resp.json()["cells"][0]
+
+    oem_labels = {f["label"] for f in client.get(f"/cells/{first_cell}/view/oem", headers=headers).json()["fields"]}
+    operator_labels = {f["label"] for f in client.get(f"/cells/{first_cell}/view/operator", headers=headers).json()["fields"]}
+    recycler_labels = {f["label"] for f in client.get(f"/cells/{first_cell}/view/recycler", headers=headers).json()["fields"]}
+
+    assert oem_labels != operator_labels
+    assert operator_labels != recycler_labels
+    assert oem_labels != recycler_labels
+
+
+# ---------------------------------------------------------------------------
 # Org-scoping — each org's own uploaded ("My Data") fleet, merged on top of
 # the shared global reference-cell fleet, via bundle_cache.load_tenant_bundle().
 # ---------------------------------------------------------------------------

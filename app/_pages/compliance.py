@@ -15,6 +15,7 @@ from utils import (
 from chemistry_profiles import ChemistryProfile
 from _pages._compliance_passport import page_passport
 from _pages._compliance_sustainability import page_sustainability
+from _pages._compliance_stakeholder import page_stakeholder_view
 
 
 @st.cache_data(show_spinner=False)
@@ -348,8 +349,8 @@ def page_compliance(
     _action_bar("compliance")
     st.markdown(f"# Is {selected} EU passport-ready?")
     st.markdown("#### EU Battery Regulation 2023/1542 · Passport · Reports · Sustainability")
-    _tab_passport, _tab_reports, _tab_sus, _tab_reg = st.tabs(
-        ["EU Battery Passport", "Reports & Export", "Sustainability", "Regulatory Alerts"]
+    _tab_passport, _tab_reports, _tab_sus, _tab_stake, _tab_reg = st.tabs(
+        ["EU Battery Passport", "Reports & Export", "Sustainability", "Stakeholder View", "Regulatory Alerts"]
     )
     with _tab_passport:
         page_passport(selected, df, bundle, rul_reliable)
@@ -357,5 +358,7 @@ def page_compliance(
         page_reports(selected, df, bundle, rul_reliable)
     with _tab_sus:
         page_sustainability(selected, df)
+    with _tab_stake:
+        page_stakeholder_view(selected, df, bundle, rul_reliable)
     with _tab_reg:
         _page_regulatory_alerts(selected, df, active_fdfs, bundles)
