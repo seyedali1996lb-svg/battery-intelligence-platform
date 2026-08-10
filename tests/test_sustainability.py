@@ -13,7 +13,10 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
-from sustainability import critical_materials_for_chemistry, material_content_for_cell
+from sustainability import (
+    critical_materials_for_chemistry, material_content_for_cell,
+    cradle_to_grave_footprint, MANUFACTURING_CO2_PER_KWH, RECYCLING_AVOIDED_CO2_PER_KWH,
+)
 
 _NAMES = ("Cobalt (Co)", "Lithium (Li)", "Graphite (C)", "Nickel (Ni)")
 
@@ -92,3 +95,64 @@ def test_material_content_for_cell_scales_by_capacity():
     cell_kwh_4ah = 4.0 * 3.6 / 1000
     assert material_content_for_cell(6.5, cell_kwh_4ah) == \
         material_content_for_cell(6.5, cell_kwh_2ah) * 2
+
+
+# ---------------------------------------------------------------------------
+# cradle_to_grave_footprint() — chemistry-specific manufacturing + real
+# per-cell use-phase (cumulative_kwh_delivered) + optional EOL credit.
+# ---------------------------------------------------------------------------
+
+def test_manufacturing_kg_uses_chemistry_specific_figure():
+    lfp = cradle_to_grave_footprint("LFP", nominal_kwh=1.0, cumulative_kwh_delivered=0.0,
+                                     grid_carbon_intensity_kg_per_kwh=0.25)
+    nca = cradle_to_grave_footprint("NCA", nominal_kwh=1.0, cumulative_kwh_delivered=0.0,
+                                     grid_carbon_intensity_kg_per_kwh=0.25)
+    assert lfp["manufacturing_kg"] == MANUFACTURING_CO2_PER_KWH["LFP"]["value"]
+    assert nca["manufacturing_kg"] == MANUFACTURING_CO2_PER_KWH["NCA"]["value"]
+    assert lfp["manufacturing_kg"] != nca["manufacturing_kg"]
+
+
+def test_unknown_chemistry_falls_back_to_licoo2_manufacturing():
+    result = cradle_to_grave_footprint("Custom", nominal_kwh=1.0, cumulative_kwh_delivered=0.0,
+                                        grid_carbon_intensity_kg_per_kwh=0.25)
+    assert result["manufacturing_kg"] == MANUFACTURING_CO2_PER_KWH["LiCoO2"]["value"]
+
+
+def test_use_phase_scales_with_real_cumulative_kwh_not_nominal():
+    """Two cells with the same nominal capacity but different real
+    cumulative throughput (one heavily cycled, one lightly) must get
+    different use-phase figures -- this is the whole point of using
+    cumulative_kwh_delivered instead of a nominal-capacity approximation."""
+    light = cradle_to_grave_footprint("LiCoO2", nominal_kwh=0.007, cumulative_kwh_delivered=1.0,
+                                       grid_carbon_intensity_kg_per_kwh=0.25)
+    heavy = cradle_to_grave_footprint("LiCoO2", nominal_kwh=0.007, cumulative_kwh_delivered=10.0,
+                                       grid_carbon_intensity_kg_per_kwh=0.25)
+    assert heavy["use_phase_kg"] == light["use_phase_kg"] * 10
+    assert light["manufacturing_kg"] == heavy["manufacturing_kg"]  # unaffected by use-phase
+
+
+def test_recycle_pathway_applies_negative_credit():
+    result = cradle_to_grave_footprint("LFP", nominal_kwh=1.0, cumulative_kwh_delivered=5.0,
+                                        grid_carbon_intensity_kg_per_kwh=0.25, end_of_life_pathway="recycle")
+    assert result["end_of_life_kg"] == -RECYCLING_AVOIDED_CO2_PER_KWH["value"]
+    assert result["end_of_life_kg"] < 0
+
+
+def test_non_recycle_pathways_apply_no_credit():
+    for pathway in ("undetermined", "landfill"):
+        result = cradle_to_grave_footprint("LFP", nominal_kwh=1.0, cumulative_kwh_delivered=5.0,
+                                            grid_carbon_intensity_kg_per_kwh=0.25, end_of_life_pathway=pathway)
+        assert result["end_of_life_kg"] == 0.0
+
+
+def test_total_kg_is_sum_of_three_stages():
+    result = cradle_to_grave_footprint("LFP", nominal_kwh=1.0, cumulative_kwh_delivered=5.0,
+                                        grid_carbon_intensity_kg_per_kwh=0.25, end_of_life_pathway="recycle")
+    assert abs(result["total_kg"] - (result["manufacturing_kg"] + result["use_phase_kg"] + result["end_of_life_kg"])) < 1e-9
+
+
+def test_manufacturing_source_citation_present_for_display():
+    result = cradle_to_grave_footprint("NCA", nominal_kwh=1.0, cumulative_kwh_delivered=0.0,
+                                        grid_carbon_intensity_kg_per_kwh=0.25)
+    assert "source" in result["manufacturing_source"]
+    assert "label" in result["manufacturing_source"]

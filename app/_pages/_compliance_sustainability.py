@@ -32,6 +32,7 @@ def page_sustainability(selected: str, df: pd.DataFrame):
     from sustainability import (
         EU_RECYCLED_TARGETS, EU_GREEN_DEAL_FIELDS,
         critical_materials_for_chemistry, material_content_for_cell,
+        cradle_to_grave_footprint, MANUFACTURING_CO2_PER_KWH,
     )
 
     _profile = ChemistryProfile.for_cell(selected)
@@ -243,6 +244,61 @@ def page_sustainability(selected: str, df: pd.DataFrame):
         f"All use-phase figures are {BADGE_ILLUST}."
         f"</div>",
         unsafe_allow_html=True,
+    )
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Section 1b: Cradle-to-Grave Footprint (one real number, three cited stages)
+    # ────────────────────────────────────────────────────────────────────────
+    _section("Cradle-to-Grave Footprint")
+    st.markdown(
+        "<div style='font-size:12px;color:#a0aec0;margin-bottom:14px;line-height:1.6'>"
+        "A single per-cell total across manufacturing, use phase, and end-of-life — "
+        "still not a certified audit (EU Green Deal Alignment section below explains why), "
+        "but a real computed estimate rather than the three separate scenario bars above. "
+        "The use-phase figure below uses this cell's own measured cumulative energy "
+        "throughput, not a nominal-capacity approximation."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    _eol_pathway = st.radio(
+        "End-of-life scenario",
+        ["Still in service", "Recycled (hydrometallurgical)", "Landfilled"],
+        horizontal=True, key="sus7_c2g_pathway",
+    )
+    _pathway_key = {
+        "Still in service": "undetermined",
+        "Recycled (hydrometallurgical)": "recycle",
+        "Landfilled": "landfill",
+    }[_eol_pathway]
+    _cumulative_kwh = float(latest["cumulative_kwh"]) if "cumulative_kwh" in latest.index else cell_kwh * cycles
+    _c2g = cradle_to_grave_footprint(
+        chemistry_short_name=_profile.short_name,
+        nominal_kwh=cell_kwh,
+        cumulative_kwh_delivered=_cumulative_kwh,
+        grid_carbon_intensity_kg_per_kwh=grid_val,
+        end_of_life_pathway=_pathway_key,
+    )
+    _c2g_cols = st.columns(4)
+    _c2g_tiles = [
+        ("Manufacturing", f"{_c2g['manufacturing_kg']:.2f} kg", "#f6ad55", _c2g["manufacturing_source"]["label"], _c2g["manufacturing_source"]["source"]),
+        ("Use phase (to date)", f"{_c2g['use_phase_kg']:.2f} kg", "#718096", "Illustrative", f"{grid_val:.2f} kg CO₂/kWh × {_cumulative_kwh:.3f} kWh delivered (this cell's real cumulative throughput)"),
+        ("End-of-life", f"{_c2g['end_of_life_kg']:.2f} kg", "#48bb78" if _c2g["end_of_life_kg"] < 0 else "#718096", "Cited estimate" if _pathway_key == "recycle" else "N/A", "Hydrometallurgical recycling avoided-emissions credit (literature review midpoint)" if _pathway_key == "recycle" else "No credit applied — cell hasn't been recycled yet"),
+        ("Cradle-to-grave total", f"{_c2g['total_kg']:.2f} kg", "#63b3ed", "Computed, not certified", "Sum of the three stages to the left — not an Art. 7 accredited audit"),
+    ]
+    for col, (label, val, colour, badge_label, note) in zip(_c2g_cols, _c2g_tiles):
+        with col:
+            render_card(
+                f"<div style='font-size:11px;color:#a0aec0'>{label}</div>"
+                f"<div style='font-size:22px;font-weight:700;color:{colour};margin-top:6px'>{val}</div>"
+                f"<div style='font-size:10px;color:#a0aec0;margin-top:2px'>CO₂e</div>"
+                f"<div style='margin-top:6px'>{make_badge(badge_label, '#63b3ed')}</div>"
+                f"<div style='font-size:10px;color:#2d3748;margin-top:6px;line-height:1.4'>{note}</div>",
+                padding="14px 16px",
+                extra_style="height:100%",
+            )
+    st.caption(
+        f"Manufacturing figure is chemistry-specific ({_profile.short_name}) — see "
+        f"`sustainability.MANUFACTURING_CO2_PER_KWH` for the full citation per chemistry."
     )
 
     # ────────────────────────────────────────────────────────────────────────

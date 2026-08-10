@@ -259,7 +259,9 @@ EU_GREEN_DEAL_FIELDS = [
     {
         "label":  "Full lifecycle carbon audit (Art. 7 scope)",
         "state":  "unavailable",
-        "note":   "Requires third-party accredited audit — use-phase CO₂ shown here is illustrative only",
+        "note":   "Requires third-party accredited audit — a computed (not certified) cradle-to-grave "
+                  "estimate is shown in the Cradle-to-Grave Footprint section below, using this cell's "
+                  "own real cumulative energy throughput for the use phase",
     },
     {
         "label":  "Critical material sourcing declaration",
@@ -276,3 +278,111 @@ def material_content_for_cell(g_per_2ah: float, cell_kwh: float) -> float:
     """
     cell_ah = cell_kwh / (3.6 / 1000)   # kWh → Ah at 3.6V nominal
     return g_per_2ah * (cell_ah / 2.0)
+
+
+# ---------------------------------------------------------------------------
+# Cradle-to-grave carbon footprint
+# ---------------------------------------------------------------------------
+# Closes the gap EU_GREEN_DEAL_FIELDS above has always disclosed honestly
+# ("Full lifecycle carbon audit (Art. 7 scope)" -- unavailable, "use-phase
+# CO2 shown here is illustrative only"): a genuine per-cell cradle-to-grave
+# NUMBER, not just three separate scenario bars on the Sustainability page's
+# existing Lifecycle Carbon Chart. This is still NOT a certified Art. 7
+# audit -- that requires third-party accreditation no software can provide
+# -- so the EU_GREEN_DEAL_FIELDS entry above stays "unavailable" even after
+# this exists; what changes is that the "illustrative only" caveat now
+# points at a real computed estimate instead of nothing.
+#
+# Distinct from consequences.ASSUMPTIONS['co2_manufacture'] (0.55 kg/cell,
+# IVL 2019, chemistry-agnostic, used by the existing Lifecycle Carbon Chart
+# and left untouched for backward compatibility): these are chemistry-
+# SPECIFIC, per-kWh manufacturing figures from more recent, chemistry-
+# resolved literature, so LFP and NCA cells get their own real numbers
+# instead of sharing one LiCoO2-derived estimate.
+MANUFACTURING_CO2_PER_KWH = {
+    "LiCoO2": {
+        "value": 75.0,
+        "label": "Cited estimate",
+        "source": "IVL (2019) range midpoint, 50-100 kg CO2e/kWh -- the same source "
+                   "consequences.ASSUMPTIONS['co2_manufacture'] uses, expressed per-kWh "
+                   "instead of per-cell so it's directly comparable across chemistries.",
+    },
+    "LFP": {
+        "value": 62.0,
+        "label": "Cited estimate",
+        "source": "Nature Communications (2024), 'Carbon footprint distributions of "
+                   "lithium-ion batteries and their materials' -- LFP cathode range "
+                   "midpoint, 54-69 kg CO2e/kWh.",
+    },
+    "NCA": {
+        "value": 74.0,
+        "label": "Estimated — chemistry proxy",
+        "source": "Same 2024 Nature Communications study's NMC811 range midpoint "
+                   "(59-115, mid 74 kg CO2e/kWh) -- used as the nearest well-documented "
+                   "high-nickel layered-oxide proxy, since dedicated NCA cradle-to-grave "
+                   "manufacturing figures are less available in the literature than LFP/NMC.",
+    },
+}
+
+# Avoided-emissions credit from hydrometallurgical recycling displacing
+# virgin material production, kg CO2e per kWh of RECOVERED (not delivered)
+# capacity. A literature-review range (25.5-30.9 kg CO2e/kWh) rather than a
+# single-study figure -- midpoint used here, distinct from
+# consequences.sustainability_snapshot()'s existing co2_recycling_credit
+# (Dunn et al. 2015, 15% cathode-material recovery credit, per-cell) which
+# the Sustainability page's Lifecycle Carbon Chart already uses; this is a
+# second, independently-sourced EOL figure for the cradle-to-grave total
+# specifically, not a replacement for that one.
+RECYCLING_AVOIDED_CO2_PER_KWH = {
+    "value": 28.0,
+    "label": "Cited estimate",
+    "source": "Literature review range 25.5-30.9 kg CO2e/kWh avoided via hydrometallurgical "
+              "recycling vs. virgin material production; midpoint used here.",
+}
+
+
+def cradle_to_grave_footprint(
+    chemistry_short_name: str,
+    nominal_kwh: float,
+    cumulative_kwh_delivered: float,
+    grid_carbon_intensity_kg_per_kwh: float,
+    end_of_life_pathway: str = "undetermined",
+) -> dict:
+    """
+    A genuine per-cell cradle-to-grave CO2e total, three separately-cited
+    stages so a reader can see exactly which numbers are solid and which
+    are assumptions -- never presented as one opaque aggregate score (this
+    platform's standing "no aggregated sustainability index" position).
+
+    cumulative_kwh_delivered should be this cell's OWN measured/computed
+    cumulative_kwh (batlab.features.engineering's real running total from
+    actual per-cycle capacity) -- not a nominal-capacity x cycle-count
+    approximation. This is the one stage genuinely specific to this cell's
+    real cycling history rather than a chemistry-wide literature average.
+
+    end_of_life_pathway: "recycle" applies the avoided-emissions credit;
+    "landfill" or "undetermined" (default -- most cells in this platform
+    are still in active service) apply no credit, since it hasn't happened
+    yet and applying it early would overstate today's footprint as better
+    than it currently is.
+
+    Returns a dict with manufacturing_kg/use_phase_kg/end_of_life_kg/total_kg
+    plus the manufacturing figure's own citation object (manufacturing_source)
+    for direct display -- callers should show all three stages, not just
+    total_kg, so nothing reads as more certain than it is.
+    """
+    mfg = MANUFACTURING_CO2_PER_KWH.get(chemistry_short_name, MANUFACTURING_CO2_PER_KWH["LiCoO2"])
+    manufacturing_kg = mfg["value"] * nominal_kwh
+    use_phase_kg = grid_carbon_intensity_kg_per_kwh * cumulative_kwh_delivered
+    end_of_life_kg = (
+        -RECYCLING_AVOIDED_CO2_PER_KWH["value"] * nominal_kwh
+        if end_of_life_pathway == "recycle" else 0.0
+    )
+    return {
+        "manufacturing_kg": manufacturing_kg,
+        "manufacturing_source": mfg,
+        "use_phase_kg": use_phase_kg,
+        "end_of_life_kg": end_of_life_kg,
+        "end_of_life_pathway": end_of_life_pathway,
+        "total_kg": manufacturing_kg + use_phase_kg + end_of_life_kg,
+    }
