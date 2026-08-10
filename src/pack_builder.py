@@ -78,6 +78,105 @@ def compute_pack_metrics(cell_stats: list, topology: str) -> dict:
     }
 
 
+def compute_trajectory_divergence(cell_frames: dict) -> dict:
+    """
+    cell_frames: {cell_id: DataFrame} — each cell's FULL featured history
+    (cycle_number, soh_pct, fade_rate_30cy columns), not just the latest
+    snapshot compute_pack_metrics() uses. compute_pack_metrics()'s
+    soh_spread/soh_stdev are a single cross-sectional snapshot — two cells
+    can show an identical spread today while one arrived there by a slow,
+    stable fade and the other by a fade rate that's actively accelerating
+    away from the pack. This detects that difference: whether the pack's
+    SOH spread is *widening* over the cells' shared cycling history, and
+    which cell is fading fastest right now even if it isn't today's
+    bottleneck yet.
+
+    Comparison is restricted to the cycle range every selected cell has
+    actually reached (common_min_cycle..common_max_cycle) — comparing a
+    cell's cycle-900 state against another cell's cycle-200 state would
+    conflate "further into life" with "genuinely diverging faster".
+
+    Returns:
+      widening:               True/False, or None if there isn't enough
+                               shared history (fewer than 2 cells with
+                               overlapping cycle ranges) to judge a trend.
+      spread_trend:            soh_stdev at each checkpoint (may contain NaN
+                               where a checkpoint had fewer than 2 cells).
+      checkpoint_cycles:       cycle numbers the checkpoints were taken at
+                               (25/50/75/100% of the shared range).
+      fastest_diverging_cell:  cell_id with the highest current fade_rate_30cy
+                               among the selected cells, or None.
+      fastest_diverging_fade:  that cell's fade_rate_30cy value.
+      pack_median_fade:        median fade_rate_30cy across selected cells,
+                               for comparison against fastest_diverging_fade.
+    """
+    empty = {
+        "widening": None, "spread_trend": [], "checkpoint_cycles": [],
+        "fastest_diverging_cell": None, "fastest_diverging_fade": None,
+        "pack_median_fade": None,
+    }
+    valid = {
+        cid: df for cid, df in cell_frames.items()
+        if df is not None and len(df) > 0
+        and "cycle_number" in df.columns and "soh_pct" in df.columns
+    }
+    if len(valid) < 2:
+        return empty
+
+    common_max_cycle = min(int(df["cycle_number"].max()) for df in valid.values())
+    common_min_cycle = max(int(df["cycle_number"].min()) for df in valid.values())
+    if common_max_cycle <= common_min_cycle:
+        return empty
+
+    checkpoint_cycles = sorted(set(
+        int(common_min_cycle + f * (common_max_cycle - common_min_cycle))
+        for f in (0.25, 0.5, 0.75, 1.0)
+    ))
+
+    spread_trend = []
+    for cy in checkpoint_cycles:
+        vals = []
+        for df in valid.values():
+            sub = df[df["cycle_number"] <= cy]
+            if len(sub) > 0:
+                vals.append(float(sub["soh_pct"].iloc[-1]))
+        spread_trend.append(statistics.stdev(vals) if len(vals) >= 2 else float("nan"))
+
+    valid_trend = [v for v in spread_trend if v == v]  # drop NaN
+    widening = None
+    if len(valid_trend) >= 2:
+        if valid_trend[-1] <= 1e-9:
+            widening = False  # still ~0 spread at the end — clearly not widening
+        elif valid_trend[0] <= 1e-9:
+            widening = True   # went from ~0 spread to a real one
+        else:
+            # 15% growth threshold — small enough to catch a real trend, large
+            # enough to not flag ordinary rolling-window noise as "widening".
+            widening = valid_trend[-1] > valid_trend[0] * 1.15
+
+    fades = {}
+    for cid, df in valid.items():
+        if "fade_rate_30cy" in df.columns:
+            recent = df[df["cycle_number"] <= common_max_cycle]
+            if len(recent) > 0 and recent["fade_rate_30cy"].notna().any():
+                fades[cid] = float(recent["fade_rate_30cy"].dropna().iloc[-1])
+
+    fastest_diverging_cell = fastest_diverging_fade = pack_median_fade = None
+    if fades:
+        pack_median_fade = statistics.median(fades.values())
+        fastest_diverging_cell = max(fades, key=fades.get)
+        fastest_diverging_fade = fades[fastest_diverging_cell]
+
+    return {
+        "widening": widening,
+        "spread_trend": spread_trend,
+        "checkpoint_cycles": checkpoint_cycles,
+        "fastest_diverging_cell": fastest_diverging_cell,
+        "fastest_diverging_fade": fastest_diverging_fade,
+        "pack_median_fade": pack_median_fade,
+    }
+
+
 def compute_matching_scores(cell_stats: list) -> list:
     """
     Pairwise 0-100 "how well-matched are these two cells for pack assembly"

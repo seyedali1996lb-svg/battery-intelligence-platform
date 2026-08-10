@@ -435,7 +435,7 @@ def render_pack_builder(featured_dfs: dict, bundles: dict, key_prefix: str) -> N
     key_prefix namespaces session_state keys (e.g. "fleet"/"explore") so
     both call sites keep independent selections without colliding.
     """
-    from pack_builder import compute_pack_metrics, compute_matching_scores
+    from pack_builder import compute_pack_metrics, compute_matching_scores, compute_trajectory_divergence
 
     st.markdown("<h4 class='section-header'>Virtual Pack Builder</h4>", unsafe_allow_html=True)
     _md_html(
@@ -541,6 +541,25 @@ def render_pack_builder(featured_dfs: dict, bundles: dict, key_prefix: str) -> N
         )
     if metrics["n_uncalibrated"]:
         st.caption(f"{metrics['n_uncalibrated']} cell(s) excluded from Pack RUL — not calibrated.")
+
+    # Trajectory-based divergence — compute_pack_metrics() above only compares
+    # cells' latest snapshot; this looks at their shared cycling history to
+    # catch a pack that's still balanced today but actively diverging, and to
+    # name whichever cell is fading fastest right now even if it isn't yet
+    # today's bottleneck.
+    _traj = compute_trajectory_divergence({cid: featured_dfs.get(cid) for cid in selected})
+    if _traj["widening"] and _traj["fastest_diverging_cell"]:
+        _fd_cell = _traj["fastest_diverging_cell"]
+        _fd_fade = _traj["fastest_diverging_fade"] * 1000
+        _fd_med  = _traj["pack_median_fade"]
+        _fd_ratio = f" ({_traj['fastest_diverging_fade'] / _fd_med:.1f}× pack median)" if _fd_med else ""
+        st.warning(
+            f"📈 SOH spread across this pack is **widening** over its shared cycling history — "
+            f"**{_fd_cell}** is currently fading fastest at {_fd_fade:.2f} mAh/cycle{_fd_ratio}. "
+            f"It may not be today's bottleneck yet, but it's on track to become one."
+        )
+    elif _traj["widening"] is False and metrics["spread_level"] != "Imbalanced":
+        st.caption("Pack SOH spread has stayed stable across the cells' shared cycling history — no widening trend detected.")
 
     st.caption(
         f"Pack SOH is reported as {metrics['pack_soh_label'].lower()} — bottleneck-cell SOH is "

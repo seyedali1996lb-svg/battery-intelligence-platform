@@ -1,6 +1,8 @@
 """Unit tests for src/pack_builder.py's pure calculation logic."""
 
-from pack_builder import compute_pack_metrics, compute_matching_scores
+from conftest import make_cycles_df
+from batlab.features.engineering import build_features
+from pack_builder import compute_pack_metrics, compute_matching_scores, compute_trajectory_divergence
 
 
 def _stats(cell_id, soh, cap, res, rul=None, rul_ok=False):
@@ -103,3 +105,45 @@ def test_matching_scores_returns_one_row_per_unique_pair():
     assert len(rows) == 3
     pairs = {(r["Cell A"], r["Cell B"]) for r in rows}
     assert pairs == {("A", "B"), ("A", "C"), ("B", "C")}
+
+
+# ---------------------------------------------------------------------------
+# compute_trajectory_divergence() — cell-to-cell fade divergence over shared
+# cycling history, distinct from compute_pack_metrics()'s latest-snapshot-only
+# soh_spread/soh_stdev.
+# ---------------------------------------------------------------------------
+
+def test_identical_fade_rates_are_not_widening():
+    frames = {
+        "A": build_features(make_cycles_df(n_cycles=300, fade_per_cycle=0.0006)),
+        "B": build_features(make_cycles_df(n_cycles=300, fade_per_cycle=0.0006)),
+    }
+    result = compute_trajectory_divergence(frames)
+    assert result["widening"] is False
+
+
+def test_diverging_fade_rates_flagged_as_widening_with_fastest_cell_named():
+    frames = {
+        "slow": build_features(make_cycles_df(n_cycles=300, fade_per_cycle=0.0004)),
+        "fast": build_features(make_cycles_df(n_cycles=300, fade_per_cycle=0.0025)),
+    }
+    result = compute_trajectory_divergence(frames)
+    assert result["widening"] is True
+    assert result["fastest_diverging_cell"] == "fast"
+    assert result["fastest_diverging_fade"] > result["pack_median_fade"]
+
+
+def test_fewer_than_two_cells_yields_none_widening():
+    frames = {"A": build_features(make_cycles_df(n_cycles=100))}
+    result = compute_trajectory_divergence(frames)
+    assert result["widening"] is None
+    assert result["fastest_diverging_cell"] is None
+
+
+def test_no_overlapping_cycle_range_yields_none_widening():
+    frames = {
+        "A": build_features(make_cycles_df(n_cycles=50)),
+        "B": make_cycles_df(n_cycles=100).assign(cycle_number=lambda d: d["cycle_number"] + 1000).pipe(build_features),
+    }
+    result = compute_trajectory_divergence(frames)
+    assert result["widening"] is None
