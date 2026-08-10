@@ -145,6 +145,9 @@ This is public-data validation, not industrial validation — the 0.806 describe
 - **Recycler routing recommendation** — a small, dated directory of real, currently-operating recyclers (chemistry- and region-matched), surfaced on the Passport only when the recommended End-of-Life pathway actually calls for recycling
 - **Residual-value / bankability report** — a financing-grade PDF packaging SOH, leave-cell-out-validated RUL quantiles, second-life fit, and NPV comparison, with an explicit not-investment-advice/not-a-rating/not-a-guarantee disclaimer
 - **Multi-jurisdiction compliance-shaped exports** — US IRA Section 30D and China's 2026 EV-battery-recycling Interim Measures, same field-structure-demonstration discipline as the EU Passport (real regulatory constants shown as available, anything requiring supply-chain-of-custody or platform-registration data honestly marked unavailable)
+- **Shared multi-stakeholder fleet view** — the same cell sliced three genuinely different ways (OEM / operator / recycler), previewable on the Compliance page and reachable externally via 3 new REST endpoints (`GET /cells/{id}/view/{oem|operator|recycler}`) gated by the same JWT auth as every other API route — no new login system
+- **Adapter plugin registry** — new integrations declare their config fields as data instead of new hand-written Settings UI each time; proved by adding a 6th BMS adapter (a configurable generic REST connector) with zero adapter-specific widget code
+- **Multi-destination webhooks** — an org can fan the same events out to more than one destination (Slack *and* PagerDuty *and* a custom CRM webhook at once) on top of the original single-URL setting, which keeps working unchanged
 
 Currently demonstrated using public datasets and simulated telemetry. Real BMS integration requires real hardware data.
 
