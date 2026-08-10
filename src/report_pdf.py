@@ -272,3 +272,75 @@ def build_report_pdf(
 
     doc.build(story)
     return buf.getvalue(), doc_id
+
+
+def build_bankability_pdf(report: dict) -> bytes:
+    """
+    PDF rendering of src/bankability_report.py's build_bankability_report()
+    output. Reuses _field_table()/_styles() above (the report's sections
+    are already in the same {label,value,state,note} field-dict shape
+    src/passport.py's groups use) instead of a second, parallel table
+    renderer.
+
+    Unlike build_report_pdf() above, this returns bytes only — no
+    document_id pairing with a JSON-LD export, since no bankability-
+    specific JSON export exists (the multi-jurisdiction/OPTIMADE/Spine
+    exports already cover machine-readable formats; this report's whole
+    purpose is a human-readable financing document).
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=18 * mm, rightMargin=18 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+        title=f"Bankability Report — {report['cell_id']}",
+    )
+    ss = _styles()
+    story = []
+
+    story.append(Paragraph("⚡ Battery Intelligence Platform", ss["SubTitle"]))
+    story.append(Paragraph(f"Residual-Value / Bankability Report — {report['cell_id']}", ss["TitleBig"]))
+    story.append(Paragraph(
+        f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} — asset-condition summary, not a rating or appraisal",
+        ss["SubTitle"],
+    ))
+    story.append(Spacer(1, 6))
+
+    disclaimer_table = Table([[Paragraph(_pdf_text(report["disclaimer"]), ss["Disclaimer"])]], colWidths=[470])
+    disclaimer_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), RED_BG),
+        ("BOX", (0, 0), (-1, -1), 0.75, RED),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(disclaimer_table)
+    story.append(Spacer(1, 4))
+
+    group_titles = {
+        "identity":    "1 · Asset Identity",
+        "condition":   "2 · Condition Summary",
+        "second_life": "3 · Second-Life Fit",
+        "financial":   "4 · Financial Comparison",
+        "provenance":  "5 · Provenance",
+    }
+    for key, title in group_titles.items():
+        if not report.get(key):
+            continue
+        section = [
+            Paragraph(title, ss["SectionHeader"]),
+            _field_table(report[key], ss),
+            Spacer(1, 4),
+        ]
+        story.append(KeepTogether(section))
+
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", color=colors.HexColor("#d0d4d9")))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        "Battery Intelligence Platform — portfolio project. Not affiliated with or endorsed by any "
+        "financial regulator, rating agency, or appraisal body. See disclaimer above.",
+        ss["Footer"],
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
