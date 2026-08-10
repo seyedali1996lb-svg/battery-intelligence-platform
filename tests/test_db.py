@@ -761,3 +761,86 @@ def test_update_marketplace_match_status_transitions(db):
 
 def test_update_nonexistent_marketplace_match_does_not_raise(db):
     db.update_marketplace_match(DEMO_ORG_ID, "does-not-exist", status="accepted")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Webhook subscriptions (additional destinations)
+# ---------------------------------------------------------------------------
+
+def _subscription_entry(sid="wh-1", **overrides):
+    entry = {
+        "id": sid, "name": "PagerDuty", "url": "https://events.pagerduty.invalid/v2/enqueue",
+        "secret": "topsecret123", "event_types": ["THERMAL_RUNAWAY_PRECURSOR", "FLEET_DIGEST"],
+        "created_at": "2026-08-10T00:00:00",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_save_and_get_webhook_subscription_roundtrips_secret(db):
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    subs = db.get_webhook_subscriptions(DEMO_ORG_ID)
+    assert len(subs) == 1
+    assert subs[0]["name"] == "PagerDuty"
+    assert subs[0]["secret"] == "topsecret123"
+    assert subs[0]["event_types"] == ["THERMAL_RUNAWAY_PRECURSOR", "FLEET_DIGEST"]
+
+
+def test_webhook_subscription_secret_stored_encrypted_at_rest(db):
+    """The raw DB row must never contain the plaintext secret."""
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    with db.Session() as s:
+        row = s.query(db.WebhookSubscription).filter_by(org_id=DEMO_ORG_ID, id="wh-1").one()
+        assert row.secret != "topsecret123"
+        assert row.secret is not None
+
+
+def test_webhook_subscription_without_secret_stores_none(db):
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(secret=""), caller_role="admin")
+    subs = db.get_webhook_subscriptions(DEMO_ORG_ID)
+    assert subs[0]["secret"] is None
+
+
+def test_save_webhook_subscription_upserts_on_same_id(db):
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(name="Renamed Destination"), caller_role="admin")
+    subs = db.get_webhook_subscriptions(DEMO_ORG_ID)
+    assert len(subs) == 1
+    assert subs[0]["name"] == "Renamed Destination"
+
+
+def test_webhook_subscriptions_scoped_per_org(db):
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    db.save_webhook_subscription(DEMO_ORG_ID + 1, _subscription_entry(sid="wh-2", name="Other Org"), caller_role="admin")
+    assert len(db.get_webhook_subscriptions(DEMO_ORG_ID)) == 1
+    assert len(db.get_webhook_subscriptions(DEMO_ORG_ID + 1)) == 1
+
+
+def test_delete_webhook_subscription(db):
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    db.delete_webhook_subscription(DEMO_ORG_ID, "wh-1", caller_role="admin")
+    assert db.get_webhook_subscriptions(DEMO_ORG_ID) == []
+
+
+def test_delete_nonexistent_webhook_subscription_does_not_raise(db):
+    db.delete_webhook_subscription(DEMO_ORG_ID, "does-not-exist", caller_role="admin")  # must not raise
+
+
+def test_save_webhook_subscription_refuses_non_admin_caller(db):
+    import pytest
+    with pytest.raises(db.InsufficientRoleError):
+        db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="engineer")
+
+
+def test_save_webhook_subscription_refuses_missing_role_fail_closed(db):
+    import pytest
+    with pytest.raises(db.InsufficientRoleError):
+        db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry())
+
+
+def test_delete_webhook_subscription_refuses_non_admin_caller(db):
+    import pytest
+    db.save_webhook_subscription(DEMO_ORG_ID, _subscription_entry(), caller_role="admin")
+    with pytest.raises(db.InsufficientRoleError):
+        db.delete_webhook_subscription(DEMO_ORG_ID, "wh-1", caller_role="engineer")
+    assert len(db.get_webhook_subscriptions(DEMO_ORG_ID)) == 1  # refused, not silently skipped

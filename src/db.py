@@ -50,6 +50,7 @@ _SECRET_SETTING_KEYS = frozenset({
     "vrm_api_token", "circunomics_api_key", "cmms_api_key",
     "webhook_secret", "orion_bms_api_key",
     "ocpp_api_key",
+    "generic_rest_auth_header_value",
 })
 
 # Setting keys that are org-wide configuration (integration credentials,
@@ -72,6 +73,8 @@ _ADMIN_ONLY_SETTING_KEYS = frozenset({
     "modbus_host", "modbus_port", "modbus_unit_id", "modbus_register_map", "modbus_cell_id",
     "can_channel", "can_bustype", "can_node_id", "can_pgn_map", "can_cell_id",
     "ocpp_central_system_url", "ocpp_api_key", "ocpp_charge_point_id",
+    "generic_rest_base_url", "generic_rest_auth_header_name", "generic_rest_auth_header_value",
+    "generic_rest_cell_id", "generic_rest_field_map",
 })
 
 _fernet: Fernet | None = None
@@ -346,6 +349,23 @@ class MarketplaceMatch(Base):
     match_score = Column(String)  # JSON-encoded score dict (application_fit, price, reasons) at match time
     created_at  = Column(String)
     updated_at  = Column(String)
+
+
+class WebhookSubscription(Base):
+    """One additional webhook destination, on top of the single legacy
+    webhook_url/webhook_secret/webhook_events Setting rows every event
+    already fires to. Lets an org fan events out to multiple real
+    destinations at once (Slack AND PagerDuty AND a custom CRM webhook)
+    instead of being limited to one URL — see src/notifications.py's
+    notify_subscribers(), additive to send_webhook(), not a replacement."""
+    __tablename__ = "webhook_subscriptions"
+    id          = Column(String, primary_key=True)
+    org_id      = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
+    name        = Column(String, nullable=False)
+    url         = Column(String, nullable=False)
+    secret      = Column(String)  # envelope-encrypted, see _SECRET_SETTING_KEYS-style handling in set_/get_webhook_subscription below
+    event_types = Column(Text)    # JSON-encoded list[str]; empty list means "all events"
+    created_at  = Column(String)
 
 
 class KGEdge(Base):
@@ -704,6 +724,64 @@ def update_marketplace_match(org_id: int, match_id: str, **fields) -> None:
         for k, v in fields.items():
             setattr(row, k, v)
         s.commit()
+
+
+# ---------------------------------------------------------------------------
+# Additional webhook destinations
+# ---------------------------------------------------------------------------
+
+def save_webhook_subscription(org_id: int, entry: dict, caller_role: "str | None" = None) -> None:
+    """Insert or update a webhook subscription. entry keys match
+    WebhookSubscription's columns; event_types is a plain list (JSON-encoded
+    here, decoded back on read). secret is Fernet-encrypted at rest, same
+    primitive set_setting() uses for credential-shaped Setting rows —
+    scoped simpler here (no fallback-key write guard) since this is a
+    locally-generated signing secret, not a third-party-granted credential.
+    Admin-only, same as every other org-wide integration config -- see
+    _require_admin()."""
+    _require_admin(caller_role, "add or edit a webhook destination")
+    with Session() as s:
+        secret = entry.get("secret") or ""
+        encrypted_secret = _get_fernet().encrypt(secret.encode()).decode() if secret else None
+        s.merge(WebhookSubscription(
+            id=entry["id"], org_id=org_id,
+            name=entry.get("name"), url=entry.get("url"),
+            secret=encrypted_secret,
+            event_types=json.dumps(entry.get("event_types", [])),
+            created_at=entry.get("created_at"),
+        ))
+        s.commit()
+
+
+def get_webhook_subscriptions(org_id: int) -> list[dict]:
+    with Session() as s:
+        rows = s.query(WebhookSubscription).filter_by(org_id=org_id).order_by(WebhookSubscription.created_at.desc()).all()
+        result = []
+        for r in rows:
+            secret = None
+            if r.secret:
+                try:
+                    secret = _get_fernet().decrypt(r.secret.encode()).decode()
+                except InvalidToken:
+                    secret = None  # predates encryption or was encrypted under a different key
+            try:
+                event_types = json.loads(r.event_types) if r.event_types else []
+            except (TypeError, ValueError):
+                event_types = []
+            result.append({
+                "id": r.id, "name": r.name, "url": r.url, "secret": secret,
+                "event_types": event_types, "created_at": r.created_at,
+            })
+        return result
+
+
+def delete_webhook_subscription(org_id: int, subscription_id: str, caller_role: "str | None" = None) -> None:
+    _require_admin(caller_role, "remove a webhook destination")
+    with Session() as s:
+        row = s.query(WebhookSubscription).filter_by(org_id=org_id, id=subscription_id).one_or_none()
+        if row is not None:
+            s.delete(row)
+            s.commit()
 
 
 # ---------------------------------------------------------------------------
