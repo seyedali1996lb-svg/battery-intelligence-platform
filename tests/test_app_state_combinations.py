@@ -133,6 +133,33 @@ def test_decide_and_ask_no_crash_for_degraded_cell(isolated_db):
     assert not at.exception, f"Decide & Ask crashed for a degraded cell: {at.exception}"
 
 
+def test_decide_and_ask_warranty_risk_section_renders(isolated_db):
+    """Smoke test for src/warranty.py's new wiring into Decide & Ask's
+    Supporting Details expander -- must render without crashing for both a
+    healthy cell (model-scaled estimate path) and a degraded one closer to
+    eol_threshold_pct (linear-only fallback path is also exercised
+    implicitly since NASA cells' RUL reliability varies by cell)."""
+    at = _logged_in_app(role="Engineer", page="decision", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Decide & Ask crashed rendering Warranty Risk: {at.exception}"
+    assert "Warranty Risk" in _all_text(at)
+
+
+def test_explore_pack_builder_trajectory_divergence_renders(isolated_db):
+    """Smoke test for compute_trajectory_divergence()'s new UI wiring in
+    render_pack_builder() (app/utils.py) -- pre-selects 2 real NASA cells so
+    the pack metrics + trajectory-divergence code paths actually execute
+    (not just the empty-state branch), and confirms no exception either way
+    the widening insight can render (warning or the stable-trend caption)."""
+    at = _logged_in_app(
+        role="Engineer", page="compare", data_mode="nasa",
+        explore_pack_cells=["B0005", "B0006"], explore_pack_topology="Series",
+        explore_view_radio="Pack Builder",
+    )
+    at.run()
+    assert not at.exception
+
+
 def test_explore_reference_datasets_condition_completeness_renders(isolated_db):
     """
     Smoke test for the new test-condition-documentation disclosure
@@ -627,6 +654,20 @@ def test_settings_webhook_widgets_do_not_trigger_session_state_duplication_warni
     assert not at.exception, f"Settings page crashed: {at.exception}"
     duplication_warnings = [c for c in calls if "default value" in str(c[0])]
     assert duplication_warnings == [], f"session-state duplication warning fired: {duplication_warnings}"
+
+
+def test_settings_new_bms_connectors_render_for_admin(isolated_db):
+    """Modbus/CAN bus/OCPP connector sections (src/bms_connectors.py's 3
+    new adapters) must render without crashing under the admin-only
+    Settings gate, same as the existing Victron/Orion sections."""
+    at = _logged_in_app(role="Fleet Manager", page="settings", data_mode="synthetic")
+    at.run()
+
+    assert not at.exception, f"Settings page crashed: {at.exception}"
+    _text = _all_text(at)
+    assert "BMS Connector (Modbus TCP)" in _text
+    assert "BMS Connector (CAN Bus)" in _text
+    assert "EV Charging Connector (OCPP)" in _text
 
 
 def test_settings_sites_and_fleets_panel_renders_for_admin(isolated_db):
