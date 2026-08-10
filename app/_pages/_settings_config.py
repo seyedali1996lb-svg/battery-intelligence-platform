@@ -452,14 +452,12 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
     _set_secret_setting(st.session_state["auth_org_id"], "webhook_secret", _wh_secret, role=st.session_state.get("auth_role"))
     db.set_setting(st.session_state["auth_org_id"], "webhook_events", _wh_events, role=st.session_state.get("auth_role"))
     if _wh_url:
-        from notifications import send_webhook
+        from notifications import send_webhook, notify_subscribers
         _wh_test_col, _wh_digest_col, _ = st.columns([1, 1, 3])
         if _wh_test_col.button("Send test ping", key="webhook_test_btn"):
-            _ok = send_webhook(
-                "TEST_PING",
-                {"message": "Webhook connectivity test from Settings page."},
-                _wh_url, _wh_secret,
-            )
+            _ping_payload = {"message": "Webhook connectivity test from Settings page."}
+            _ok = send_webhook("TEST_PING", _ping_payload, _wh_url, _wh_secret)
+            notify_subscribers(st.session_state["auth_org_id"], "TEST_PING", _ping_payload)
             if _ok:
                 st.success("Test ping sent.")
             else:
@@ -480,11 +478,9 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
                     if r["cell_id"] in _active_ids_wh and r.get("soh_pct") is not None
                     and float(r["soh_pct"]) < st.session_state.get("eol_threshold_pct", 80.0)
                 )
-                _ok = send_webhook(
-                    "FLEET_DIGEST",
-                    {"n_cells": _n_cells, "n_flagged_below_eol": _n_flagged},
-                    _wh_url, _wh_secret,
-                )
+                _digest_payload = {"n_cells": _n_cells, "n_flagged_below_eol": _n_flagged}
+                _ok = send_webhook("FLEET_DIGEST", _digest_payload, _wh_url, _wh_secret)
+                notify_subscribers(st.session_state["auth_org_id"], "FLEET_DIGEST", _digest_payload)
                 if _ok:
                     db.set_setting(st.session_state["auth_org_id"], "last_digest_sent", datetime.date.today().isoformat())
                     st.success(f"Digest sent — {_n_cells} cells, {_n_flagged} below EOL threshold.")
@@ -492,6 +488,65 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
                     st.warning("Webhook did not return a success response.")
     else:
         st.caption("Enter a webhook URL above to enable push notifications.")
+
+
+def render_webhook_subscriptions() -> None:
+    """Additional webhook destinations on top of the single URL above --
+    src/db.py's WebhookSubscription table + src/notifications.py's
+    notify_subscribers(), fanned out from the same 7 real event call
+    sites the single webhook already fires from, additively (see
+    notify_subscribers()'s own docstring)."""
+    _section("Additional Webhook Destinations")
+    _md_html(
+        "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
+        "Fan the same events out to more than one destination — e.g. Slack AND PagerDuty AND a "
+        "custom CRM webhook at once, instead of being limited to the single URL above."
+        "</div>"
+    )
+    org_id = st.session_state["auth_org_id"]
+    role = st.session_state.get("auth_role")
+
+    with st.expander("Add a destination", expanded=False):
+        _sub_name = st.text_input("Name", key="whsub_name", placeholder="PagerDuty")
+        _sub_url = st.text_input("Webhook URL", key="whsub_url", placeholder="https://events.pagerduty.com/v2/enqueue")
+        _sub_secret = st.text_input("HMAC secret (optional)", type="password", key="whsub_secret")
+        _sub_events = st.multiselect(
+            "Fire on (leave empty for all events)", key="whsub_events",
+            options=["THERMAL_RUNAWAY_PRECURSOR", "UNDERTEMPERATURE", "CAPACITY_PLUNGE",
+                     "VOLTAGE_HIGH", "VOLTAGE_LOW", "TEMPERATURE_HIGH", "SOC_ANOMALY",
+                     "FLEET_DIGEST", "TRAJECTORY_MATCH", "PASSPORT_GAP", "INGESTION_FAULT", "TEST_PING"],
+        )
+        if st.button("Add destination", key="whsub_add_btn"):
+            if _sub_name and _sub_url:
+                import uuid as _uuid_whsub
+                db.save_webhook_subscription(org_id, {
+                    "id": _uuid_whsub.uuid4().hex, "name": _sub_name, "url": _sub_url,
+                    "secret": _sub_secret, "event_types": _sub_events,
+                    "created_at": datetime.datetime.now().isoformat(),
+                }, caller_role=role)
+                st.success(f"Added destination: {_sub_name}.")
+                st.rerun()
+            else:
+                st.warning("Name and URL are required.")
+
+    _subs = db.get_webhook_subscriptions(org_id)
+    if not _subs:
+        st.caption("No additional destinations configured yet.")
+    for _sub in _subs:
+        _sub_col1, _sub_col2, _sub_col3 = st.columns([4, 2, 1])
+        _sub_col1.markdown(
+            f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{_sub['name']}</div>"
+            f"<div style='font-size:11px;color:#8896a8'>{_sub['url']}</div>",
+            unsafe_allow_html=True,
+        )
+        _sub_col2.markdown(
+            f"<div style='font-size:11px;color:#a0aec0;padding:4px 0'>"
+            f"{', '.join(_sub['event_types']) if _sub['event_types'] else 'All events'}</div>",
+            unsafe_allow_html=True,
+        )
+        if _sub_col3.button("Remove", key=f"whsub_del_{_sub['id']}"):
+            db.delete_webhook_subscription(org_id, _sub["id"], caller_role=role)
+            st.rerun()
 
 
 def render_bms_connector_victron() -> None:
@@ -700,6 +755,71 @@ def render_bms_connector_ocpp() -> None:
             from bms_connectors import OCPPAdapter
             _ocpp_result = OCPPAdapter(_ocpp_url, _ocpp_key, _ocpp_cp_id).test_connection()
             (st.success if _ocpp_result["ok"] else st.error)(_ocpp_result["message"])
+
+
+def render_adapter_settings(registry_key: str) -> None:
+    """
+    Generic Settings UI for any src/plugin_registry.py adapter with
+    `rendered_via_registry=True` — widgets, persistence, empty-state
+    guard, and a test-connection button, all driven by the adapter's
+    `AdapterField` specs instead of a new hand-written function per
+    integration. See plugin_registry.py's module docstring for the full
+    "why this exists" story.
+    """
+    from plugin_registry import ADAPTER_REGISTRY
+
+    meta = ADAPTER_REGISTRY[registry_key]
+    _section(f"BMS Connector ({meta.name})")
+    _md_html(f"<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>{meta.description}</div>")
+
+    org_id = st.session_state["auth_org_id"]
+    role = st.session_state.get("auth_role")
+    raw_values: dict = {}
+    text_cols = st.columns(2)
+    _col_i = 0
+    for f in meta.fields:
+        widget_key = f"plugin_{registry_key}_{f.key}"
+        if f.kind == "textarea_json":
+            val = st.text_area(
+                f.label, value=st.session_state.get(f.key, f.default),
+                key=widget_key, height=90, help=f.help, placeholder=f.placeholder,
+            )
+        else:
+            target = text_cols[_col_i % 2]
+            _col_i += 1
+            val = target.text_input(
+                f.label, value=st.session_state.get(f.key, f.default),
+                type="password" if f.kind == "password" else "default",
+                key=widget_key, help=f.help, placeholder=f.placeholder,
+            )
+        raw_values[f.key] = val
+        if f.secret:
+            _set_secret_setting(org_id, f.key, val, role=role)
+        else:
+            db.set_setting(org_id, f.key, val, role=role)
+
+    missing_required = [f.label for f in meta.fields if f.required and not raw_values.get(f.key)]
+    if missing_required:
+        _empty_state(
+            "Not yet connected",
+            f"Fill in {', '.join(missing_required)} above to enable pulling live readings from {meta.name}.",
+            icon="🔌",
+        )
+        return
+
+    parsed_values = dict(raw_values)
+    for f in meta.fields:
+        if f.kind == "textarea_json":
+            try:
+                parsed_values[f.key] = json.loads(raw_values[f.key]) if raw_values[f.key] else {}
+            except json.JSONDecodeError as e:
+                st.error(f"{f.label} is not valid JSON: {e}")
+                return
+
+    if st.button(f"Test {meta.name} connection", key=f"plugin_{registry_key}_test_btn"):
+        adapter = meta.adapter_class(**meta.build_kwargs(parsed_values))
+        result = adapter.test_connection()
+        (st.success if result["ok"] else st.error)(result["message"])
 
 
 def render_second_life_marketplace() -> None:
@@ -1077,11 +1197,13 @@ def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
         render_model_cache()
         render_cost_of_delay()
         render_webhook_notifications(featured_dfs)
+        render_webhook_subscriptions()
         render_bms_connector_victron()
         render_bms_connector_orion()
         render_bms_connector_modbus()
         render_bms_connector_can()
         render_bms_connector_ocpp()
+        render_adapter_settings("generic_rest_bms")
         render_second_life_marketplace()
         render_maintenance_writeback()
     render_team_members()
