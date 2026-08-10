@@ -212,6 +212,7 @@ def render_data_lineage_expander(df: pd.DataFrame, cell_id: str) -> None:
             "c_rate_rolling_10cy":  ("C-rate (10cy avg)",     "charge/discharge rate (A / nominal Ah), 10-cy mean", "Protocol constant (NASA) or synthetic profile"),
             "stress_index":         ("Stress Index",          "Arrhenius(T) × C-rate^0.7 — composite aging driver", "Derived: features.build_features()"),
             "dod_proxy":            ("DoD proxy",             "capacity(n) / capacity(1) — depth of discharge",    "Derived from measured capacity_ah"),
+            "usage_profile_code":   ("Usage Profile",         "0=Stationary-like, 1=Mixed, 2=EV-like — duty-cycle regime", "Derived from rolling C-rate/DoD variability"),
         }
         for _col, (_label, _formula, _source) in _col_map.items():
             _avail = _col in df.columns

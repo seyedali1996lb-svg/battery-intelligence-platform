@@ -81,12 +81,25 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         "synthetic": "LiCoO₂ · Lithium Cobalt Oxide (synthetic)",
         "uploaded":  "User-defined chemistry",
     }.get(st.session_state.get("data_mode", "synthetic"), "LiCoO₂")
+    _usage_profile = None
+    if "usage_profile" in df.columns:
+        _up_series = df["usage_profile"].dropna()
+        if len(_up_series) > 0:
+            _usage_profile = _up_series.iloc[-1]
+    _usage_badge_html = (
+        f"<span style='font-size:10px;font-weight:700;background:#2d374899;"
+        f"border:1px solid #4a5568;color:#a0aec0;padding:2px 9px;border-radius:6px;"
+        f"letter-spacing:0.06em;margin-left:8px'>USAGE PROFILE</span>"
+        f"<span style='font-size:13px;color:#a0aec0;margin-left:8px'>{_usage_profile}</span>"
+        if _usage_profile else ""
+    )
     st.markdown(
         f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:12px'>"
         f"<span style='font-size:10px;font-weight:700;background:#2d374899;"
         f"border:1px solid #4a5568;color:#a0aec0;padding:2px 9px;border-radius:6px;"
         f"letter-spacing:0.06em'>CHEMISTRY</span>"
         f"<span style='font-size:13px;color:#a0aec0'>{_chem_label}</span>"
+        f"{_usage_badge_html}"
         f"</div>",
         unsafe_allow_html=True,
     )
