@@ -145,7 +145,7 @@ def _parse_two_column_timestamp_csv(raw: "pd.DataFrame") -> "list | None":
     interval reads aggregate correctly). Returns list[8760] only if that
     produces exactly one full year of hourly rows, else None."""
     try:
-        ts = pd.to_datetime(raw.iloc[:, 0], errors="coerce")
+        ts = pd.to_datetime(raw.iloc[:, 0], errors="coerce", format="mixed")
         vals = pd.to_numeric(raw.iloc[:, 1], errors="coerce")
         combined = pd.DataFrame({"ts": ts, "val": vals}).dropna()
         if len(combined) == 0:

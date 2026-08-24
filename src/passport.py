@@ -71,7 +71,7 @@ def build_passport(
     has_dates = "test_date" in df.columns and df["test_date"].notna().any()
     if has_dates:
         import pandas as _pd
-        dates     = _pd.to_datetime(df["test_date"].dropna(), errors="coerce").dropna()
+        dates     = _pd.to_datetime(df["test_date"].dropna(), errors="coerce", format="mixed").dropna()
         date_from = str(dates.min().date()) if len(dates) else None
         date_to   = str(dates.max().date()) if len(dates) else None
     else:

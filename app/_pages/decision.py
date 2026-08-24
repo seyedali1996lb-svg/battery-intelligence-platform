@@ -306,8 +306,8 @@ def page_decision(
         _rul_cy     = max(0, (_cur_soh - _eol_thr) / _fp_cy) if _fp_cy > 1e-6 else None
 
         if "test_date" in df.columns and df["test_date"].notna().any():
-            _dates = pd.to_datetime(df["test_date"].dropna())
-            _cpd   = len(df) / max((_dates.iloc[-1] - _dates.iloc[0]).days, 1)
+            _dates = pd.to_datetime(df["test_date"].dropna(), errors="coerce", format="mixed").dropna()
+            _cpd   = len(df) / max((_dates.iloc[-1] - _dates.iloc[0]).days, 1) if len(_dates) > 1 else 1.0
         else:
             _cpd   = 1.0
 

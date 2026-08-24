@@ -367,8 +367,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
     # Time estimate: cycles/day from test_date if present, else assume 1 cycle/day
     if "test_date" in df.columns and df["test_date"].notna().any():
-        dates = pd.to_datetime(df["test_date"].dropna())
-        span_days = max((dates.iloc[-1] - dates.iloc[0]).days, 1)
+        dates = pd.to_datetime(df["test_date"].dropna(), errors="coerce", format="mixed").dropna()
+        span_days = max((dates.iloc[-1] - dates.iloc[0]).days, 1) if len(dates) > 1 else 1
         cycles_per_day = len(df) / span_days
         rate_note = f"estimated at {cycles_per_day:.1f} cycle/day from data"
     else:
