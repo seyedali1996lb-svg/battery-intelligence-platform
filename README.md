@@ -194,27 +194,78 @@ Being explicit about what this platform is not, as of today:
 
 See [`docs/history.md`](docs/history.md) for the fuller production-readiness roadmap this summary is drawn from.
 
-## Installation
+## Installation & Setup
 
-### Just want to see the app? (no programming experience needed)
+### Developer Quickstart (Git Clone)
 
-This gets the Streamlit dashboard open in your web browser. It takes about 10 minutes the first time.
+If you are setting up the project from scratch on a new machine or after cloning:
 
-1. **Install Python.** Go to [python.org/downloads](https://www.python.org/downloads/) and click the big yellow "Download Python" button. Run the installer.
-   - **Windows:** on the very first install screen, tick the box that says **"Add Python to PATH"** before clicking Install — this step is easy to miss and everything below depends on it.
-   - **Mac:** just run the installer normally.
-2. **Download this project.** On this page, click the green **`Code`** button near the top, then **`Download ZIP`**. Once it's downloaded, unzip it (double-click it, or right-click → "Extract All" on Windows) to a folder you can find, e.g. your Desktop.
-3. **Open a terminal in that folder.** A terminal is just a window where you type commands instead of clicking things.
-   - **Windows:** open the unzipped folder in File Explorer, click once in the empty address bar at the top, type `cmd`, and press Enter.
-   - **Mac:** open the unzipped folder in Finder, then Finder menu → Services → "New Terminal at Folder" (or open the Terminal app and type `cd ` followed by dragging the folder into the window, then press Enter).
-4. **Type these two lines into that window, pressing Enter after each one, and wait for each to finish** (the first one downloads everything the app needs and can take a few minutes):
+```bash
+# 1. Clone the repository
+git clone https://github.com/seyedali1996lb-svg/battery-intelligence-platform.git
+cd battery-intelligence-platform
+
+# 2. Create and activate a Python virtual environment
+python -m venv .venv
+
+# On Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# On Windows (Command Prompt):
+.venv\Scripts\activate.bat
+# On macOS / Linux:
+source .venv/bin/activate
+
+# 3. Install the project in editable mode with development dependencies
+pip install -e ".[dev]"
+
+# 4. Verify installation by running test suite
+pytest tests/ -v
+```
+
+---
+
+### Running the Applications Locally
+
+#### 1. Interactive Streamlit Dashboard (Default)
+```bash
+streamlit run app/main.py
+```
+Opens in your browser at `http://localhost:8501`.
+
+#### 2. FastAPI REST Backend
+```bash
+uvicorn src.api:app --reload --port 8000
+```
+Interactive API documentation available at `http://localhost:8000/docs`.
+
+#### 3. React Frontend (Optional)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+### Non-developer Setup (No Git Required)
+
+This gets the Streamlit dashboard open in your web browser with minimal steps:
+
+1. **Install Python:** Go to [python.org/downloads](https://www.python.org/downloads/) and click "Download Python".
+   - **Windows:** on the very first screen, tick **"Add Python to PATH"** before clicking Install.
+   - **Mac:** run the installer normally.
+2. **Download this project:** Click the green **`Code`** button near the top of this GitHub page, then **`Download ZIP`**. Extract the ZIP to a known folder (e.g. Desktop).
+3. **Open a terminal in that folder:**
+   - **Windows:** open the unzipped folder in File Explorer, click the address bar, type `cmd`, and press Enter.
+   - **Mac:** open Finder, right-click the folder → "New Terminal at Folder".
+4. **Run the following commands:**
    ```bash
    pip install -r requirements.txt
    streamlit run app/main.py
    ```
-5. A new tab should open automatically in your web browser with the app running. If it doesn't, the terminal will print a line like `Local URL: http://localhost:8501` — copy that address into your browser.
+5. The browser will open automatically at `http://localhost:8501`.
 
-To stop the app later, go back to that terminal window and press `Ctrl+C`. To run it again another day, you only need step 4's second command (`streamlit run app/main.py`) from inside that same folder.
+---
 
 ### Using `batlab` as a Python library
 
@@ -247,12 +298,112 @@ print(batlab.cite(dataset="nasa"))               # + license, for whichever data
 
 The full ten-minute tour is [`notebooks/01_quickstart.ipynb`](notebooks/01_quickstart.ipynb). See [`docs/datasets/`](docs/datasets/index.md) for each dataset's schema, citation, and license, and [`batlab/datasets/CONTRIBUTING.md`](batlab/datasets/CONTRIBUTING.md) for adding a fifth loader.
 
-For development (`pytest` plus every loader/notebook/docs extra):
+---
+
+## Deployment Guide
+
+### Option 1: Streamlit Community Cloud (Fastest for Dashboard)
+
+To host the interactive dashboard for free on Streamlit Cloud:
+
+1. Push or fork this repository to your GitHub account.
+2. Visit [share.streamlit.io](https://share.streamlit.io/) and log in with GitHub.
+3. Click **"New app"**, select your repository, branch (`master`), and set:
+   - **Main file path:** `app/main.py`
+4. *(Optional)* Under **Advanced settings**, add environment secrets such as:
+   ```toml
+   ANTHROPIC_API_KEY = "your-claude-api-key"
+   ```
+5. Click **Deploy**.
+
+---
+
+### Option 2: Docker Container (REST API Backend)
+
+The project includes a production `Dockerfile.api` for running the FastAPI service in a containerized environment (AWS ECS, Google Cloud Run, Azure Container Apps, or Docker Swarm):
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/ -v
+# 1. Build the Docker container image
+docker build -f Dockerfile.api -t battery-intelligence-api:latest .
+
+# 2. Run the container
+docker run -d -p 8000:8000 \
+  -e PORT=8000 \
+  -e JWT_SECRET="your-jwt-secret" \
+  --name battery-api \
+  battery-intelligence-api:latest
+
+# 3. Test endpoint health
+curl http://localhost:8000/health
 ```
+
+---
+
+### Option 3: Production Linux VM (Ubuntu / Debian / AWS EC2)
+
+To deploy as a resilient background service with automatic restarts:
+
+1. **Clone and setup repository on the server:**
+   ```bash
+   sudo git clone https://github.com/seyedali1996lb-svg/battery-intelligence-platform.git /opt/battery-platform
+   cd /opt/battery-platform
+   sudo python3 -m venv .venv
+   sudo .venv/bin/pip install -r requirements.txt
+   ```
+
+2. **Create a systemd service file** (`/etc/systemd/system/battery-platform.service`):
+   ```ini
+   [Unit]
+   Description=Battery Intelligence Platform Streamlit Service
+   After=network.target
+
+   [Service]
+   Type=simple
+   User=www-data
+   WorkingDirectory=/opt/battery-platform
+   ExecStart=/opt/battery-platform/.venv/bin/streamlit run app/main.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. **Start and enable the service:**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable battery-platform
+   sudo systemctl start battery-platform
+   sudo systemctl status battery-platform
+   ```
+
+4. **Configure Nginx as a reverse proxy with SSL (HTTPS):**
+   ```nginx
+   server {
+       listen 80;
+       server_name battery.yourdomain.com;
+
+       location / {
+           proxy_pass http://127.0.0.1:8501;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_read_timeout 86400;
+       }
+   }
+   ```
+
+---
+
+### Configuration & Environment Variables
+
+| Variable | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `ANTHROPIC_API_KEY` | Optional | *None* | Enables Claude Sonnet 5 tool-calling agent in the Copilot tab. |
+| `JWT_SECRET` | Optional | *Demo secret* | Secret key used to sign and verify multi-tenant JWT authentication tokens. |
+| `PORT` | Optional | `8000` / `8501` | Service binding port for FastAPI or Streamlit. |
 
 ## Citation
 
