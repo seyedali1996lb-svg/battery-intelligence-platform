@@ -832,3 +832,320 @@ def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
         "medium":   sum(1 for a in alerts if a.severity == "medium"),
         "alerts":   [a.model_dump() for a in alerts],
     }
+
+
+# ── Action Center & Operations Triage Endpoints ──────────────────────────────
+
+from src.action_center import action_center
+from batlab.features.partial_cycles import rainflow_counting, reconstruct_ocv_relaxation, partial_ica_analysis
+from batlab.datasets.cycler_mapper import detect_cycler_format, ingest_cycler_data
+from src.pinn_model import BatteryPINNEstimator
+from src.dynamic_circularity import calculate_dynamic_lca, generate_verifiable_credential_passport, match_second_life_bids
+from src.task_queue import task_queue
+from src.streaming_analytics import streaming_engine
+
+
+class ActionCreateRequest(BaseModel):
+    cell_id: str
+    title: str
+    category: str = "DEGRADATION"
+    severity: str = "HIGH"
+    description: str
+    recommended_action: str
+    soh_pct: float
+    sla_hours: int = 24
+
+
+class ActionTriageRequest(BaseModel):
+    status: str
+    assigned_to: Optional[str] = None
+
+
+class ActionDispatchRequest(BaseModel):
+    target_system: str
+    payload: Optional[dict] = None
+
+
+class RainflowRequest(BaseModel):
+    soc_series: list[float]
+    time_series: Optional[list[float]] = None
+
+
+class OCVRequest(BaseModel):
+    time_sec: list[float]
+    voltage_v: list[float]
+    current_a: list[float]
+
+
+class PartialICARequest(BaseModel):
+    voltage_v: list[float]
+    capacity_ah: list[float]
+    v_min: float = 3.2
+    v_max: float = 4.1
+
+
+class PINNEstimateRequest(BaseModel):
+    cycles: list[float]
+    soh_pct: list[float]
+    future_cycles_count: int = 1000
+    temperature_c: float = 25.0
+    c_rate: float = 1.0
+
+
+class StreamingReadingRequest(BaseModel):
+    cell_id: str
+    voltage_v: float
+    current_a: float
+    temperature_c: float
+    timestamp_s: Optional[float] = None
+
+
+@app.get("/actions", summary="List operational action center tickets")
+def list_action_tickets(
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    category: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+) -> list[dict]:
+    return action_center.list_actions(
+        org_id=current_user["org_id"],
+        severity=severity,
+        status=status,
+        category=category,
+    )
+
+
+@app.post("/actions", summary="Create an operational action ticket")
+def create_action_ticket(
+    req: ActionCreateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return action_center.create_action(
+        cell_id=req.cell_id,
+        title=req.title,
+        category=req.category,
+        severity=req.severity,
+        description=req.description,
+        recommended_action=req.recommended_action,
+        soh_pct=req.soh_pct,
+        org_id=current_user["org_id"],
+        sla_hours=req.sla_hours,
+    )
+
+
+@app.post("/actions/{action_id}/triage", summary="Triage an action ticket")
+def triage_action_ticket(
+    action_id: str,
+    req: ActionTriageRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        return action_center.triage_action(
+            action_id=action_id,
+            new_status=req.status,
+            assigned_to=req.assigned_to,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/actions/{action_id}/dispatch", summary="Dispatch an action workflow to CMMS/Warranty/Circularity")
+def dispatch_action_ticket(
+    action_id: str,
+    req: ActionDispatchRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        return action_center.dispatch_workflow(
+            action_id=action_id,
+            target_system=req.target_system,
+            payload=req.payload,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── Partial Cycles & Field Telemetry Analytics ───────────────────────────────
+
+@app.post("/analytics/rainflow", summary="ASTM E1049-85 Rainflow cycle counting")
+def run_rainflow_analysis(
+    req: RainflowRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return rainflow_counting(
+        soc_series=np.array(req.soc_series),
+        time_series=np.array(req.time_series) if req.time_series else None,
+    )
+
+
+@app.post("/analytics/ocv-reconstruct", summary="Reconstruct OCV and R0 from rest interval")
+def run_ocv_reconstruction(
+    req: OCVRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return reconstruct_ocv_relaxation(
+        time_sec=np.array(req.time_sec),
+        voltage_v=np.array(req.voltage_v),
+        current_a=np.array(req.current_a),
+    )
+
+
+@app.post("/analytics/partial-ica", summary="Partial window Incremental Capacity Analysis (dQ/dV)")
+def run_partial_ica(
+    req: PartialICARequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return partial_ica_analysis(
+        voltage_v=np.array(req.voltage_v),
+        capacity_ah=np.array(req.capacity_ah),
+        v_min=req.v_min,
+        v_max=req.v_max,
+    )
+
+
+# ── Universal Cycler Ingestion Helpers ───────────────────────────────────────
+
+@app.post("/ingest/cycler-detect", summary="Detect cycler format and map columns")
+def detect_cycler(
+    columns: list[str],
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return detect_cycler_format(columns)
+
+
+# ── Physics & PINN Modeling ──────────────────────────────────────────────────
+
+@app.post("/physics/pinn-estimate", summary="Hybrid PINN LLI/LAM degradation estimation")
+def run_pinn_estimation(
+    req: PINNEstimateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    estimator = BatteryPINNEstimator()
+    estimator.fit(np.array(req.cycles), np.array(req.soh_pct))
+    
+    current_cy = int(req.cycles[-1]) if req.cycles else 100
+    future_cy = np.arange(1, current_cy + req.future_cycles_count, 1)
+    preds = estimator.predict(future_cy, temperature_c=req.temperature_c, c_rate=req.c_rate)
+    rul = estimator.estimate_rul(current_cycle=current_cy, temperature_c=req.temperature_c, c_rate=req.c_rate)
+    
+    return {
+        "rul_estimation": rul,
+        "parameters": estimator.params,
+        "sample_points_count": len(future_cy),
+        "latest_soh_pct": float(preds["soh_pct"][-1]),
+        "latest_knee_risk_score": float(preds["knee_risk_score"][-1]),
+    }
+
+
+# ── Dynamic LCA, Circularity & Verifiable Credentials ─────────────────────────
+
+@app.get("/cells/{cell_id}/dynamic-lca", summary="Calculate cradle-to-grave dynamic CO2e footprint")
+def get_cell_dynamic_lca(
+    cell_id: str,
+    region: str = "EU_AVG",
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    latest = df.iloc[-1]
+    profile = ChemistryProfile.for_cell(cell_id)
+    chem = getattr(profile, "cathode_name", "LFP") if profile else "LFP"
+    nominal_kwh = (float(latest.get("capacity_ah", 2.0)) * 3.3) / 1000.0
+    throughput = float(len(df) * max(nominal_kwh, 0.005) * 0.8)
+    return calculate_dynamic_lca(
+        cell_id=cell_id,
+        chemistry=chem,
+        nominal_kwh=nominal_kwh,
+        cumulative_throughput_kwh=throughput,
+        region=region,
+    )
+
+
+@app.get("/cells/{cell_id}/verifiable-passport", summary="W3C Verifiable Credential EU Battery Passport")
+def get_verifiable_passport(
+    cell_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    latest = df.iloc[-1]
+    profile = ChemistryProfile.for_cell(cell_id)
+    chem = getattr(profile, "cathode_name", "LFP") if profile else "LFP"
+    soh = float(latest.get("soh_pct", 80.0))
+    rul = int(latest.get("rul_pred", 500)) if not np.isnan(latest.get("rul_pred", 500)) else 500
+    res = float(latest.get("resistance_ohm", 0.025)) if not np.isnan(latest.get("resistance_ohm", 0.025)) else 0.025
+    nominal_kwh = (float(latest.get("capacity_ah", 2.0)) * 3.3) / 1000.0
+    carbon = calculate_dynamic_lca(cell_id, chem, nominal_kwh, 15.0)
+
+    return generate_verifiable_credential_passport(
+        cell_id=cell_id,
+        org_id=str(current_user["org_id"]),
+        chemistry=chem,
+        soh_pct=soh,
+        rul_cycles=rul,
+        resistance_ohm=res,
+        carbon_data=carbon,
+    )
+
+
+@app.get("/cells/{cell_id}/second-life-bids", summary="Matched second-life buyer bids and valuations")
+def get_second_life_bids(
+    cell_id: str,
+    current_user: dict = Depends(get_current_user),
+) -> list[dict]:
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    latest = df.iloc[-1]
+    profile = ChemistryProfile.for_cell(cell_id)
+    chem = getattr(profile, "cathode_name", "LFP") if profile else "LFP"
+    soh = float(latest.get("soh_pct", 80.0))
+    res_norm = float(latest.get("resistance_normalized", 1.2)) if not np.isnan(latest.get("resistance_normalized", 1.2)) else 1.2
+    res_growth = res_norm * 100.0
+    nominal_kwh = (float(latest.get("capacity_ah", 2.0)) * 3.3) / 1000.0
+
+    return match_second_life_bids(
+        cell_id=cell_id,
+        chemistry=chem,
+        soh_pct=soh,
+        resistance_growth_pct=res_growth,
+        nominal_kwh=nominal_kwh,
+    )
+
+
+
+# ── Asynchronous Task Queue ──────────────────────────────────────────────────
+
+@app.get("/tasks", summary="List async analytics tasks")
+def list_tasks(current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return task_queue.list_tasks(org_id=current_user["org_id"])
+
+
+@app.get("/tasks/{task_id}", summary="Get async task status")
+def get_task_status(task_id: str, current_user: dict = Depends(get_current_user)) -> dict:
+    t = task_queue.get_task(task_id)
+    if not t or t.get("org_id") != current_user["org_id"]:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return t
+
+
+# ── Real-Time Streaming Telemetry Anomaly Detection ──────────────────────────
+
+@app.post("/telemetry/process", summary="Process high-frequency streaming BMS sample")
+def process_streaming_sample(
+    req: StreamingReadingRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    return streaming_engine.process_reading(
+        cell_id=req.cell_id,
+        voltage_v=req.voltage_v,
+        current_a=req.current_a,
+        temperature_c=req.temperature_c,
+        timestamp_s=req.timestamp_s,
+    )
+

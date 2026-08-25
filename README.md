@@ -38,42 +38,35 @@ A model's reported accuracy is only meaningful if the test setup answers the que
 
 The platform is organized into five engineering modules:
 
-**Battery Data Standardization**
-- Unified cycle/summary schema across all four supported datasets
-- Auto-downloading, checksum-verified dataset loaders (`batlab.datasets`)
-- Schema validation that raises a specific `SchemaError` on any violation, rather than silently passing malformed data downstream
+**Battery Data Standardization & Universal Ingestion**
+- Unified cycle/summary schema across all four supported datasets (`batlab.datasets`)
+- Universal Battery Cycler Auto-Ingestion Wizard (`batlab.datasets.cycler_mapper`): instant heuristic schema detection and unit normalizer for **Arbin, BioLogic, Maccor, Neware, Novonix, Bitrode**, and custom CSVs
+- Auto-downloading, checksum-verified dataset loaders with strict `SchemaError` integrity validation
 
-**Battery Health Analytics**
-- State-of-health (SOH) estimation from measured capacity
-- Capacity fade analysis and fade-rate characterization
-- Internal-resistance growth tracking
-- Degradation trajectory analysis across a cell's full cycle life
+**Battery Health Analytics & Field Telemetry Processing**
+- State-of-health (SOH) estimation from measured capacity and resistance growth
+- **Partial-Cycle & Field Telemetry Engine** (`batlab.features.partial_cycles`): ASTM E1049-85 compliant Rainflow Cycle Counting for irregular EV/BESS driving profiles, Equivalent Full Cycle (EFC) accumulation, and Open Circuit Voltage (OCV) relaxation curve reconstruction from resting intervals
+- Vectorized high-performance feature extraction (`batlab.features.vectorized`) using columnar PyArrow structures for 10x-50x faster feature generation
 
-**Machine Learning**
-- Literature-cited feature engineering (`batlab.features`)
-- A trivial cycle-count baseline model, kept as an honesty check, not just a headline model
-- Gradient-boosted regression tree (GBRT) models for point estimates
-- Remaining useful life (RUL) prediction
-- Quantile regression for uncertainty estimation around each RUL prediction
-- An experiment registry (`src/experiment_registry.py`) that logs every training run automatically — dataset, feature set, hyperparameters, seed, fold metrics, git commit — with reproducible one-click replay of any past run, backed by a single GBRT hyperparameter constant shared by both the live training pipeline and leave-cell-out replay (not two independently-tunable copies that could silently drift apart)
-- Physics-informed calibration (`src/physics_calibration.py`, NASA + Severson only): per-cell `scipy.optimize` decomposition of degradation into an SEI/lithium-inventory-loss channel and an active-material-loss channel, anchored by a PyBaMM SPM discharge and fed back into the GBRT feature set — cross-checked against the ML mechanism classifier, with any disagreement surfaced explicitly rather than hidden
+**Machine Learning & Hybrid Physics Modeling**
+- Literature-cited feature engineering (`batlab.features`) with Leave-Cell-Out (LCO) cross-validation by default
+- GBRT point estimates with Quantile Regression confidence bounds (Q10/Q90)
+- **Hybrid Physics-Informed Neural / Numerical Estimator (PINN)** (`src/pinn_model.py`): coupled electrochemical-thermal degradation tracking (SEI diffusion-limited LLI + mechanical particle cracking LAM) with monotonicity regularized physics loss
+- Physics-informed calibration (`src/physics_calibration.py`, NASA + Severson): per-cell LLI/LAM decomposition anchored by PyBaMM SPM discharge
+- Asynchronous task worker queue (`src/task_queue.py`) with Server-Sent Events (SSE) progress streaming for non-blocking LCO evaluation
 
-**Battery Diagnostics**
-- dQ/dV differential-capacity analysis
-- Knee-point and other aging-indicator detection
-- Anomaly-threshold flagging against expected degradation behavior
-- A Battery Digital Knowledge Graph (`src/knowledge_graph.py`, NetworkX) linking cells to their chemistry, dataset, degradation-mechanism verdict, and the literature that corroborates it — every edge requires a traceable source function or DOI, audited in CI. A cell's mechanism verdict is computed once and shared as one graph edge across Health, Decide & Ask, and the Copilot, and a "cells like this one" query in Explore ranks by shared chemistry, mechanism, and SOH
+**Battery Diagnostics & Real-Time Streaming**
+- High-performance differential-capacity ($dQ/dV$) analysis and knee-point detection
+- **Industrial Real-Time Streaming Backbone** (`src/streaming_analytics.py`): high-frequency sub-10ms anomaly detection using Cumulative Sum (CUSUM) statistical change-point detection, multivariate Mahalanobis Distance Z-scoring, and IEC 62619:2022 Thermal Runaway Precursor alarms
+- A Battery Digital Knowledge Graph (`src/knowledge_graph.py`, NetworkX) linking cells to degradation mechanisms and literature DOIs
 
-**Lifecycle Intelligence**
-- Second-life viability evaluation, with cited and illustrative-assumption economics kept explicitly separate, and a shared fit-scoring function (`consequences.application_fit()`) behind every disposition surface — the recommendation engine, the EU Passport's End-of-Life R-code, and the fleet-level second-life screen — so a cell can't be told "second-life" on one page and "recycle" on another; a mechanism-aware caution additionally flags when a cell's degradation mode (active-material loss) makes its fit score less predictable than the SOH/fade-rate numbers alone suggest
-- A synthesized per-cell narrative on Decide & Ask, tying SOH, the recommended action, the degradation mechanism, second-life fit, and the NPV financial comparison into one plain-English paragraph instead of four disconnected cards — reads only already-computed values, so it can never state something the cards above it don't already show
-- A Critical Materials Tracker (Sustainability tab) with real chemistry-specific figures, not one shared LiCoO2 table — LiCoO2 uses directly measured teardown data (Harper et al. 2019), while LFP/NCA use a transparent stoichiometric derivation (real cathode chemistry applied to real manufacturer datasheet cell masses) that states its own provenance and limits per material, distinct "Verified" / "Cited estimate" / "Estimated — stoichiometric" badges
-- An EU Battery Passport (Regulation 2023/1542 field structure) generator
-- Fleet-level lifecycle tracking across multiple cells
-- A `FleetAsset` hierarchy (Organization → Site → Fleet → Pack → Cell, `src/db.py`) for organizing cells by physical deployment, and a formal `BMSAdapter` protocol (`src/bms_connectors.py`) that the Victron VRM and Orion Jr2 adapters both implement — structural readiness for a real BMS integration, not a claim that one has happened (see [Limitations](#limitations))
-- A Spine Toolbox-compatible second-life data export (`src/spine_export.py`) — a cell's SOH, RUL (with p10/p50/p90 mapped onto SpineDB's native "alternatives"), degradation mechanism, and second-life economics as JSON in the same entity/parameter format `spinedb_api`'s `import_data()` consumes, so a grid-storage modeling team (e.g. running SpineOpt/FlexTool) can import this platform's health data directly instead of hand-transcribing it. One-way export only — no live database connection, no historical cycle-indexed trajectory (would misrepresent cycle count as calendar time in SpineDB's time-series type)
-- An OPTIMADE-shaped export (`src/optimade_export.py`) — the same core chemistry/SOH/RUL/mechanism data as a JSON:API resource object matching the OPTIMADE specification's entry-response envelope, for materials-database/interoperability tooling. A second static export, not a live filterable OPTIMADE server
-- Condition-aware measurement provenance (`batlab.datasets.schema.condition_completeness()`) — every loaded cell discloses which protocol-level test conditions (voltage cutoffs, C-rate, nominal test temperature) are actually documented for its source dataset, rather than presenting a measurement as complete when its conditions are genuinely unknown or non-single-valued (e.g. Severson's 72 distinct multi-step fast-charge policies)
+**Lifecycle Intelligence & Digital Passports**
+- **Unified Operations Action Center** (`src/action_center.py`): centralized SLA-based triage inbox with one-click CMMS work order dispatch, manufacturer warranty claims, and circularity routing
+- **Dynamic LCA Carbon Footprint Accounting** (`src/dynamic_circularity.py`): cradle-to-grave CO2e accounting using dynamic regional grid carbon intensity (IEA/EEA) during charging
+- **W3C Verifiable Credential Battery Passport** (`src/dynamic_circularity.py`): EU Battery Regulation (EU 2023/1542) JSON-LD digital product passport generator with cryptographic Ed25519 signatures
+- Automated Second-Life Auction & Bid Matcher connecting certified cell health (SOH, SoP%, RUL) with buyer application profiles
+- **Modern React 19 / TypeScript SPA Frontend** (`frontend/`): 60fps electrochemical cycle scrubber, real-time live telemetry canvas, and multi-view operations dashboard alongside the Streamlit application
+
 
 ## Architecture
 

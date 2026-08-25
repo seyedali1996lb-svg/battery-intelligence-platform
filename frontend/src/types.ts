@@ -75,3 +75,51 @@ export interface FleetAlerts {
   medium: number;
   alerts: AlertItem[];
 }
+
+export interface ActionTicket {
+  id: string;
+  cell_id: string;
+  org_id: number;
+  title: string;
+  category: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  status: "NEW" | "TRIAGED" | "IN_PROGRESS" | "DISPATCHED" | "RESOLVED";
+  sla_hours: number;
+  created_at: string;
+  description: string;
+  recommended_action: string;
+  soh_pct: number;
+  dispatched_to?: string | null;
+  assigned_to?: string | null;
+}
+
+export interface DynamicLCA {
+  cell_id: string;
+  chemistry: string;
+  region: string;
+  grid_intensity_g_kwh: number;
+  mfg_co2_kg: number;
+  use_phase_co2_kg: number;
+  eol_recycling_credit_kg: number;
+  net_lifecycle_co2_kg: number;
+  carbon_intensity_kg_per_kwh_delivered: number;
+}
+
+export interface SecondLifeBid {
+  buyer_id: string;
+  buyer_name: string;
+  application: string;
+  region: string;
+  fit_score: number;
+  status: string;
+  offer_per_kwh_usd: number;
+  total_bid_usd: number;
+}
+
+export interface CyclerDetection {
+  hardware: string;
+  mapped_columns: Record<string, string>;
+  unit_scales: Record<string, number>;
+  confidence: number;
+  unmapped_columns: string[];
+}

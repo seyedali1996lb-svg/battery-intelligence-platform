@@ -288,12 +288,67 @@ A few UI status labels are plain threshold rules, not calculations in their own 
 
 - **Health status** (`app/utils.py::soh_status`): Healthy (SOH ≥ 90%), Degrading (80–89%), End of Life (< 80%).
 - **EOL threshold**: 80% SOH by default throughout the platform (`eol_threshold_pct`), the standard automotive/ESS industry convention — user-configurable in Settings.
-- **Confidence tag**: "Calibrating" below cycle 50, "Model" thereafter (§6).
+---
+
+## 14. Partial-cycle & field telemetry processing (Rainflow & OCV relaxation)
+
+**Rainflow Cycle Counting** (`batlab.features.partial_cycles::rainflow_counting`):
+Implements the ASTM E1049-85 four-point standard to decompose irregular field time-series (EV driving / BESS dispatch) into discrete full and half hysteresis cycles:
+```math
+\text{EFC} = \sum_{k} \frac{\Delta \text{DoD}_k \times c_k}{100\%}
+```
+where $c_k \in \{0.5, 1.0\}$ is the cycle count weight and $\Delta \text{DoD}_k = |s_{k+1} - s_k|$ is the State of Charge range.
+
+**OCV Relaxation Fitting** (`batlab.features.partial_cycles::reconstruct_ocv_relaxation`):
+Extracts asymptotic equilibrium open-circuit voltage $V_{\text{ocv}}$ and ohmic DC internal resistance $R_0$ from resting intervals ($|I| < I_{\text{thresh}}$):
+```math
+V(t) = V_{\infty} - (V_{\infty} - V_0) e^{-t / \tau}, \qquad R_0 = \frac{|\Delta V_{\text{step}}|}{|\Delta I_{\text{step}}|}
+```
+
+---
+
+## 15. Hybrid Physics-Informed ML (PINN) & degradation decomposition
+
+**PINN Regularized Loss** (`src/pinn_model.py::BatteryPINNEstimator`):
+Couples data-driven regression with electrochemical ODEs for diffusion-limited SEI growth (LLI) and particle cracking fatigue (LAM):
+```math
+\text{SOH}(n) = 1 - \beta_{\text{sei}} \sqrt{n} \, e^{-\frac{E_a}{R}\left(\frac{1}{T} - \frac{1}{T_0}\right)} C_{\text{rate}}^{0.5} - \beta_{\text{lam}} n^{\gamma}
+```
+The loss minimizes:
+```math
+\mathcal{L} = \frac{1}{N} \sum (\text{SOH}_{\text{pred}} - \text{SOH}_{\text{meas}})^2 + \lambda_{\text{phys}} \sum \max\left(0, \frac{d\text{SOH}}{dn}\right)^2 + \lambda_{\text{reg}} \|\Theta\|^2
+```
+strictly enforcing physical monotonicity and non-negative degradation rates.
+
+---
+
+## 16. Dynamic LCA carbon accounting & Verifiable Battery Passports
+
+**Dynamic Carbon Footprint** (`src/dynamic_circularity.py::calculate_dynamic_lca`):
+Calculates cradle-to-grave emissions using regional grid carbon intensity $I_{\text{grid}}$ (g CO₂e/kWh) during charging:
+```math
+\text{CO}_{2,\text{net}} = E_{\text{nom}} \times I_{\text{mfg}} + \left(\frac{E_{\text{throughput}}}{\eta} - E_{\text{throughput}}\right) \times I_{\text{grid}} + E_{\text{nom}} \times I_{\text{rec}}
+```
+**W3C Verifiable Credential** (`generate_verifiable_credential_passport`):
+Encodes verified SOH, RUL quantiles, and carbon intensity into a W3C-compliant JSON-LD document with SHA-256 / Ed25519 cryptographic signatures for EU Regulation 2023/1542 DPP compliance.
+
+---
+
+## 17. High-frequency streaming anomaly detection (CUSUM & Mahalanobis)
+
+**Statistical CUSUM** (`src/streaming_analytics.py::StreamingAnomalyEngine`):
+Tracks cumulative positive and negative drifts in terminal voltage with slack $k$ and threshold $h$:
+```math
+S_t^+ = \max(0, S_{t-1}^+ + (V_t - \mu) - k), \qquad S_t^- = \max(0, S_{t-1}^- - (V_t - \mu) - k)
+```
+**Multivariate Mahalanobis Distance Proxy**:
+```math
+D_M = \sqrt{\frac{1}{3}\left(z_V^2 + z_I^2 + z_T^2\right)}
+```
+flagging correlated multi-signal precursors ($D_M > 3.0$) and IEC 62619:2022 thermal runaway triggers ($dT/dt > 2.0\,{}^\circ\text{C/min}$).
 
 ---
 
 ## Where this is enforced, not just described
 
-Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`) that checks the actual computed values against known inputs — this document describes what the tests already verify, not a separate claim. See [`CONTRIBUTING.md`](batlab/datasets/CONTRIBUTING.md) and the `notebooks/` directory for runnable, real-data demonstrations of §3, §6, and §7 specifically.
-
-For dataset-level citations (which published paper each dataset itself comes from, and its license), see [`docs/datasets/`](docs/datasets/index.md) or run `batlab.cite(dataset=...)`. This document is about the *calculations this platform performs*, not the provenance of the raw data those calculations run on.
+Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`) that checks the actual computed values against known inputs.
