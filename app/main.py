@@ -33,6 +33,7 @@ from utils import NASA_CELL_IDS, _md_html, render_card, load_tenant_bundle_cache
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached
 import cell_store
 from chemistry_profiles import ChemistryProfile
+import rbac
 
 
 # ---------------------------------------------------------------------------
@@ -881,12 +882,10 @@ def render_sidebar(cell_ids: list[str], mode: str, nasa_n: int, synth_n: int,
             )
 
         # A7: front-load 1-2 relevant nav groups for non-technical roles —
-        # other groups stay reachable, just collapsed, not hidden.
-        _PRIORITY_GROUPS = {
-            "Executive": {"Operate", "EU Passport"},
-            "Compliance Officer": {"EU Passport"},
-        }
-        _priority = _PRIORITY_GROUPS.get(_cur_role)
+        # other groups stay reachable, just collapsed, not hidden. The
+        # per-role expansion policy lives in src/rbac.py (front_loaded_nav)
+        # so nav UX and server enforcement share one permission source.
+        _priority = rbac.front_loaded_nav(_cur_role)
 
         for group_label, group_items in NAV_GROUPS:
             _has_current = any(key == current_page for _, key in group_items)

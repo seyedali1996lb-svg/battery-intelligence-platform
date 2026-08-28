@@ -31,6 +31,7 @@ import streamlit as st
 from design_system import make_badge, section_header_html, C_GREEN, C_MUTED
 from utils import _md_html, _empty_state, render_card, metric_tile_html
 import db
+import rbac
 
 
 def _section(title: str):
@@ -65,7 +66,7 @@ def render_encryption_key_warning() -> None:
     admin who actually opens Settings should see this directly. Not shown
     to non-admin roles since it names a real security gap in this org's
     deployment, not something every viewer needs surfaced."""
-    if st.session_state.get("auth_role") != "admin":
+    if not rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
         return
     if not db.using_fallback_encryption_key():
         return
@@ -911,7 +912,7 @@ def render_maintenance_writeback() -> None:
 
 
 def render_team_members() -> None:
-    if st.session_state.get("auth_role") != "admin":
+    if not rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
         return
     _section(f"Team Members — {st.session_state.get('auth_org_name', '')}")
     _md_html(
@@ -950,7 +951,7 @@ def render_team_members() -> None:
 
 
 def render_sites_and_fleets(featured_dfs: dict) -> None:
-    if st.session_state.get("auth_role") != "admin":
+    if not rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
         return
     _section("Sites & Fleets")
     _md_html(
@@ -1239,7 +1240,7 @@ def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
     # alone was never a real security boundary). Hiding them here as well
     # avoids a confusing "you can see the field but saving it always
     # errors" experience for non-admin roles.
-    if st.session_state.get("auth_role") == "admin":
+    if rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
         render_application_profile_and_eol()
         render_model_cache()
         render_cost_of_delay()

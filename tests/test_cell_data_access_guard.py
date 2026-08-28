@@ -44,7 +44,7 @@ _ITER_RE = re.compile(rf"\b{_FDFS_VAR_RE}\.(?:items|values)\(\)")
 # file:line -> why this specific full-fleet iteration is legitimate and
 # doesn't need to (or can't cleanly) migrate to a CellSummary query.
 _ALLOWLIST = {
-    "app/main.py:335": (
+    "app/main.py:336": (
         "Inside _persist_cell_data() -- the one place allowed to touch "
         "every cell's full DataFrame: it's the write path that populates "
         "cell_store's Parquet files + CellSummary in the first place, "
