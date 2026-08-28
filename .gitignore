@@ -48,3 +48,6 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Project-local PostgreSQL dev instance (scripts/postgres_dev.py)
+.tools/

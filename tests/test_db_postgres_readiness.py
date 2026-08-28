@@ -25,8 +25,11 @@ def _tiny_sqlite(path: pathlib.Path) -> None:
     import sqlite3
 
     conn = sqlite3.connect(str(path))
-    conn.execute("CREATE TABLE organizations (id INTEGER PRIMARY KEY, slug TEXT, name TEXT)")
-    conn.execute("INSERT INTO organizations (slug, name) VALUES ('demo-org', 'Demo Org')")
+    conn.execute(
+        "CREATE TABLE organizations (id INTEGER PRIMARY KEY, org_id INTEGER, "
+        "slug TEXT, name TEXT, created_at TEXT)"
+    )
+    conn.execute("INSERT INTO organizations (id, org_id, slug, name) VALUES (1, 1, 'demo-org', 'Demo Org')")
     conn.commit()
     conn.close()
 

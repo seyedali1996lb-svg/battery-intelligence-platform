@@ -1,0 +1,7 @@
+# Development-only dependencies — NOT installed by the deploy path
+# (Streamlit Community Cloud / Docker install requirements.txt only).
+#
+# Bundled official PostgreSQL binaries (Windows/macOS/Linux) used by
+# scripts/postgres_dev.py to run a project-local dev server for validating
+# the PostgreSQL backend + migration (scripts/migrate_sqlite_to_postgres.py).
+postgresql-binaries==18.4.0
