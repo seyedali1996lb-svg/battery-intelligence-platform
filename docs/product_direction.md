@@ -87,12 +87,17 @@ first time.
   Note the degree of RBAC progress: server-side write gating for the
   Decision/CMMS-ticket API landed in `src/rbac.py` (create/triage →
   admin/engineer/fleet, external dispatch → admin/engineer, Compliance
-  read-only), and the admin-tier gates in `src/db.py` were already real —
-  but gating the *full* operational write surface server-side (every
-  app mutating action, not just ticket create/triage/dispatch) remains a
-  broader gap. The fleet-operator-facing work already in flight (Phase 4
-  in `README.md`'s roadmap preview) continues — this note doesn't stop
-  it — it just isn't the thing being claimed as *done* right now.
+  read-only), the admin-tier gates in `src/db.py` were already real, and
+  the Streamlit UI now reads the *same* registry — the Settings admin-only
+  sections via the `settings.manage` capability and the sidebar's per-
+  persona nav front-loading via `ui.nav.*`/`ui.frontload.*` — so UI
+  affordances and server enforcement can't drift apart. What remains is
+  purely the *surface*, not the split: gating the full operational write
+  surface server-side (every app mutating action, not just ticket
+  create/triage/dispatch) is a broader gap. The fleet-operator-facing work
+  already in flight (Phase 4 in `README.md`'s roadmap preview) continues —
+  this note doesn't stop it — it just isn't the thing being claimed as
+  *done* right now.
 - **The demo app stays a demo app, on purpose.** It's real, useful evidence
   that the library's outputs assemble into a usable tool, not a
   soon-to-be-replaced placeholder for a fleet-operator product.
