@@ -1091,8 +1091,10 @@ def render_enterprise_sso() -> None:
     Okta/LDAP for enterprise SSO"). Honest about what exists: the OIDC
     adapter (src/sso.py) is built against the spec and reports not-
     configured until a real IdP tenant's settings are present in the
-    environment. No login-path integration exists yet — this card is the
-    visible status, not a fake "SSO enabled" toggle."""
+    environment. The login page shows an SSO button and completes the full
+    authorization-code flow with account provisioning/linking when configured
+    — but no live IdP tenant has validated it end-to-end yet. This card is
+    the visible status, not a fake "SSO enabled" toggle."""
     import os as _os
     from sso import sso_configured
 
@@ -1108,10 +1110,12 @@ def render_enterprise_sso() -> None:
             )
         )
         st.caption(
-            "OIDC provider settings are present in the environment. The OIDC flow "
-            "(src/sso.py) is built against the OpenID Connect spec — the login-page "
-            "integration and a live-tenant validation are still outstanding before "
-            "SSO can actually sign anyone in."
+            "OIDC provider settings are present in the environment, so the login page "
+            "now shows an SSO button that runs the full authorization-code flow "
+            "(state/nonce verification, code exchange, account provisioning or "
+            "linking against the existing User model). The flow is built against the "
+            "OpenID Connect spec — a live-tenant validation is still outstanding "
+            "before SSO can actually sign anyone in."
         )
     else:
         st.markdown(
@@ -1122,9 +1126,10 @@ def render_enterprise_sso() -> None:
             )
         )
         st.caption(
-            "Enterprise SSO via OAuth2/OIDC is implemented as an adapter (src/sso.py, "
-            "spec-built, untested against a live tenant) but not wired into the login "
-            "page. Username/password auth remains the only sign-in path."
+            "Set SSO_OIDC_ISSUER / SSO_CLIENT_ID / SSO_CLIENT_SECRET (via a secrets "
+            "manager, not the repo) to activate the SSO button on the login page. "
+            "The flow (src/sso.py) is spec-built and untested against a live tenant; "
+            "username/password auth remains the always-available sign-in path."
         )
 
 

@@ -183,6 +183,10 @@ class User(Base):
     id            = Column(Integer, primary_key=True, autoincrement=True)
     org_id        = Column(Integer, nullable=False)
     username      = Column(String, unique=True, nullable=False)
+    # Verified email from the SSO IdP when the account was provisioned or
+    # linked via enterprise SSO; the account-linking lookup key. NULL for
+    # password-only accounts that were never SSO-linked.
+    email         = Column(String, nullable=True)
     password_hash = Column(String, nullable=False)
     role          = Column(String, nullable=False)
     display_name  = Column(String)
@@ -193,6 +197,12 @@ class User(Base):
     # reset_login_attempts() below.
     failed_login_attempts = Column(Integer, default=0)
     locked_until           = Column(String, nullable=True)  # ISO datetime, or None
+    # Enterprise SSO (src/sso.py): when set, this user authenticated via an
+    # OIDC identity (provider, subject = IdP 'sub'). Such users carry the
+    # unusable password sentinel _SSO_NO_PASSWORD below so password login
+    # can never succeed for them.
+    sso_provider = Column(String, nullable=True)
+    sso_subject  = Column(String, nullable=True)
 
 
 class Decision(Base):
@@ -437,6 +447,12 @@ def _ensure_login_lockout_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0"))
         if "locked_until" not in cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN locked_until TEXT"))
+        if "sso_provider" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN sso_provider TEXT"))
+        if "sso_subject" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN sso_subject TEXT"))
+        if "email" not in cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN email TEXT"))
 
 
 def _seed_demo_org_and_users() -> None:
@@ -608,7 +624,132 @@ def get_user_by_username(username: str) -> "dict | None":
             "org_name": org.name if org else "",
             "username": row.username, "password_hash": row.password_hash,
             "role": row.role, "display_name": row.display_name,
+            "email": row.email,
+            "sso_provider": row.sso_provider, "sso_subject": row.sso_subject,
         }
+
+
+# ---------------------------------------------------------------------------
+# Enterprise SSO provisioning/linking (src/sso.py drives this)
+# ---------------------------------------------------------------------------
+
+# Sentinels for SSO-only accounts: no real bcrypt hash exists (there is no
+# password to hash), and verify_password() returns False for anything it
+# can't validate, so password login can never succeed for these users.
+_SSO_NO_PASSWORD = "!sso-only:no-password!"
+SSO_ADMIN_ROLE = "admin"  # SSO-provisioned users become their org's first admin
+
+
+def _user_row_to_dict(row, s) -> "dict | None":
+    org = s.query(Organization).filter_by(id=row.org_id).one_or_none()
+    return {
+        "user_id": row.id, "org_id": row.org_id,
+        "org_name": org.name if org else "",
+        "username": row.username, "password_hash": row.password_hash,
+        "role": row.role, "display_name": row.display_name,
+        "email": row.email,
+        "sso_provider": row.sso_provider, "sso_subject": row.sso_subject,
+    }
+
+
+def find_user_by_sso(provider: str, subject: str) -> "dict | None":
+    """Find a user previously provisioned or linked to an OIDC identity."""
+    with Session() as s:
+        row = (
+            s.query(User)
+            .filter_by(sso_provider=provider, sso_subject=subject)
+            .one_or_none()
+        )
+        return _user_row_to_dict(row, s) if row is not None else None
+
+
+def link_user_sso(user_id: int, provider: str, subject: str) -> None:
+    """Attach an OIDC identity to an existing user (idempotent) — the
+    "link" half of SSO account linking: the IdP email already has a local
+    account, so it becomes the user's SSO login."""
+    with Session() as s:
+        row = s.query(User).filter_by(id=user_id).one_or_none()
+        if row is None:
+            return
+        row.sso_provider = provider
+        row.sso_subject = subject
+        s.commit()
+
+
+def provision_or_link_sso_user(
+    email: str,
+    display_name: str,
+    provider: str,
+    subject: str,
+) -> dict:
+    """Provision or link a user from a verified OIDC identity (the "account
+    provisioning/linking against the existing User model" half of SSO).
+
+    Resolution order (all inside one transaction):
+    1. A local user already linked to this (provider, subject) -> log them in.
+    2. A local user with this email address -> LINK the identity to that
+       account (its username becomes the SSO login) and log them in. The
+       identity of an existing account is never silently taken over by a
+       stranger's email claim.
+    3. Otherwise -> create a NEW organization with this person as its first
+       admin (same self-service shape as create_organization_with_admin),
+       username derived from the email local-part (deduped).
+
+    Returns the same user dict shape as get_user_by_username(), which the
+    login page's _log_in_user() consumes directly.
+    """
+    email = email.strip().lower()
+    with Session() as s:
+        # 1. Already-linked account
+        row = (
+            s.query(User)
+            .filter_by(sso_provider=provider, sso_subject=subject)
+            .one_or_none()
+        )
+        if row is not None:
+            return _user_row_to_dict(row, s)
+
+        # 2. Existing account with this verified email -> link, don't create.
+        # (Matches the email column, or the username for accounts created
+        # before the email column existed / that used their email as username.)
+        existing = (
+            s.query(User)
+            .filter((User.email == email) | (User.username == email))
+            .one_or_none()
+        )
+        if existing is not None:
+            existing.email = email
+            existing.sso_provider = provider
+            existing.sso_subject = subject
+            s.commit()
+            return _user_row_to_dict(existing, s)
+
+        # 3. New org + admin, username deduped from the email local-part
+        base = email.split("@")[0][:40] or "sso"
+        username = base
+        i = 2
+        while s.query(User).filter_by(username=username).one_or_none() is not None:
+            username = f"{base}{i}"
+            i += 1
+        org = Organization(
+            name=display_name.strip() or email, slug=_slugify(email),
+            created_at=datetime.datetime.now().isoformat(),
+        )
+        s.add(org)
+        s.commit()
+        s.refresh(org)
+        user = User(
+            org_id=org.id, username=username, email=email,
+            password_hash=_SSO_NO_PASSWORD, role=SSO_ADMIN_ROLE,
+            display_name=display_name.strip() or base,
+            created_at=datetime.datetime.now().isoformat(),
+            sso_provider=provider, sso_subject=subject,
+        )
+        s.add(user)
+        s.commit()
+        s.refresh(user)
+        _ensure_default_site_and_fleet(s, org.id)
+        return _user_row_to_dict(user, s)
 
 
 # ---------------------------------------------------------------------------
