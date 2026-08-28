@@ -443,6 +443,30 @@ where $E_{\text{cur},i} = E_{\text{nom},i} \times \text{SOH}_i/100$ (SoH-limited
 
 **Type:** deterministic aggregation of measured/derived health signals — a capability *offer*, explicitly not a dispatch control signal (stated in the returned `caveats`).
 
+## 24. Model cards, health-as-a-service & live-carbon LCA
+
+**Auto-generated model cards** (`src/model_cards.py`): every logged training run (see §6's reproducibility discussion and `src/experiment_registry.py`) renders as a structured card via `build_model_card(run)` — model identity (framework, feature version, seed, git commit, timestamp), data (chemistry, n_cells/n_rows, feature set, and the dataset's real license resolved through `batlab.cite`'s own license text — the single source of truth; the synthetic fleet is disclosed as internally generated, a tenant upload as license-unknown), validation (LCO method statement, SOH/RUL metrics, per-fold breakdown), hyperparameters, the reproducibility contract (replay via `evaluate_from_manifest`; recorded-vs-current `GBRT_PARAMS` divergence surfaced in `hyperparams_diff_vs_current`, never hidden), and platform-standard limitations (public-lab data, small fold populations, RUL = cycles-to-80%-SOH, dQ/dV-as-simulation — plus NOT-leave-cell-out and synthetic-fleet caveats where applicable). `model_card_markdown()` renders it for the Benchmark page, which also offers a JSON download per run.
+
+**Health-as-a-service** (`GET /cells/{id}/health`): a single machine-readable record composing existing, already-validated plumbing — LCO-validated SOH/RUL (quantiles only when the per-cell RUL reliability floor is met, §7), State-of-Power (the §3 rate-capability proxy), fade rate, an explicit per-metric `confidence` map, EU-passport-facing fragments (chemistry, IEC 62902 R-code via §12's `eol_r_code_recommendation()`, best second-life application via `application_fit()`), and the run's model card. No new computation — the endpoint composes, it does not re-derive.
+
+**Live-carbon LCA**: the market-data adapter's `resolve_carbon_intensity()` (§20) feeds `calculate_dynamic_lca()`'s additive `grid_intensity_g_kwh` override (§16); the REST endpoint opts in via `use_live_carbon=true` and reports `carbon_resolution` (source live/static, window mean, per-hour series) alongside the footprint. Static IEA/EEA table remains the default — live is opt-in, and the response says which source was actually used.
+
+**Type:** structured provenance/reporting layers over already-validated computations — no new model, no new estimate.
+
+## 25. ML-based unsupervised anomaly detection
+
+**What it is:** the complement to the named-rule anomaly engines (§10, §17). Those fire on thresholds a human anticipated; a per-cell Isolation Forest (`src/ml_anomaly.py`) learns the normal region of a cell's *own* feature space from its historical cycles and flags cycles that are novel relative to that history — the signal that catches patterns no rule was written for (e.g. a slow joint capacity+resistance drift no single-channel threshold crosses, or an operating temperature unusual for THIS cell).
+
+**Features** (`MLAnomalyDetector._feature_matrix`): capacity, a 30-cycle rolling fade rate, resistance + resistance-growth, and temperature — derived deterministically from the standard cycle schema; deliberately NOT the full §3 feature pipeline (this is a health-signal detector, not a second training pipeline).
+
+**Warmup handling:** the fade-rate feature needs 30 cycles of history, so a cell's first 30 cycles carry no full rolling window. They are excluded from the fit (fitting on them would teach the forest a spurious early-cycle cluster) and reported in `per_cycle` as unscored warmup with `anomaly_score=null` and an honest note — never scored on a fabricated feature, never silently dropped.
+
+**Scores and threshold:** sklearn's IsolationForest convention is inverted so higher = more anomalous; a cycle is flagged when its score is at or above the (1 − contamination) empirical quantile (default contamination 0.05 — an assumed fraction of anomalous cycles, a modeling assumption, not a physical limit). Scores are relative per cell, so the report returns each cell's own score distribution rather than a global cutoff.
+
+**Honest framing** (in the returned `caveats`, not just this document): unsupervised novelty detection, not fault classification — a flagged cycle is "unusual for this cell's own history", not a diagnosed fault; flags are review signals to cross-check against the named-rule engines before acting. Cells with too few scored cycles are refused with an explicit reason (or listed in `detect_fleet_anomalies()`'s `skipped` map), never given a noisy fit.
+
+**Type:** unsupervised ML novelty detection (IsolationForest) on derived cycle features — a review signal, not a diagnosis.
+
 ## Where this is enforced, not just described
 
-Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`, `tests/test_market_data.py`, `tests/test_health_aware_dispatch.py`, `tests/test_grid_services.py`, `tests/test_managed_charging.py`, `tests/test_fleet_aggregation.py`, `tests/test_api_p1_endpoints.py`) that checks the actual computed values against known inputs.
+Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`, `tests/test_market_data.py`, `tests/test_health_aware_dispatch.py`, `tests/test_grid_services.py`, `tests/test_managed_charging.py`, `tests/test_fleet_aggregation.py`, `tests/test_api_p1_endpoints.py`, `tests/test_model_cards.py`, `tests/test_ml_anomaly.py`, `tests/test_api_p2_endpoints.py`, `tests/test_benchmark_model_card_page.py`) that checks the actual computed values against known inputs.

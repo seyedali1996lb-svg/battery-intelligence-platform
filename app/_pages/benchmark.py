@@ -10,6 +10,7 @@ module docstring for why there is no manual "log this run" step.
 
 import sys
 import os
+import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -140,6 +141,23 @@ def page_benchmark(org_id: int) -> None:
             "cross-dataset transfer run (a single train/eval split, not "
             "leave-cell-out)."
         )
+
+    # ── Auto-generated model card (P2) ──────────────────────────────────────
+    with st.expander("Model card (auto-generated per run)", expanded=False):
+        try:
+            import model_cards as mc
+            card = mc.build_model_card(run)
+        except Exception as exc:
+            st.caption(f"Model card unavailable for this run: {exc}")
+        else:
+            st.markdown(mc.model_card_markdown(card))
+            st.download_button(
+                "Download model card (JSON)",
+                data=json.dumps(card, indent=2, default=str),
+                file_name=f"model_card_{run['run_id']}.json",
+                mime="application/json",
+                key=f"bench_model_card_{run['run_id']}",
+            )
 
     # ── Physics vs GBRT held-out-cell divergence (Phase 6) ──────────────────
     _render_physics_divergence_section(run["dataset"])

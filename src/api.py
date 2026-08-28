@@ -487,6 +487,8 @@ def root():
             "POST /analytics/grid-services-revenue",
             "POST /analytics/managed-charge-plan",
             "POST /fleet/dispatchable-capacity",
+            "GET /cells/{cell_id}/health (Health-as-a-service)",
+            "POST /analytics/ml-anomaly (ML anomaly scan)",
         ],
     )
 
@@ -859,6 +861,8 @@ from src.health_aware_dispatch import arbitrage_schedule, schedule_comparison
 from src.grid_services import grid_services_revenue
 from src.managed_charging import managed_charge_plan
 from src.fleet_aggregation import fleet_dispatchable_offer
+from src.ml_anomaly import detect_anomalous_cycles
+from src import model_cards
 
 
 class ActionCreateRequest(BaseModel):
@@ -960,6 +964,12 @@ class FleetCapacityRequest(BaseModel):
     window_hours: int = 2
     soc_high_limit_pct: float = 95.0
     soc_low_limit_pct: float = 10.0
+
+
+class MLAnomalyRequest(BaseModel):
+    cell_id: str
+    cycles: list[dict]
+    contamination: float = 0.05
 
 
 @app.get("/actions", summary="List operational action center tickets")
@@ -1273,6 +1283,102 @@ def run_pinn_estimation(
     }
 
 
+# ── Health-as-a-service ───────────────────────────────────────────────────────
+
+class CellHealth(BaseModel):
+    cell_id: str
+    cycle_number: int
+    soh_pct: float
+    status: str
+    rul_pred: Optional[float]
+    rul_q10: Optional[float]
+    rul_q90: Optional[float]
+    rul_reliable: bool
+    sop_pct: Optional[float]
+    fade_rate_30cy: Optional[float]
+    is_power_limited: Optional[bool]
+    confidence: dict
+    passport_fragments: dict
+    model_card: dict
+
+
+@app.get("/cells/{cell_id}/health", response_model=CellHealth, summary="Health-as-a-service: LCO-validated SOH/RUL/SoP + confidence + passport fragments")
+def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
+    """The full per-cell health record as a single, machine-readable
+    response: LCO-validated SOH/RUL (with Q10/Q90 only when the per-cell
+    reliability floor is met), State-of-Power, fade rate, an explicit
+    confidence map, EU-passport-facing fragments (chemistry, R-code, best
+    second-life application), and the auto-generated model card of the run
+    that produced this cell's model. Everything reuses existing plumbing
+    (the same bundle, validation gates, and recommendation functions the
+    Streamlit pages use) — no new training, no new cache."""
+    from src.consequences import application_fit, eol_r_code_recommendation, best_fit_application
+
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    bundles = _get_bundles(current_user["org_id"])
+    latest = df.iloc[-1]
+    rul_ok = _rul_reliable_for(cell_id, bundles)
+    profile = ChemistryProfile.for_cell(cell_id)
+
+    def _safe(col: str) -> Optional[float]:
+        v = latest.get(col)
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return None
+        return float(v)
+
+    soh = float(latest["soh_pct"])
+    fade_30 = _safe("fade_rate_30cy")
+    sop_pct = _safe("sop_pct")
+    is_power_limited = bool(latest.get("is_power_limited", False)) if "is_power_limited" in latest.index else None
+
+    fit = application_fit(soh, fade_30 or 0.0, fleet_fade_median=None, sop_pct=sop_pct)
+    _, best_app = best_fit_application(fit)
+    r_code = eol_r_code_recommendation(soh, fade_30 or 0.0, sop_pct=sop_pct)
+
+    # Model card for the run that produced this cell's model — the same
+    # experiment-registry record the Benchmark page shows. The bundle's
+    # own "run_id" (if logged) is used; otherwise the card is built from
+    # the bundle's recorded metadata.
+    bndl = bundles.get(profile.source_kind, {}) if profile else {}
+    run = bndl.get("run") if isinstance(bndl, dict) else None
+    card = model_cards.build_model_card(run) if run else {
+        "model": {"run_id": None, "note": "No experiment-registry run record for this bundle — card fields unavailable."},
+        "dataset": model_cards.dataset_license(profile.source_kind if profile else "upload"),
+    }
+
+    return CellHealth(
+        cell_id=cell_id,
+        cycle_number=int(latest["cycle_number"]),
+        soh_pct=soh,
+        status=_soh_status(soh),
+        rul_pred=_safe("rul_pred") if rul_ok else None,
+        rul_q10=_safe("rul_q10") if rul_ok else None,
+        rul_q90=_safe("rul_q90") if rul_ok else None,
+        rul_reliable=rul_ok,
+        sop_pct=sop_pct,
+        fade_rate_30cy=fade_30,
+        is_power_limited=is_power_limited,
+        confidence={
+            "soh": "Measured/derived — capacity vs the cell's own first cycle (batlab.datasets.schema.compute_soh_pct)",
+            "rul": ("LCO-validated GBRT quantile interval (leave-cell-out, per-cell fold R² ≥ 0.3)" if rul_ok
+                    else "Withheld — per-cell LCO RUL R² below the 0.3 reliability floor"),
+            "sop": "Rate-capability proxy from resistance growth (1/R), not a measured power test",
+        },
+        passport_fragments={
+            "chemistry": profile.short_name if profile else "Unknown",
+            "source_kind": profile.source_kind if profile else "upload",
+            "r_code": r_code["r_code"],
+            "best_second_life_application": best_app["name"],
+            "best_application_fit": best_app["fit"],
+            "is_eol": soh < 80.0,
+        },
+        model_card=card,
+    )
+
+
 # ── Dynamic LCA, Circularity & Verifiable Credentials ─────────────────────────
 
 @app.get("/cells/{cell_id}/dynamic-lca", summary="Calculate cradle-to-grave dynamic CO2e footprint")
@@ -1280,6 +1386,8 @@ def get_cell_dynamic_lca(
     cell_id: str,
     region: str = "EU_AVG",
     grid_intensity_g_kwh: Optional[float] = Query(None, description="Live grid carbon intensity (g CO2e/kWh) from a MarketDataAdapter — overrides the static regional table for the use phase"),
+    use_live_carbon: bool = Query(False, description="Resolve carbon intensity from the named market adapter (live feed when it provides one, static fallback otherwise) instead of only the static table"),
+    carbon_adapter: str = Query("synthetic", description="MarketDataAdapter key for use_live_carbon resolution (see /market/prices)"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     fdfs = _get_featured_dfs(current_user["org_id"])
@@ -1291,7 +1399,23 @@ def get_cell_dynamic_lca(
     chem = getattr(profile, "cathode_name", "LFP") if profile else "LFP"
     nominal_kwh = (float(latest.get("capacity_ah", 2.0)) * 3.3) / 1000.0
     throughput = float(len(df) * max(nominal_kwh, 0.005) * 0.8)
-    return calculate_dynamic_lca(
+
+    carbon_resolution = None
+    if use_live_carbon:
+        try:
+            mkt = get_market_adapter(carbon_adapter)
+        except KeyError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not mkt.is_configured():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Market adapter '{carbon_adapter}' is not configured (missing API key) — cannot resolve live carbon.",
+            )
+        carbon_resolution = resolve_carbon_intensity(region=region, adapter=mkt)
+        if grid_intensity_g_kwh is None:
+            grid_intensity_g_kwh = carbon_resolution["g_co2_per_kwh"]
+
+    result = calculate_dynamic_lca(
         cell_id=cell_id,
         chemistry=chem,
         nominal_kwh=nominal_kwh,
@@ -1299,6 +1423,9 @@ def get_cell_dynamic_lca(
         region=region,
         grid_intensity_g_kwh=grid_intensity_g_kwh,
     )
+    if carbon_resolution is not None:
+        result["carbon_resolution"] = carbon_resolution
+    return result
 
 
 @app.get("/cells/{cell_id}/verifiable-passport", summary="W3C Verifiable Credential EU Battery Passport")
@@ -1355,6 +1482,30 @@ def get_second_life_bids(
         nominal_kwh=nominal_kwh,
     )
 
+
+
+# ── ML-based (unsupervised) anomaly scan ──────────────────────────────────────
+
+@app.post("/analytics/ml-anomaly", summary="Unsupervised ML anomaly scan of one cell's cycle history (IsolationForest)")
+def run_ml_anomaly(
+    req: MLAnomalyRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """One-shot unsupervised anomaly scan over a cell's cycle history,
+    complementing the rule-based engines (IEC 62619 rules, CUSUM,
+    Mahalanobis). Returns per-cycle IsolationForest scores, flagged cycles,
+    and honest caveats — a flagged cycle is 'unusual for this cell's own
+    history', not a diagnosed fault (see src/ml_anomaly.py). cycles: list of
+    {cycle_number, capacity_ah, resistance_ohm?, temperature_c?, soh_pct?}."""
+    import pandas as pd
+
+    if not req.cycles:
+        raise HTTPException(status_code=400, detail="cycles must not be empty.")
+    df = pd.DataFrame(req.cycles)
+    try:
+        return detect_anomalous_cycles(df, contamination=req.contamination)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── Asynchronous Task Queue ──────────────────────────────────────────────────
