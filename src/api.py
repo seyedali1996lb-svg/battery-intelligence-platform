@@ -213,6 +213,28 @@ def get_current_user(
     return {"username": payload["sub"], "org_id": payload["org_id"], "role": payload["role"]}
 
 
+def require_action(action: str):
+    """FastAPI dependency factory for server-side write gating (src/rbac.py).
+
+    Chains on get_current_user so authentication, org scoping, and role
+    enforcement always travel together, then denies the call with a 403 when
+    the authenticated user's role isn't allowed to perform `action`. This is
+    the enforcement edge the Settings roadmap called out: before src/rbac.py,
+    roles only filtered what the UI showed and any authenticated role could hit
+    a write endpoint directly.
+    """
+    def _dep(current_user: dict = Depends(get_current_user)) -> dict:
+        role = current_user["role"]
+        if not can(role, action):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{role}' is not allowed to perform '{action}' "
+                       f"({describe(action)}).",
+            )
+        return current_user
+    return _dep
+
+
 # ── Bundle loading (lazy, singleton) ─────────────────────────────────────────
 
 _bundle_cache: dict | None = None
@@ -897,6 +919,8 @@ from src.managed_charging import managed_charge_plan
 from src.fleet_aggregation import fleet_dispatchable_offer
 from src.ml_anomaly import detect_anomalous_cycles
 from src import model_cards
+from rbac import can, allowed_roles, describe, \
+    ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET
 
 
 class ActionCreateRequest(BaseModel):
@@ -1024,7 +1048,7 @@ def list_action_tickets(
 @app.post("/actions", summary="Create an operational action ticket")
 def create_action_ticket(
     req: ActionCreateRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_action(ACTION_CREATE_TICKET)),
 ) -> dict:
     return action_center.create_action(
         cell_id=req.cell_id,
@@ -1043,7 +1067,7 @@ def create_action_ticket(
 def triage_action_ticket(
     action_id: str,
     req: ActionTriageRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_action(ACTION_TRIAGE_TICKET)),
 ) -> dict:
     try:
         return action_center.triage_action(
@@ -1059,7 +1083,7 @@ def triage_action_ticket(
 def dispatch_action_ticket(
     action_id: str,
     req: ActionDispatchRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_action(ACTION_DISPATCH_TICKET)),
 ) -> dict:
     try:
         return action_center.dispatch_workflow(
