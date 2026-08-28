@@ -42,3 +42,12 @@
         - load_calce_cells
         - CalceDataNotFoundError
         - any_cached
+
+::: batlab.datasets.zhu2022
+    options:
+      show_root_heading: true
+      members:
+        - load_zhu2022_cells
+        - derive_cell_summary
+        - any_cached
+        - download_and_prepare
