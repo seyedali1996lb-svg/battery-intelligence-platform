@@ -22,7 +22,7 @@ This is harder than it looks, for reasons this platform is built specifically to
 - **Data leakage in ML validation is the single most common way that happens** — see [Validation](#validation) below for a real, reproduced example.
 - **There is no standard schema across public battery datasets** — NASA PCoE, the Severson et al. *Nature Energy* dataset, Oxford's path-dependent dataset, and CALCE's CS2 cells each ship in a different file format with different column conventions, which means every research group re-writes the same brittle parsing code.
 
-`batlab`, the research framework underneath this platform, exists to fix the last two problems directly: one standardized schema across all four datasets, and one validation methodology (leave-cell-out) applied by default to every model it trains.
+`batlab`, the research framework underneath this platform, exists to fix the last two problems directly: one standardized schema across all five datasets, and one validation methodology (leave-cell-out) applied by default to every model it trains.
 
 ## Core philosophy
 
@@ -32,14 +32,15 @@ A model's reported accuracy is only meaningful if the test setup answers the que
 
 - **Random row-level train/test splits are misleading** for cycling data, because consecutive cycles from the same cell are nearly identical to each other. A model can memorize a cell's own trajectory and still score well on a held-out *row* from that same cell, without having learned anything that transfers to a new cell.
 - **Leave-cell-out (LCO) validation** holds out entire cells, never seen in training, and reports accuracy only on those. This is the harder, more honest question, and it's the platform's default — not an opt-in mode.
-- **Reproducibility matters** because a claimed R² is worthless if it can't be checked. Every number this platform reports traces back to a runnable notebook or a benchmark manifest, not a number typed into a table.
+- **Reproducibility matters** because a claimed R² is worthless if it can't be checked. Every number this platform reports traces back to a runnable notebook or a benchmark manifest, not a number typed into a table. `batlab.validation.manifest.export_benchmark_results()` also exports a machine-readable benchmark bundle (split manifest + reported metrics, `schema: "batlab-lco-benchmark"`) so other software can consume a number together with the conditions it was produced under.
 
 ## Platform capabilities
 
 The platform is organized into five engineering modules:
 
 **Battery Data Standardization & Universal Ingestion**
-- Unified cycle/summary schema across all four supported datasets (`batlab.datasets`)
+- Unified cycle/summary schema across all five supported datasets (`batlab.datasets`)
+- Fifth dataset: Zhu et al. 2022 voltage-relaxation NCM+NCA 18650s (`batlab.datasets.zhu2022`) — 9 dense-cycling cells (~900-1000 cycles each, 25°C, CC BY 4.0), auto-downloaded from Zenodo with SHA-256 verification; per-cycle capacity is derived from raw discharge-run charge transfer (a characterization-cycle guard, not a naive per-cycle max)
 - Universal Battery Cycler Auto-Ingestion Wizard (`batlab.datasets.cycler_mapper`): instant heuristic schema detection and unit normalizer for **Arbin, BioLogic, Maccor, Neware, Novonix, Bitrode**, and custom CSVs
 - Auto-downloading, checksum-verified dataset loaders with strict `SchemaError` integrity validation
 
@@ -51,6 +52,8 @@ The platform is organized into five engineering modules:
 **Machine Learning & Hybrid Physics Modeling**
 - Literature-cited feature engineering (`batlab.features`) with Leave-Cell-Out (LCO) cross-validation by default
 - GBRT point estimates with Quantile Regression confidence bounds (Q10/Q90)
+- **Quantile-interval calibration** (`batlab.validation.calibration`): leave-cell-out empirical coverage of the Q10/Q90 RUL interval, plus conformal quantile recalibration (Romano et al. 2019) fit per fold on the other folds only — the recalibrator never sees the cell it is applied to
+- **Per-prediction local attribution** (`batlab.models.attribution`): occlusion-based, SHAP-style feature attribution answering "why did THIS cell's RUL come out at X" — per-row/per-feature mean prediction change under counterfactual substitution, no `shap` dependency
 - **Hybrid Physics-Informed Neural / Numerical Estimator (PINN)** (`src/pinn_model.py`): coupled electrochemical-thermal degradation tracking (SEI diffusion-limited LLI + mechanical particle cracking LAM) with monotonicity regularized physics loss
 - Physics-informed calibration (`src/physics_calibration.py`, NASA + Severson): per-cell LLI/LAM decomposition anchored by PyBaMM SPM discharge
 - Asynchronous task worker queue (`src/task_queue.py`) with Server-Sent Events (SSE) progress streaming for non-blocking LCO evaluation
@@ -95,7 +98,7 @@ Every result this platform produces falls into exactly one of five categories, a
 
 | Category | Examples here | How it's produced |
 |---|---|---|
-| **Measured** | Voltage, current, capacity, temperature, cycle count | Read directly from the four public datasets' raw files into the standardized schema — never modified |
+| **Measured** | Voltage, current, capacity, temperature, cycle count | Read directly from the five public datasets' raw files into the standardized schema — never modified |
 | **Derived** | SOH, capacity fade rate, resistance growth, dQ/dV peaks, knee point | Deterministic engineering formulas applied to measured data — the exact formula behind each one is documented in [`METHODOLOGY.md`](METHODOLOGY.md) |
 | **Predicted (ML)** | RUL point estimate, RUL quantile interval | GBRT / quantile models trained on engineered features, always leave-cell-out validated |
 | **Simulated** | PVGIS-driven solar yield in the Solar + Storage Sizing calculator, PyBaMM-based physics capacity projection | Physics-based or third-party-API-driven simulation of a process, not a direct sensor reading |
@@ -160,7 +163,7 @@ is the near-term focus, and what's explicitly deferred — is written up in
 [`docs/product_direction.md`](docs/product_direction.md).
 
 **Phase 1 — Research foundation** *(current)*
-The `batlab` library itself: standardized dataset loaders for all four datasets, literature-cited feature engineering, leave-cell-out-validated GBRT/quantile models, and reproducible benchmark manifests. This phase is what's installable and tested today.
+The `batlab` library itself: standardized dataset loaders for all five datasets, literature-cited feature engineering, leave-cell-out-validated GBRT/quantile models, quantile-interval calibration, and reproducible benchmark manifests. This phase is what's installable and tested today.
 
 **Phase 2 — Industrial analytics** *(partially delivered)*
 Turning per-cell diagnostics into fleet- and deployment-level decision support — the demo app's fleet view, EU Battery Passport, and Solar + Storage Sizing / second-life economics calculator are working examples of this phase, built on public data and clearly labeled assumptions rather than a live industrial dataset.
@@ -176,7 +179,7 @@ The Victron VRM and Orion Jr2 adapters (`src/bms_connectors.py`) now share one f
 Being explicit about what this platform is not, as of today:
 
 **Currently:**
-- No proprietary factory or manufacturer data — only the four public datasets listed above
+- No proprietary factory or manufacturer data — only the five public datasets listed above
 - No real vehicle or stationary-storage fleet — fleet views operate on the same public-dataset cells or an honestly-labelled synthetic fleet
 - No validated live BMS connection — the Victron/Orion adapters (now unified under one formal `BMSAdapter` protocol) exist in code but have never been run against a live account, and Live Monitor's telemetry stream is a simulated replay, not a real one
 

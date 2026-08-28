@@ -52,7 +52,7 @@ methodology and easy to run, both of which are already true.
 
 - `pip install -e ".[severson,oxford,calce]"` installs `batlab` as a
   standalone library with no Streamlit/app dependency required.
-- Four public datasets (NASA PCoE, Severson 2019, Oxford Path-Dependent,
+- Five public datasets (NASA PCoE, Severson 2019, Oxford Path-Dependent,
   CALCE) load through one standardized schema, with checksum-verified
   downloads and a `SchemaError` on any malformed input.
 - Every model is leave-cell-out validated by default, and the gap between

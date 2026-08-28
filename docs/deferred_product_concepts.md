@@ -15,7 +15,7 @@ in-house test data, not just public datasets.
 
 **Why deferred:** blocked on hardened ingestion for arbitrary proprietary
 customer file formats. The platform today handles exactly two ingestion
-shapes well: the four public datasets' own native formats (`batlab.datasets`,
+shapes well: the five public datasets' own native formats (`batlab.datasets`,
 checksum-verified, one schema each) and one manually-mapped CSV schema for
 a researcher bringing their own data (see [Research Platform setup
 path](research_platform_setup.md)) — which requires that researcher to do

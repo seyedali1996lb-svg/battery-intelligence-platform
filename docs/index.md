@@ -2,7 +2,7 @@
 
 A citable, honest research library for battery degradation analysis.
 
-- Standardized loaders for four public li-ion cycling datasets (NASA, Severson, Oxford, CALCE) — one documented schema, not four ad hoc shapes.
+- Standardized loaders for five public li-ion cycling datasets (NASA, Severson, Oxford, CALCE, Zhu 2022) — one documented schema, not five ad hoc shapes.
 - Literature-cited feature engineering (fade rate, dQ/dV, knee detection, Coulombic Efficiency, stress index).
 - Gradient-boosted SOH/RUL models validated with **leave-cell-out** cross-validation, not a row-level split that quietly leaks near-neighbor cycles into the test set.
 - A reproducible benchmark manifest format that records the exact seed, fold assignments, and feature-engineering version behind a reported number.

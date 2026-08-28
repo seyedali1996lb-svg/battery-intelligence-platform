@@ -308,6 +308,24 @@ _KNOWN_GAP_CAVEATS: dict[str, dict[str, str]] = {
         "voltage_charge_cutoff_v": "No confirmed voltage cutoff found in the source's published documentation.",
         "voltage_discharge_cutoff_v": "No confirmed voltage cutoff found in the source's published documentation.",
     },
+    "zhu2022": {
+        "c_rate": (
+            "The dataset's own naming convention encodes the charge rate (CY25-05 → 25 °C, "
+            "0.5C) and the raw files show a ~2.5 A (≈1C) discharge current, but no per-cycle "
+            "C-rate is recorded in the source CSVs — the c_rate column is omitted rather than "
+            "approximated."
+        ),
+        "voltage_charge_cutoff_v": (
+            "Zhu 2022's published dataset description documents temperature and C-rate via the "
+            "cell-name convention but states no charge voltage cutoff — not recorded rather "
+            "than guessed."
+        ),
+        "voltage_discharge_cutoff_v": (
+            "Zhu 2022's published dataset description documents temperature and C-rate via the "
+            "cell-name convention but states no discharge voltage cutoff — not recorded rather "
+            "than guessed."
+        ),
+    },
 }
 
 

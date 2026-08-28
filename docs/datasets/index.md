@@ -8,6 +8,7 @@ Every loader in `batlab.datasets` returns `{cell_id: DataFrame}` in one standard
 | Severson 2019 | `batlab.datasets.severson` | LFP | 12 | cycle | Yes | `severson2019` |
 | Oxford Path-Dependent 2020 | `batlab.datasets.oxford` | NCA | 12 | checkpoint (~8-14/cell, sparse) | Yes | `oxford2020` |
 | CALCE CS2 | `batlab.datasets.calce` | LiCoO2 | any (manual placement) | cycle | No — manual download | `calce` |
+| Zhu 2022 voltage relaxation | `batlab.datasets.zhu2022` | NCM+NCA | 9 | cycle (~900-1000/cell, dense) | Yes | `zhu2022` |
 
 Get the full citation (BibTeX + license) for any dataset with `batlab.cite(dataset=<citation key>)`.
 
@@ -50,6 +51,15 @@ except CalceDataNotFoundError as exc:
     print(exc)  # tells you exactly where to download from and where to place files
 ```
 
-## Adding a 5th loader
+## Zhu 2022 voltage relaxation
+
+Zhu et al., *Nature Communications* 2022 — 9 commercial 18650 cells with a blended NCM+NCA cathode, cycled at 25 °C (0.5C charge / ~1C discharge) as part of a study on capacity estimation from voltage relaxation. Dense per-cycle data (~910-1030 cycles/cell, first-cycle capacity ~2.47-2.50 Ah fading to ~62-67% SOH), so it runs through the GBRT + LCO pipeline as a genuinely new chemistry for this library. Auto-downloads a ~356 MB ZIP from Zenodo on first call (SHA-256 checksum-verified; matches the archive's own published md5), then derives per-cycle discharge capacity from the raw `Q discharge/mA.h` column — taking the largest single discharge-run delta per cycle rather than the per-cycle maximum, because a handful of characterization cycles contain multiple discharge segments (see `batlab/datasets/zhu2022.py`'s docstring). Per-cell summaries are cached as small CSVs. License: CC BY 4.0.
+
+```python
+from batlab.datasets import load_zhu2022_cells
+cells = load_zhu2022_cells()
+```
+
+## Adding a 6th loader
 
 See [`batlab/datasets/CONTRIBUTING.md`](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/blob/master/batlab/datasets/CONTRIBUTING.md) for the mechanical checklist: schema contract, citation/license, download policy, fixture-based tests.

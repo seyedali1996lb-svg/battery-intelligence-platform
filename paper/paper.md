@@ -41,6 +41,15 @@ Still open — TODO(human author) before submitting to JOSS:
     replace once there's something real to report (adoption, downloads,
     citations, a dependent package). Don't inflate it, don't delete it
     while the honest answer is still "not yet".
+
+Updated 2026-08-28 (pre-submission content refresh): added a fifth dataset
+loader (Zhu 2022 voltage-relaxation NCM+NCA cells), leave-cell-out
+quantile-interval calibration with conformal recalibration
+(batlab.validation.calibration), occlusion-based per-prediction local
+attribution (batlab.models.attribution), and a machine-readable benchmark
+bundle export (batlab.validation.manifest.export_benchmark_results). The
+summary/statement-of-need/software-design sections below were refreshed to
+match; the research-impact statement stays honest (no external users yet).
 -->
 
 # Summary
@@ -52,12 +61,16 @@ tooling make it easy to report an inflated, non-reproducible accuracy number wit
 `batlab` is a Python library that packages three things researchers in this space need but
 usually have to rebuild themselves for every project: (1) standardized loaders for public
 cycling datasets (NASA PCoE [@saha2007nasa], Severson 2019 [@severson2019data], Oxford
-Path-Dependent 2020 [@raj2020pathdependent], CALCE CS2 [@calce_battery_data]) that all return one
-documented DataFrame schema instead of four incompatible ad hoc shapes; (2) literature-cited
+Path-Dependent 2020 [@raj2020pathdependent], CALCE CS2 [@calce_battery_data], and the Zhu 2022
+voltage-relaxation NCM+NCA cells [@zhu2022voltage]) that all return one
+documented DataFrame schema instead of five incompatible ad hoc shapes; (2) literature-cited
 feature engineering and gradient-boosted SOH/RUL models validated with leave-cell-out (LCO)
-cross-validation rather than a row-level split; and (3) a reproducible-benchmark manifest format
-that records the exact fold assignments, random seed, and feature-engineering version behind a
-reported number, so it can be checked rather than taken on faith.
+cross-validation rather than a row-level split; (3) leave-cell-out calibration of the Q10/Q90
+prediction interval, with a conformal quantile-recalibration step that never sees the cell it is
+applied to; and (4) a reproducible-benchmark manifest format that records the exact fold
+assignments, random seed, and feature-engineering version behind a reported number — exportable
+as a machine-readable bundle other software can consume — so it can be checked rather than taken
+on faith.
 
 # Statement of need
 
@@ -76,9 +89,9 @@ Researchers evaluating a new feature, model architecture, or dataset for battery
 prediction currently have to write dataset-specific parsers, decide how to split their data, and
 implement their own reliability gating from scratch — work that is redone, inconsistently, across
 many papers and repositories, and rarely open-sourced in a form another group can directly reuse.
-`batlab` is aimed at that researcher: install it, load one of four public datasets in one
+`batlab` is aimed at that researcher: install it, load one of five public datasets in one
 standardized schema, and get an LCO-validated baseline with an honest, per-cell reliability
-number (`RUL_RELIABLE_FLOOR`) in minutes, or extend it with a fifth dataset loader following the
+number (`RUL_RELIABLE_FLOOR`) in minutes, or extend it with further dataset loaders following the
 mechanical checklist in `batlab/datasets/CONTRIBUTING.md`.
 
 # State of the field
@@ -117,7 +130,10 @@ targets.
 `batlab.datasets` (loaders, schema contract, no dependency on the other three), `batlab.features`
 (pure functions of a schema-conformant DataFrame), `batlab.models` (GBRT training/prediction, no
 dependency on `datasets`), and `batlab.validation` (leave-cell-out evaluation and the
-reproducible split-manifest format, depending only on `features`). Dataset-specific heavy
+reproducible split-manifest format and quantile-interval calibration, depending only on
+`features`). The validation package also exports a machine-readable benchmark bundle pairing the
+split manifest with the reported metrics, so a published number ships together with the exact
+conditions it was produced under. Dataset-specific heavy
 dependencies (`h5py` for Severson's MATLAB v7.3 files, `mat-io` for Oxford's MCOS-serialized
 MATLAB tables, `openpyxl` for CALCE's Arbin Excel exports) are optional extras, not core
 dependencies, so installing `batlab` to use one loader does not require every loader's parser.

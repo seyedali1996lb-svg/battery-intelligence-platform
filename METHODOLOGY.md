@@ -95,7 +95,7 @@ All of the following are computed in `batlab/features/engineering.py::build_feat
 
 **What it is:** peak position, amplitude, area, and width of the dQ/dV curve, a classic electrode-diagnostic technique (Dubarry & Liaw 2009) that identifies *which* electrode mechanism (loss of active material vs. loss of lithium inventory) is driving fade.
 
-**Why it's flagged:** none of the four datasets this platform loads (NASA, Severson, Oxford, CALCE) expose raw voltage/current time series — only per-cycle summary values (capacity, resistance). A true dQ/dV curve requires the full discharge voltage curve, which isn't available. Instead, `batlab/features/dqdv.py::simulate_vq_curve()` **simulates** a plausible LiCoO₂ discharge voltage curve from a parametric open-circuit-voltage (OCV) polynomial model:
+**Why it's flagged:** none of the four summary-level datasets this platform's dQ/dV module operates on (NASA, Severson, Oxford, CALCE) expose raw voltage/current time series — only per-cycle summary values (capacity, resistance). (The Zhu 2022 loader's raw files *do* contain full voltage/current time series, but its loader deliberately reduces them to the same summary schema, so the simulation remains the applicable path there too.) A true dQ/dV curve requires the full discharge voltage curve, which the summary schema doesn't carry. Instead, `batlab/features/dqdv.py::simulate_vq_curve()` **simulates** a plausible LiCoO₂ discharge voltage curve from a parametric open-circuit-voltage (OCV) polynomial model:
 
 ```math
 \text{OCV}(\text{SOC}) = 3.7 + 0.7\,\text{SOC} - 0.5\,\text{SOC}^2 + 0.3\,\text{SOC}^3 - 0.1(1-\text{SOC})^3 + 0.08\,e^{-20\,\text{SOC}} - 0.05\,e^{-20(1-\text{SOC})}
@@ -348,6 +348,34 @@ D_M = \sqrt{\frac{1}{3}\left(z_V^2 + z_I^2 + z_T^2\right)}
 flagging correlated multi-signal precursors ($D_M > 3.0$) and IEC 62619:2022 thermal runaway triggers ($dT/dt > 2.0\,{}^\circ\text{C/min}$).
 
 ---
+
+## 18. Quantile-interval calibration — LCO coverage and conformal recalibration
+
+**What it is:** the Q10/Q90 quantile GBRT models (see §6) claim an 80% prediction interval, but `train_models()` only ever measured that interval's empirical coverage on a chronological holdout of cells the model had already partly seen. `batlab.validation.calibration` asks the honest LCO version of the question and adds a leakage-free correction:
+
+**`run_lco_quantiles()`** trains the RUL point + Q10/Q90 models under the same leave-cell-out folds as `run_lco()` and reports empirical coverage on cells never seen in training:
+
+```math
+\text{coverage} = \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}[y_i \in [\hat{q}_{10,i},\, \hat{q}_{90,i}]]
+```
+
+**`recalibrate_lco_intervals()`** applies **conformal quantile recalibration** (Romano, Patterson & Candès, NeurIPS 2019): for a held-out fold, compute each calibration point's conformity score $E_i = \max(\hat{q}_{10,i} - y_i,\ y_i - \hat{q}_{90,i})$ — how far the true value falls outside its own raw interval — using only the *other* folds' points; then widen the held-out fold's interval to $[\hat{q}_{10} - E^*,\ \hat{q}_{90} + E^*]$, where $E^*$ is the $(1-\alpha)(n+1)/n$ empirical quantile of those scores ($\alpha = 0.2$ for the default 80% interval). The recalibrator never sees the cell it is applied to, and the method carries a distribution-free marginal coverage guarantee at the nominal level.
+
+**Why not isotonic-on-(predicted-quantile, true) pairs:** fitting isotonic regression of the true value on the predicted quantile approximates a conditional *mean*, not a quantile — it collapses an over-narrow interval instead of correcting it (fitting on $(F_i(y_i), y_i)$ pairs is mathematically a fixed point that recovers the model's own inverse CDF). Conformal scores are the standard, correct alternative.
+
+**Type:** empirical coverage is a deterministic statistic on measured/predicted values; recalibration is a distribution-free statistical correction with a marginal guarantee — still not a per-cell conditional guarantee, and with LCO's small fold populations the corrected coverage is an estimate, not a certificate.
+
+## 19. Per-prediction local attribution (occlusion-based, SHAP-style)
+
+**What it is:** `feature_importances_` (§6) answers "what drives this model in general" but not "why did THIS cell's RUL come out at 512 cycles?". `batlab.models.attribution::occlusion_attribution()` answers the local question: for one prediction $x$ and feature $j$, draw $n$ values of feature $j$ from a reference distribution, substitute each into $x$ one at a time, and record the mean absolute prediction change:
+
+```math
+\phi_j(x) = \frac{1}{n}\sum_{k=1}^{n} \left| f(x) - f(x^{(k)})\right|,\qquad x^{(k)}_j \sim P_{X_j}^{\text{ref}}
+```
+
+A feature the model leans on for this specific row shows a large mean change; an irrelevant feature leaves the prediction untouched. `mean_attribution()` averages this per-row signal into a local-first feature ranking, and `top_attributions()` returns the per-row top-N for a "why this prediction?" UI.
+
+**Type:** a Monte Carlo sensitivity/perturbation estimate, seeded and deterministic for a fixed seed. It is SHAP-*style* (counterfactual perturbation attribution), not the exact game-theoretic TreeSHAP values, which require the `shap` package's tree-path algorithm — the module deliberately has no `shap` dependency, and the values should be read as a ranking signal rather than a precise Shapley decomposition.
 
 ## Where this is enforced, not just described
 

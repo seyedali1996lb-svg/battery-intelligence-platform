@@ -5,6 +5,7 @@ from batlab.datasets.nasa import load_nasa_cells
 from batlab.datasets.oxford import load_oxford_cells
 from batlab.datasets.severson import load_severson_cells
 from batlab.datasets.calce import CalceDataNotFoundError, load_calce_cells
+from batlab.datasets.zhu2022 import load_zhu2022_cells
 
 __all__ = [
     "validate_schema",
@@ -16,4 +17,5 @@ __all__ = [
     "load_oxford_cells",
     "load_calce_cells",
     "CalceDataNotFoundError",
+    "load_zhu2022_cells",
 ]

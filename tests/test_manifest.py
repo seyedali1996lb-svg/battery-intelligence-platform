@@ -15,14 +15,21 @@ import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
 
+import numpy as np
+import pandas as pd
 import pytest
+import sklearn
 from conftest import make_cycles_df
 
 from batlab.validation.manifest import (
+    BENCHMARK_SCHEMA,
+    BENCHMARK_SCHEMA_VERSION,
     FEATURE_VERSION,
-    export_split_manifest,
-    load_manifest,
     evaluate_from_manifest,
+    export_benchmark_results,
+    export_split_manifest,
+    load_benchmark_results,
+    load_manifest,
 )
 
 
@@ -141,3 +148,78 @@ def test_evaluate_from_manifest_rejects_missing_cells(tmp_path):
 
     with pytest.raises(ValueError, match="missing"):
         evaluate_from_manifest(path, {"CellA": make_cycles_df()})
+
+
+# ---------------------------------------------------------------------------
+# Benchmark bundle export (machine-readable interop format)
+# ---------------------------------------------------------------------------
+
+
+def _fake_lco_result():
+    """A run_lco()-shaped dict with numpy scalar metrics — exercises the
+    JSON serializer's numpy handling without paying for a real LCO run."""
+    return {
+        "soh_r2": float(np.float64(0.806)),
+        "soh_mae": float(np.float64(3.70)),
+        "rul_r2": float(np.float64(0.629)),
+        "rul_mae": float(np.float64(8.06)),
+        "rul_reliable": True,
+        "per_cell": {
+            "CellA": {"soh_mae": 3.1, "soh_r2": 0.81, "rul_mae": 7.2, "rul_r2": 0.60},
+            "CellB": {"soh_mae": 4.3, "soh_r2": 0.80, "rul_mae": 8.9, "rul_r2": 0.66},
+        },
+    }
+
+
+def test_export_and_load_benchmark_round_trip(tmp_path):
+    path = tmp_path / "benchmark.json"
+    written = export_benchmark_results(_fake_lco_result(), path, cell_ids=["CellA", "CellB"], seed=9)
+    loaded = load_benchmark_results(path)
+    assert loaded == written
+    assert loaded["schema"] == BENCHMARK_SCHEMA
+    assert loaded["schema_version"] == BENCHMARK_SCHEMA_VERSION
+    assert loaded["metrics"]["soh_r2"] == 0.806
+    assert loaded["metrics"]["rul_reliable"] is True
+    assert loaded["seed"] == 9
+    assert loaded["feature_version"] == FEATURE_VERSION
+    assert len(loaded["folds"]) == 2
+    assert loaded["folds"][0]["test_cell"] == "CellA"
+    assert loaded["folds"][0]["train_cells"] == ["CellB"]
+    assert loaded["per_cell"]["CellA"]["rul_r2"] == 0.60
+
+
+def test_export_benchmark_pins_environment_and_uses_numpy_clean_serialization(tmp_path):
+    """The interop contract: the number ships with the environment and fold
+    structure it was produced under, and numpy scalars never break JSON."""
+    import numpy as np
+
+    result = _fake_lco_result()
+    result["soh_r2"] = np.float64(0.9)  # raw numpy scalar on purpose
+    path = tmp_path / "benchmark.json"
+    written = export_benchmark_results(result, path)
+    assert written["environment"] == {
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+        "scikit-learn": sklearn.__version__,
+    }
+    assert written["metrics"]["soh_r2"] == 0.9
+    # round-trip through real JSON, not just the in-memory dict
+    assert load_benchmark_results(path)["metrics"]["soh_r2"] == 0.9
+
+
+def test_load_benchmark_rejects_wrong_schema_or_version(tmp_path):
+    path = tmp_path / "benchmark.json"
+    path.write_text(json.dumps({"schema": "something-else", "schema_version": 1}))
+    with pytest.raises(ValueError, match="Not a batlab benchmark"):
+        load_benchmark_results(path)
+
+    path.write_text(json.dumps({"schema": BENCHMARK_SCHEMA, "schema_version": 999}))
+    with pytest.raises(ValueError, match="schema_version"):
+        load_benchmark_results(path)
+
+
+def test_export_benchmark_requires_lco_shaped_result(tmp_path):
+    with pytest.raises(ValueError, match="per_cell"):
+        export_benchmark_results({"soh_r2": 0.8}, tmp_path / "x.json")
+    with pytest.raises(ValueError, match="at least 2 cells"):
+        export_benchmark_results({"per_cell": {"CellA": {}}}, tmp_path / "x.json")

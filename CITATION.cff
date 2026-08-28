@@ -25,12 +25,13 @@ keywords:
 abstract: >-
   batlab is a Python research library for lithium-ion battery degradation
   analysis: standardized dataset loaders (NASA PCoE, Severson 2019, Oxford
-  Path-Dependent 2020, CALCE CS2), literature-cited feature engineering,
-  leave-cell-out-validated GBRT SOH/RUL models, and reproducible benchmark
-  manifests. Built around the position that a battery-ML result is only
-  useful if it is validated honestly (leave-cell-out, not a row-level
-  split) and reported with its actual sample size and reliability, not
-  just a headline R-squared.
+  Path-Dependent 2020, CALCE CS2, Zhu 2022 voltage relaxation),
+  literature-cited feature engineering, leave-cell-out-validated GBRT
+  SOH/RUL models, quantile-interval calibration, per-prediction local
+  attribution, and reproducible benchmark manifests. Built around the
+  position that a battery-ML result is only useful if it is validated
+  honestly (leave-cell-out, not a row-level split) and reported with its
+  actual sample size and reliability, not just a headline R-squared.
 preferred-citation:
   type: software
   title: "batlab: a citable, honest research library for battery degradation analysis"

@@ -76,6 +76,19 @@ _DATASETS: dict[str, dict[str, str]] = {
                     "generated it, in addition to the dataset itself — see the source page for the "
                     "specific paper per cell series.",
     },
+    "zhu2022": {
+        "bibtex": """@article{zhu2022voltage,
+  title   = {Data-driven capacity estimation of commercial lithium-ion batteries from voltage relaxation},
+  author  = {Zhu, Jiangong and Wang, Yixiu and Huang, Yuan and Gopaluni, R. Bhushan and Cao, Yankai and Heere, Michael and M{\"u}hlbauer, Martin J. and Mereacre, Liuda and Dai, Haifeng and Liu, Xinhua and Senyshyn, Anatoliy and Wei, Xuezhe and Knapp, Michael and Ehrenberg, Helmut},
+  journal = {Nature Communications},
+  volume  = {13},
+  pages   = {2261},
+  year    = {2022},
+  doi     = {10.1038/s41467-022-29837-w}
+}""",
+        "license": "Creative Commons Attribution 4.0 (CC BY 4.0) — https://creativecommons.org/licenses/by/4.0/."
+                    " Zenodo record 6405084 (https://zenodo.org/records/6405084).",
+    },
 }
 
 

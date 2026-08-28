@@ -31,10 +31,20 @@ from datetime import datetime, timezone
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
+import numpy as np
+
 from batlab.features.engineering import FEATURE_VERSION
 from batlab.validation.lco import run_lco
 
 MANIFEST_SCHEMA_VERSION = 2
+
+# Schema marker + version for the machine-readable benchmark bundle written
+# by export_benchmark_results() (see below) — distinct from the split-only
+# manifest schema above: a benchmark bundle records BOTH the split structure
+# AND the actual reported metrics, so other software can consume the number
+# together with the conditions it was produced under.
+BENCHMARK_SCHEMA = "batlab-lco-benchmark"
+BENCHMARK_SCHEMA_VERSION = 1
 
 # Re-exported from batlab.features.engineering — the single source of truth
 # for "which version of build_features() produced this feature data" (see
@@ -119,6 +129,94 @@ def load_manifest(path: str | Path) -> dict:
             "the current batlab.validation.manifest."
         )
     return manifest
+
+
+def export_benchmark_results(
+    result: dict,
+    path: str | Path,
+    cell_ids: list[str] | None = None,
+    seed: int = 42,
+    feature_version: str = FEATURE_VERSION,
+) -> dict:
+    """
+    Write a machine-readable LCO benchmark bundle: the fold structure a
+    split manifest records (which cells, what order, what seed/feature
+    version) PLUS the actual reported metrics and per-cell fold results.
+
+    This is the interop surface: other software (a BESS optimizer, a
+    partner's fleet tool, a benchmark aggregator) can consume a reported
+    SOH/RUL accuracy number together with the exact conditions it was
+    produced under, without re-implementing this library's LCO semantics.
+    `result` is any dict shaped like batlab.validation.lco.run_lco()'s
+    return value (soh_r2/soh_mae/rul_r2/rul_mae/rul_reliable/per_cell) —
+    the output of evaluate_from_manifest() works unchanged.
+
+    Returns the benchmark dict that was written (same content as the JSON
+    file). `cell_ids` fixes the fold enumeration order (default: the order
+    of `result["per_cell"]`).
+    """
+    if "per_cell" not in result:
+        raise ValueError("result must be shaped like run_lco()'s return value — "
+                         "missing 'per_cell'.")
+    if cell_ids is None:
+        cell_ids = list(result["per_cell"].keys())
+    if len(cell_ids) < 2:
+        raise ValueError("A benchmark bundle needs at least 2 cells.")
+
+    benchmark = {
+        "schema": BENCHMARK_SCHEMA,
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "seed": seed,
+        "feature_version": feature_version,
+        "environment": _current_environment(),
+        "metrics": {
+            k: result[k]
+            for k in ("soh_r2", "soh_mae", "rul_r2", "rul_mae", "rul_reliable")
+            if k in result
+        },
+        "per_cell": {
+            cell: {k: v for k, v in fold.items() if not isinstance(v, np.ndarray)}
+            for cell, fold in result["per_cell"].items()
+        },
+        "folds": [
+            {
+                "fold": i,
+                "test_cell": test_cell,
+                "train_cells": [c for c in cell_ids if c != test_cell],
+            }
+            for i, test_cell in enumerate(cell_ids)
+        ],
+    }
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(benchmark, indent=2, default=_json_default))
+    return benchmark
+
+
+def _json_default(obj):
+    """Serialize numpy scalars (e.g. np.float64 metrics) to plain JSON types."""
+    if isinstance(obj, np.generic):
+        return obj.item()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def load_benchmark_results(path: str | Path) -> dict:
+    """Load and validate a benchmark bundle written by export_benchmark_results()."""
+    benchmark = json.loads(Path(path).read_text())
+    if benchmark.get("schema") != BENCHMARK_SCHEMA:
+        raise ValueError(
+            f"Not a batlab benchmark bundle (schema {benchmark.get('schema')!r} != "
+            f"{BENCHMARK_SCHEMA!r})."
+        )
+    if benchmark.get("schema_version") != BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(
+            f"Benchmark schema_version {benchmark.get('schema_version')!r} != "
+            f"supported version {BENCHMARK_SCHEMA_VERSION}. Re-export it with "
+            "the current batlab.validation.manifest."
+        )
+    return benchmark
 
 
 def evaluate_from_manifest(manifest: dict | str | Path, cell_data: dict) -> dict:
