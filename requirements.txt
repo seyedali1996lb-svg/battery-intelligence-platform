@@ -19,6 +19,9 @@ fastapi[standard]
 uvicorn
 qrcode[pil]
 sqlalchemy
+# PostgreSQL driver — only used when DATABASE_URL points at postgres
+# (SQLite is the default); see scripts/migrate_sqlite_to_postgres.py
+psycopg2-binary
 pytest
 bcrypt
 mat-io

@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 
 from design_system import make_badge, section_header_html, C_GREEN, C_MUTED
-from utils import _md_html, _empty_state
+from utils import _md_html, _empty_state, render_card, metric_tile_html
 import db
 
 
@@ -1086,6 +1086,48 @@ def render_onboarding_replay() -> None:
         st.rerun()
 
 
+def render_enterprise_sso() -> None:
+    """Enterprise SSO status gate (Production Readiness Roadmap: "OAuth2 via
+    Okta/LDAP for enterprise SSO"). Honest about what exists: the OIDC
+    adapter (src/sso.py) is built against the spec and reports not-
+    configured until a real IdP tenant's settings are present in the
+    environment. No login-path integration exists yet — this card is the
+    visible status, not a fake "SSO enabled" toggle."""
+    import os as _os
+    from sso import sso_configured
+
+    _section("Enterprise SSO (OIDC)")
+    _issuer = _os.environ.get("SSO_OIDC_ISSUER", "")
+    if sso_configured():
+        st.markdown(
+            render_card(
+                metric_tile_html("SSO status", "Configured",
+                                 "OIDC discovery will be fetched from the issuer at first login flow",
+                                 value_color="#4ade80")
+                + f"<div style='font-size:12px;color:#8896a8;margin-top:8px'>Issuer: {_issuer}</div>",
+            )
+        )
+        st.caption(
+            "OIDC provider settings are present in the environment. The OIDC flow "
+            "(src/sso.py) is built against the OpenID Connect spec — the login-page "
+            "integration and a live-tenant validation are still outstanding before "
+            "SSO can actually sign anyone in."
+        )
+    else:
+        st.markdown(
+            render_card(
+                metric_tile_html("SSO status", "Not configured",
+                                 "Set SSO_OIDC_ISSUER / SSO_CLIENT_ID / SSO_CLIENT_SECRET (via a secrets manager, not the repo)",
+                                 value_color="#a0aec0")
+            )
+        )
+        st.caption(
+            "Enterprise SSO via OAuth2/OIDC is implemented as an adapter (src/sso.py, "
+            "spec-built, untested against a live tenant) but not wired into the login "
+            "page. Username/password auth remains the only sign-in path."
+        )
+
+
 def render_production_roadmap() -> None:
     _section("Production Readiness Roadmap")
     st.caption("This platform's primary direction is a Research Platform for public battery-cycling data (see docs/product_direction.md) — the Streamlit app you're using is a real demo built on that library, run with intentional constraints, not a production fleet-operations deployment. The table below documents the credible path to production deployment for fleet-operator use cases.")
@@ -1210,5 +1252,6 @@ def render_settings_configuration(featured_dfs: dict, bundles: dict) -> None:
     render_sites_and_fleets(featured_dfs)
     render_ai_copilot_key()
     render_onboarding_replay()
+    render_enterprise_sso()
     render_production_roadmap()
     render_about()

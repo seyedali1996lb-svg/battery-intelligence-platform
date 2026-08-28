@@ -26,9 +26,21 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 DB_PATH = pathlib.Path(__file__).parent.parent / "data" / "app.db"
-DB_URL = f"sqlite:///{DB_PATH}"
 
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+# SQLite by default (the single-user demo deployment); a production
+# deployment can point DATABASE_URL at PostgreSQL (e.g.
+# postgresql+psycopg2://user:pass@host/db) and this module's ORM layer
+# runs against it with no code changes — see scripts/migrate_sqlite_to_postgres.py
+# for the data copy + row-level-security DDL.
+DB_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DB_PATH}")
+
+_engine_kwargs: dict = {}
+if DB_URL.startswith("sqlite"):
+    # SQLite-specific: this app's Streamlit process serves multiple threads
+    # (each rerun touches the DB), so the default check_same_thread guard
+    # must be relaxed for the demo DB. Postgres needs no such knob.
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+engine = create_engine(DB_URL, **_engine_kwargs)
 Session = sessionmaker(bind=engine)
 Base = declarative_base()
 

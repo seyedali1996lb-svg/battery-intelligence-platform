@@ -467,6 +467,16 @@ where $E_{\text{cur},i} = E_{\text{nom},i} \times \text{SOH}_i/100$ (SoH-limited
 
 **Type:** unsupervised ML novelty detection (IsolationForest) on derived cycle features — a review signal, not a diagnosis.
 
+## 26. Digital twin architecture (Phase 3)
+
+**What it is:** the defined architecture connecting a cell's measured history, its derived health indicators, and a physics-based degradation model into one continuously-updated representation — `src/digital_twin.py`'s `CellTwin`. The twin holds three layers in a single object: (a) measured per-cycle history as it arrives (merged idempotently per cycle number), (b) the platform's standard health indicators (SOH, 30-cycle fade rate, knee detection via §4, EOL flag), and (c) a physics projection — the same SEI sqrt-fade model as §12/§19 (`Q(n) = Q0·(1 − β·√n)`, `β` re-fit by `scipy.optimize.curve_fit` on every update batch, 2σ bands, optional one-time PyBaMM SPM anchor for nominal capacity). Every update re-derives all three layers from the merged history, so a consumer holding a twin always reads one self-consistent state instead of reassembling independently-computed verdicts (the disagreement bug class this platform has fixed repeatedly).
+
+**Honest boundaries** (in the snapshot's `labels`, not just this document): the projection is a *projection*, not a prediction — physics-based forward extrapolation of measured fade; the parameter set is fixed per chemistry, not re-parameterized from telemetry; and without a real BMS feed this is "not a live-synced digital twin" (the same real-BMS-validation trigger that gates the Lifecycle Intelligence layer gates a deeper twin). The API path (`GET /cells/{id}/twin`) deliberately skips the slow SPM anchor and reports `spm_capacity_ah: null`.
+
+**Robustness:** the twin ingests only numeric per-cycle measurements — string/None annotation columns (e.g. `confidence_tag`) that real app frames carry are skipped rather than crashing a float cast, and cycles without a `capacity_ah` are excluded from the fit. Fit failures degrade to a `last_error` field, never an exception to the caller.
+
+**Type:** continuously-updated physics-informed state representation (SEI fade + derived indicators), honestly labeled projection.
+
 ## Where this is enforced, not just described
 
 Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`, `tests/test_market_data.py`, `tests/test_health_aware_dispatch.py`, `tests/test_grid_services.py`, `tests/test_managed_charging.py`, `tests/test_fleet_aggregation.py`, `tests/test_api_p1_endpoints.py`, `tests/test_model_cards.py`, `tests/test_ml_anomaly.py`, `tests/test_api_p2_endpoints.py`, `tests/test_benchmark_model_card_page.py`) that checks the actual computed values against known inputs.

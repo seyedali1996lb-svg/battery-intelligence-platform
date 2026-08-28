@@ -518,6 +518,7 @@ NAV_GROUPS = [
         ("Fleet",             "fleet"),
         ("Diagnose & Decide", "decision"),
         ("Live Monitor",      "live_monitor"),
+        ("Grid Services",     "operations"),
     ]),
     ("Configure", [
         ("Configure", "configure"),
@@ -1473,6 +1474,9 @@ def main():
         page_grading(cell_ids, active_fdfs, bundles, selected)
     elif page == "live_monitor":
         page_live_monitor(cell_ids, active_fdfs)
+    elif page == "operations":
+        from _pages.operations import page_operations
+        page_operations(cell_ids, active_fdfs)
     elif page in ("settings", "import", "configure"):
         # Merged Configure page — Import and Settings as tabs
         st.markdown("# Configure")

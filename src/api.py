@@ -62,7 +62,7 @@ import datetime
 from typing import Any, Optional, Literal
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, Depends, Header
+    from fastapi import FastAPI, HTTPException, Query, Depends, Header, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel
@@ -120,15 +120,14 @@ app.add_middleware(
 # doesn't need its own secrets-manager setup.
 if "pytest" in sys.modules:
     _JWT_SECRET = os.environ.get("JWT_SECRET", "dev-only-insecure-secret-change-in-production")
+    _PREV_JWT_SECRETS = [
+        s for s in os.environ.get("JWT_PREVIOUS_SECRETS", "").split(",") if s.strip()
+    ]
 else:
-    _JWT_SECRET = os.environ.get("JWT_SECRET")
-    if not _JWT_SECRET:
-        raise RuntimeError(
-            "JWT_SECRET is not set. Refusing to start src/api.py with the "
-            "insecure demo-grade fallback secret that's public in this repo's "
-            "source — set JWT_SECRET in the environment (a real secrets "
-            "manager for any real deployment) before running this API."
-        )
+    from secrets_store import resolve_jwt_secrets
+    _jwt_secrets = resolve_jwt_secrets()
+    _JWT_SECRET = _jwt_secrets["current"]
+    _PREV_JWT_SECRETS = _jwt_secrets["previous"]
 _JWT_ALGORITHM = "HS256"
 _JWT_EXPIRY_HOURS = 24
 
@@ -159,24 +158,58 @@ def _create_access_token(user: dict) -> str:
         "role": user["role"],
         "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=_JWT_EXPIRY_HOURS),
     }
-    return _pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    # Signed with the CURRENT key and tagged with a kid, so a rotation that
+    # moves this key into JWT_PREVIOUS_SECRETS keeps verifying until expiry.
+    return _pyjwt.encode(
+        payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM, headers={"kid": "current"}
+    )
 
 
-def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+    request: Request = None,  # noqa: B008 — FastAPI injects Request (bare type, default ignored)
+) -> dict:
     """
     FastAPI dependency — decodes the `Authorization: Bearer <token>` header
     issued by POST /auth/login. Raises 401 on any missing/invalid/expired
     token so every gated endpoint below fails closed, not open.
+
+    Also enforces the per-org rate limit (src/rate_limit.py, disabled by
+    default) so every gated endpoint inherits it with zero per-endpoint
+    changes — the org_id comes straight from the verified token.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or malformed Authorization header.")
     token = authorization.removeprefix("Bearer ").strip()
     try:
+        # Current key first, then any previous (rotated-out) keys — see
+        # src/secrets_store.py for the rotation mechanics.
         payload = _pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
     except _pyjwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired.")
     except _pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token.")
+        for _prev in _PREV_JWT_SECRETS:
+            try:
+                payload = _pyjwt.decode(token, _prev, algorithms=[_JWT_ALGORITHM])
+                break
+            except _pyjwt.ExpiredSignatureError:
+                raise HTTPException(status_code=401, detail="Token expired.")
+            except _pyjwt.InvalidTokenError:
+                continue
+        else:
+            raise HTTPException(status_code=401, detail="Invalid token.")
+
+    # Per-org rate limit — see src/rate_limit.py (disabled by default).
+    from rate_limit import check_rate_limit
+    _path = request.url.path if request is not None else ""
+    _allowed, _retry_after = check_rate_limit(payload.get("org_id"), _path)
+    if not _allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded for this organization — retry after {_retry_after:.0f}s.",
+            headers={"Retry-After": str(int(max(1, _retry_after)))},
+        )
+
     return {"username": payload["sub"], "org_id": payload["org_id"], "role": payload["role"]}
 
 
@@ -489,6 +522,7 @@ def root():
             "POST /fleet/dispatchable-capacity",
             "GET /cells/{cell_id}/health (Health-as-a-service)",
             "POST /analytics/ml-anomaly (ML anomaly scan)",
+            "GET /cells/{cell_id}/twin (Phase 3 digital twin snapshot)",
         ],
     )
 
@@ -1377,6 +1411,27 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
         },
         model_card=card,
     )
+
+
+@app.get("/cells/{cell_id}/twin", summary="Digital twin snapshot — measured history + derived health indicators + physics projection (Phase 3)")
+def cell_twin(cell_id: str, current_user: dict = Depends(get_current_user)) -> dict:
+    """The Phase 3 CellTwin architecture as an API: one self-consistent
+    representation of the cell's measured history, derived health
+    indicators, and a physics-based (SEI sqrt-fade) projection, re-fit on
+    every update. The API builds the twin from the cell's stored history
+    without the slow one-time PyBaMM SPM anchor (snapshot's
+    ``projection.spm_capacity_ah`` is None and its labels say so) — the
+    honest, fast projection; the SPM anchor stays an offline/UI concern."""
+    from digital_twin import twin_from_cell
+
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    profile = ChemistryProfile.for_cell(cell_id)
+    data_mode = profile.source_kind if profile else "upload"
+    twin = twin_from_cell(cell_id, df, data_mode=data_mode, anchor_spm=False)
+    return twin.snapshot()
 
 
 # ── Dynamic LCA, Circularity & Verifiable Credentials ─────────────────────────

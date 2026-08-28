@@ -298,6 +298,51 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
                     f"against streaming data, not a live-synced digital twin."
                 )
 
+        # ── Digital Twin (Phase 3 architecture) ────────────────────────────────
+        # The CellTwin (src/digital_twin.py) is the platform's Phase 3
+        # architecture: one continuously-updated {history + indicators +
+        # physics projection} representation, re-fit on every update. Here it
+        # consumes the same streamed cycles as the Physics Twin Check above,
+        # kept fast (no SPM anchor) so it can re-derive every rerun; the twin's
+        # own labels carry the "not a live-synced digital twin" honesty note.
+        st.markdown("<h4 class='section-header'>🔄 Digital Twin (Phase 3)</h4>", unsafe_allow_html=True)
+        if _n_usable < 5:
+            st.caption(f"Digital twin needs ≥5 streamed cycles (have {_n_usable}).")
+        else:
+            import pandas as _pd_twin
+            _lm_data_mode = st.session_state.get("data_mode", "synthetic")
+            _twin_cache_key = f"lm_twin_{_replay_cell}"
+            _twin_df = _pd_twin.DataFrame({
+                "cycle_number": _cycle_vals[:_n_usable],
+                "soh_pct":      _soh_vals[:_n_usable],
+                "capacity_ah":  _cap_vals[:_n_usable],
+            })
+            if _twin_cache_key not in st.session_state:
+                from digital_twin import CellTwin
+                st.session_state[_twin_cache_key] = CellTwin(_replay_cell, _lm_data_mode, anchor_spm=False)
+            _twin = st.session_state[_twin_cache_key]
+            _twin.update(_twin_df)
+            _snap = _twin.snapshot()
+            _proj = _snap.get("projection") or {}
+            _tw1, _tw2, _tw3, _tw4 = st.columns(4)
+            _tw1.metric("SOH (twin)", f"{_snap['indicators'].get('soh_pct', '—'):.1f} %" if _snap["indicators"].get("soh_pct") is not None else "—")
+            _tw2.metric("Fade rate (30cy)", f"{_snap['indicators'].get('fade_rate_30cy', 0):.3f} %/cy" if _snap["indicators"].get("fade_rate_30cy") is not None else "—")
+            _tw3.metric("Projected RUL", f"{_proj.get('rul_cycles_to_eol', '—')} cy" if _proj.get("rul_cycles_to_eol") is not None else "—")
+            _tw4.metric("Knee", (_snap["indicators"].get("knee") or {}).get("phase", "—"))
+            _knee = (_snap["indicators"].get("knee") or {})
+            if _knee.get("detected"):
+                st.caption(
+                    f"Knee detected at cycle {_knee.get('cycle')} (SOH {_knee.get('soh_at_knee'):.1f}%) — "
+                    f"projected EOL in {_proj.get('rul_cycles_to_eol', '—')} cycles at {_proj.get('eol_threshold', 80)}% SOH."
+                )
+            if _snap.get("last_error"):
+                st.caption(f"Twin last error: {_snap['last_error']}")
+            st.caption(
+                "One self-consistent representation re-fit on each streamed cycle batch: measured history → "
+                "derived health indicators → SEI sqrt-fade projection (same model as the Physics Twin Check above). "
+                "Projection, not prediction; not a live-synced digital twin (fixed per-chemistry parameter set)."
+            )
+
         # ── Real-time charts ────────────────────────────────────────────────────
         st.markdown("<h4 class='section-header'>Telemetry Stream</h4>", unsafe_allow_html=True)
 

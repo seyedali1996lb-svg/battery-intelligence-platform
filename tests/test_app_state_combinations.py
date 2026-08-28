@@ -613,6 +613,36 @@ def test_live_monitor_physics_twin_check_runs_against_streamed_telemetry(isolate
     assert any("not a live-synced digital twin" in c for c in captions)
 
 
+def test_live_monitor_digital_twin_block_renders(isolated_db):
+    """Phase 3 CellTwin block on Live Monitor: with enough streamed cycles it
+    renders the twin's health indicators + projection and the honest
+    not-a-live-synced-twin caption."""
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(20), lm_anomalies=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed: {at.exception}"
+    metrics = {m.label: m.value for m in at.metric}
+    assert "SOH (twin)" in metrics
+    captions = [c.value for c in at.caption]
+    assert any("Projection, not prediction" in c for c in captions)
+    assert any("not a live-synced digital twin" in c for c in captions)
+
+
+def test_live_monitor_digital_twin_waits_for_minimum_readings(isolated_db):
+    """The twin needs ≥5 streamed cycles (its fade fit needs ≥5) — with fewer
+    it must show the waiting message, not crash."""
+    at = _logged_in_app(
+        role="Engineer", page="live_monitor", data_mode="nasa",
+        lm_replay_cell="B0005", lm_telemetry=_synthetic_telemetry(3), lm_anomalies=[],
+    )
+    at.run()
+    assert not at.exception, f"Live Monitor crashed with 3 readings: {at.exception}"
+    captions = [c.value for c in at.caption]
+    assert any("≥5 streamed cycles" in c for c in captions)
+
+
 def test_live_monitor_ingestion_faults_panel_renders_with_no_faults(isolated_db):
     """The new Ingestion Faults expander must render an honest empty state
     when nothing has tripped a fault check yet, not crash or show stale

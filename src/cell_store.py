@@ -67,19 +67,44 @@ def save_cell_df(cell_id: str, df: pd.DataFrame) -> None:
     _evict_if_needed()
 
 
-def get_cell_df(cell_id: str) -> "pd.DataFrame | None":
+def get_cell_df(
+    cell_id: str,
+    columns: "list[str] | None" = None,
+    memory_map: bool = True,
+) -> "pd.DataFrame | None":
     """Lazily load a cell's full per-cycle DataFrame, LRU-cached in-process.
 
     Returns None if the cell was never saved (mirrors bundle_cache's
     None-on-miss convention).
+
+    Performance knobs (perf-regression batch, docs/history.md):
+
+    - ``memory_map=True``: pyarrow memory-maps the Parquet file instead of
+      copying it into anonymous memory on every read. For the small
+      per-cell files here this is a modest constant saving, but it's free
+      and it's the right default for the "low thousands of cells" ceiling
+      this module documents.
+    - ``columns=``: prune to a column subset at read time, so consumers
+      that only need e.g. (cycle_number, soh_pct) never materialize the
+      full row width. Pruned reads are intentionally NOT LRU-cached under
+      the cell's own key (a cached subset must never shadow the full
+      frame for later full-frame consumers) — they're returned directly.
     """
+    if columns is not None:
+        # Column subset — bypass the LRU entirely so a subset can't shadow
+        # the full frame (see docstring), just read through memory-mapped
+        # Parquet with only the requested columns decoded.
+        path = CELL_STORE_DIR / f"{cell_id}.parquet"
+        if not path.exists():
+            return None
+        return pd.read_parquet(path, engine="pyarrow", memory_map=memory_map, columns=list(columns))
     if cell_id in _lru:
         _lru.move_to_end(cell_id)
         return _lru[cell_id]
     path = CELL_STORE_DIR / f"{cell_id}.parquet"
     if not path.exists():
         return None
-    df = pd.read_parquet(path, engine="pyarrow")
+    df = pd.read_parquet(path, engine="pyarrow", memory_map=memory_map)
     _lru[cell_id] = df
     _evict_if_needed()
     return df
