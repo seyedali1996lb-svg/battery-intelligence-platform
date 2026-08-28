@@ -367,7 +367,115 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                        zeroline=False, range=[max(_e1_eol - 8, 55), 102]),
         ),
     )
-    st.plotly_chart(_fig_e1, use_container_width=True)
+
+    # ── CellTwin physics projection (Phase 3) — built once, shown beside the
+    # GBRT-fade forecast so researchers can eyeball where the two models
+    # diverge. Same module the Live Monitor streams through, anchor_spm=False
+    # so this stays fast (pure SEI sqrt-fade fit, no PyBaMM single-cycle run
+    # on every render). The twin's own snapshot carries the honesty labels.
+    _twin_snap = None
+    _twin_err = None
+    try:
+        from digital_twin import CellTwin
+        _twin = CellTwin(
+            cell_id, st.session_state.get("data_mode", "synthetic"),
+            eol_threshold=_e1_eol, anchor_spm=False,
+        )
+        _twin_snap = _twin.update(df)
+    except Exception as _exc:  # noqa: BLE001 — the twin must never crash the page
+        _twin_err = str(_exc)
+    _twin_proj = (_twin_snap or {}).get("projection") if _twin_snap else None
+
+    # RUL comparison strip: validated GBRT (leave-cell-out) vs the physics fit.
+    _rul_comp_cols = st.columns(2)
+    _gbrt_rul_val = "—"
+    if rul_reliable and "rul_pred" in latest.index and latest["rul_pred"] is not None \
+            and pd.notna(latest["rul_pred"]):
+        _gbrt_rul_val = f"{float(latest['rul_pred']):.0f} cy"
+    _phys_rul_val = "—"
+    if _twin_proj and _twin_proj.get("rul_cycles_to_eol") is not None:
+        _phys_rul_val = f"{_twin_proj['rul_cycles_to_eol']:,} cy"
+    with _rul_comp_cols[0]:
+        render_card(
+            metric_tile_html("GBRT RUL (LCO-validated)", _gbrt_rul_val,
+                             "Data-driven model — suppressed when the fold R² floor is not met",
+                             value_color="#63b3ed")
+        )
+    with _rul_comp_cols[1]:
+        render_card(
+            metric_tile_html("Physics RUL (SEI √fade)", _phys_rul_val,
+                             "Central projection crossing the EOL threshold — ±2σ band shown on the chart",
+                             value_color="#48bb78")
+        )
+
+    _fig_e1_col, _fig_twin_col = st.columns(2)
+    with _fig_e1_col:
+        st.plotly_chart(_fig_e1, use_container_width=True)
+
+    with _fig_twin_col:
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        if _twin_proj:
+            _fig_twin = go.Figure()
+            # Measured history (downsampled for charts, same as the forecast)
+            _fig_twin.add_trace(go.Scatter(
+                x=_rdf["cycle_number"], y=_rdf["soh_pct"],
+                name="Measured", mode="lines",
+                line=dict(color="#63b3ed", width=2),
+                hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Measured</extra>",
+            ))
+            # 2-sigma fit-parameter band (lo = pessimistic lower SOH edge)
+            _fig_twin.add_trace(go.Scatter(
+                x=_twin_proj["proj_cycles"] + _twin_proj["proj_cycles"][::-1],
+                y=_twin_proj["proj_soh_hi_pct"] + _twin_proj["proj_soh_lo_pct"][::-1],
+                fill="toself", fillcolor="rgba(72,187,120,0.12)", line=dict(width=0),
+                name="±2σ band", hoverinfo="skip",
+            ))
+            # Central projection
+            _fig_twin.add_trace(go.Scatter(
+                x=_twin_proj["proj_cycles"], y=_twin_proj["proj_soh_pct"],
+                name="Physics (SEI √fade)", mode="lines",
+                line=dict(color="#48bb78", width=2, dash="dash"),
+                hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Physics</extra>",
+            ))
+            _fig_twin.add_hline(
+                y=_twin_proj["eol_threshold"], line_dash="dot", line_color="#e53e3e",
+                line_width=1, annotation_text=f"EOL ({_twin_proj['eol_threshold']:.0f}%)",
+                annotation_position="bottom right", annotation_font_color="#e53e3e",
+                annotation_font_size=10,
+            )
+            _fig_twin.add_vline(
+                x=_e1_last_cycle, line_dash="dot", line_color="#4a5568", line_width=1,
+                annotation_text="Now", annotation_position="top left",
+                annotation_font_color="#4a5568", annotation_font_size=10,
+            )
+            _fig_twin.update_layout(
+                **base_layout(
+                    height=300, legend=LEGEND_H,
+                    xaxis=dict(title="Cycle", zeroline=False),
+                    yaxis=dict(title="SOH %",
+                               zeroline=False, range=[max(_e1_eol - 8, 55), 102]),
+                ),
+            )
+            st.plotly_chart(_fig_twin, use_container_width=True)
+            st.caption(
+                f"Physics projection ({_twin_proj.get('physics_model', 'SEI sqrt-fade')}) re-fit on "
+                f"measured history — central line ±2σ fit band. Parameter set: "
+                f"{_twin_proj.get('param_set', 'Marquis2019')}. Projection, not prediction; "
+                f"not a live-synced digital twin (no real BMS feed)."
+            )
+        else:
+            st.markdown(
+                render_card(
+                    metric_tile_html(
+                        "Physics Projection", "Unavailable",
+                        "Needs ≥5 capacity-bearing cycles for the SEI sqrt-fade fit",
+                        value_color="#a0aec0",
+                    )
+                )
+            )
+            if _twin_err:
+                st.caption(f"CellTwin could not be built: {_twin_err}")
+
     # Plain-English summary
     _e1_soh_12m   = max(_e1_eol - 2, _e1_last_soh - _e1_fade_30 * _CYCLES_12M - 0.5 * _e1_fade_acc * _CYCLES_12M**2)
     _e1_soh_12m_r = max(_e1_eol - 2, _e1_last_soh - _e1_fade_reduced * _CYCLES_12M)
