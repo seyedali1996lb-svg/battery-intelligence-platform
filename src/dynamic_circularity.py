@@ -83,6 +83,7 @@ def calculate_dynamic_lca(
     cumulative_throughput_kwh: float,
     region: str = "EU_AVG",
     efficiency: float = 0.92,
+    grid_intensity_g_kwh: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Calculate cradle-to-grave dynamic CO2e footprint for a battery cell.
@@ -101,6 +102,14 @@ def calculate_dynamic_lca(
         Regional grid intensity key.
     efficiency : float
         Round-trip energetic efficiency.
+    grid_intensity_g_kwh : float, optional
+        Live/hourly grid carbon intensity (g CO2e/kWh) from a configured
+        MarketDataAdapter (see src.market_data.resolve_carbon_intensity()).
+        When provided it OVERRIDES the static regional table for the
+        use-phase calculation — the Lifecycle Intelligence layer's upgrade
+        from static IEA/EEA averages to a live intensity feed. When None
+        (default), behavior is unchanged: the static GRID_CARBON_INTENSITY
+        table is used. Additive, so every existing caller keeps working.
         
     Returns
     -------
@@ -118,7 +127,10 @@ def calculate_dynamic_lca(
     mfg_co2_kg = nominal_kwh * mfg_intensity
     
     # 2. Use-phase emissions (from charging energy losses)
-    grid_g_per_kwh = GRID_CARBON_INTENSITY.get(region.upper(), 230.0)
+    if grid_intensity_g_kwh is not None:
+        grid_g_per_kwh = float(grid_intensity_g_kwh)
+    else:
+        grid_g_per_kwh = GRID_CARBON_INTENSITY.get(region.upper(), 230.0)
     charging_energy_kwh = cumulative_throughput_kwh / max(efficiency, 0.5)
     energy_loss_kwh = charging_energy_kwh - cumulative_throughput_kwh
     use_phase_co2_kg = (energy_loss_kwh * grid_g_per_kwh) / 1000.0
@@ -141,6 +153,8 @@ def calculate_dynamic_lca(
         "chemistry": chemistry,
         "region": region,
         "grid_intensity_g_kwh": grid_g_per_kwh,
+        "grid_intensity_source": ("live (MarketDataAdapter override)" if grid_intensity_g_kwh is not None
+                                  else "static regional table (IEA/EEA)"),
         "mfg_co2_kg": round(mfg_co2_kg, 2),
         "use_phase_co2_kg": round(use_phase_co2_kg, 2),
         "eol_recycling_credit_kg": round(eol_credit_kg, 2),

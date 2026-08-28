@@ -377,6 +377,72 @@ A feature the model leans on for this specific row shows a large mean change; an
 
 **Type:** a Monte Carlo sensitivity/perturbation estimate, seeded and deterministic for a fixed seed. It is SHAP-*style* (counterfactual perturbation attribution), not the exact game-theoretic TreeSHAP values, which require the `shap` package's tree-path algorithm — the module deliberately has no `shap` dependency, and the values should be read as a ranking signal rather than a precise Shapley decomposition.
 
+## 20. Market-data adapters (pluggable price/carbon feeds)
+
+**What it is:** the Lifecycle Intelligence layer's external-data boundary — the market-side sibling of the `BMSAdapter` protocol in `src/bms_connectors.py`. `src/market_data.py` defines a `MarketDataAdapter` Protocol (`name`, `is_configured()`, `fetch_hourly_prices()`, `fetch_carbon_intensity()`) and a registry with three built-ins:
+
+- **Synthetic** — deterministic, offline, always available (the tested default). A two-peak daily price shape (night trough 23–06, morning peak 07–10, midday shoulder 11–16, evening peak 17–21, late-evening drop 22) with seed-controlled day-to-day jitter and an optional injected price spike for arbitrage tests.
+- **EIA Open Data** (`api.eia.gov/v2/electricity/rto/region-data`) — hourly balancing-authority prices, built against the documented JSON shape, returned in USD/kWh (converted from the API's $/MWh). Requires a free EIA API key.
+- **ENTSO-E Transparency** — day-ahead prices for a bidding zone via the documented XML `documentType=A44` endpoint, parsed with the stdlib only, returned in EUR/kWh (converted from €/MWh). Requires a free ENTSO-E REST API key.
+
+**Contracts** (same as every external adapter in this project, see `src/adapter_contract.py`): None when not configured (missing key) — never raises; `{"error": str}` on request failure — never raises; result dict on success. The EIA/ENTSO-E adapters are built against documented API shapes but are **not verified against live accounts** (no API key exists for this project) — the same honest scope as the BMS connectors.
+
+**Currency normalization:** `to_eur_per_kwh()` converts USD feeds to EUR at `USD_TO_EUR = 0.92`, an explicitly labeled illustrative FX assumption (see the ASSUMPTIONS convention in §12), recorded in the result's `fx_assumption` field so the conversion is auditable.
+
+**Carbon intensity:** `resolve_carbon_intensity()` prefers a live per-hour series from a configured adapter (e.g. the synthetic feed's deterministic daily carbon shape) and falls back to the static IEA/EEA regional table (`src/dynamic_circularity.GRID_CARBON_INTENSITY` — the single source of truth, imported, not duplicated). `calculate_dynamic_lca()` accepts the resulting live value additively via a new optional `grid_intensity_g_kwh` parameter (§16), so dynamic-LCA can run on live intensity without changing any existing caller.
+
+**Type:** external-data fetch adapters (synthetic: deterministic model; EIA/ENTSO-E: documented-shape REST/XML clients, untested against live accounts).
+
+## 21. Health-aware dispatch (SoP-limited, RUL/SOH-narrowed arbitrage)
+
+**What it is:** the platform's answer to the battery-storage-software cohort (Capture Energy, Solship, Deepgrid — see the competitive comparison): those optimizers bid dispatchable capacity while *assuming the battery is healthy*. `src/health_aware_dispatch.py` prices the same arbitrage opportunity but constrains the schedule with the platform's own health signals.
+
+**Health constraints** (`health_constrained_band()`):
+
+```math
+P_{\text{cap}} = E_{\text{nom}} \times C_{\text{rate}} \times \underbrace{\max\!\left(0.3,\ \min\!\left(1,\ \tfrac{\text{sop\_pct}}{100}\right)\right)}_{\text{SoP power factor}}
+```
+
+- **SoP-limited power cap** — a cell at 50% State-of-Power (the resistance-derived rate-capability proxy from §3) delivers at most half its nominal C-rate power, floored at 30%.
+- **RUL/SOH-narrowed operating band** — a cell with a *reliable* RUL below 200 cycles, or SOH below 80% without a reliable RUL, is dispatched within a narrowed `[40%, 85%]` SOC band instead of the healthy `[10%, 95%]` band, reducing per-cycle depth-of-discharge (the same stress-reduction rationale the second-life literature and §12's application fit use).
+
+**Dispatch heuristic** (`arbitrage_schedule()`): a threshold heuristic, not an LP/MILP optimizer — the same explicit scope decision `src/deployment_sizing.py` already made for the solar+storage engine. The battery charges when price is below the window's 35th percentile and discharges above the 65th percentile, with the health-constrained power cap and SOC band applied each hour. EFC delivered is computed by running the resulting SOC trajectory through the platform's own rainflow engine (§14), turning-point-preprocessed (the engine's extrema detector misses plateau-heavy square-wave profiles).
+
+**Comparison** (`schedule_comparison()`): dispatches the same price window twice — once under the cohort's implicit "assume healthy" behavior (soh=100%, no SoP limit, no RUL caution), once with the real health signals — and reports the signed delta (revenue, EFC, mean cycle DoD). With the threshold heuristic the sign can flip on degenerate price shapes, so the delta is presented as a signed comparison, not a guaranteed loss.
+
+**Type:** deterministic rule-based dispatch (derived from measured/health-model inputs), with EFC accounting via the rainflow engine. Explicitly *not* a validated optimal-control result.
+
+## 22. Grid-services revenue stack & managed charging
+
+**Grid-services revenue** (`src/grid_services.py`) — per-site revenue potential across the three ways a battery makes money:
+
+```math
+V_{\text{total}} = V_{\text{arbitrage}} + P_{\text{MW}} \cdot r_{\text{reg}} \cdot h_{\text{service}} + P_{\text{MW}} \cdot r_{\text{cap}}
+```
+
+- **Arbitrage** — from `arbitrage_schedule()` (§21), annualized by repeating a representative price window to 8760 hours (flagged `arbitrage_annualized_from_window=True`) or used directly when the window is the full year.
+- **Frequency regulation (ancillary)** — capacity held for aFRR/FCR-style service earns `r_reg` (default 25 €/MW/h) for the hours in service; its energy cycling contributes EFC stress, accounted on the cost/stress ledger, not as revenue.
+- **Capacity (reserve)** — availability payments at `r_cap` (default 40,000 €/MW/yr).
+
+Every rate is an entry in `GRID_SERVICES_ASSUMPTIONS` in the same `{value, slider_range, unit, label, source}` shape as §12's `ASSUMPTIONS` — defaults are labeled "Illustrative — not sourced" and the arbitrage-vs-ancillary exclusivity is stated in the result (`exclusivity_note`), not hidden.
+
+**Managed charging** (`src/managed_charging.py`) — cheapest-hour EV charging over a price window: sort hours by price, greedily fill the energy needed to reach `target_soc_pct` at up to `max_charge_kw`, efficiency applied so wall energy ≥ battery energy. The unmanaged baseline (charge immediately at max power) gives the savings delta; the session's flexibility is measured as the rainflow EFC of its SOC trajectory. It is a **recommendation, not a control signal** — the OCPP connector reads completed sessions from a Central System's REST reporting API but does not push commands (see `src/bms_connectors.py`'s honest scope), and this module makes the same no-push scope explicit.
+
+**Type:** illustrative financial/engineering estimates on supplied market prices — every figure labeled, none presented as a validated market outcome.
+
+## 23. Fleet aggregation (dispatchable-capacity offers)
+
+**What it is:** per-cell health/SoC headroom aggregated into one VPP-style offer (`src/fleet_aggregation.py`):
+
+```math
+E_{\text{offer}} = \sum_{i} E_{\text{cur},i} \times \frac{\text{band}_{\text{high},i} - \max(\text{SOC}_i,\, \text{band}_{\text{low},i})}{100}, \qquad
+P_{\text{offer}} = \sum_{i} E_{\text{cur},i} \times C_{\text{rate}} \times f_{\text{SoP},i}
+```
+
+where $E_{\text{cur},i} = E_{\text{nom},i} \times \text{SOH}_i/100$ (SoH-limited current capacity) and the per-cell band/power factor come from the same `health_constrained_band()` as §21 — so a faded or power-limited cell is offered *less*, and a caution-flagged cell offers shallower depth-of-discharge, rather than being bid at nameplate. A cell whose current SOC is already at/above its band high limit is excluded from the window (listed separately with a reason).
+
+**Type:** deterministic aggregation of measured/derived health signals — a capability *offer*, explicitly not a dispatch control signal (stated in the returned `caveats`).
+
 ## Where this is enforced, not just described
 
-Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`) that checks the actual computed values against known inputs.
+Every formula above that isn't a one-line UI threshold has a corresponding unit test in `tests/` (e.g. `tests/test_features.py`, `tests/test_dqdv.py`, `tests/test_knee_detection.py`, `tests/test_lco_eval.py`, `tests/test_trajectory_memory.py`, `tests/test_innovations_v2.py`, `tests/test_api_v2_endpoints.py`, `tests/test_market_data.py`, `tests/test_health_aware_dispatch.py`, `tests/test_grid_services.py`, `tests/test_managed_charging.py`, `tests/test_fleet_aggregation.py`, `tests/test_api_p1_endpoints.py`) that checks the actual computed values against known inputs.

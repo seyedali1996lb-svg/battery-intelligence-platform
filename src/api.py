@@ -481,6 +481,12 @@ def root():
             "GET /cells/{cell_id}/view/{oem|operator|recycler}",
             "GET /fleet/summary",
             "GET /fleet/alerts",
+            "GET /market/prices (Lifecycle Intelligence)",
+            "POST /analytics/dispatch-schedule",
+            "POST /analytics/dispatch-comparison",
+            "POST /analytics/grid-services-revenue",
+            "POST /analytics/managed-charge-plan",
+            "POST /fleet/dispatchable-capacity",
         ],
     )
 
@@ -843,6 +849,16 @@ from src.pinn_model import BatteryPINNEstimator
 from src.dynamic_circularity import calculate_dynamic_lca, generate_verifiable_credential_passport, match_second_life_bids
 from src.task_queue import task_queue
 from src.streaming_analytics import streaming_engine
+from src.market_data import (
+    get_market_adapter,
+    registered_market_adapters,
+    to_eur_per_kwh,
+    resolve_carbon_intensity,
+)
+from src.health_aware_dispatch import arbitrage_schedule, schedule_comparison
+from src.grid_services import grid_services_revenue
+from src.managed_charging import managed_charge_plan
+from src.fleet_aggregation import fleet_dispatchable_offer
 
 
 class ActionCreateRequest(BaseModel):
@@ -898,6 +914,52 @@ class StreamingReadingRequest(BaseModel):
     current_a: float
     temperature_c: float
     timestamp_s: Optional[float] = None
+
+
+class DispatchScheduleRequest(BaseModel):
+    prices_eur_per_kwh: list[float]
+    battery_kwh: float
+    c_rate: float = 0.5
+    round_trip_efficiency: float = 0.90
+    soh_pct: float = 100.0
+    sop_pct: Optional[float] = None
+    rul_cycles: Optional[float] = None
+    rul_reliable: bool = False
+    initial_soc_pct: float = 50.0
+
+
+class GridServicesRevenueRequest(BaseModel):
+    prices_eur_per_kwh: list[float]
+    battery_kwh: float
+    c_rate: float = 0.5
+    round_trip_efficiency: float = 0.90
+    soh_pct: float = 100.0
+    sop_pct: Optional[float] = None
+    rul_cycles: Optional[float] = None
+    rul_reliable: bool = False
+    frequency_regulation_price_eur_per_mw_h: Optional[float] = None
+    capacity_payment_eur_per_mw_year: Optional[float] = None
+    regulation_service_hours_per_year: Optional[float] = None
+    regulation_energy_throughput_factor: Optional[float] = None
+    price_window_is_annual: bool = False
+
+
+class ManagedChargePlanRequest(BaseModel):
+    prices_eur_per_kwh: list[float]
+    battery_kwh: float
+    initial_soc_pct: float
+    target_soc_pct: float
+    max_charge_kw: float
+    efficiency: float = 0.94
+    unmanaged_start_hour: Optional[int] = None
+
+
+class FleetCapacityRequest(BaseModel):
+    cells: list[dict]
+    c_rate: float = 0.5
+    window_hours: int = 2
+    soc_high_limit_pct: float = 95.0
+    soc_low_limit_pct: float = 10.0
 
 
 @app.get("/actions", summary="List operational action center tickets")
@@ -1003,6 +1065,180 @@ def run_partial_ica(
     )
 
 
+# ── Market Data & Lifecycle Intelligence (P1) ─────────────────────────────────
+
+@app.get("/market/prices", summary="Hourly market prices + carbon intensity from a MarketDataAdapter")
+def get_market_prices(
+    adapter: str = "synthetic",
+    hours: int = Query(48, ge=1, le=8760, description="Hours of price data"),
+    region: str = "EU_AVG",
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Fetch an hourly price window from the named market adapter (default
+    synthetic), normalized to EUR/kWh, plus the best-available carbon
+    intensity for `region` (live when the adapter provides it, static
+    IEA/EEA table otherwise). The synthetic adapter is fully tested and
+    always available; eia/entsoe require their own API keys and are built
+    against documented API shapes, not verified live (see
+    src/market_data.py's module docstring)."""
+    try:
+        mkt = get_market_adapter(adapter)
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not mkt.is_configured():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Market adapter '{adapter}' is not configured (missing API key). "
+                   f"Available adapters: {registered_market_adapters()}",
+        )
+
+    start = None
+    end = None
+    result = mkt.fetch_hourly_prices(start=start, end=end)
+    if result is None:
+        raise HTTPException(status_code=400, detail=f"Market adapter '{adapter}' returned nothing.")
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+
+    normalized = to_eur_per_kwh(result)
+    normalized["prices"] = normalized["prices"][:hours]
+    normalized["hours"] = len(normalized["prices"])
+
+    carbon = resolve_carbon_intensity(region=region, adapter=mkt)
+    return {"prices": normalized, "carbon_intensity": carbon}
+
+
+@app.post("/analytics/dispatch-schedule", summary="Health-aware arbitrage dispatch schedule")
+def run_dispatch_schedule(
+    req: DispatchScheduleRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Hour-by-hour price-arbitrage schedule constrained by the battery's
+    own health signals (SoP-limited power cap; RUL/SOH-narrowed SOC band) —
+    the lifecycle-intelligence layer Capture/Solship/Deepgrid-style
+    optimizers lack. Threshold heuristic, not an LP/MILP optimizer; see
+    src/health_aware_dispatch.py's module docstring for the honest scope."""
+    try:
+        return arbitrage_schedule(
+            prices_eur_per_kwh=req.prices_eur_per_kwh,
+            battery_kwh=req.battery_kwh,
+            c_rate=req.c_rate,
+            round_trip_efficiency=req.round_trip_efficiency,
+            soh_pct=req.soh_pct,
+            sop_pct=req.sop_pct,
+            rul_cycles=req.rul_cycles,
+            rul_reliable=req.rul_reliable,
+            initial_soc_pct=req.initial_soc_pct,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/analytics/dispatch-comparison", summary="Healthy-assumption vs health-aware dispatch — the platform's differentiator")
+def run_dispatch_comparison(
+    req: DispatchScheduleRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Dispatch the same price window twice: once under the cohort's implicit
+    "assume the battery is healthy" behavior, once with the cell's real
+    health constraints — and report the signed revenue/EFC/DoD delta. This
+    is the measurable version of the wedge this platform holds over
+    capture-energy-style optimizers (see src/health_aware_dispatch.py's
+    schedule_comparison())."""
+    try:
+        return schedule_comparison(
+            prices_eur_per_kwh=req.prices_eur_per_kwh,
+            battery_kwh=req.battery_kwh,
+            c_rate=req.c_rate,
+            round_trip_efficiency=req.round_trip_efficiency,
+            soh_pct=req.soh_pct,
+            sop_pct=req.sop_pct,
+            rul_cycles=req.rul_cycles,
+            rul_reliable=req.rul_reliable,
+            initial_soc_pct=req.initial_soc_pct,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/analytics/grid-services-revenue", summary="Per-site revenue potential: arbitrage + frequency regulation + capacity")
+def run_grid_services_revenue(
+    req: GridServicesRevenueRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Revenue potential across the three ways a battery makes money on the
+    grid, all estimates with explicit provenance (see
+    src/grid_services.py's GRID_SERVICES_ASSUMPTIONS). The arbitrage leg
+    inherits the health-aware dispatch engine; regulation/capacity legs
+    assume the battery is held out of arbitrage (exclusivity note in the
+    result)."""
+    try:
+        return grid_services_revenue(
+            prices_eur_per_kwh=req.prices_eur_per_kwh,
+            battery_kwh=req.battery_kwh,
+            c_rate=req.c_rate,
+            round_trip_efficiency=req.round_trip_efficiency,
+            soh_pct=req.soh_pct,
+            sop_pct=req.sop_pct,
+            rul_cycles=req.rul_cycles,
+            rul_reliable=req.rul_reliable,
+            frequency_regulation_price_eur_per_mw_h=req.frequency_regulation_price_eur_per_mw_h,
+            capacity_payment_eur_per_mw_year=req.capacity_payment_eur_per_mw_year,
+            regulation_service_hours_per_year=req.regulation_service_hours_per_year,
+            regulation_energy_throughput_factor=req.regulation_energy_throughput_factor,
+            price_window_is_annual=req.price_window_is_annual,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/analytics/managed-charge-plan", summary="Tariff-aware managed EV charging plan")
+def run_managed_charge_plan(
+    req: ManagedChargePlanRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Cheapest-hour EV charging plan over a price window, with the cost
+    delta vs unmanaged charging and the flexibility the session represents
+    (rainflow EFC of the SOC trajectory). A recommendation, not a control
+    signal — this endpoint does not push commands to a charger (see
+    src/managed_charging.py's honest scope)."""
+    try:
+        return managed_charge_plan(
+            prices_eur_per_kwh=req.prices_eur_per_kwh,
+            battery_kwh=req.battery_kwh,
+            initial_soc_pct=req.initial_soc_pct,
+            target_soc_pct=req.target_soc_pct,
+            max_charge_kw=req.max_charge_kw,
+            efficiency=req.efficiency,
+            unmanaged_start_hour=req.unmanaged_start_hour,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/fleet/dispatchable-capacity", summary="Fleet dispatchable-capacity offer (VPP-style aggregate)")
+def run_fleet_dispatchable_capacity(
+    req: FleetCapacityRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Aggregate per-cell health/SoC headroom into one VPP-style
+    dispatchable-capacity offer (energy_kwh + power_kw for a service
+    window). A capability statement, not a dispatch control signal — see
+    src/fleet_aggregation.py's caveats. Cells: [{cell_id, nominal_kwh,
+    soh_pct, soc_pct, sop_pct?, rul_cycles?, rul_reliable?}]"""
+    try:
+        return fleet_dispatchable_offer(
+            cells=req.cells,
+            c_rate=req.c_rate,
+            window_hours=req.window_hours,
+            soc_high_limit_pct=req.soc_high_limit_pct,
+            soc_low_limit_pct=req.soc_low_limit_pct,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ── Universal Cycler Ingestion Helpers ───────────────────────────────────────
 
 @app.post("/ingest/cycler-detect", summary="Detect cycler format and map columns")
@@ -1043,6 +1279,7 @@ def run_pinn_estimation(
 def get_cell_dynamic_lca(
     cell_id: str,
     region: str = "EU_AVG",
+    grid_intensity_g_kwh: Optional[float] = Query(None, description="Live grid carbon intensity (g CO2e/kWh) from a MarketDataAdapter — overrides the static regional table for the use phase"),
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     fdfs = _get_featured_dfs(current_user["org_id"])
@@ -1060,6 +1297,7 @@ def get_cell_dynamic_lca(
         nominal_kwh=nominal_kwh,
         cumulative_throughput_kwh=throughput,
         region=region,
+        grid_intensity_g_kwh=grid_intensity_g_kwh,
     )
 
 
