@@ -29,7 +29,7 @@ _PRICE_HOURS = 48  # representative two-day window for the dispatch/revenue tabs
 
 
 def _synthetic_prices() -> list:
-    from market_data import SyntheticMarketAdapter
+    from src.market_data import SyntheticMarketAdapter
     # fetch_hourly_prices() with no start/end resolves to a 48-hour window
     data = SyntheticMarketAdapter(seed=7).fetch_hourly_prices()
     return data["prices"]
