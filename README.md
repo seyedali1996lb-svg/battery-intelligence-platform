@@ -110,7 +110,9 @@ The Streamlit app (`app/`) is split into focused modules:
 - **`app/_router.py`** — page routing/dispatch
 - **`app/_session.py`** — session-state initialization, DB persistence hydration, cell partitioning, and data-mode resolution
 - **`app/_design_tokens.py`** — constants, Plotly config, feature labels, card colours
-- **`app/_ui_helpers.py`** — UI rendering (cards, metric tiles, charts, provenance, pack builder)
+- **`app/_pack_builder.py`** — pack builder widget (self-contained)
+- **`app/_report_regen.py`** — report regeneration button widget
+- **`app/_ui_helpers.py`** — small pure UI helpers (cards, metric tiles, sparkline, provenance)
 - **`app/utils.py`** — cache helpers + backward-compatible re-exports from the above
 - **`app/_pages/`** — individual page renderers (one per page)
 
