@@ -86,7 +86,7 @@ def page_operations(cell_ids: list, active_fdfs: dict) -> None:
     _cell_id = st.selectbox("Cell", options=cell_ids, key="ops_cell")
     df = active_fdfs[_cell_id]
     signals = _cell_signals(df)
-    nominal_kwh = _nominal_kwh(_cell_id)
+    nominal_kwh = _nominal_kwh(_cell_id)  # pyright: ignore[reportArgumentType]
 
     tab_dispatch, tab_revenue, tab_charge, tab_fleet, tab_anomaly = st.tabs(
         ["Dispatch", "Grid revenue", "Managed charging", "Fleet offers", "ML anomaly"]
@@ -246,8 +246,8 @@ def _schedule_figure(sched: pd.DataFrame, band: dict) -> object:
                         vertical_spacing=0.06)
     fig.add_trace(go.Scatter(x=sched["hour"], y=sched["soc_pct"], name="SOC %",
                              line=dict(color="#38bdf8", width=2)), row=1, col=1)
-    fig.add_hline(y=band["max_soc_pct"], line_dash="dot", line_color="#64748b", row=1, col=1)
-    fig.add_hline(y=band["min_soc_pct"], line_dash="dot", line_color="#64748b", row=1, col=1)
+    fig.add_hline(y=band["max_soc_pct"], line_dash="dot", line_color="#64748b", row=1, col=1)  # pyright: ignore[reportArgumentType]
+    fig.add_hline(y=band["min_soc_pct"], line_dash="dot", line_color="#64748b", row=1, col=1)  # pyright: ignore[reportArgumentType]
     fig.add_trace(go.Bar(x=sched["hour"], y=sched["charge_kw"], name="Charge kW",
                          marker_color="#4ade80"), row=2, col=1)
     fig.add_trace(go.Bar(x=sched["hour"], y=[-d for d in sched["discharge_kw"]], name="Discharge kW",

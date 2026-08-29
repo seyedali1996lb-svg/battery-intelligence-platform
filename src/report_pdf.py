@@ -213,15 +213,15 @@ def build_report_pdf(
             ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
             ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ] + bg_cmds))
-        sl_section.append(t)
-        sl_section.append(Spacer(1, 4))
+        sl_section.append(t)  # pyright: ignore[reportArgumentType]
+        sl_section.append(Spacer(1, 4))  # pyright: ignore[reportArgumentType]
         sl_section.append(Paragraph(
             f"Best-fit application: <b>{second_life['best_app']}</b> ({second_life['best_fit']}). "
             "All figures are cited estimates — see assumption register below.",
             ss["CellWrap"],
         ))
-    sl_section.append(Spacer(1, 6))
-    story.append(KeepTogether(sl_section))
+    sl_section.append(Spacer(1, 6))  # pyright: ignore[reportArgumentType]
+    story.append(KeepTogether(sl_section))  # pyright: ignore[reportArgumentType]
 
     # ── Assumption register ──
     # This table can be long — wrap only the header + first few rows to avoid

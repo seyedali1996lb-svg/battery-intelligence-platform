@@ -424,9 +424,9 @@ def render_solar_storage_sizing(selected: str, current_kwh: float) -> None:
                     if siz_shape == "Custom" and siz_custom_df is not None:
                         monthly_consumption = [float(v) for v in siz_custom_df["kWh"]]
                     else:
-                        monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]
-                    daily_shape = DAILY_LOAD_SHAPES[siz_daily_shape]
-                    weekend_shape = DAILY_LOAD_SHAPES[siz_weekend_shape_label] if siz_use_weekend_shape else None
+                        monthly_consumption = [siz_annual_kwh * w for w in SEASONAL_SHAPES[siz_shape]]  # pyright: ignore[reportPossiblyUnboundVariable]
+                    daily_shape = DAILY_LOAD_SHAPES[siz_daily_shape]  # pyright: ignore[reportPossiblyUnboundVariable]
+                    weekend_shape = DAILY_LOAD_SHAPES[siz_weekend_shape_label] if siz_use_weekend_shape else None  # pyright: ignore[reportPossiblyUnboundVariable]
                 azimuth_compass = _COMPASS_DIRECTIONS[siz_orientation]
                 tariff_model = {
                     "Single rate": "single_rate", "Day/Night": "day_night", "Custom hours": "custom",
@@ -589,7 +589,7 @@ def render_solar_storage_sizing(selected: str, current_kwh: float) -> None:
             except Exception:
                 _ctx_ids = []
             for _ctx_id in _ctx_ids:
-                _ctx_text = get_document(_ctx_id)
+                _ctx_text = get_document(_ctx_id)  # pyright: ignore[reportPossiblyUnboundVariable]
                 if _ctx_text:
                     render_card(
                         "<div style='font-size:10px;font-weight:700;color:#a0aec0;text-transform:uppercase;"

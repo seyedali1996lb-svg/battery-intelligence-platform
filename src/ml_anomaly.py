@@ -163,7 +163,7 @@ class MLAnomalyDetector:
                 f"fade-rate feature)."
             )
         self.model = IsolationForest(
-            contamination=self.contamination,
+            contamination=self.contamination,  # pyright: ignore[reportArgumentType]
             n_estimators=self.n_estimators,
             random_state=self.random_state,
         ).fit(X_valid)
@@ -228,7 +228,7 @@ class MLAnomalyDetector:
             "anomaly_score_max": round(float(scored_valid["anomaly_score"].max()), 4),
             "normal_score_max": round(float(normal["anomaly_score"].max()), 4) if len(normal) else None,
             "per_cycle": [
-                {"cycle_number": int(r["cycle_number"]), "anomaly_score": _score_or_none(r["anomaly_score"]),
+                {"cycle_number": int(r["cycle_number"]), "anomaly_score": _score_or_none(r["anomaly_score"]),  # pyright: ignore[reportArgumentType]
                  "is_anomaly": bool(r["is_anomaly"]),
                  "note": _note_or_none(r.get("note"))}
                 for _, r in scored.iterrows()

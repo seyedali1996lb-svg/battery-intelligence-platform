@@ -316,7 +316,7 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
             else:
                 _best_k, _best_sil = 2, -1.0
                 for _k in range(2, _k_max + 1):
-                    _km_try = _KM(n_clusters=_k, random_state=42, n_init=10)
+                    _km_try = _KM(n_clusters=_k, random_state=42, n_init=10)  # pyright: ignore[reportArgumentType]
                     _lab_try = _km_try.fit_predict(_X_sc)
                     if len(set(_lab_try)) < 2:
                         continue
@@ -324,7 +324,7 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
                     if _s > _best_sil:
                         _best_sil, _best_k = _s, _k
 
-            _km   = _KM(n_clusters=_best_k, random_state=42, n_init=10)
+            _km   = _KM(n_clusters=_best_k, random_state=42, n_init=10)  # pyright: ignore[reportArgumentType]
             _labs = _km.fit_predict(_X_sc)
             _clust_df_clean = _clust_df_clean.copy()
             _clust_df_clean["cluster"] = _labs

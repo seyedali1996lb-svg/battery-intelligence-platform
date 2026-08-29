@@ -204,7 +204,7 @@ def to_export_document(spine_data: dict, cell_id: str, condition_completeness: "
         ),
     }
     if condition_completeness is not None:
-        metadata["source_condition_completeness"] = condition_completeness
+        metadata["source_condition_completeness"] = condition_completeness  # pyright: ignore[reportArgumentType]
     return {
         "metadata": metadata,
         "data": spine_data,

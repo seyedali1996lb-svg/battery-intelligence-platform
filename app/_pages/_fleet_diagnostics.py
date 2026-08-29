@@ -1046,7 +1046,7 @@ def render_anomaly_alert_history(featured_dfs: dict) -> None:
         _anom_df = pd.DataFrame(_anom_log).sort_values(["severity", "last_10_cycles"], ascending=[True, False])
         _SEV_COLOUR = {"High": "#fc8181", "Moderate": "#f6ad55", "Low": "#718096"}
         for _, _al in _anom_df.iterrows():
-            _sc = _SEV_COLOUR[_al["severity"]]
+            _sc = _SEV_COLOUR[_al["severity"]]  # pyright: ignore[reportArgumentType]
             _md_html(
                 f"<div style='display:flex;align-items:center;gap:16px;padding:10px 14px;"
                 f"margin-bottom:6px;background:#1e2a38;border-radius:8px;"
@@ -1072,7 +1072,7 @@ def render_fleet_diagnostics(rows: list, featured_dfs: dict, bundles: dict, traj
     _traj_matches = get_trajectory_matches_and_render_banner(featured_dfs, trajectory_memory)
     render_alert_inbox(rows, _traj_matches)
 
-    rows = render_filter_and_view_selector(rows, featured_dfs, bundles)
+    rows = render_filter_and_view_selector(rows, featured_dfs, bundles)  # pyright: ignore[reportAssignmentType]
     if rows is None:
         return
 

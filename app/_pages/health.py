@@ -29,7 +29,7 @@ from _pages._health_diagnostics import render_engineering_diagnostics
 # ---------------------------------------------------------------------------
 
 def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
-                bundle: dict = None, rul_reliable: bool = True, graph=None):
+                bundle: dict = None, rul_reliable: bool = True, graph=None):  # pyright: ignore[reportArgumentType]
     _action_bar("health")
     st.markdown(f"# What is degrading {cell_id}?")
     _rdf = _resample_df(df)   # downsampled for charts; df still used for latest/masks

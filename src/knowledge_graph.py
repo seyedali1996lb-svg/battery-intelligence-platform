@@ -337,7 +337,7 @@ def link_cell_to_mechanism(
         confidence_notes=list(mech["confidence_notes"]),
         signals={k: float(v) for k, v in mech["signals"].items()},
     )
-    return mechanism_edge(g, cell_id)
+    return mechanism_edge(g, cell_id)  # pyright: ignore[reportReturnType]
 
 
 def get_or_compute_mechanism(

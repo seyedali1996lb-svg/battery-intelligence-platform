@@ -91,7 +91,7 @@ def cluster_fleet(
     scaler = StandardScaler()
     X_sc   = scaler.fit_transform(X)
 
-    km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)  # pyright: ignore[reportArgumentType]
     labels = km.fit_predict(X_sc)
 
     # Rank clusters by their centroid SOH (descending) so label 0 = Healthy
@@ -139,7 +139,7 @@ def cluster_fleet(
         assignments=assignments,
         n_clusters=n_clusters,
         feature_names=feat_names,
-        inertia=float(km.inertia_),
+        inertia=float(km.inertia_),  # pyright: ignore[reportArgumentType]
     )
 
 

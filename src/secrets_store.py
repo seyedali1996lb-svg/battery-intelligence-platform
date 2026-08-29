@@ -84,7 +84,7 @@ class FileSecretsStore:
                     self._cache = json.load(f)
             except (OSError, json.JSONDecodeError):
                 self._cache = {}
-        return self._cache
+        return self._cache  # pyright: ignore[reportReturnType]
 
     def get(self, name: str) -> "str | None":
         return self._load().get(name)

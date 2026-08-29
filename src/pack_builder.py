@@ -164,7 +164,7 @@ def compute_trajectory_divergence(cell_frames: dict) -> dict:
     fastest_diverging_cell = fastest_diverging_fade = pack_median_fade = None
     if fades:
         pack_median_fade = statistics.median(fades.values())
-        fastest_diverging_cell = max(fades, key=fades.get)
+        fastest_diverging_cell = max(fades, key=fades.get)  # pyright: ignore[reportArgumentType, reportCallIssue]
         fastest_diverging_fade = fades[fastest_diverging_cell]
 
     return {

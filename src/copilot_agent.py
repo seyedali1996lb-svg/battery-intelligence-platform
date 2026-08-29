@@ -166,7 +166,7 @@ def build_tools(featured_dfs: dict, bundles: dict, org_id: int, graph) -> tuple[
             edge = get_or_compute_mechanism(graph, cell_id, featured_dfs[cell_id])
         except Exception as e:
             return {"error": f"Could not compute a mechanism verdict for {cell_id}: {e}"}
-        key = MECHANISM_VERDICT_TO_KEY.get(edge.get("verdict"), "insufficient_data")
+        key = MECHANISM_VERDICT_TO_KEY.get(edge.get("verdict"), "insufficient_data")  # pyright: ignore[reportArgumentType, reportCallIssue]
         return {"mechanism": edge, "literature": literature_for_mechanism(graph, key)}
 
     def _get_feature_citation(tool_input: dict) -> dict:

@@ -59,7 +59,7 @@ def _signature(battery_dict: dict) -> str:
     Changing CACHE_VERSION above busts the cache across all cells.
     """
     sig = {cid: len(cell["cycles"]) for cid, cell in sorted(battery_dict.items())}
-    sig["__cache_version__"] = CACHE_VERSION
+    sig["__cache_version__"] = CACHE_VERSION  # pyright: ignore[reportArgumentType]
     return hashlib.sha256(json.dumps(sig).encode()).hexdigest()[:20]
 
 

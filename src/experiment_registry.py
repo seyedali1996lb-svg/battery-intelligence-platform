@@ -164,10 +164,10 @@ def log_run(
         cell_ids=list(cell_ids),
         n_cells=len(cell_ids),
         n_rows=n_rows,
-        soh_mae=lco_metrics.get("soh_mae"),
-        soh_r2=lco_metrics.get("soh_r2"),
-        rul_mae=lco_metrics.get("rul_mae"),
-        rul_r2=lco_metrics.get("rul_r2"),
+        soh_mae=lco_metrics.get("soh_mae"),  # pyright: ignore[reportArgumentType]
+        soh_r2=lco_metrics.get("soh_r2"),  # pyright: ignore[reportArgumentType]
+        rul_mae=lco_metrics.get("rul_mae"),  # pyright: ignore[reportArgumentType]
+        rul_r2=lco_metrics.get("rul_r2"),  # pyright: ignore[reportArgumentType]
         rul_reliable=bool(lco_metrics.get("rul_reliable", False)),
         fold_metrics=lco_metrics.get("per_cell", {}),
         git_commit=_git_commit_hash(),
@@ -449,7 +449,7 @@ def run_cross_chemistry_transfer(
     X_train = pd.concat([X[common] for X, _, _ in train_inputs.values()])
     y_soh_train = pd.concat([y for _, y, _ in train_inputs.values()])
     y_rul_train = pd.concat([y for _, _, y in train_inputs.values()])
-    bndl = train_models(X_train, y_soh_train, y_rul_train)
+    bndl = train_models(X_train, y_soh_train, y_rul_train)  # pyright: ignore[reportArgumentType]
 
     X_eval = pd.concat([X[common] for X, _, _ in eval_inputs.values()])
     y_soh_eval = pd.concat([y for _, y, _ in eval_inputs.values()])
@@ -473,7 +473,7 @@ def run_cross_chemistry_transfer(
         feature_set=common,
         feature_version=FEATURE_VERSION,
         hyperparams=dict(GBRT_PARAMS),
-        seed=GBRT_PARAMS["random_state"],
+        seed=GBRT_PARAMS["random_state"],  # pyright: ignore[reportArgumentType]
         cell_ids=list(train_cell_data.keys()) + list(eval_cell_data.keys()),
         n_rows=len(X_train) + len(X_eval),
         lco_metrics={

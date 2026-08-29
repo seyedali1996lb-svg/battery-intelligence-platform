@@ -188,7 +188,7 @@ def _early_life_grade(df: pd.DataFrame):
     cap0 = float(early["capacity_ah"].iloc[0])
     res0 = max(float(early["resistance_ohm"].iloc[0]), 1e-6) if "resistance_ohm" in early.columns else 1e-6
     fade = (float(early["capacity_ah"].iloc[0]) - float(early["capacity_ah"].iloc[-1])) / len(early)
-    var = float(early["capacity_ah"].var())
+    var = float(early["capacity_ah"].var())  # pyright: ignore[reportArgumentType]
     slope = (
         float(np.polyfit(early["cycle_number"], early["resistance_ohm"], 1)[0])
         if "resistance_ohm" in early.columns else 0.0

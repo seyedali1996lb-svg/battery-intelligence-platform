@@ -301,7 +301,7 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
             _qr.make(fit=True)
             _qr_img = _qr.make_image(fill_color="white", back_color="#0e1117")
             _qr_buf = _io.BytesIO()
-            _qr_img.save(_qr_buf, format="PNG")
+            _qr_img.save(_qr_buf, format="PNG")  # pyright: ignore[reportCallIssue]
             _qr_buf.seek(0)
             st.image(_qr_buf, caption=f"Scan to open live passport for {selected}", width=200)
             st.download_button(

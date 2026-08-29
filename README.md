@@ -121,7 +121,7 @@ The `src/` layer provides:
 - **DI entry points** (`src/api.py`) — `get_store()`/`set_store()` and `get_market_adapter()`/`set_market_adapter()` let tests inject fakes without changing call sites
 - **Shared API contracts** (`src/contracts.py`) — `TypedDict` definitions for every REST response shape (`CellSummary`, `HealthResponse`, `FleetSummary`, `DecisionRecord`, `TwinResponse`, `DispatchSchedule`, `PassportData`) consumed by both the Streamlit dashboard and React frontend
 - **Domain groupings** (`src/__init__.py` + `src/_domain/`) — lazy re-exports via `__getattr__` so `from src import db` works alongside bare `import db`; the 69 `src/` modules organized into 8 named domains for IDE navigation
-- **pyright CI gate** — type checking runs on every push/PR via `.github/workflows/ci.yml` (non-blocking while ramping up)
+- **pyright CI gate** — type checking runs on every push/PR via `.github/workflows/ci.yml` (blocking: 0 errors enforced)
 
 ## Methodology
 

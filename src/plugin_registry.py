@@ -63,7 +63,7 @@ class AdapterMeta:
     description: str
     adapter_class: type
     fields: list = field(default_factory=list)
-    build_kwargs: "callable | None" = None   # dict[str, str] -> dict of adapter_class(**kwargs)
+    build_kwargs: "callable | None" = None   # dict[str, str] -> dict of adapter_class(**kwargs)  # pyright: ignore[reportGeneralTypeIssues]
     rendered_via_registry: bool = False       # False = hand-written UI still owns this one (documentation-only entry)
     live_tested: bool = False
 

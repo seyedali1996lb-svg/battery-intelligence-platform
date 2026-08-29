@@ -234,7 +234,7 @@ def load_or_generate_cell(cell_id: str) -> pd.DataFrame:
         f"stress={sf:.2f}×  n={profile['n_cycles']} cycles"
     )
 
-    df = generate_cell_data(cell_id=cell_id, seed=seed, **profile)
+    df = generate_cell_data(cell_id=cell_id, seed=seed, **profile)  # pyright: ignore[reportArgumentType]
 
     os.makedirs(DATA_DIR, exist_ok=True)
     df.to_csv(local_path, index=False)

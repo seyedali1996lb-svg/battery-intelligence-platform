@@ -46,7 +46,7 @@ def retrieve(query: str, top_k: int = 3, min_score: float = 0.05) -> list[str]:
     if not query or not query.strip():
         return []
     _ensure_fitted()
-    query_vec = _vectorizer.transform([query])
+    query_vec = _vectorizer.transform([query])  # pyright: ignore[reportOptionalMemberAccess]
     scores = cosine_similarity(query_vec, _doc_matrix)[0]
     ranked = sorted(enumerate(scores), key=lambda t: t[1], reverse=True)
     return [DOCUMENTS[i]["text"] for i, score in ranked[:top_k] if score >= min_score]

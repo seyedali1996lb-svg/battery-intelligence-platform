@@ -81,14 +81,14 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
             st.session_state["lm_faults"] = []
-            _clear_pybamm_cache(_replay_cell)
+            _clear_pybamm_cache(_replay_cell)  # pyright: ignore[reportArgumentType]
             st.rerun()
         else:
             # Clear old buffers
             st.session_state["lm_telemetry"] = []
             st.session_state["lm_anomalies"] = []
             st.session_state["lm_faults"] = []
-            _clear_pybamm_cache(_replay_cell)
+            _clear_pybamm_cache(_replay_cell)  # pyright: ignore[reportArgumentType]
             # Start subscriber first, then publisher
             _data_mode = st.session_state.get("data_mode", "synthetic")
             # ChemistryProfile.for_cell() also correctly wires up "NCA" for
@@ -117,7 +117,7 @@ def page_live_monitor(cell_ids: list, active_fdfs: dict):
         st.session_state["lm_telemetry"] = []
         st.session_state["lm_anomalies"] = []
         st.session_state["lm_faults"] = []
-        _clear_pybamm_cache(_replay_cell)
+        _clear_pybamm_cache(_replay_cell)  # pyright: ignore[reportArgumentType]
         st.rerun()
 
     # ── Status strip + streaming telemetry ────────────────────────────────────

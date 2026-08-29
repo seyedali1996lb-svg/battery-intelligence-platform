@@ -17,6 +17,13 @@ from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from trajectory_memory import reconcile_rul_estimates
 from chemistry_profiles import ChemistryProfile
 
+try:
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from trajectory_memory import TrajectoryMatch, TrajectoryMemory
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Trajectory match card
 # ---------------------------------------------------------------------------
@@ -506,7 +513,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     with st.expander("📊 Fleet context", expanded=False):
         # ── Benchmark comparison (M4) ────────────────────────────────────────
         try:
-            _bm_fdfs = bundle.get("featured_dfs") or {}
+            _bm_fdfs = bundle.get("featured_dfs") or {}  # pyright: ignore[reportOptionalMemberAccess]
             if len(_bm_fdfs) >= 3:
                 _peer_sohs = []
                 for _bm_cid, _bm_df in _bm_fdfs.items():
@@ -768,8 +775,8 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 _sigma_f2 = float((_f2_valid["soh_pct"] - _f2_valid["soh_pred"]).std())
                 _sigma_f2 = max(min(_sigma_f2, 8.0), 0.3)
                 _cx_f2  = _f2_valid["cycle_number"].tolist()
-                _cu_f2  = (_f2_valid["soh_pred"] + _sigma_f2).clip(upper=102.0).tolist()
-                _cl_f2  = (_f2_valid["soh_pred"] - _sigma_f2).clip(lower=60.0).tolist()
+                _cu_f2  = (_f2_valid["soh_pred"] + _sigma_f2).clip(upper=102.0).tolist()  # pyright: ignore[reportCallIssue]
+                _cl_f2  = (_f2_valid["soh_pred"] - _sigma_f2).clip(lower=60.0).tolist()  # pyright: ignore[reportCallIssue]
                 fig.add_trace(go.Scatter(
                     x=_cx_f2 + _cx_f2[::-1],
                     y=_cu_f2 + _cl_f2[::-1],

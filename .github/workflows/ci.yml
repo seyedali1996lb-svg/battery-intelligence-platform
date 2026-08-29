@@ -39,19 +39,10 @@ jobs:
           print(f'All Python files OK')
           "
 
-      - name: Type check with pyright (baseline-guarded)
+      - name: Type check with pyright
         run: |
           pip install pyright
-          # Baseline: 138 errors as of 2026-08-30. CI fails only if the
-          # count *increases* — every cleanup PR lowers the bar.
-          PYRIGHT_BASELINE=195
-          ERRORS=$(pyright --pythonversion 3.10 src/ app/ batlab/ 2>&1 | tail -1 | grep -oP '\d+ error' | grep -oP '\d+')
-          echo "pyright found $ERRORS errors (baseline: $PYRIGHT_BASELINE)"
-          if [ "$ERRORS" -gt "$PYRIGHT_BASELINE" ]; then
-            echo "ERROR: pyright errors increased from $PYRIGHT_BASELINE to $ERRORS"
-            exit 1
-          fi
-          echo "OK: pyright errors within baseline"
+          pyright --pythonversion 3.10 src/ app/
 
       - name: Run test suite
         run: python -m pytest tests/ -v

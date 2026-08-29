@@ -365,7 +365,7 @@ def start_subscriber(
 
     client_id = f"battery-intelligence-sub-{uuid.uuid4().hex[:8]}"
     client = mqtt.Client(
-        mqtt.CallbackAPIVersion.VERSION2,
+        mqtt.CallbackAPIVersion.VERSION2,  # pyright: ignore[reportPrivateImportUsage]
         client_id=client_id,
         userdata={"chemistry_map": chemistry_map or {}},
     )
@@ -446,7 +446,7 @@ def _publisher_worker(
         return
 
     client_id = f"battery-intelligence-pub-{uuid.uuid4().hex[:8]}"
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)  # pyright: ignore[reportPrivateImportUsage]
     try:
         client.connect(host, port, keepalive=30)
         client.loop_start()

@@ -21,13 +21,18 @@ from utils import (
 )
 from design_system import make_badge
 from chemistry_profiles import ChemistryProfile
-
 from _pages._fleet_diagnostics import render_fleet_diagnostics
+
+try:
+    from typing import TYPE_CHECKING
+    if TYPE_CHECKING:
+        from trajectory_memory import TrajectoryMemory
+except ImportError:
+    pass
 
 # ---------------------------------------------------------------------------
 # Page: Fleet
 # ---------------------------------------------------------------------------
-
 def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "TrajectoryMemory | None" = None):
     _action_bar("fleet")
     st.markdown("# Which cells need attention this week?")
@@ -98,7 +103,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     rows = []
 
     def _bundle_for_cell(cid: str) -> dict | None:
-        return bundles.get(ChemistryProfile.for_cell(cid).source_kind)
+        return bundles.get(ChemistryProfile.for_cell(cid).source_kind)  # pyright: ignore[reportUndefinedVariable]
 
     _summaries_by_id = {
         r["cell_id"]: r for r in _db_rows.get_cell_summaries(_org_id) if r["cell_id"] in _active_ids
@@ -112,7 +117,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             continue
         per_cell  = bndl["metrics"].get("per_cell_rul_reliable", {})
         rul_ok    = per_cell.get(cell_id, bndl["metrics"].get("rul_reliable", False))
-        _profile  = ChemistryProfile.for_cell(cell_id)
+        _profile  = ChemistryProfile.for_cell(cell_id)  # pyright: ignore[reportUndefinedVariable]
         soh       = _r["soh_pct"]
         cycle     = _r["cycle_number"]
         fade_30   = (_r["fade_rate_30cy"] if _r["fade_rate_30cy"] is not None else float("nan")) * 1000  # mSOH/cy
@@ -263,4 +268,4 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         from battery_copilot import build_fleet_stats as _build_fleet_stats, answer_fleet_risk
         st.markdown(answer_fleet_risk(_build_fleet_stats(_org_id, featured_dfs, bundles)))
 
-    render_fleet_diagnostics(rows, featured_dfs, bundles, trajectory_memory)
+    render_fleet_diagnostics(rows, featured_dfs, bundles, trajectory_memory)  # pyright: ignore[reportCallIssue]

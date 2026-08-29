@@ -147,7 +147,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 if _use_warm_start and _prev_bundle_triple is not None:
                     _prev_bundle = _prev_bundle_triple[1]
                     try:
-                        up_bndl = warm_start_update(_prev_bundle, X_all, y_soh_all, y_rul_all)
+                        up_bndl = warm_start_update(_prev_bundle, X_all, y_soh_all, y_rul_all)  # pyright: ignore[reportArgumentType]
                         _training_mode = "warm_start"
                         _warm_start_note = (
                             f"training_mode=warm_start (+{up_bndl['n_estimators_added']} estimators, "
@@ -157,10 +157,10 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                         # Feature-set changed or estimator cap hit — an honest
                         # fallback to a full refit, not a silent one (surfaced
                         # via the step message below).
-                        up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+                        up_bndl = train_models(X_all, y_soh_all, y_rul_all)  # pyright: ignore[reportArgumentType]
                         _warm_start_note = f"warm_start_update() fell back to full_refit: {_ws_exc}"
                 else:
-                    up_bndl = train_models(X_all, y_soh_all, y_rul_all)
+                    up_bndl = train_models(X_all, y_soh_all, y_rul_all)  # pyright: ignore[reportArgumentType]
                 up_bndl["metrics"]["n_cells"] = n_up
                 up_bndl["metrics"]["n_rows"]  = len(X_all)
                 up_bndl["metrics"]["training_mode"] = _training_mode

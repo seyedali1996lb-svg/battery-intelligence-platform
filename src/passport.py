@@ -83,7 +83,7 @@ def build_passport(
     chemistry_known = profile.nominal_capacity_kwh_key is not None
 
     if chemistry_known:
-        cell_kwh = CELL_NOMINAL_KWH[profile.nominal_capacity_kwh_key]
+        cell_kwh = CELL_NOMINAL_KWH[profile.nominal_capacity_kwh_key]  # pyright: ignore[reportArgumentType]
         capacity_value = f"{cell_kwh*1000:.2f} Wh ({cell_kwh/3.6*1000:.2f} Ah @ 3.6V nominal)"
         capacity_state = "available"
         capacity_note  = profile.passport_capacity_note

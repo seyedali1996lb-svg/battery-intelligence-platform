@@ -141,9 +141,9 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
     st.markdown("<h4 class='section-header'>Degradation Phase Analysis</h4>", unsafe_allow_html=True)
     phase_labels = degradation_phases(df["soh_pct"], df["cycle_number"])
     phase_counts = phase_labels.value_counts()
-    n_early = int(phase_counts.get("Early", 0))
-    n_plateau = int(phase_counts.get("Plateau", 0))
-    n_accel = int(phase_counts.get("Accelerating", 0))
+    n_early = int(phase_counts.get("Early", 0))  # pyright: ignore[reportArgumentType]
+    n_plateau = int(phase_counts.get("Plateau", 0))  # pyright: ignore[reportArgumentType]
+    n_accel = int(phase_counts.get("Accelerating", 0))  # pyright: ignore[reportArgumentType]
     current_phase = knee["phase"]
     PHASE_COLOUR = {"Early": "#63b3ed", "Plateau": "#48bb78", "Accelerating": "#fc8181", "Unknown": "#4a5568"}
     pc = PHASE_COLOUR.get(current_phase, "#4a5568")
@@ -497,7 +497,7 @@ def render_ce_expander(df: pd.DataFrame, cell_id: str) -> None:
             _md_html("""<div style="font-size:12px;color:#8896a8;margin:8px 0 12px;line-height:1.6"><strong style="color:#a0aec0">Why CE matters:</strong> Every cycle where CE &lt; 100% permanently loses cyclable lithium to the SEI layer. A CE drop from 99.95% → 99.30% may seem small but represents ~0.65% lithium lost per cycle — the dominant degradation mechanism in calendar-aged cells. CATL and BYD track cumulative CE deficit as the primary warranty signal for LLI-dominated failures.</div>""")
 
             # CE trend chart
-            _rdf_ce = _resample_df(df[df["coulombic_efficiency"].notna()])
+            _rdf_ce = _resample_df(df[df["coulombic_efficiency"].notna()])  # pyright: ignore[reportArgumentType]
             fig_ce = go.Figure()
             fig_ce.add_trace(go.Scatter(
                 x=_rdf_ce["cycle_number"].tolist(),
@@ -873,7 +873,7 @@ def render_formation_protocol_expander(df: pd.DataFrame, cell_id: str) -> None:
                 _fc1.metric("ICL (Cycles 1→3)", f"{_icl:.2f}%", help="Irreversible Capacity Loss during formation. Target <2% for LiCoO₂.")
                 if _ce0 is not None:
                     _fc2.metric("CE Cycle 1", f"{_ce0:.2f}%", help="First-cycle CE; ~90–95% is normal — SEI consumes lithium.")
-                    _fc3.metric("CE Cycle 3", f"{_ce3:.2f}%", delta=f"+{_ce3-_ce0:.2f}pp", help="CE should stabilise toward 99.9% by cycle 10.")
+                    _fc3.metric("CE Cycle 3", f"{_ce3:.2f}%", delta=f"+{_ce3-_ce0:.2f}pp", help="CE should stabilise toward 99.9% by cycle 10.")  # pyright: ignore[reportOptionalOperand]
 
                 # CE stabilisation curve
                 if "coulombic_efficiency" in df.columns:

@@ -5,7 +5,7 @@ import _paths  # noqa: F401
 import streamlit as st
 import plotly.graph_objects as go
 
-from utils import _action_bar, _md_html, PLOTLY_CONFIG, friendly
+from utils import _action_bar, _md_html, PLOTLY_CONFIG, friendly, base_layout
 from batlab.models.gbrt import top_drivers, feature_importance_df
 from design_system import make_badge
 from chemistry_profiles import ChemistryProfile
@@ -247,13 +247,13 @@ def page_copilot(
         _bc_fit = application_fit(_bc_soh, _bc_fade_30, fleet_fade_median=None)
         _bc_result = classify(
             _bc_soh, _bc_fade_30, _bc_fade_50,
-            ctx["rul_reliable"], ctx["rul_pred"], _bc_fit,
+            ctx["rul_reliable"], ctx["rul_pred"], _bc_fit,  # pyright: ignore[reportOptionalSubscript]
         )
         _bc_assumptions = {k: v["value"] for k, v in ASSUMPTIONS.items()}
         _bc_financials = None
-        if ctx["source_kind"] in CELL_NOMINAL_KWH:
+        if ctx["source_kind"] in CELL_NOMINAL_KWH:  # pyright: ignore[reportOptionalSubscript]
             _bc_financials = financial_comparison(
-                soh=_bc_soh, source=ctx["source_kind"],
+                soh=_bc_soh, source=ctx["source_kind"],  # pyright: ignore[reportOptionalSubscript]
                 recycling_value=_bc_assumptions["recycling_value"],
                 new_cell_cost=_bc_assumptions["new_cell_cost"],
                 sl_value_per_kwh=_bc_assumptions["second_life_value_per_kwh"],
@@ -322,7 +322,7 @@ def page_copilot(
                     list(bundles.values())[0],
                 )
                 _drivers = top_drivers(_shap_bundle, model="soh", top_n=8)
-                _fi = feature_importance_df(_shap_bundle, model="soh", top_n=8)
+                _fi = feature_importance_df(_shap_bundle, model="soh", top_n=8)  # pyright: ignore[reportCallIssue]
                 _top_feat = _drivers[0]["feature"] if _drivers else "—"
                 _top_pct  = _drivers[0]["importance_pct"] if _drivers else 0
                 st.markdown(
@@ -361,7 +361,7 @@ def page_copilot(
     if contexts:
         with st.expander("Context used — what data drove this response", expanded=False):
             for c in contexts:
-                st.markdown(f"**{c['cell_id']}**")
+                st.markdown(f"**{c['cell_id']}**")  # pyright: ignore[reportOptionalSubscript]
                 st.code(context_summary(c), language=None)
     elif fleet_only:
         with st.expander("Context used — fleet aggregates", expanded=False):

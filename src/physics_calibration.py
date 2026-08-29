@@ -368,7 +368,7 @@ def calibrate_cell(cell_id: str, df: pd.DataFrame, eol_threshold_pct: float = 80
     result["param_set"] = param_set
 
     from pybamm_rul import _CHEM_LABEL
-    result["chem_label"] = _CHEM_LABEL.get(param_set, param_set)
+    result["chem_label"] = _CHEM_LABEL.get(param_set, param_set)  # pyright: ignore[reportArgumentType, reportCallIssue]
 
     valid = df[["cycle_number", "soh_pct"]].dropna()
     if len(valid) < MIN_CYCLES_FOR_CALIBRATION:
@@ -465,7 +465,7 @@ def calibrated_feature_series(df: pd.DataFrame, cell_id: "str | None") -> pd.Dat
             cur["beta_lam"] = fade_fit["beta_lam"]
             cur["r2"] = fade_fit["r2"]
             if has_resistance:
-                r_fit = fit_resistance_growth(cycles_all[: i + 1], resistance_all[: i + 1])
+                r_fit = fit_resistance_growth(cycles_all[: i + 1], resistance_all[: i + 1])  # pyright: ignore[reportOptionalSubscript]
                 cur["k_r"] = r_fit["k_r"] if r_fit is not None else np.nan
             last_refit_i = i
 
@@ -644,7 +644,7 @@ def physics_gbrt_divergence_report(cell_data: dict) -> list[dict]:
         X_train = _pd.concat([t[0] for t in train_inputs])
         y_soh_train = _pd.concat([t[1] for t in train_inputs])
         y_rul_train = _pd.concat([t[2] for t in train_inputs])
-        bndl = train_models(X_train, y_soh_train, y_rul_train)
+        bndl = train_models(X_train, y_soh_train, y_rul_train)  # pyright: ignore[reportArgumentType]
         gbrt_preds = predict(bndl, X_test)
         gbrt_soh_mae = float(mean_absolute_error(y_soh_test, gbrt_preds["soh_pred"]))
 

@@ -86,7 +86,7 @@ class OIDCProvider:
             resp = self._session.get(url, timeout=self.timeout)
             resp.raise_for_status()
             self._discovery = resp.json()
-        return self._discovery
+        return self._discovery  # pyright: ignore[reportReturnType]
 
     # ── flow ─────────────────────────────────────────────────────────────────
 

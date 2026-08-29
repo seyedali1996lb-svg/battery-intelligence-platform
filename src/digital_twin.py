@@ -112,7 +112,7 @@ class CellTwin:
             raise ValueError("update() needs a non-empty per-cycle DataFrame")
 
         for _, row in df.iterrows():
-            cyc = int(row["cycle_number"])
+            cyc = int(row["cycle_number"])  # pyright: ignore[reportArgumentType]
             record: dict[str, float] = {}
             for k, v in row.items():
                 if k == "cycle_number":
@@ -120,7 +120,7 @@ class CellTwin:
                 if isinstance(v, bool):
                     continue  # flags (is_eol etc.) aren't twin state
                 if isinstance(v, (int, float)) and not np.isnan(float(v)):
-                    record[k] = float(v)
+                    record[k] = float(v)  # pyright: ignore[reportArgumentType]
                 # strings / None / NaN silently skipped — the twin only
                 # ingests numeric per-cycle measurements.
             self._cycles[cyc] = record
@@ -250,7 +250,7 @@ class CellTwin:
                 "spm_capacity_ah": self._spm_capacity_ah,
                 "beta": getattr(self, "_beta", None),
                 "beta_sigma": getattr(self, "_beta_sigma", None),
-                **self._projection,
+                **self._projection,  # pyright: ignore[reportGeneralTypeIssues]
             } if getattr(self, "_projection", None) else None,
             "labels": [
                 "projection, not prediction — physics-based forward extrapolation of measured fade",

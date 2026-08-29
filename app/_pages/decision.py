@@ -440,7 +440,7 @@ def page_decision(
                             st.session_state["sl_listings"] = []
                         st.session_state["sl_listings"].append(_listing)
                         if _circ_state == "error":
-                            st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")
+                            st.error(f"Circunomics submission failed ({_circ_result['error']}) — saved as a local demo listing instead.")  # pyright: ignore[reportOptionalSubscript]
                         else:
                             st.success(
                                 f"Listing created for {selected} at ${_listing['asking_usd']:.2f} "

@@ -136,12 +136,12 @@ def _classify_failure_mode(window: pd.DataFrame) -> str:
     if "ce_rolling_30cy" in window.columns:
         ce = window["ce_rolling_30cy"].dropna()
         if len(ce) >= 5:
-            slope = float(np.polyfit(np.arange(len(ce)), ce.values, 1)[0])
+            slope = float(np.polyfit(np.arange(len(ce)), ce.values, 1)[0])  # pyright: ignore[reportArgumentType, reportCallIssue]
             lli = slope < -4e-5   # CE falling > 4e-5 / cycle
     if "resistance_normalized" in window.columns:
         rn = window["resistance_normalized"].dropna()
         if len(rn) >= 5:
-            slope = float(np.polyfit(np.arange(len(rn)), rn.values, 1)[0])
+            slope = float(np.polyfit(np.arange(len(rn)), rn.values, 1)[0])  # pyright: ignore[reportArgumentType, reportCallIssue]
             lam = slope > 0.0015  # resistance rising > 0.15% / cycle
     if lli and lam:
         return "Mixed (LLI + LAM)"

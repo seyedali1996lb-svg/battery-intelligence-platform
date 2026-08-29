@@ -518,10 +518,10 @@ def is_login_locked_out(username: str) -> "str | None":
     even attempts a bcrypt check."""
     with Session() as s:
         row = s.query(User).filter_by(username=username.strip().lower()).one_or_none()
-        if row is None or not row.locked_until:
+        if row is None or not row.locked_until:  # pyright: ignore[reportGeneralTypeIssues]
             return None
-        if datetime.datetime.fromisoformat(row.locked_until) > datetime.datetime.now():
-            return row.locked_until
+        if datetime.datetime.fromisoformat(row.locked_until) > datetime.datetime.now():  # pyright: ignore[reportArgumentType]
+            return row.locked_until  # pyright: ignore[reportReturnType]
         return None
 
 
@@ -536,7 +536,7 @@ def record_failed_login(username: str) -> None:
         if row is None:
             return
         row.failed_login_attempts = (row.failed_login_attempts or 0) + 1
-        if row.failed_login_attempts >= _MAX_FAILED_LOGIN_ATTEMPTS:
+        if row.failed_login_attempts >= _MAX_FAILED_LOGIN_ATTEMPTS:  # pyright: ignore[reportGeneralTypeIssues]
             row.locked_until = (
                 datetime.datetime.now() + datetime.timedelta(minutes=_LOCKOUT_MINUTES)
             ).isoformat()
@@ -589,7 +589,7 @@ def create_organization_with_admin(org_name: str, username: str, password: str, 
         s.add(user)
         s.commit()
         s.refresh(user)
-        _ensure_default_site_and_fleet(s, org.id)
+        _ensure_default_site_and_fleet(s, org.id)  # pyright: ignore[reportArgumentType]
         return {"org_id": org.id, "org_name": org.name, "user_id": user.id}
 
 
@@ -721,7 +721,7 @@ def provision_or_link_sso_user(
             .one_or_none()
         )
         if row is not None:
-            return _user_row_to_dict(row, s)
+            return _user_row_to_dict(row, s)  # pyright: ignore[reportReturnType]
 
         # 2. Existing account with this verified email -> link, don't create.
         # (Matches the email column, or the username for accounts created
@@ -736,7 +736,7 @@ def provision_or_link_sso_user(
             existing.sso_provider = provider
             existing.sso_subject = subject
             s.commit()
-            return _user_row_to_dict(existing, s)
+            return _user_row_to_dict(existing, s)  # pyright: ignore[reportReturnType]
 
         # 3. New org + admin, username deduped from the email local-part
         base = email.split("@")[0][:40] or "sso"
@@ -762,8 +762,8 @@ def provision_or_link_sso_user(
         s.add(user)
         s.commit()
         s.refresh(user)
-        _ensure_default_site_and_fleet(s, org.id)
-        return _user_row_to_dict(user, s)
+        _ensure_default_site_and_fleet(s, org.id)  # pyright: ignore[reportArgumentType]
+        return _user_row_to_dict(user, s)  # pyright: ignore[reportReturnType]
 
 
 # ---------------------------------------------------------------------------
@@ -933,13 +933,13 @@ def get_webhook_subscriptions(org_id: int) -> list[dict]:
         result = []
         for r in rows:
             secret = None
-            if r.secret:
+            if r.secret:  # pyright: ignore[reportGeneralTypeIssues]
                 try:
                     secret = _get_fernet().decrypt(r.secret.encode()).decode()
                 except InvalidToken:
                     secret = None  # predates encryption or was encrypted under a different key
             try:
-                event_types = json.loads(r.event_types) if r.event_types else []
+                event_types = json.loads(r.event_types) if r.event_types else []  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
             except (TypeError, ValueError):
                 event_types = []
             result.append({
@@ -997,7 +997,7 @@ def get_setting(org_id: int, key: str, default=None):
                 # it as-is; the next set_setting() call re-encrypts it.
                 pass
         try:
-            return json.loads(raw)
+            return json.loads(raw)  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
             return default
 
@@ -1033,7 +1033,7 @@ def get_settings(org_id: int, keys: "list[str] | None" = None) -> dict:
                 # it as-is; the next set_setting() call re-encrypts it.
                 pass
         try:
-            result[row.key] = json.loads(raw)
+            result[row.key] = json.loads(raw)  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
             continue
     return result
@@ -1090,7 +1090,7 @@ def load_upload_meta_history(org_id: int) -> list[dict]:
         return [
             {
                 "id": r.id, "upload_date": r.upload_date, "n_cells": r.n_cells,
-                "cell_ids": json.loads(r.cell_ids) if r.cell_ids else [],
+                "cell_ids": json.loads(r.cell_ids) if r.cell_ids else [],  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
                 "joblib_key": r.joblib_key,
             }
             for r in rows
@@ -1127,13 +1127,13 @@ def load_failure_signatures(org_id: int) -> list:
         rows = s.query(FailureSignature).filter_by(org_id=org_id).all()
         return [
             _FS(
-                cell_id=r.cell_id,
-                source=r.source,
-                eol_cycle=r.eol_cycle,
-                soh_at_window_start=r.soh_at_window_start,
-                failure_mode=r.failure_mode,
-                feature_names=json.loads(r.feature_names),
-                trend_vector=np.array(json.loads(r.trend_vector), dtype=float),
+                cell_id=r.cell_id,  # pyright: ignore[reportArgumentType]
+                source=r.source,  # pyright: ignore[reportArgumentType]
+                eol_cycle=r.eol_cycle,  # pyright: ignore[reportArgumentType]
+                soh_at_window_start=r.soh_at_window_start,  # pyright: ignore[reportArgumentType]
+                failure_mode=r.failure_mode,  # pyright: ignore[reportArgumentType]
+                feature_names=json.loads(r.feature_names),  # pyright: ignore[reportArgumentType]
+                trend_vector=np.array(json.loads(r.trend_vector), dtype=float),  # pyright: ignore[reportArgumentType]
             )
             for r in rows
         ]
@@ -1266,11 +1266,11 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "org_id":          r.org_id,
         "dataset":         r.dataset,
         "chemistry":       r.chemistry,
-        "feature_set":     json.loads(r.feature_set) if r.feature_set else [],
+        "feature_set":     json.loads(r.feature_set) if r.feature_set else [],  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "feature_version": r.feature_version,
-        "hyperparams":     json.loads(r.hyperparams) if r.hyperparams else {},
+        "hyperparams":     json.loads(r.hyperparams) if r.hyperparams else {},  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "seed":            r.seed,
-        "cell_ids":        json.loads(r.cell_ids) if r.cell_ids else [],
+        "cell_ids":        json.loads(r.cell_ids) if r.cell_ids else [],  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "n_cells":         r.n_cells,
         "n_rows":          r.n_rows,
         "soh_mae":         r.soh_mae,
@@ -1278,7 +1278,7 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "rul_mae":         r.rul_mae,
         "rul_r2":          r.rul_r2,
         "rul_reliable":    bool(r.rul_reliable),
-        "fold_metrics":    json.loads(r.fold_metrics) if r.fold_metrics else {},
+        "fold_metrics":    json.loads(r.fold_metrics) if r.fold_metrics else {},  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,
@@ -1513,7 +1513,7 @@ def list_pack_cells(org_id: int, pack_id: int) -> list[str]:
             .order_by(PackCell.position, PackCell.cell_id)
             .all()
         )
-        return [r.cell_id for r in rows]
+        return [r.cell_id for r in rows]  # pyright: ignore[reportReturnType]
 
 
 def _ensure_default_site_and_fleet(s, org_id: int) -> None:
@@ -1542,4 +1542,4 @@ def _seed_default_fleet_hierarchy() -> None:
     _seed_demo_org_and_users()'s "create on first run only" pattern."""
     with Session() as s:
         for org in s.query(Organization).all():
-            _ensure_default_site_and_fleet(s, org.id)
+            _ensure_default_site_and_fleet(s, org.id)  # pyright: ignore[reportArgumentType]

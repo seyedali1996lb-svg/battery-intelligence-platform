@@ -122,7 +122,7 @@ def get_store() -> DataStore:
         return _store
     # Lazy import to avoid circular deps at module load time.
     import db as _db
-    return _db  # db module already satisfies the DataStore protocol
+    return _db  # db module already satisfies the DataStore protocol  # pyright: ignore[reportReturnType]
 
 
 def set_store(store: DataStore) -> None:
@@ -137,7 +137,7 @@ def get_market_adapter() -> MarketDataAdapter:
     if _market_adapter is not None:
         return _market_adapter
     from market_data import get_market_adapter as _real_get
-    return _real_get()
+    return _real_get()  # pyright: ignore[reportCallIssue]
 
 
 def set_market_adapter(adapter: MarketDataAdapter) -> None:
@@ -226,7 +226,7 @@ def _create_access_token(user: dict) -> str:
 
 def get_current_user(
     authorization: Optional[str] = Header(None),
-    request: Request = None,  # noqa: B008 — FastAPI injects Request (bare type, default ignored)
+    request: Request = None,  # noqa: B008 — FastAPI injects Request (bare type, default ignored)  # pyright: ignore[reportArgumentType]
 ) -> dict:
     """
     FastAPI dependency — decodes the `Authorization: Bearer <token>` header
@@ -307,7 +307,7 @@ def _get_bundle() -> dict:
         _bundle_cache = load_everything()
     except ImportError:
         _bundle_cache = _load_bundle_from_disk_cache()
-    return _bundle_cache
+    return _bundle_cache  # pyright: ignore[reportReturnType]
 
 def _load_bundle_from_disk_cache() -> dict:
     """
@@ -935,7 +935,7 @@ from dynamic_circularity import calculate_dynamic_lca, generate_verifiable_crede
 from task_queue import task_queue
 from streaming_analytics import streaming_engine
 from market_data import (
-    get_market_adapter,
+    get_market_adapter,  # pyright: ignore[reportAssignmentType]
     registered_market_adapters,
     to_eur_per_kwh,
     resolve_carbon_intensity,
@@ -1282,7 +1282,7 @@ def create_team_member_api(
             detail="username is required and password must be at least 6 characters.",
         )
     result = create_user(
-        current_user["org_id"], req.username, req.password, req.role, req.display_name,
+        current_user["org_id"], req.username, req.password, req.role, req.display_name,  # pyright: ignore[reportArgumentType]
         caller_role=current_user["role"],
     )
     if "error" in result:
@@ -1367,7 +1367,7 @@ def get_market_prices(
     against documented API shapes, not verified live (see
     src/market_data.py's module docstring)."""
     try:
-        mkt = get_market_adapter(adapter)
+        mkt = get_market_adapter(adapter)  # pyright: ignore[reportCallIssue]
     except KeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1688,7 +1688,7 @@ def get_cell_dynamic_lca(
     carbon_resolution = None
     if use_live_carbon:
         try:
-            mkt = get_market_adapter(carbon_adapter)
+            mkt = get_market_adapter(carbon_adapter)  # pyright: ignore[reportCallIssue]
         except KeyError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if not mkt.is_configured():

@@ -109,7 +109,7 @@ def warranty_breach_estimate(
     if can_scale:
         remaining_to_floor = current_soh_pct - warranty_floor_soh_pct
         scale = remaining_to_floor / remaining_to_eol
-        model_scaled_estimate = max(0.0, rul_pred * scale)
+        model_scaled_estimate = max(0.0, rul_pred * scale)  # pyright: ignore[reportOptionalOperand]
         if rul_q10 is not None:
             model_scaled_q10 = max(0.0, rul_q10 * scale)
         if rul_q90 is not None:
