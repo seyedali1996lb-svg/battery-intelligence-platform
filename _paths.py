@@ -26,8 +26,16 @@ from __future__ import annotations
 import os
 import sys
 
-# Absolute path to the project root (the directory containing this file).
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+# Absolute path to the project root.
+# Walk up from this file's directory until we find pyproject.toml or .git,
+# so the app works even when launched from a subdirectory (e.g.
+# ``streamlit run app/main.py`` from anywhere).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = _HERE
+while _ROOT != os.path.dirname(_ROOT):  # stop at filesystem root
+    if os.path.isfile(os.path.join(_ROOT, "pyproject.toml")) or os.path.isdir(os.path.join(_ROOT, ".git")):
+        break
+    _ROOT = os.path.dirname(_ROOT)
 _SRC = os.path.join(_ROOT, "src")
 _APP = os.path.join(_ROOT, "app")
 _SCRIPTS = os.path.join(_ROOT, "scripts")

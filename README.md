@@ -109,9 +109,12 @@ The Streamlit app (`app/`) is split into focused modules:
 - **`app/_onboarding.py`** — guided tour, command palette, and first-run overlay dialogs
 - **`app/_router.py`** — page routing/dispatch
 - **`app/_session.py`** — session-state initialization, DB persistence hydration, cell partitioning, and data-mode resolution
+- **`app/_design_tokens.py`** — constants, Plotly config, feature labels, card colours
+- **`app/_ui_helpers.py`** — UI rendering (cards, metric tiles, charts, provenance, pack builder)
+- **`app/utils.py`** — cache helpers + backward-compatible re-exports from the above
 - **`app/_pages/`** — individual page renderers (one per page)
 
-A centralized **`_paths.py`** at the project root ensures `src/`, `app/`, and `scripts/` are importable as bare names from anywhere — no scattered `sys.path.insert` hacks.
+A centralized **`_paths.py`** at the project root walks up from its own directory to find the repo root, ensuring `src/`, `app/`, and `scripts/` are importable from any working directory. A **`python -m app`** entry point is also provided.
 
 The `src/` layer provides:
 - **Dependency-injection protocols** (`src/protocols.py`) — `BMSAdapter`, `MarketDataAdapter`, `DataStore`, `ImportAdapter`, `NotificationSender`, `KnowledgeRetriever` Protocol interfaces defining subsystem boundaries
@@ -181,9 +184,11 @@ Run it locally:
 ```bash
 pip install -r requirements.txt
 streamlit run app/main.py
+# or, from anywhere:
+python -m app
 ```
 
-The dashboard is launched from the repository root. Path resolution is handled by `_paths.py` (ensuring `src/`, `app/`, and `scripts/` are importable), so module resolution works consistently in local and hosted deployments.
+Path resolution is handled by `_paths.py`, which walks up from its own directory to find the repo root — so the app works when launched from any working directory.
 
 See [`docs/history.md`](docs/history.md) for its full build history and architecture.
 

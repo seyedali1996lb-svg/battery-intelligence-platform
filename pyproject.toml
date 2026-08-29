@@ -53,8 +53,14 @@ pythonVersion = "3.10"
 include = ["batlab", "src", "app"]
 exclude = ["**/node_modules", "**/__pycache__"]
 typeCheckingMode = "standard"
-reportMissingImports = true
+# --- Suppressed categories (false positives at scale) ---
+# reportMissingImports: bare imports resolve at runtime via _paths.py sys.path;
+#   pyright can't see the dynamic path setup, so these are always false positives.
+reportMissingImports = false
 reportMissingTypeStubs = false
+# reportAttributeAccessIssue: Streamlit's session_state is a dynamic dict-like
+#   object; pyright flags every attribute access as unknown.
+reportAttributeAccessIssue = false
 reportUnknownMemberType = false
 reportUnknownParameterType = false
 reportUnknownVariableType = false
@@ -62,9 +68,16 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 reportUntypedFunctionDecorator = false
 reportUntypedClassDecorator = false
-reportAttributeAccessIssue = true
+# --- Active checks (real errors we want to catch) ---
 reportCallIssue = true
 reportReturnType = true
+reportArgumentType = true
+reportGeneralTypeIssues = true
+reportOperatorIssue = true
+reportOptionalSubscript = true
+reportIndexIssue = true
+reportUndefinedVariable = true
+reportPossiblyUnboundVariable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
