@@ -41,6 +41,25 @@ GET  /cells/{cell_id}/rul   — RUL prediction with reliability flag + band
 GET  /cells/{cell_id}/lineage — data lineage for a cell's metrics
 GET  /cells/{cell_id}/view/{oem|operator|recycler} — same cell, sliced for one real stakeholder (see src/stakeholder_views.py)
 
+Org write surface (Role-aware — see src/rbac.py):
+POST /decisions                     — append to the org's decision log (decision.log)
+GET  /decisions                     — list the org's decision log (any auth role)
+POST /webhooks                      — add/update a webhook destination (webhooks.manage)
+DELETE /webhooks/{id}               — remove a webhook destination (webhooks.manage)
+GET  /webhooks                      — list configured destinations (any auth role)
+POST /sites                         — create a site (fleet-assets.manage)
+POST /sites/{site_id}/fleets        — create a fleet under a site (fleet-assets.manage)
+POST /fleets/{fleet_id}/packs       — create a pack under a fleet (fleet-assets.manage)
+POST /packs/{pack_id}/cells         — assign a cell to a pack (fleet-assets.manage)
+DELETE /packs/{pack_id}/cells/{cell_id} — remove a cell from a pack (fleet-assets.manage)
+GET  /sites, /sites/{id}/fleets, /fleets/{id}/packs, /packs/{id}/cells — org-scoped reads (any auth role)
+
+The /decisions, /webhooks, and /sites-/fleets-/packs- write routes are enforced
+server-side by src/api.py's require_action on the same src/rbac.py capability
+keys the Streamlit UI reads, and each passes the authenticated role through as
+caller_role into src/db.py (which applies the identical check) -- so the UI
+and the API boundary can never drift apart.
+
 All endpoints other than / and /auth/login require:
     Authorization: Bearer <token>
 """
