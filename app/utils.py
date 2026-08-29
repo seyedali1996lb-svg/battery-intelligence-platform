@@ -2,10 +2,7 @@
 Shared UI helpers, constants, and small pure functions extracted from main.py.
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
 import streamlit as st
 import plotly.graph_objects as go

@@ -46,10 +46,12 @@ from __future__ import annotations
 
 import argparse
 import pathlib
-import sys
+import sys as _sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "src"))
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
+import _paths  # noqa: F402
 
 from sqlalchemy import create_engine, inspect, text  # noqa: E402
 from sqlalchemy.schema import CreateTable  # noqa: E402

@@ -9,12 +9,9 @@ gated by this platform's existing JWT auth, same as any other API
 consumer.
 """
 
+
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 

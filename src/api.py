@@ -65,17 +65,9 @@ All endpoints other than / and /auth/login require:
 """
 
 from __future__ import annotations
-
-import sys
 import os
-
-# Ensure project root is on the path so src.* imports work
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-_APP_DIR = os.path.join(_ROOT, "app")
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
 import datetime
 import uuid
@@ -99,7 +91,7 @@ except ImportError as _e:
 
 import numpy as np
 
-from src.db import (
+from db import (
     get_user_by_username, verify_password, init_db,
     create_user, list_users,
     save_decision, load_decisions,
@@ -111,7 +103,7 @@ from src.db import (
     create_pack, list_packs,
     list_pack_cells, add_cell_to_pack, remove_cell_from_pack,
 )
-from src.chemistry_profiles import ChemistryProfile
+from chemistry_profiles import ChemistryProfile
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 
@@ -138,7 +130,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ── Auth (JWT) ────────────────────────────────────────────────────────────────
 # Same honesty pattern as this app's other secrets (see README's Production
@@ -167,11 +158,9 @@ _JWT_EXPIRY_HOURS = 24
 # touch data/app.db on a fresh clone, so this can't be lazy like _get_bundle().
 init_db()
 
-
 class LoginRequest(BaseModel):
     username: str
     password: str
-
 
 class LoginResponse(BaseModel):
     access_token: str
@@ -180,7 +169,6 @@ class LoginResponse(BaseModel):
     org_name: str
     role: str
     display_name: str
-
 
 def _create_access_token(user: dict) -> str:
     payload = {
@@ -194,7 +182,6 @@ def _create_access_token(user: dict) -> str:
     return _pyjwt.encode(
         payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM, headers={"kid": "current"}
     )
-
 
 def get_current_user(
     authorization: Optional[str] = Header(None),
@@ -243,7 +230,6 @@ def get_current_user(
 
     return {"username": payload["sub"], "org_id": payload["org_id"], "role": payload["role"]}
 
-
 def require_action(action: str):
     """FastAPI dependency factory for server-side write gating (src/rbac.py).
 
@@ -265,11 +251,9 @@ def require_action(action: str):
         return current_user
     return _dep
 
-
 # ── Bundle loading (lazy, singleton) ─────────────────────────────────────────
 
 _bundle_cache: dict | None = None
-
 
 def _get_bundle() -> dict:
     global _bundle_cache
@@ -283,7 +267,6 @@ def _get_bundle() -> dict:
     except ImportError:
         _bundle_cache = _load_bundle_from_disk_cache()
     return _bundle_cache
-
 
 def _load_bundle_from_disk_cache() -> dict:
     """
@@ -312,11 +295,11 @@ def _load_bundle_from_disk_cache() -> dict:
     than a real dict of every cell's full DataFrame.
     """
     try:
-        from src.bundle_cache import load_cached_unchecked  # type: ignore
+        from bundle_cache import load_cached_unchecked  # type: ignore
     except ImportError:
         from bundle_cache import load_cached_unchecked  # type: ignore
     try:
-        from src.cell_store import LazyCellFrameMap  # type: ignore
+        from cell_store import LazyCellFrameMap  # type: ignore
     except ImportError:
         from cell_store import LazyCellFrameMap  # type: ignore
 
@@ -332,7 +315,6 @@ def _load_bundle_from_disk_cache() -> dict:
 
     return {"featured_dfs": LazyCellFrameMap(cell_ids), "bundles": bundles}
 
-
 def _get_org_bundle(org_id: "int | None"):
     """Return the org's own persisted (featured_dfs, bundle, split_cycles)
     triple via bundle_cache.load_tenant_bundle() — the exact same function
@@ -342,11 +324,10 @@ def _get_org_bundle(org_id: "int | None"):
     if org_id is None:
         return None
     try:
-        from src.bundle_cache import load_tenant_bundle  # type: ignore
+        from bundle_cache import load_tenant_bundle  # type: ignore
     except ImportError:
         from bundle_cache import load_tenant_bundle  # type: ignore
     return load_tenant_bundle(org_id)
-
 
 def _get_featured_dfs(org_id: "int | None" = None) -> dict:
     b = _get_bundle()
@@ -361,7 +342,6 @@ def _get_featured_dfs(org_id: "int | None" = None) -> dict:
         fdfs = {**fdfs, **org_fdfs}
     return fdfs
 
-
 def _get_bundles(org_id: "int | None" = None) -> dict:
     b = _get_bundle()
     bundles = b[1] if isinstance(b, tuple) else b.get("bundles", {})
@@ -370,7 +350,6 @@ def _get_bundles(org_id: "int | None" = None) -> dict:
     if org_bundle is not None:
         bundles = {**bundles, "upload": org_bundle[1]}
     return bundles
-
 
 def _cell_stat_rows(org_id: "int | None") -> list[dict]:
     """Normalized per-cell stats for fleet_summary()/fleet_alerts(): the
@@ -430,7 +409,6 @@ def _cell_stat_rows(org_id: "int | None") -> list[dict]:
 
     return rows
 
-
 # ── Response models ────────────────────────────────────────────────────────────
 
 class APIInfo(BaseModel):
@@ -439,12 +417,10 @@ class APIInfo(BaseModel):
     docs: str
     endpoints: list[str]
 
-
 class HealthCheck(BaseModel):
     status: str
     cells_loaded: int
     bundles_loaded: list[str]
-
 
 class CellLatest(BaseModel):
     cell_id: str
@@ -458,13 +434,11 @@ class CellLatest(BaseModel):
     resistance_normalized: Optional[float]
     coulombic_efficiency: Optional[float]
 
-
 class HistoryPoint(BaseModel):
     cycle_number: int
     soh_pct: float
     rul_pred: Optional[float]
     capacity_ah: Optional[float]
-
 
 class FleetSummary(BaseModel):
     total_cells: int
@@ -478,13 +452,11 @@ class FleetSummary(BaseModel):
     cells_near_eol_6m: int
     capex_estimate_12m_usd: float
 
-
 class AlertItem(BaseModel):
     severity: str          # "critical" | "high" | "medium"
     cell_id: str
     title: str
     body: str
-
 
 class RULResult(BaseModel):
     cell_id: str
@@ -496,7 +468,6 @@ class RULResult(BaseModel):
     rul_reliable: bool
     eol_threshold_pct: float
 
-
 class LineageRow(BaseModel):
     metric: str
     latest_value: str
@@ -504,12 +475,10 @@ class LineageRow(BaseModel):
     formula: str
     source: str
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _CYCLES_PER_MONTH = 200
 _REPLACEMENT_COST_USD = 150
-
 
 def _soh_status(soh: float) -> str:
     if soh >= 90:
@@ -517,7 +486,6 @@ def _soh_status(soh: float) -> str:
     if soh >= 80:
         return "Degrading"
     return "End of Life"
-
 
 def _rul_reliable_for(cell_id: str, bundles: dict) -> bool:
     _kind = ChemistryProfile.for_cell(cell_id).source_kind
@@ -543,10 +511,8 @@ def _rul_reliable_for(cell_id: str, bundles: dict) -> bool:
     per_cell = bndl.get("metrics", {}).get("per_cell_rul_reliable", {})
     return per_cell.get(cell_id, bndl.get("metrics", {}).get("rul_reliable", False))
 
-
 def _cell_not_found(cell_id: str):
     raise HTTPException(status_code=404, detail=f"Cell '{cell_id}' not found in loaded bundle.")
-
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -579,7 +545,6 @@ def root():
         ],
     )
 
-
 @app.post("/auth/login", response_model=LoginResponse, summary="Log in and receive a bearer token")
 def login(body: LoginRequest):
     user = get_user_by_username(body.username)
@@ -592,7 +557,6 @@ def login(body: LoginRequest):
         role=user["role"],
         display_name=user["display_name"],
     )
-
 
 @app.get("/health", response_model=HealthCheck, summary="Liveness check")
 def health(current_user: dict = Depends(get_current_user)):
@@ -607,12 +571,10 @@ def health(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "error", "detail": str(e)})
 
-
 @app.get("/cells", summary="List all cell IDs")
 def list_cells(current_user: dict = Depends(get_current_user)) -> dict:
     fdfs = _get_featured_dfs(current_user["org_id"])
     return {"cells": sorted(fdfs.keys()), "count": len(fdfs)}
-
 
 @app.get("/cells/{cell_id}", response_model=CellLatest, summary="Latest metrics for one cell")
 def cell_latest(cell_id: str, current_user: dict = Depends(get_current_user)):
@@ -642,7 +604,6 @@ def cell_latest(cell_id: str, current_user: dict = Depends(get_current_user)):
         resistance_normalized=_safe("resistance_normalized"),
         coulombic_efficiency=_safe("coulombic_efficiency"),
     )
-
 
 @app.get("/cells/{cell_id}/history", summary="SOH/RUL history for one cell")
 def cell_history(
@@ -686,7 +647,6 @@ def cell_history(
         "history": [p.model_dump() for p in points],
     }
 
-
 @app.get("/cells/{cell_id}/rul", response_model=RULResult, summary="RUL prediction with uncertainty band")
 def cell_rul(
     cell_id: str,
@@ -717,7 +677,6 @@ def cell_rul(
         rul_reliable=rul_ok,
         eol_threshold_pct=eol_threshold,
     )
-
 
 @app.get("/cells/{cell_id}/lineage", summary="Data lineage — source of every metric")
 def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -> dict:
@@ -763,7 +722,6 @@ def cell_lineage(cell_id: str, current_user: dict = Depends(get_current_user)) -
         "last_cycle": int(df["cycle_number"].iloc[-1]),
         "lineage": [r.model_dump() for r in rows],
     }
-
 
 @app.get(
     "/cells/{cell_id}/view/{stakeholder}",
@@ -828,7 +786,6 @@ def cell_stakeholder_view(
 
     return {"cell_id": cell_id, "stakeholder": stakeholder, "fields": fields}
 
-
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")
 def fleet_summary(current_user: dict = Depends(get_current_user)):
     rows = _cell_stat_rows(current_user["org_id"])
@@ -874,7 +831,6 @@ def fleet_summary(current_user: dict = Depends(get_current_user)):
         cells_near_eol_6m=eol_6m,
         capex_estimate_12m_usd=eol_12m * _REPLACEMENT_COST_USD,
     )
-
 
 @app.get("/fleet/alerts", summary="Active alert list — same logic as Alert Inbox UI")
 def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
@@ -928,27 +884,26 @@ def fleet_alerts(current_user: dict = Depends(get_current_user)) -> dict:
         "alerts":   [a.model_dump() for a in alerts],
     }
 
-
 # ── Action Center & Operations Triage Endpoints ──────────────────────────────
 
-from src.action_center import action_center
+from action_center import action_center
 from batlab.features.partial_cycles import rainflow_counting, reconstruct_ocv_relaxation, partial_ica_analysis
 from batlab.datasets.cycler_mapper import detect_cycler_format, ingest_cycler_data
-from src.pinn_model import BatteryPINNEstimator
-from src.dynamic_circularity import calculate_dynamic_lca, generate_verifiable_credential_passport, match_second_life_bids
-from src.task_queue import task_queue
-from src.streaming_analytics import streaming_engine
-from src.market_data import (
+from pinn_model import BatteryPINNEstimator
+from dynamic_circularity import calculate_dynamic_lca, generate_verifiable_credential_passport, match_second_life_bids
+from task_queue import task_queue
+from streaming_analytics import streaming_engine
+from market_data import (
     get_market_adapter,
     registered_market_adapters,
     to_eur_per_kwh,
     resolve_carbon_intensity,
 )
-from src.health_aware_dispatch import arbitrage_schedule, schedule_comparison
-from src.grid_services import grid_services_revenue
-from src.managed_charging import managed_charge_plan
-from src.fleet_aggregation import fleet_dispatchable_offer
-from src.ml_anomaly import detect_anomalous_cycles
+from health_aware_dispatch import arbitrage_schedule, schedule_comparison
+from grid_services import grid_services_revenue
+from managed_charging import managed_charge_plan
+from fleet_aggregation import fleet_dispatchable_offer
+from ml_anomaly import detect_anomalous_cycles
 from src import model_cards
 from rbac import (
     can, allowed_roles, describe,
@@ -956,7 +911,6 @@ from rbac import (
     DECISION_LOG, WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE, TEAM_MANAGE, COHORT_MANAGE,
     CAP_SETTINGS_MANAGE,
 )
-
 
 class ActionCreateRequest(BaseModel):
     cell_id: str
@@ -968,34 +922,28 @@ class ActionCreateRequest(BaseModel):
     soh_pct: float
     sla_hours: int = 24
 
-
 class ActionTriageRequest(BaseModel):
     status: str
     assigned_to: Optional[str] = None
-
 
 class ActionDispatchRequest(BaseModel):
     target_system: str
     payload: Optional[dict] = None
 
-
 class RainflowRequest(BaseModel):
     soc_series: list[float]
     time_series: Optional[list[float]] = None
-
 
 class OCVRequest(BaseModel):
     time_sec: list[float]
     voltage_v: list[float]
     current_a: list[float]
 
-
 class PartialICARequest(BaseModel):
     voltage_v: list[float]
     capacity_ah: list[float]
     v_min: float = 3.2
     v_max: float = 4.1
-
 
 class PINNEstimateRequest(BaseModel):
     cycles: list[float]
@@ -1004,14 +952,12 @@ class PINNEstimateRequest(BaseModel):
     temperature_c: float = 25.0
     c_rate: float = 1.0
 
-
 class StreamingReadingRequest(BaseModel):
     cell_id: str
     voltage_v: float
     current_a: float
     temperature_c: float
     timestamp_s: Optional[float] = None
-
 
 class DispatchScheduleRequest(BaseModel):
     prices_eur_per_kwh: list[float]
@@ -1023,7 +969,6 @@ class DispatchScheduleRequest(BaseModel):
     rul_cycles: Optional[float] = None
     rul_reliable: bool = False
     initial_soc_pct: float = 50.0
-
 
 class GridServicesRevenueRequest(BaseModel):
     prices_eur_per_kwh: list[float]
@@ -1040,7 +985,6 @@ class GridServicesRevenueRequest(BaseModel):
     regulation_energy_throughput_factor: Optional[float] = None
     price_window_is_annual: bool = False
 
-
 class ManagedChargePlanRequest(BaseModel):
     prices_eur_per_kwh: list[float]
     battery_kwh: float
@@ -1050,7 +994,6 @@ class ManagedChargePlanRequest(BaseModel):
     efficiency: float = 0.94
     unmanaged_start_hour: Optional[int] = None
 
-
 class FleetCapacityRequest(BaseModel):
     cells: list[dict]
     c_rate: float = 0.5
@@ -1058,12 +1001,10 @@ class FleetCapacityRequest(BaseModel):
     soc_high_limit_pct: float = 95.0
     soc_low_limit_pct: float = 10.0
 
-
 class MLAnomalyRequest(BaseModel):
     cell_id: str
     cycles: list[dict]
     contamination: float = 0.05
-
 
 @app.get("/actions", summary="List operational action center tickets")
 def list_action_tickets(
@@ -1078,7 +1019,6 @@ def list_action_tickets(
         status=status,
         category=category,
     )
-
 
 @app.post("/actions", summary="Create an operational action ticket")
 def create_action_ticket(
@@ -1097,7 +1037,6 @@ def create_action_ticket(
         sla_hours=req.sla_hours,
     )
 
-
 @app.post("/actions/{action_id}/triage", summary="Triage an action ticket")
 def triage_action_ticket(
     action_id: str,
@@ -1112,7 +1051,6 @@ def triage_action_ticket(
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
-
 
 @app.post("/actions/{action_id}/dispatch", summary="Dispatch an action workflow to CMMS/Warranty/Circularity")
 def dispatch_action_ticket(
@@ -1129,7 +1067,6 @@ def dispatch_action_ticket(
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-
 # ── Org Write Surface: decision log, webhooks, site/fleet/pack CRUD ──────────
 # The "remaining app write surface" the API boundary now enforces on the SAME
 # src/rbac.py capability keys the Streamlit UI reads -- `webhooks.manage` and
@@ -1138,7 +1075,6 @@ def dispatch_action_ticket(
 # role (org-scoped); only the writes are gated. Each write endpoint passes its
 # authenticated `role` through as `caller_role`, so even if this route is ever
 # bypassed the db layer applies the identical check.
-
 
 class DecisionLogRequest(BaseModel):
     id: str
@@ -1150,7 +1086,6 @@ class DecisionLogRequest(BaseModel):
     status: str = "Pending"
     outcome_soh: Optional[float] = None
 
-
 class WebhookSubscriptionRequest(BaseModel):
     id: Optional[str] = None
     name: str
@@ -1159,28 +1094,22 @@ class WebhookSubscriptionRequest(BaseModel):
     event_types: Optional[list[str]] = []
     created_at: Optional[str] = None
 
-
 class SiteCreateRequest(BaseModel):
     name: str
-
 
 class FleetCreateRequest(BaseModel):
     name: str
 
-
 class PackCreateRequest(BaseModel):
     name: str
-
 
 class PackCellRequest(BaseModel):
     cell_id: str
     position: Optional[int] = None
 
-
 @app.get("/decisions", summary="List the organization's decision log")
 def list_decisions_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
     return load_decisions(current_user["org_id"])
-
 
 @app.post("/decisions", summary="Append an entry to the organization's decision log")
 def log_decision_api(
@@ -1191,11 +1120,9 @@ def log_decision_api(
     save_decision(current_user["org_id"], entry, caller_role=current_user["role"])
     return entry
 
-
 @app.get("/webhooks", summary="List configured webhook destinations")
 def list_webhooks_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
     return get_webhook_subscriptions(current_user["org_id"])
-
 
 @app.post("/webhooks", summary="Add or update a webhook destination")
 def save_webhook_api(
@@ -1210,7 +1137,6 @@ def save_webhook_api(
     save_webhook_subscription(current_user["org_id"], entry, caller_role=current_user["role"])
     return entry
 
-
 @app.delete("/webhooks/{subscription_id}", summary="Remove a webhook destination")
 def delete_webhook_api(
     subscription_id: str,
@@ -1219,11 +1145,9 @@ def delete_webhook_api(
     delete_webhook_subscription(current_user["org_id"], subscription_id, caller_role=current_user["role"])
     return {"id": subscription_id, "deleted": True}
 
-
 @app.get("/sites", summary="List sites for the organization")
 def list_sites_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
     return list_sites(current_user["org_id"])
-
 
 @app.post("/sites", summary="Create a site")
 def create_site_api(
@@ -1232,11 +1156,9 @@ def create_site_api(
 ) -> dict:
     return create_site(current_user["org_id"], req.name, caller_role=current_user["role"])
 
-
 @app.get("/sites/{site_id}/fleets", summary="List fleets under a site")
 def list_site_fleets_api(site_id: int, current_user: dict = Depends(get_current_user)) -> list[dict]:
     return list_fleets(current_user["org_id"], site_id=site_id)
-
 
 @app.post("/sites/{site_id}/fleets", summary="Create a fleet under a site")
 def create_fleet_api(
@@ -1246,11 +1168,9 @@ def create_fleet_api(
 ) -> dict:
     return create_fleet(current_user["org_id"], site_id, req.name, caller_role=current_user["role"])
 
-
 @app.get("/fleets/{fleet_id}/packs", summary="List packs under a fleet")
 def list_fleet_packs_api(fleet_id: int, current_user: dict = Depends(get_current_user)) -> list[dict]:
     return list_packs(current_user["org_id"], fleet_id=fleet_id)
-
 
 @app.post("/fleets/{fleet_id}/packs", summary="Create a pack under a fleet")
 def create_pack_api(
@@ -1260,11 +1180,9 @@ def create_pack_api(
 ) -> dict:
     return create_pack(current_user["org_id"], fleet_id, req.name, caller_role=current_user["role"])
 
-
 @app.get("/packs/{pack_id}/cells", summary="List the cells assigned to a pack")
 def list_pack_cells_api(pack_id: int, current_user: dict = Depends(get_current_user)) -> list[str]:
     return list_pack_cells(current_user["org_id"], pack_id)
-
 
 @app.post("/packs/{pack_id}/cells", summary="Assign a cell to a pack")
 def add_pack_cell_api(
@@ -1276,7 +1194,6 @@ def add_pack_cell_api(
                      position=req.position, caller_role=current_user["role"])
     return {"pack_id": pack_id, "cell_id": req.cell_id, "position": req.position}
 
-
 @app.delete("/packs/{pack_id}/cells/{cell_id}", summary="Remove a cell from a pack")
 def remove_pack_cell_api(
     pack_id: int,
@@ -1286,7 +1203,6 @@ def remove_pack_cell_api(
     remove_cell_from_pack(current_user["org_id"], pack_id, cell_id,
                            caller_role=current_user["role"])
     return {"pack_id": pack_id, "cell_id": cell_id, "deleted": True}
-
 
 # ── Team members, cohort tags, settings ─────────────────────────────────────
 # The last single-writer helpers, now on the same src/rbac.py capability keys
@@ -1298,26 +1214,21 @@ def remove_pack_cell_api(
 # its authenticated role through as caller_role so the db layer applies the
 # identical check even if the route is ever bypassed.
 
-
 class TeamMemberCreateRequest(BaseModel):
     username: str
     password: str
     role: str
     display_name: Optional[str] = ""
 
-
 class CohortTagRequest(BaseModel):
     tag: str
-
 
 class SettingsValueRequest(BaseModel):
     value: Any
 
-
 @app.get("/team/members", summary="List the organization's members")
 def list_team_members_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
     return list_users(current_user["org_id"])
-
 
 @app.post("/team/members", summary="Invite a teammate to the organization")
 def create_team_member_api(
@@ -1337,11 +1248,9 @@ def create_team_member_api(
         raise HTTPException(status_code=409, detail=result["error"])
     return result
 
-
 @app.get("/cohort-tags", summary="List the cohort/batch tags for this org's cells")
 def list_cohort_tags_api(current_user: dict = Depends(get_current_user)) -> dict:
     return load_cohort_tags(current_user["org_id"])
-
 
 @app.post("/cells/{cell_id}/cohort-tag", summary="Set a cell's cohort/batch tag")
 def set_cohort_tag_api(
@@ -1352,11 +1261,9 @@ def set_cohort_tag_api(
     save_cohort_tag(current_user["org_id"], cell_id, req.tag, caller_role=current_user["role"])
     return {"cell_id": cell_id, "tag": req.tag}
 
-
 @app.get("/settings/{key}", summary="Read one org setting (any authenticated member)")
 def get_setting_api(key: str, current_user: dict = Depends(get_current_user)) -> dict:
     return {"key": key, "value": get_setting(current_user["org_id"], key)}
-
 
 @app.put("/settings/{key}", summary="Write an org-wide setting (requires settings.manage)")
 def set_setting_api(
@@ -1366,7 +1273,6 @@ def set_setting_api(
 ) -> dict:
     set_setting(current_user["org_id"], key, req.value, role=current_user["role"])
     return {"key": key, "value": req.value}
-
 
 # ── Partial Cycles & Field Telemetry Analytics ───────────────────────────────
 
@@ -1380,7 +1286,6 @@ def run_rainflow_analysis(
         time_series=np.array(req.time_series) if req.time_series else None,
     )
 
-
 @app.post("/analytics/ocv-reconstruct", summary="Reconstruct OCV and R0 from rest interval")
 def run_ocv_reconstruction(
     req: OCVRequest,
@@ -1391,7 +1296,6 @@ def run_ocv_reconstruction(
         voltage_v=np.array(req.voltage_v),
         current_a=np.array(req.current_a),
     )
-
 
 @app.post("/analytics/partial-ica", summary="Partial window Incremental Capacity Analysis (dQ/dV)")
 def run_partial_ica(
@@ -1404,7 +1308,6 @@ def run_partial_ica(
         v_min=req.v_min,
         v_max=req.v_max,
     )
-
 
 # ── Market Data & Lifecycle Intelligence (P1) ─────────────────────────────────
 
@@ -1449,7 +1352,6 @@ def get_market_prices(
     carbon = resolve_carbon_intensity(region=region, adapter=mkt)
     return {"prices": normalized, "carbon_intensity": carbon}
 
-
 @app.post("/analytics/dispatch-schedule", summary="Health-aware arbitrage dispatch schedule")
 def run_dispatch_schedule(
     req: DispatchScheduleRequest,
@@ -1474,7 +1376,6 @@ def run_dispatch_schedule(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @app.post("/analytics/dispatch-comparison", summary="Healthy-assumption vs health-aware dispatch — the platform's differentiator")
 def run_dispatch_comparison(
@@ -1501,7 +1402,6 @@ def run_dispatch_comparison(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @app.post("/analytics/grid-services-revenue", summary="Per-site revenue potential: arbitrage + frequency regulation + capacity")
 def run_grid_services_revenue(
@@ -1533,7 +1433,6 @@ def run_grid_services_revenue(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @app.post("/analytics/managed-charge-plan", summary="Tariff-aware managed EV charging plan")
 def run_managed_charge_plan(
     req: ManagedChargePlanRequest,
@@ -1557,7 +1456,6 @@ def run_managed_charge_plan(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @app.post("/fleet/dispatchable-capacity", summary="Fleet dispatchable-capacity offer (VPP-style aggregate)")
 def run_fleet_dispatchable_capacity(
     req: FleetCapacityRequest,
@@ -1579,7 +1477,6 @@ def run_fleet_dispatchable_capacity(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 # ── Universal Cycler Ingestion Helpers ───────────────────────────────────────
 
 @app.post("/ingest/cycler-detect", summary="Detect cycler format and map columns")
@@ -1588,7 +1485,6 @@ def detect_cycler(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     return detect_cycler_format(columns)
-
 
 # ── Physics & PINN Modeling ──────────────────────────────────────────────────
 
@@ -1613,7 +1509,6 @@ def run_pinn_estimation(
         "latest_knee_risk_score": float(preds["knee_risk_score"][-1]),
     }
 
-
 # ── Health-as-a-service ───────────────────────────────────────────────────────
 
 class CellHealth(BaseModel):
@@ -1632,7 +1527,6 @@ class CellHealth(BaseModel):
     passport_fragments: dict
     model_card: dict
 
-
 @app.get("/cells/{cell_id}/health", response_model=CellHealth, summary="Health-as-a-service: LCO-validated SOH/RUL/SoP + confidence + passport fragments")
 def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
     """The full per-cell health record as a single, machine-readable
@@ -1643,7 +1537,7 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
     that produced this cell's model. Everything reuses existing plumbing
     (the same bundle, validation gates, and recommendation functions the
     Streamlit pages use) — no new training, no new cache."""
-    from src.consequences import application_fit, eol_r_code_recommendation, best_fit_application
+    from consequences import application_fit, eol_r_code_recommendation, best_fit_application
 
     fdfs = _get_featured_dfs(current_user["org_id"])
     if cell_id not in fdfs:
@@ -1709,7 +1603,6 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
         model_card=card,
     )
 
-
 @app.get("/cells/{cell_id}/twin", summary="Digital twin snapshot — measured history + derived health indicators + physics projection (Phase 3)")
 def cell_twin(cell_id: str, current_user: dict = Depends(get_current_user)) -> dict:
     """The Phase 3 CellTwin architecture as an API: one self-consistent
@@ -1729,7 +1622,6 @@ def cell_twin(cell_id: str, current_user: dict = Depends(get_current_user)) -> d
     data_mode = profile.source_kind if profile else "upload"
     twin = twin_from_cell(cell_id, df, data_mode=data_mode, anchor_spm=False)
     return twin.snapshot()
-
 
 # ── Dynamic LCA, Circularity & Verifiable Credentials ─────────────────────────
 
@@ -1779,7 +1671,6 @@ def get_cell_dynamic_lca(
         result["carbon_resolution"] = carbon_resolution
     return result
 
-
 @app.get("/cells/{cell_id}/verifiable-passport", summary="W3C Verifiable Credential EU Battery Passport")
 def get_verifiable_passport(
     cell_id: str,
@@ -1808,7 +1699,6 @@ def get_verifiable_passport(
         carbon_data=carbon,
     )
 
-
 @app.get("/cells/{cell_id}/second-life-bids", summary="Matched second-life buyer bids and valuations")
 def get_second_life_bids(
     cell_id: str,
@@ -1834,8 +1724,6 @@ def get_second_life_bids(
         nominal_kwh=nominal_kwh,
     )
 
-
-
 # ── ML-based (unsupervised) anomaly scan ──────────────────────────────────────
 
 @app.post("/analytics/ml-anomaly", summary="Unsupervised ML anomaly scan of one cell's cycle history (IsolationForest)")
@@ -1859,13 +1747,11 @@ def run_ml_anomaly(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 # ── Asynchronous Task Queue ──────────────────────────────────────────────────
 
 @app.get("/tasks", summary="List async analytics tasks")
 def list_tasks(current_user: dict = Depends(get_current_user)) -> list[dict]:
     return task_queue.list_tasks(org_id=current_user["org_id"])
-
 
 @app.get("/tasks/{task_id}", summary="Get async task status")
 def get_task_status(task_id: str, current_user: dict = Depends(get_current_user)) -> dict:
@@ -1873,7 +1759,6 @@ def get_task_status(task_id: str, current_user: dict = Depends(get_current_user)
     if not t or t.get("org_id") != current_user["org_id"]:
         raise HTTPException(status_code=404, detail="Task not found.")
     return t
-
 
 # ── Real-Time Streaming Telemetry Anomaly Detection ──────────────────────────
 

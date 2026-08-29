@@ -11,9 +11,12 @@ directly testable the same way src/ pure-logic modules are.
 import sys
 import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "app"))
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
-
+import sys as _sys
+import os as _os
+_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+import _paths  # noqa: F401
 from utils import metric_tile_html, load_tenant_bundle_cached, cached_detect_knee, cached_match_fleet
 
 

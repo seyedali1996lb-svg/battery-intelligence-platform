@@ -1,13 +1,14 @@
 """Shared fixtures for the pure-logic module test suite."""
 
-import sys
-import os
-_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _root not in sys.path:
-    sys.path.insert(0, _root)
-_src = os.path.join(_root, "src")
-if _src not in sys.path:
-    sys.path.insert(0, _src)
+import sys as _sys
+import os as _os
+
+# Bootstrap the repo root so _paths is importable, then delegate the rest.
+_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+
+import _paths as _bp  # noqa: F401  (side-effect: adds src/, app/, scripts/ to sys.path)
 
 import numpy as np
 import pandas as pd

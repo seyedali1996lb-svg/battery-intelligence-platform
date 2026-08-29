@@ -7,8 +7,8 @@ charging, and fleet dispatchable-capacity offers.
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api import app, _create_access_token
-from src.market_data import SyntheticMarketAdapter
+from api import app, _create_access_token
+from market_data import SyntheticMarketAdapter
 
 
 @pytest.fixture

@@ -11,18 +11,13 @@ app/_pages/. page_settings() keeps the sections most tied to loaded data
 """
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 
 from design_system import section_header_html
 from utils import _action_bar, render_card
 from chemistry_profiles import ChemistryProfile
 from _pages._settings_config import render_settings_configuration
-
 
 def page_settings(featured_dfs: dict, bundles: dict):
     _action_bar("settings")
@@ -221,7 +216,6 @@ def page_settings(featured_dfs: dict, bundles: dict):
     # Marketplace, Maintenance Write-Back, Team Members, Sites & Fleets,
     # AI Copilot key, Onboarding, Production Roadmap, About) --
     render_settings_configuration(featured_dfs, bundles)
-
 
 def _clear_uploaded_data():
     """Revert this session to NASA mode. Does NOT delete the org's persisted

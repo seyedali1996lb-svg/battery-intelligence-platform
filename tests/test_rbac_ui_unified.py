@@ -32,6 +32,7 @@ from rbac import (
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _MAIN_PY = _ROOT / "app" / "main.py"
+_SIDEBAR_PY = _ROOT / "app" / "_sidebar.py"
 _SETTINGS_PY = _ROOT / "app" / "_pages" / "_settings_config.py"
 
 _PERSONAS = rbac.PERSONA_ENGINEER, rbac.PERSONA_FLEET, rbac.PERSONA_EXECUTIVE, rbac.PERSONA_COMPLIANCE
@@ -118,7 +119,7 @@ def test_main_py_nav_groups_align_with_rbac_ui_nav_groups():
     """The app's NAV_GROUPS definitions must carry exactly the group labels the
     rbac nav capabilities are keyed on. If a nav group is added/renamed here and
     forgotten in rbac (or vice versa), this fails instead of silently drifting."""
-    src = _MAIN_PY.read_text(encoding="utf-8")
+    src = _SIDEBAR_PY.read_text(encoding="utf-8")
     # NAV_GROUPS is a list of (label, [(page, route)...]) tuples; grab the label.
     block = src[src.index("NAV_GROUPS = ["):src.index("def _upload_status_line")]
     labels = re.findall(r'\("([^"]+)",\s*\[', block)
@@ -146,7 +147,7 @@ def test_settings_page_binds_admin_sections_to_cap_settings_manage():
     # No raw admin-string gates on the parts that should be capability-driven.
     assert not re.search(r'auth_role"\s*[!=]=\s*"admin"', settings_src)
 
-    main_src = _MAIN_PY.read_text(encoding="utf-8")
-    assert "rbac.front_loaded_nav" in main_src
+    sidebar_src = _SIDEBAR_PY.read_text(encoding="utf-8")
+    assert "rbac.front_loaded_nav" in sidebar_src
     # The old hardcoded priority dict is gone.
-    assert "_PRIORITY_GROUPS" not in main_src
+    assert "_PRIORITY_GROUPS" not in sidebar_src

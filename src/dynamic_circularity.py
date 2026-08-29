@@ -16,7 +16,7 @@ import json
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 
-from src.chemistry_profiles import ChemistryProfile
+from chemistry_profiles import ChemistryProfile
 
 
 # Regional grid carbon intensities (g CO2e / kWh) - Source: IEA / EEA 2024

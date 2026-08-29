@@ -9,17 +9,12 @@ page_compliance() imports it here for the "EU Battery Passport" tab.
 """
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 
 from utils import _md_html, render_card
 from design_system import make_state_badge
-
 
 def _passport_field_row(f: dict) -> str:
     muted = f["state"] == "unavailable"
@@ -41,7 +36,6 @@ def _passport_field_row(f: dict) -> str:
         f"<div style='flex-shrink:0;padding-top:2px'>{make_state_badge(f['state'])}</div>"
         f"</div>"
     )
-
 
 def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: bool):
     from passport import build_passport
@@ -283,7 +277,6 @@ def page_passport(selected: str, df: pd.DataFrame, bundle: dict, rul_reliable: b
         padding="20px 24px",
         extra_style="font-size:13px;color:#a0aec0;line-height:1.8",
     )
-
 
     # ── E3: QR Code generator ─────────────────────────────────────────────────
     st.markdown(

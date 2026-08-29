@@ -26,11 +26,14 @@ sample cells happen to trigger it.
 Run locally:  python scripts/audit_knowledge_graph_provenance.py
 """
 
-import sys
+import sys as _sys
+import os as _os
 import pathlib
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "src"))
+if str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
+import _paths  # noqa: F401
 
 import numpy as np
 import pandas as pd

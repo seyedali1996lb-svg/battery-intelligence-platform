@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.ml_anomaly import (
+from ml_anomaly import (
     MLAnomalyDetector,
     detect_anomalous_cycles,
     detect_fleet_anomalies,

@@ -11,8 +11,12 @@ LiCoO2's numbers.
 import sys
 import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
-
+import sys as _sys
+import os as _os
+_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+import _paths  # noqa: F401
 from sustainability import (
     critical_materials_for_chemistry, material_content_for_cell,
     cradle_to_grave_footprint, MANUFACTURING_CO2_PER_KWH, RECYCLING_AVOIDED_CO2_PER_KWH,

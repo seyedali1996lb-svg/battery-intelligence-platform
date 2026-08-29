@@ -1,12 +1,10 @@
 """Page: Import."""
 
-import sys
-import os
 import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import os
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -22,7 +20,6 @@ from batlab.models.gbrt import (
 from batlab.validation.lco import run_lco, RUL_RELIABLE_FLOOR
 from bundle_cache import load_cached, save_cached, load_features_cached, save_features_cached, save_tenant_bundle
 from _pages.settings import _clear_uploaded_data
-
 
 def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
     """Training pipeline wired to the Analyse button — called from page_import()."""
@@ -264,7 +261,6 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
             st.error(f"Pipeline error: {exc}")
             st.code(traceback.format_exc())
 
-
 def _show_upload_summary():
     """Post-analysis summary panel shown on the Import page after a successful upload."""
     meta = st.session_state["uploaded_mode_meta"]
@@ -318,11 +314,9 @@ def _show_upload_summary():
             _clear_uploaded_data()
             st.rerun()
 
-
 def page_import():
     _action_bar("import")
     import io
-    import os
 
     def _section(title: str):
         st.markdown(section_header_html(title), unsafe_allow_html=True)

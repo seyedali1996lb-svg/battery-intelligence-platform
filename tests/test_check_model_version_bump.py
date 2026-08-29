@@ -9,11 +9,12 @@ logic (no subprocess, no git) so it's directly testable without a real
 repo or commit history.
 """
 
-import sys
-import pathlib
-
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "scripts"))
-
+import sys as _sys
+import os as _os
+_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+import _paths  # noqa: F401
 from check_model_version_bump import check_needs_bump, MODEL_FILE, BUNDLE_CACHE_FILE
 
 

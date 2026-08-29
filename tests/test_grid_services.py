@@ -5,8 +5,8 @@ revenue stack with honest assumption provenance.
 
 import pytest
 
-from src.market_data import SyntheticMarketAdapter
-from src.grid_services import grid_services_revenue, GRID_SERVICES_ASSUMPTIONS
+from market_data import SyntheticMarketAdapter
+from grid_services import grid_services_revenue, GRID_SERVICES_ASSUMPTIONS
 
 
 def _prices(hours=48):

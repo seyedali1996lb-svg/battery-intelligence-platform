@@ -9,13 +9,10 @@ the single source of truth every summary on this page reads from --
 header metrics, exec summary bar) and delegates the rest.
 """
 
-import sys
-import os
 import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 
 from utils import (
@@ -26,7 +23,6 @@ from design_system import make_badge
 from chemistry_profiles import ChemistryProfile
 
 from _pages._fleet_diagnostics import render_fleet_diagnostics
-
 
 # ---------------------------------------------------------------------------
 # Page: Fleet

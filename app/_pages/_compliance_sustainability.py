@@ -9,11 +9,7 @@ imports it here for the "Sustainability" tab.
 """
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -24,7 +20,6 @@ from design_system import (
     BADGE_ESTIMATE, BADGE_ILLUST,
 )
 from chemistry_profiles import ChemistryProfile
-
 
 def page_sustainability(selected: str, df: pd.DataFrame):
     _action_bar("sustainability")

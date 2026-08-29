@@ -22,9 +22,6 @@ Output schema matches data_loader.build_battery() exactly:
 """
 
 import pandas as pd
-import sys
-import os
-sys.path.insert(0, os.path.dirname(__file__))
 
 from data_loader import enrich_cycles
 

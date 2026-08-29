@@ -20,12 +20,10 @@ client = TestClient(app)
 DEMO_USER = "engineer"
 DEMO_PASSWORD = "battery"
 
-
 def test_root_does_not_require_auth():
     resp = client.get("/")
     assert resp.status_code == 200
     assert resp.json()["name"] == "Battery Intelligence Platform API"
-
 
 def test_login_with_correct_demo_credentials_succeeds():
     resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
@@ -36,16 +34,13 @@ def test_login_with_correct_demo_credentials_succeeds():
     assert body["role"] == "engineer"
     assert body["access_token"]
 
-
 def test_login_with_wrong_password_rejected():
     resp = client.post("/auth/login", json={"username": DEMO_USER, "password": "wrong"})
     assert resp.status_code == 401
 
-
 def test_login_with_unknown_username_rejected():
     resp = client.post("/auth/login", json={"username": "nobody-such-user", "password": "x"})
     assert resp.status_code == 401
-
 
 @pytest.mark.parametrize("path", [
     "/health",
@@ -57,7 +52,6 @@ def test_gated_endpoints_reject_missing_token(path):
     resp = client.get(path)
     assert resp.status_code == 401
 
-
 @pytest.mark.parametrize("path", [
     "/health",
     "/cells",
@@ -68,7 +62,6 @@ def test_gated_endpoints_reject_garbage_token(path):
     resp = client.get(path, headers={"Authorization": "Bearer not-a-real-token"})
     assert resp.status_code == 401
 
-
 def test_gated_endpoint_rejects_expired_token():
     expired_payload = {
         "sub": DEMO_USER, "org_id": 1, "role": "engineer",
@@ -77,7 +70,6 @@ def test_gated_endpoint_rejects_expired_token():
     expired_token = pyjwt.encode(expired_payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
     resp = client.get("/cells", headers={"Authorization": f"Bearer {expired_token}"})
     assert resp.status_code == 401
-
 
 def test_gated_endpoints_accept_valid_token_and_return_real_data():
     login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
@@ -100,7 +92,6 @@ def test_gated_endpoints_accept_valid_token_and_return_real_data():
     resp = client.get(f"/cells/{first_cell}", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["cell_id"] == first_cell
-
 
 # ---------------------------------------------------------------------------
 # GET /cells/{cell_id}/view/{stakeholder} — src/stakeholder_views.py's real
@@ -125,7 +116,6 @@ def test_stakeholder_view_endpoint_returns_real_fields(stakeholder):
     for f in body["fields"]:
         assert set(f.keys()) >= {"label", "value", "state"}
 
-
 def test_stakeholder_view_endpoint_rejects_invalid_stakeholder():
     login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
     token = login_resp.json()["access_token"]
@@ -136,11 +126,9 @@ def test_stakeholder_view_endpoint_rejects_invalid_stakeholder():
     resp = client.get(f"/cells/{first_cell}/view/not-a-real-stakeholder", headers=headers)
     assert resp.status_code == 422  # FastAPI's Literal-type path validation
 
-
 def test_stakeholder_view_endpoint_requires_auth():
     resp = client.get("/cells/B0005/view/oem")
     assert resp.status_code == 401
-
 
 def test_stakeholder_view_endpoint_404s_for_unknown_cell():
     login_resp = client.post("/auth/login", json={"username": DEMO_USER, "password": DEMO_PASSWORD})
@@ -148,7 +136,6 @@ def test_stakeholder_view_endpoint_404s_for_unknown_cell():
     headers = {"Authorization": f"Bearer {token}"}
     resp = client.get("/cells/NOT-A-REAL-CELL/view/oem", headers=headers)
     assert resp.status_code == 404
-
 
 def test_stakeholder_views_are_actually_different_slices():
     """The core claim of this feature -- OEM/operator/recycler get
@@ -168,7 +155,6 @@ def test_stakeholder_views_are_actually_different_slices():
     assert operator_labels != recycler_labels
     assert oem_labels != recycler_labels
 
-
 # ---------------------------------------------------------------------------
 # Org-scoping — each org's own uploaded ("My Data") fleet, merged on top of
 # the shared global reference-cell fleet, via bundle_cache.load_tenant_bundle().
@@ -187,7 +173,6 @@ def _fake_org_triple(cell_id: str, soh: float):
     bundle = {"metrics": {"rul_reliable": True, "per_cell_rul_reliable": {cell_id: True}}}
     return ({cell_id: df}, bundle, 1)
 
-
 def test_get_featured_dfs_merges_org_upload_on_top_of_global(monkeypatch):
     import api as api_module
     monkeypatch.setattr(api_module, "_get_org_bundle", lambda org_id: _fake_org_triple("ORG1-CELL", 92.0) if org_id else None)
@@ -200,7 +185,6 @@ def test_get_featured_dfs_merges_org_upload_on_top_of_global(monkeypatch):
     # Global reference cells are still present alongside the org's own cell.
     assert set(fdfs_no_org.keys()) <= set(fdfs_with_org.keys())
 
-
 def test_get_bundles_adds_upload_key_when_org_has_uploaded_data(monkeypatch):
     import api as api_module
     monkeypatch.setattr(api_module, "_get_org_bundle", lambda org_id: _fake_org_triple("ORG1-CELL", 92.0) if org_id else None)
@@ -210,7 +194,6 @@ def test_get_bundles_adds_upload_key_when_org_has_uploaded_data(monkeypatch):
 
     assert "upload" not in bundles_no_org
     assert "upload" in bundles_with_org
-
 
 def test_cross_org_isolation_uploaded_cells_never_leak(monkeypatch):
     """Two orgs' uploaded fleets must never mix — the actual acceptance
@@ -234,7 +217,6 @@ def test_cross_org_isolation_uploaded_cells_never_leak(monkeypatch):
     assert "ORG222-CELL" in fdfs_222
     assert "ORG111-CELL" not in fdfs_222
 
-
 def test_cells_endpoint_returns_merged_cells_for_org_with_upload(monkeypatch):
     """End-to-end: the real /cells endpoint, called with a real demo-org
     bearer token, reflects the merge — not just the helper functions."""
@@ -255,7 +237,6 @@ def test_cells_endpoint_returns_merged_cells_for_org_with_upload(monkeypatch):
     assert resp.json()["cell_id"] == "DEMO-ORG-UPLOAD"
     assert resp.json()["rul_reliable"] is True
 
-
 # ---------------------------------------------------------------------------
 # _load_bundle_from_disk_cache() — _get_bundle()'s fallback when `main` (the
 # Streamlit app) can't be imported, e.g. a bare `uvicorn src.api:app` process.
@@ -267,7 +248,7 @@ def test_cells_endpoint_returns_merged_cells_for_org_with_upload(monkeypatch):
 # zero cells. Both fixed; both covered here.
 #
 # _load_bundle_from_disk_cache() does its `load_cached_unchecked` import
-# locally (inside the function, both `from src.bundle_cache import ...` and
+# locally (inside the function, both `from bundle_cache import ...` and
 # a bare `from bundle_cache import ...` fallback), so these tests patch the
 # attribute on whichever of those two already-imported module objects is
 # reachable, rather than guessing which import path the function will take.
@@ -281,7 +262,6 @@ def _patch_load_cached_unchecked(monkeypatch, fake_fn):
         monkeypatch.setattr(src_bc_module, "load_cached_unchecked", fake_fn)
     except ImportError:
         pass
-
 
 def test_load_bundle_from_disk_cache_shapes_dict_from_per_source_triples(monkeypatch):
     """bundle_cache's "nasa"/"severson"/"synth" keys now cache
@@ -304,7 +284,6 @@ def test_load_bundle_from_disk_cache_shapes_dict_from_per_source_triples(monkeyp
     assert set(result["bundles"]) == {"nasa", "severson"}
     assert result["bundles"]["nasa"]["metrics"]["soh_r2"] == 0.9
 
-
 def test_load_bundle_from_disk_cache_returns_empty_shape_when_nothing_cached(monkeypatch):
     import api as api_module
 
@@ -313,7 +292,6 @@ def test_load_bundle_from_disk_cache_returns_empty_shape_when_nothing_cached(mon
     result = api_module._load_bundle_from_disk_cache()
 
     assert result == {"featured_dfs": {}, "bundles": {}}
-
 
 def test_get_bundle_falls_back_without_crashing_when_main_unimportable(monkeypatch):
     """The actual regression: _get_bundle() must not raise ImportError from

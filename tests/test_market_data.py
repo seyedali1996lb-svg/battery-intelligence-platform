@@ -7,7 +7,7 @@ is exercised with monkeypatched HTTP (no network).
 import pytest
 
 from src import market_data
-from src.market_data import (
+from market_data import (
     SyntheticMarketAdapter,
     EIAAdapter,
     ENTSOEAdapter,
@@ -18,7 +18,7 @@ from src.market_data import (
     register_market_adapter,
     _parse_entsoe_prices,
 )
-from src.dynamic_circularity import GRID_CARBON_INTENSITY
+from dynamic_circularity import GRID_CARBON_INTENSITY
 
 
 # ---------------------------------------------------------------------------

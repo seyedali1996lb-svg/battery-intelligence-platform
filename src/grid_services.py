@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from src.health_aware_dispatch import arbitrage_schedule
+from health_aware_dispatch import arbitrage_schedule
 
 GRID_SERVICES_ASSUMPTIONS = {
     "frequency_regulation_price_eur_per_mw_h": {

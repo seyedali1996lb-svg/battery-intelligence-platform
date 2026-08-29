@@ -18,11 +18,12 @@ at least one row per org where the app's public API allows it.
 from __future__ import annotations
 
 import pathlib
-import sys
+import sys as _sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "src"))
+if str(ROOT) not in _sys.path:
+    _sys.path.insert(0, str(ROOT))
+import _paths  # noqa: F401
 
 import db  # noqa: E402
 

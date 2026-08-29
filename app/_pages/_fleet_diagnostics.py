@@ -17,13 +17,10 @@ per-call state (STATUS_COLOUR, _traj_matches) locally rather than take
 more parameters, same pattern as _health_diagnostics.py.
 """
 
-import sys
-import os
 import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -34,7 +31,6 @@ from utils import (
 )
 from data_loader import CELL_STRESS_PROFILES
 from _pages.grading import page_grading
-
 
 # ---------------------------------------------------------------------------
 # T1: Executive Fleet Dashboard
@@ -108,7 +104,6 @@ def render_fleet_summary_expander(rows: list) -> None:
         Adjust in Configure → Application Profile.
         </div>
         """)
-
 
 # ---------------------------------------------------------------------------
 # Trajectory match alerts (fleet-wide)
@@ -186,7 +181,6 @@ def get_trajectory_matches_and_render_banner(featured_dfs: dict, trajectory_memo
 
     return _traj_matches
 
-
 # ---------------------------------------------------------------------------
 # T2: Proactive Alert Inbox
 # ---------------------------------------------------------------------------
@@ -253,7 +247,6 @@ def render_alert_inbox(rows: list, _traj_matches: dict) -> None:
                 f"<div style='font-size:11px;color:#8896a8;margin-top:2px'>{_al['body']}</div></div></div>"
             )
         _md_html(_alert_html)
-
 
 # ---------------------------------------------------------------------------
 # Filter Fleet UI + Fleet Overview / Cell Grading view selector
@@ -324,7 +317,6 @@ def render_filter_and_view_selector(rows: list, featured_dfs: dict, bundles: dic
         page_grading(list(featured_dfs.keys()), featured_dfs, bundles, list(featured_dfs.keys())[0])
         return None
     return rows
-
 
 # ---------------------------------------------------------------------------
 # Weekly digest + Health Ranking table + jump buttons + CSV export
@@ -517,7 +509,6 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
         mime="text/csv",
     )
 
-
 # ---------------------------------------------------------------------------
 # SOH distribution bar chart
 # ---------------------------------------------------------------------------
@@ -550,7 +541,6 @@ def render_soh_distribution_chart(rows: list) -> None:
         ),
     )
     st.plotly_chart(fig, use_container_width=True)
-
 
 # ---------------------------------------------------------------------------
 # Risk matrix: SOH vs RUL
@@ -660,7 +650,6 @@ def render_risk_matrix(rows: list) -> None:
     else:
         st.info("Risk matrix requires at least one cell with a calibrated RUL estimate.")
 
-
 # ---------------------------------------------------------------------------
 # Cell-to-Cell Spread Trending
 # ---------------------------------------------------------------------------
@@ -728,7 +717,6 @@ def render_spread_trending(featured_dfs: dict) -> None:
             )
     except Exception as _sp_e:
         st.info(f"Spread trend unavailable: {_sp_e}")
-
 
 # ---------------------------------------------------------------------------
 # SOH Distribution Shift Over Time (histogram animation)
@@ -809,7 +797,6 @@ def render_distribution_shift_histogram(featured_dfs: dict) -> None:
             )
     except Exception as _hist_e:
         st.info(f"SOH trend histogram unavailable: {_hist_e}")
-
 
 # ---------------------------------------------------------------------------
 # E2: Fleet what-if scenario planner
@@ -902,7 +889,6 @@ def render_whatif_scenario_planner(rows: list) -> None:
             icon="⏱",
         )
 
-
 # ---------------------------------------------------------------------------
 # Second-Life Readiness Screening
 # ---------------------------------------------------------------------------
@@ -973,7 +959,6 @@ def render_second_life_screening(rows: list) -> None:
                 """
             )
 
-
 # ---------------------------------------------------------------------------
 # "About This Ranking" methodology note + roadmap expander (static content)
 # ---------------------------------------------------------------------------
@@ -1022,7 +1007,6 @@ def render_ranking_methodology_note() -> None:
             Until then, ranking by SOH and fade rate is the honest choice.
             """
         )
-
 
 # ---------------------------------------------------------------------------
 # Anomaly Alert History Log
@@ -1078,7 +1062,6 @@ def render_anomaly_alert_history(featured_dfs: dict) -> None:
             )
     else:
         st.success("No anomaly flags detected across the fleet.")
-
 
 # ---------------------------------------------------------------------------
 # Orchestrator — called once from page_fleet() after the exec summary bar

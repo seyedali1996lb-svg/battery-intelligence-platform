@@ -1,12 +1,9 @@
 """Page: Overview."""
 
-import sys
-import os
 import html
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,7 +16,6 @@ from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from trajectory_memory import reconcile_rul_estimates
 from chemistry_profiles import ChemistryProfile
-
 
 # ---------------------------------------------------------------------------
 # Trajectory match card
@@ -124,7 +120,6 @@ def _render_trajectory_match_card(
         st.session_state.page = "decision"
         st.rerun()
 
-
 def _render_reconciliation_card(cell_id: str, reconcile: dict) -> None:
     """
     Render ONE unified card when the primary RUL model and the trajectory-
@@ -195,7 +190,6 @@ def _render_reconciliation_card(cell_id: str, reconcile: dict) -> None:
     if st.button("Go to Decide & Ask →", key=f"reconcile_to_dec_{cell_id}", use_container_width=True):
         st.session_state.page = "decision"
         st.rerun()
-
 
 # ---------------------------------------------------------------------------
 # Page: Overview

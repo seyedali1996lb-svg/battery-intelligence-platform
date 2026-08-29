@@ -1,12 +1,9 @@
 """Page: Decision (merged Recommendations + EOL Economics)."""
 
-import sys
-import os
 import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 
@@ -15,7 +12,6 @@ from design_system import make_badge, ACTION_META, CONF_META
 from chemistry_profiles import ChemistryProfile
 
 from _pages.consequences import page_consequences
-
 
 # ---------------------------------------------------------------------------
 # Page: Decision  (merged Recommendations + EOL Economics)
@@ -901,5 +897,4 @@ def page_decision(
                 )
         except Exception as _dc_e:
             st.caption(f"Copilot unavailable: {_dc_e}")
-
 

@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from src.model_cards import build_model_card, model_card_markdown, dataset_license
+from model_cards import build_model_card, model_card_markdown, dataset_license
 
 
 def _run(**overrides):

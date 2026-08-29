@@ -1,10 +1,7 @@
 """Login wall — real multi-tenant auth backed by src/db.py."""
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import db
 
@@ -14,7 +11,6 @@ _ROLE_DEFAULT_PAGE = {
     "engineer":   "health",
     "admin":      "overview",
 }
-
 
 def _log_in_user(user: dict) -> None:
     st.session_state["authenticated"]  = True
@@ -26,7 +22,6 @@ def _log_in_user(user: dict) -> None:
     default = _ROLE_DEFAULT_PAGE.get(user["role"], "overview")
     if "page" not in st.session_state:
         st.session_state["page"] = default
-
 
 def _handle_sso_callback() -> None:
     """The IdP redirected back to this app with ?code=...&state=.... Exchange
@@ -61,7 +56,6 @@ def _handle_sso_callback() -> None:
     finally:
         qp.clear()
         st.rerun()
-
 
 def render_login() -> bool:
     """

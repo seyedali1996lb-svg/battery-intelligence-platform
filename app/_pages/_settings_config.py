@@ -18,14 +18,11 @@ mechanical move: one function per _section() boundary, called in the
 original order from render_settings_configuration().
 """
 
-import sys
-import os
 import datetime
 import json
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import sys
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 
 from design_system import make_badge, section_header_html, C_GREEN, C_MUTED
@@ -33,10 +30,8 @@ from utils import _md_html, _empty_state, render_card, metric_tile_html
 import db
 import rbac
 
-
 def _section(title: str):
     st.markdown(section_header_html(title), unsafe_allow_html=True)
-
 
 def _set_secret_setting(org_id: int, key: str, value, role: "str | None" = None) -> None:
     """Wraps db.set_setting() for the 5 credential-shaped keys, surfacing
@@ -59,7 +54,6 @@ def _set_secret_setting(org_id: int, key: str, value, role: "str | None" = None)
     except db.InsufficientRoleError:
         st.error(f"Not saved: {key.replace('_', ' ')} is org-wide configuration, restricted to the admin role.")
 
-
 def render_encryption_key_warning() -> None:
     """Admin-only banner surfacing src/db.py's using_fallback_encryption_key()
     -- a server log line alone is easy to miss on a live deployment; an
@@ -81,7 +75,6 @@ def render_encryption_key_warning() -> None:
         "</div>",
         unsafe_allow_html=True,
     )
-
 
 def render_application_profile_and_eol() -> None:
     _section("Application Profile")
@@ -162,7 +155,6 @@ def render_application_profile_and_eol() -> None:
             unsafe_allow_html=True,
         )
 
-
 def render_alert_thresholds() -> None:
     _section("🔔 Alert Thresholds")
 
@@ -197,7 +189,6 @@ def render_alert_thresholds() -> None:
             key="spread_alert_pct",
         )
         st.caption("Alert when SOH spread across fleet cells exceeds this threshold.")
-
 
 def render_rul_reliability_threshold(bundles: dict) -> None:
     from batlab.validation.lco import RUL_RELIABLE_FLOOR
@@ -281,7 +272,6 @@ def render_rul_reliability_threshold(bundles: dict) -> None:
         row[3].markdown(f"<div style='padding:4px 0'>{_status(preview_ok)}</div>", unsafe_allow_html=True)
         row[4].markdown(f"<div style='padding:4px 0'>{change_html}</div>", unsafe_allow_html=True)
 
-
 def render_model_cache() -> None:
     _section("Model Cache")
 
@@ -313,7 +303,6 @@ def render_model_cache() -> None:
             _clear_bundle_cache()
             st.success("Model cache cleared — models will retrain on next app load.")
             st.rerun()
-
 
 def render_crm_configuration() -> None:
     _section("CRM Configuration (EU Battery Regulation Art. 13)")
@@ -382,7 +371,6 @@ def render_crm_configuration() -> None:
                 value=float(st.session_state.get("crm_user_recycled_ni_pct", 0.0)),
                 key="crm_user_recycled_ni_pct")
 
-
 def render_cost_of_delay() -> None:
     _section("Cost-of-Delay Multiplier")
     st.markdown(
@@ -403,7 +391,6 @@ def render_cost_of_delay() -> None:
         st.session_state["cost_of_delay_mult"] = _cod_mult
         db.set_setting(st.session_state["auth_org_id"], "cost_of_delay_mult", _cod_mult, role=st.session_state.get("auth_role"))
         st.rerun()
-
 
 def render_webhook_notifications(featured_dfs: dict) -> None:
     _section("Anomaly Webhook Notifications")
@@ -490,7 +477,6 @@ def render_webhook_notifications(featured_dfs: dict) -> None:
     else:
         st.caption("Enter a webhook URL above to enable push notifications.")
 
-
 def render_webhook_subscriptions() -> None:
     """Additional webhook destinations on top of the single URL above --
     src/db.py's WebhookSubscription table + src/notifications.py's
@@ -553,7 +539,6 @@ def render_webhook_subscriptions() -> None:
             db.delete_webhook_subscription(org_id, _sub["id"], caller_role=role)
             st.rerun()
 
-
 def render_bms_connector_victron() -> None:
     _section("BMS Connector (Victron VRM)")
     _md_html(
@@ -596,7 +581,6 @@ def render_bms_connector_victron() -> None:
             except Exception as _vrm_e:
                 st.error(f"VRM connection failed: {_vrm_e}")
 
-
 def render_bms_connector_orion() -> None:
     _section("BMS Connector (Orion Jr2)")
     _md_html(
@@ -635,7 +619,6 @@ def render_bms_connector_orion() -> None:
                 st.error(f"Orion BMS connection failed: {_orion_result['error']}")
             else:
                 st.success(f"Fetched {len(_orion_result)} records for cell {_orion_cell_id}.")
-
 
 def render_bms_connector_modbus() -> None:
     _section("BMS Connector (Modbus TCP)")
@@ -683,7 +666,6 @@ def render_bms_connector_modbus() -> None:
         _mb_result = _mb_adapter.test_connection()
         (st.success if _mb_result["ok"] else st.error)(_mb_result["message"])
 
-
 def render_bms_connector_can() -> None:
     _section("BMS Connector (CAN Bus)")
     _md_html(
@@ -728,7 +710,6 @@ def render_bms_connector_can() -> None:
         _can_result = _can_adapter.test_connection()
         (st.success if _can_result["ok"] else st.error)(_can_result["message"])
 
-
 def render_bms_connector_ocpp() -> None:
     _section("EV Charging Connector (OCPP)")
     _md_html(
@@ -760,7 +741,6 @@ def render_bms_connector_ocpp() -> None:
             from bms_connectors import OCPPAdapter
             _ocpp_result = OCPPAdapter(_ocpp_url, _ocpp_key, _ocpp_cp_id).test_connection()
             (st.success if _ocpp_result["ok"] else st.error)(_ocpp_result["message"])
-
 
 def render_adapter_settings(registry_key: str) -> None:
     """
@@ -826,7 +806,6 @@ def render_adapter_settings(registry_key: str) -> None:
         result = adapter.test_connection()
         (st.success if result["ok"] else st.error)(result["message"])
 
-
 def render_second_life_marketplace() -> None:
     _section("Second-Life Marketplace (Circunomics)")
     _md_html(
@@ -864,7 +843,6 @@ def render_second_life_marketplace() -> None:
                 st.error(f"Circunomics connection failed: {_circ_result['error']}")
             else:
                 st.success("Circunomics connection succeeded.")
-
 
 def render_maintenance_writeback() -> None:
     _section("Maintenance Write-Back (CMMS/ERP)")
@@ -914,7 +892,6 @@ def render_maintenance_writeback() -> None:
             else:
                 st.success("CMMS connection succeeded.")
 
-
 def render_team_members() -> None:
     if not rbac.can(st.session_state.get("auth_role"), rbac.TEAM_MANAGE):
         return
@@ -952,7 +929,6 @@ def render_team_members() -> None:
                     st.error(_invite_result["error"])
                 else:
                     st.success(f"Added {_tm_username} ({_tm_role}) to {st.session_state.get('auth_org_name', 'this organization')}.")
-
 
 def render_sites_and_fleets(featured_dfs: dict) -> None:
     if not rbac.can(st.session_state.get("auth_role"), rbac.FLEET_ASSETS_MANAGE):
@@ -1050,7 +1026,6 @@ def render_sites_and_fleets(featured_dfs: dict) -> None:
             icon="🏭",
         )
 
-
 def render_ai_copilot_key() -> None:
     _section("AI Copilot — Language Model")
     _md_html(
@@ -1082,14 +1057,12 @@ def render_ai_copilot_key() -> None:
     else:
         st.caption("Without an API key the Copilot uses template answers grounded on bundle values.")
 
-
 def render_onboarding_replay() -> None:
     _section("Onboarding")
     if st.button("↺ Replay guided tour", key="settings_replay_tour"):
         st.session_state["tour_seen"] = False
         st.session_state["tour_step"] = 0
         st.rerun()
-
 
 def render_enterprise_sso() -> None:
     """Enterprise SSO status gate (Production Readiness Roadmap: "OAuth2 via
@@ -1137,7 +1110,6 @@ def render_enterprise_sso() -> None:
             "username/password auth remains the always-available sign-in path."
         )
 
-
 def render_production_roadmap() -> None:
     _section("Production Readiness Roadmap")
     st.caption("This platform's primary direction is a Research Platform for public battery-cycling data (see docs/product_direction.md) — the Streamlit app you're using is a real demo built on that library, run with intentional constraints, not a production fleet-operations deployment. The table below documents the credible path to production deployment for fleet-operator use cases.")
@@ -1176,7 +1148,6 @@ def render_production_roadmap() -> None:
         )
 
     st.caption("Estimated effort to reach internal-fleet MVP: 3–4 sprints (auth + persistence + MQTT production broker + Docker deployment pipeline).")
-
 
 def render_about() -> None:
     _section("About")
@@ -1225,7 +1196,6 @@ def render_about() -> None:
         "</div>",
         unsafe_allow_html=True,
     )
-
 
 # ---------------------------------------------------------------------------
 # Orchestrator — called once from page_settings() after Model Transparency

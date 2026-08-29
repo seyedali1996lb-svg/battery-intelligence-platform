@@ -44,35 +44,34 @@ _ITER_RE = re.compile(rf"\b{_FDFS_VAR_RE}\.(?:items|values)\(\)")
 # file:line -> why this specific full-fleet iteration is legitimate and
 # doesn't need to (or can't cleanly) migrate to a CellSummary query.
 _ALLOWLIST = {
-    "app/main.py:336": (
-        "Inside _persist_cell_data() -- the one place allowed to touch "
-        "every cell's full DataFrame: it's the write path that populates "
-        "cell_store's Parquet files + CellSummary in the first place, "
-        "right after _train_and_predict() freshly computes them."
+    "app/_data.py:173": (
+        "Inside load_everything()'s _persist_cell_data() callback -- the "
+        "write path that populates cell_store's Parquet files + CellSummary."
     ),
-    "app/_pages/explore.py:289": (
+    "app/_pages/explore.py:283": (
         "Explore's Cluster tab -- opt-in secondary view, needs "
         "ce_rolling_30cy (not in CellSummary's schema, and not worth "
         "growing it for one tab; see cell_store.py's module docstring)."
+    ),
+    "app/_pages/_fleet_diagnostics.py:662": (
+        "Spread trending pre-filter -- needs every cell's full soh_pct "
+        "to filter out empty DataFrames before spread interpolation."
     ),
     "app/_pages/_fleet_diagnostics.py:673": (
         "Spread trending -- needs every cell's full soh_pct/cycle_number "
         "series to interpolate cross-fleet SOH spread over cycle number, "
         "not reducible to a last-value scalar."
     ),
-    "app/_pages/_fleet_diagnostics.py:684": (
-        "Spread trending (same function as :673)."
-    ),
-    "app/_pages/_fleet_diagnostics.py:747": (
+    "app/_pages/_fleet_diagnostics.py:735": (
         "SOH distribution-shift histogram -- needs every cell's full "
         "soh_pct/cycle_number series to build historical snapshots."
     ),
-    "app/_pages/_fleet_diagnostics.py:1034": (
+    "app/_pages/_fleet_diagnostics.py:1018": (
         "Anomaly Alert History -- needs each cell's full "
         "capacity_anomaly/resistance_anomaly boolean columns to count "
         "total flags and recent-window flags, not just the latest value."
     ),
-    "src/api.py:411": (
+    "src/api.py:390": (
         "Inside _cell_stat_rows() -- iterates only the requesting org's "
         "own small, session-bounded uploaded fleet (org_fdfs from "
         "load_tenant_bundle()), which is explicitly out of scope for "

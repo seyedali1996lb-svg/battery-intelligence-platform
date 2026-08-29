@@ -75,7 +75,7 @@ The platform is organized into five engineering modules:
 - **Health-as-a-service endpoint** (`GET /cells/{id}/health`): one JWT-gated response carrying LCO-validated SOH/RUL (Q10/Q90 only when the per-cell reliability floor is met), State-of-Power, fade rate, an explicit per-metric confidence map, EU-passport-facing fragments (chemistry, R-code, best second-life application), and the auto-generated model card of the run behind the model — reusing only existing plumbing, no new training
 - **Auto-generated model cards** (`src/model_cards.py`): every logged experiment-registry run renders as a structured, honest model card (model identity, dataset + its real license via `batlab.cite`, LCO validation metrics, hyperparameters, the replay/hyperparams-divergence reproducibility contract, and platform-standard limitations) — shown per run on the Benchmark page with a JSON download, and embedded in the health-as-a-service response
 - **Digital Twin architecture** (`src/digital_twin.py`): the Phase 3 CellTwin — one continuously-updated representation of a cell's measured history, derived health indicators (SOH, 30-cycle fade rate, knee, EOL), and a physics-based SEI sqrt-fade projection re-fit on every update batch. Exposed as `GET /cells/{id}/twin` and as a Live Monitor block that consumes the streamed telemetry; honestly labeled "projection, not prediction" and "not a live-synced digital twin" (fixed per-chemistry parameter set, no real BMS feed). On the Cell Workbench's Health view the projection is charted beside the GBRT-fade 12-month forecast — measured history, central SEI sqrt-fade projection, and ±2σ fit band on the same SOH axis, with a GBRT-vs-physics RUL comparison strip — so researchers can see where the data-driven and physics models diverge for a cell
-- **Grid Services page** (`app/_pages/operations.py`): the Streamlit surface for the Lifecycle Intelligence layer — health-aware dispatch (with the healthy-vs-health-aware comparison), grid-services revenue, managed charging, fleet dispatchable-capacity offers, and the ML anomaly scan, all read-only estimates with the modules' own labels. The page imports `src/` package modules using bare imports (e.g. `from market_data import ...`), with the project root on `sys.path` via `app/main.py` so both bare and `src.*`-prefixed imports resolve correctly in local and hosted deployments.
+- **Grid Services page** (`app/_pages/operations.py`): the Streamlit surface for the Lifecycle Intelligence layer — health-aware dispatch (with the healthy-vs-health-aware comparison), grid-services revenue, managed charging, fleet dispatchable-capacity offers, and the ML anomaly scan, all read-only estimates with the modules' own labels. The page imports `src/` package modules using bare imports (e.g. `from market_data import ...`), with path resolution handled by the centralized `_paths.py` module.
 - **W3C Verifiable Credential Battery Passport** (`src/dynamic_circularity.py`): EU Battery Regulation (EU 2023/1542) JSON-LD digital product passport generator with cryptographic Ed25519 signatures
 - Automated Second-Life Auction & Bid Matcher connecting certified cell health (SOH, SoP%, RUL) with buyer application profiles
 - **Modern React 19 / TypeScript SPA Frontend** (`frontend/`): 60fps electrochemical cycle scrubber, real-time live telemetry canvas, and multi-view operations dashboard alongside the Streamlit application — designed with an energy-lab aesthetic (electrolyte-teal accent, Inter + JetBrains Mono type pairing, state-of-health-derived color ramp, Lucide SVG icons) that reads as an instrument panel rather than a generic dark dashboard
@@ -101,6 +101,15 @@ Visualization / Application   app/
 ```
 
 Each layer is independently usable — `batlab` runs standalone as a Python library (see [Installation](#installation)), and the Streamlit application in `app/` is a consumer of it, not the other way around.
+
+The Streamlit app (`app/`) is split into focused modules:
+- **`app/main.py`** — thin orchestrator (~200 lines): data loading, training, and page dispatch
+- **`app/_data.py`** — data loading and caching logic
+- **`app/_sidebar.py`** — sidebar navigation, role switching, and onboarding
+- **`app/_router.py`** — page routing/dispatch
+- **`app/_pages/`** — individual page renderers (one per page)
+
+A centralized **`_paths.py`** at the project root ensures `src/`, `app/`, and `scripts/` are importable as bare names from anywhere — no scattered `sys.path.insert` hacks.
 
 ## Methodology
 
@@ -165,7 +174,7 @@ pip install -r requirements.txt
 streamlit run app/main.py
 ```
 
-The dashboard is launched from the repository root. Keep that working directory when starting Streamlit so pages such as Grid Services can resolve shared modules under `src/` consistently in local and hosted deployments.
+The dashboard is launched from the repository root. Path resolution is handled by `_paths.py` (ensuring `src/`, `app/`, and `scripts/` are importable), so module resolution works consistently in local and hosted deployments.
 
 See [`docs/history.md`](docs/history.md) for its full build history and architecture.
 

@@ -37,7 +37,7 @@ oxford = ["mat-io"]
 calce = ["openpyxl"]
 notebooks = ["jupyter", "matplotlib", "papermill", "nbconvert", "ipykernel"]
 docs = ["mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
-dev = ["pytest", "batlab[severson,oxford,calce,notebooks,docs]"]
+dev = ["pytest", "pyright", "batlab[severson,oxford,calce,notebooks,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
@@ -47,6 +47,24 @@ DOI = "https://doi.org/10.5281/zenodo.21346275"
 
 [tool.setuptools.packages.find]
 include = ["batlab*"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+include = ["batlab", "src", "app"]
+exclude = ["**/node_modules", "**/__pycache__"]
+typeCheckingMode = "standard"
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUntypedFunctionDecorator = false
+reportUntypedClassDecorator = false
+reportAttributeAccessIssue = true
+reportCallIssue = true
+reportReturnType = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

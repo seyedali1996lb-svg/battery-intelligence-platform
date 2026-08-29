@@ -1,17 +1,12 @@
 """Page: Explore (Compare / Cluster / Cohort)."""
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
 from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card, _resample_df
-
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     _action_bar("compare")
@@ -254,7 +249,6 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
 
     # end of Compare view — Cluster and Cohort are handled via radio+return above
 
-
 # ---------------------------------------------------------------------------
 # Explore sub-pages (Cluster / Cohort) — called from page_compare radio switch
 # ---------------------------------------------------------------------------
@@ -434,7 +428,6 @@ def _page_explore_cluster(cell_ids: list, active_fdfs: dict, bundles: dict):
     except Exception as _ce:
         st.info(f"Clustering unavailable: {_ce}")
 
-
 def _page_explore_cohort(active_fdfs: dict):
     """Cohort analysis view — cells grouped by user-set tags."""
     # ── Inline cohort tagging ─────────────────────────────────────────────────
@@ -610,7 +603,6 @@ def _page_explore_cohort(active_fdfs: dict):
             icon="🏷",
         )
 
-
 def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
     """"Cells like this one" — a graph-query panel over the Battery
     Knowledge Graph (src/knowledge_graph.py). Ranks candidates by same
@@ -678,7 +670,6 @@ def _page_related_cells(cell_ids: list, active_fdfs: dict, graph):
             extra_style="margin-bottom:8px",
         )
 
-
 _CONDITION_LABELS = {
     "c_rate": "C-rate",
     "temperature_c": "Measured temperature",
@@ -686,7 +677,6 @@ _CONDITION_LABELS = {
     "voltage_discharge_cutoff_v": "Discharge voltage cutoff",
     "test_temperature_c": "Test temperature setpoint",
 }
-
 
 def _render_condition_completeness(df):
     """
@@ -717,7 +707,6 @@ def _render_condition_completeness(df):
                 + "<br>".join(result["caveats"])
                 + "</div>"
             )
-
 
 def _page_reference_datasets():
     """
@@ -799,5 +788,4 @@ def _page_reference_datasets():
 
     with st.expander("Per-checkpoint data"):
         st.dataframe(_cp.set_index("checkpoint_index"), use_container_width=True)
-
 

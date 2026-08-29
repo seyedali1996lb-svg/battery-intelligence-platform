@@ -5,7 +5,7 @@ into a VPP-style dispatchable-capacity offer.
 
 import pytest
 
-from src.fleet_aggregation import cell_dispatchable_capacity, fleet_dispatchable_offer
+from fleet_aggregation import cell_dispatchable_capacity, fleet_dispatchable_offer
 
 
 def _cells():

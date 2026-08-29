@@ -109,7 +109,7 @@ def scratch_db():
 
 
 def _auth(user: str, oid: int, role: str = "admin") -> dict:
-    from src.api import _create_access_token
+    from api import _create_access_token
     token = _create_access_token({"username": user, "org_id": oid, "role": role})
     return {"Authorization": f"Bearer {token}"}
 
@@ -145,7 +145,7 @@ def test_api_concurrent_multitenant_writes_no_cross_tenant_bleed(scratch_db):
     org's reads see ONLY its own rows -- org_id-scoping holds under concurrent
     multi-tenant requests, and nothing leaks between tenants."""
     from fastapi.testclient import TestClient
-    from src.api import app
+    from api import app
 
     db = scratch_db["db"]
     orgs = {}

@@ -5,8 +5,8 @@ unmanaged baseline and flexibility (EFC) measurement.
 
 import pytest
 
-from src.market_data import SyntheticMarketAdapter
-from src.managed_charging import managed_charge_plan, CHARGING_EFFICIENCY
+from market_data import SyntheticMarketAdapter
+from managed_charging import managed_charge_plan, CHARGING_EFFICIENCY
 
 
 def _prices(hours=48, spike_hour=12):

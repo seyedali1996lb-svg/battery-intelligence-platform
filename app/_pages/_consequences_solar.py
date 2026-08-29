@@ -12,17 +12,12 @@ cell_id (used only as a session_state cache key).
 """
 
 import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
 from utils import _empty_state, _md_html, base_layout, render_card, metric_tile_html
-
 
 # ---------------------------------------------------------------------------
 # Solar + Storage Sizing — consumption/tariff presets
@@ -99,7 +94,6 @@ SITE_REGION_PV_COST_EUR_PER_KWP = {
     "Spain": 1600.0,
 }
 
-
 @st.cache_data(show_spinner=False, ttl=86400)
 def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float, year: int) -> dict:
     """Cached wrapper around pvgis_client.fetch_pv_yield_hourly() — PVGIS's
@@ -115,7 +109,6 @@ def _cached_pv_yield_hourly(lat: float, lon: float, peakpower_kwp: float, tilt_d
         azimuth_deg=azimuth_deg, year=year,
     )
 
-
 @st.cache_data(show_spinner=False, ttl=86400)
 def _cached_pv_yield_annual(lat: float, lon: float, peakpower_kwp: float, tilt_deg: float, azimuth_deg: float) -> dict:
     """Cached wrapper around pvgis_client.fetch_pv_yield() (PVcalc, multi-year
@@ -127,7 +120,6 @@ def _cached_pv_yield_annual(lat: float, lon: float, peakpower_kwp: float, tilt_d
         lat=lat, lon=lon, peakpower_kwp=peakpower_kwp, tilt_deg=tilt_deg, azimuth_deg=azimuth_deg,
     )
 
-
 @st.cache_data(show_spinner=False, ttl=86400)
 def _cached_tmy_ghi(lat: float, lon: float) -> dict:
     """Cached wrapper around pvgis_client.fetch_tmy_ghi() — passed to
@@ -136,7 +128,6 @@ def _cached_tmy_ghi(lat: float, lon: float) -> dict:
     regardless of how many PV sizes are explored."""
     from pvgis_client import fetch_tmy_ghi
     return fetch_tmy_ghi(lat=lat, lon=lon)
-
 
 def _parse_two_column_timestamp_csv(raw: "pd.DataFrame") -> "list | None":
     """Shared logic for _parse_hourly_consumption_csv()'s two-column path —
@@ -156,7 +147,6 @@ def _parse_two_column_timestamp_csv(raw: "pd.DataFrame") -> "list | None":
     except Exception:
         pass
     return None
-
 
 def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
     """Parses a user-uploaded consumption CSV in either of two formats:
@@ -220,7 +210,6 @@ def _parse_hourly_consumption_csv(uploaded_file) -> "list | None":
     if len(values) != 8760:
         return None
     return values
-
 
 # ---------------------------------------------------------------------------
 # Solar + Storage Sizing tool

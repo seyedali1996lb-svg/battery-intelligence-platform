@@ -8,13 +8,9 @@ runs) is logged automatically at fit time -- see experiment_registry.py's
 module docstring for why there is no manual "log this run" step.
 """
 
-import sys
-import os
 import json
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401
 import streamlit as st
 import pandas as pd
 

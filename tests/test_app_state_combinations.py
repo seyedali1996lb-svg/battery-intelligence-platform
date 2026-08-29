@@ -23,9 +23,12 @@ already flagged for this class of test.
 import sys
 import pathlib
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "app"))
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
-
+import sys as _sys
+import os as _os
+_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+if _root not in _sys.path:
+    _sys.path.insert(0, _root)
+import _paths  # noqa: F401
 import pytest
 import db as db_module
 from streamlit.testing.v1 import AppTest
@@ -1143,9 +1146,6 @@ def test_regenerate_report_button_replays_and_shows_recorded_vs_reproduced(isola
     app_dir = str(pathlib.Path(__file__).parent.parent / "app")
     src_dir = str(pathlib.Path(__file__).parent.parent / "src")
     script = f"""
-import sys
-sys.path.insert(0, {app_dir!r})
-sys.path.insert(0, {src_dir!r})
 from utils import render_regenerate_report_button
 bundle = {{"metrics": {{"experiment_run_id": {run_id!r}}}}}
 render_regenerate_report_button(bundle, org_id=1, key_suffix="test")

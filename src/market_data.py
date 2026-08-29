@@ -58,7 +58,7 @@ from typing import Optional, Protocol, runtime_checkable
 
 import requests
 
-from src.dynamic_circularity import GRID_CARBON_INTENSITY  # single source of truth
+from dynamic_circularity import GRID_CARBON_INTENSITY  # single source of truth
 
 
 @runtime_checkable

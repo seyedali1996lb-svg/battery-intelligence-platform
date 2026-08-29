@@ -9,12 +9,7 @@ action cards, 12-month forecast) and delegates to
 render_engineering_diagnostics() once the checkbox is on.
 """
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -28,7 +23,6 @@ from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
 from chemistry_profiles import ChemistryProfile
 from _pages._health_diagnostics import render_engineering_diagnostics
-
 
 # ---------------------------------------------------------------------------
 # Page: Health

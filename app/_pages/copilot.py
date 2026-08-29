@@ -1,10 +1,6 @@
 """Page: Copilot."""
 
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import _paths  # noqa: F401
 
 import streamlit as st
 import plotly.graph_objects as go

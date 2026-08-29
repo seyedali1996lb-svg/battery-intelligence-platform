@@ -7,7 +7,7 @@ anomaly scan (POST /analytics/ml-anomaly).
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api import app, _create_access_token
+from api import app, _create_access_token
 
 
 @pytest.fixture

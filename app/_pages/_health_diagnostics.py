@@ -16,12 +16,8 @@ directly, so each function below does that locally instead of taking more
 parameters -- keeps every function's signature minimal and self-contained.
 """
 
-import sys
 import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -34,7 +30,6 @@ from utils import (
 from design_system import provenance_banner
 from batlab.features.knee_detection import degradation_phases
 from chemistry_profiles import ChemistryProfile
-
 
 # ---------------------------------------------------------------------------
 # Fade rate + degradation phase (always shown under Engineering details,
@@ -191,7 +186,6 @@ def render_fade_rate_and_phase_analysis(df: pd.DataFrame, _rdf: pd.DataFrame,
         extra_style="margin-bottom:16px",
     )
 
-
 # ---------------------------------------------------------------------------
 # H4: Data Lineage
 # ---------------------------------------------------------------------------
@@ -234,7 +228,6 @@ def render_data_lineage_expander(df: pd.DataFrame, cell_id: str) -> None:
             f"Data provenance: {_cell_provenance(cell_id).upper()}"
         )
 
-
 # ---------------------------------------------------------------------------
 # H4.5: Why the model predicts this SOH — top drivers + citations
 # ---------------------------------------------------------------------------
@@ -275,7 +268,6 @@ def render_prediction_drivers_expander(df: pd.DataFrame, cell_id: str, bundle: d
             with st.popover(f"{_row['name']} — {_row['pct']:.1f}%", use_container_width=True):
                 st.caption(_row["tooltip"])
         st.caption("Select a driver above for its physical explanation and literature citation (where one is on file).")
-
 
 # ---------------------------------------------------------------------------
 # T4: Degradation Mechanism Classifier (LLI vs LAM)
@@ -322,7 +314,6 @@ def render_mechanism_classifier_expander(_mech: dict) -> None:
                                   help="Resistance increase per 1000 cycles")
         except Exception as _e_mech:
             st.info(f"Mechanism classifier unavailable: {_e_mech}")
-
 
 # ---------------------------------------------------------------------------
 # dQ/dV Degradation Analysis
@@ -475,7 +466,6 @@ def render_dqdv_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: str) -> 
           except Exception as _e:
             st.info(f"dQ/dV analysis unavailable: {_e}")
 
-
 # ---------------------------------------------------------------------------
 # Coulombic Efficiency
 # ---------------------------------------------------------------------------
@@ -563,7 +553,6 @@ def render_ce_expander(df: pd.DataFrame, cell_id: str) -> None:
         except Exception as _ce_e:
             st.info(f"CE analysis unavailable: {_ce_e}")
 
-
 # ---------------------------------------------------------------------------
 # Energy & Capacity Throughput
 # ---------------------------------------------------------------------------
@@ -614,7 +603,6 @@ def render_energy_throughput_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell
             st.plotly_chart(fig_kwh, use_container_width=True)
         except Exception as _te:
             st.info(f"Throughput analysis unavailable: {_te}")
-
 
 # ---------------------------------------------------------------------------
 # Lithium Plating Risk Score
@@ -735,7 +723,6 @@ def render_lithium_plating_expander(df: pd.DataFrame) -> None:
         except Exception as _plat_err:
             st.info(f"Plating risk analysis unavailable: {_plat_err}")
 
-
 # ---------------------------------------------------------------------------
 # Resistance Component Proxy (simulated EIS)
 # ---------------------------------------------------------------------------
@@ -849,7 +836,6 @@ def render_resistance_proxy_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_
         except Exception as _eis_e:
             st.info(f"EIS analysis unavailable: {_eis_e}")
 
-
 # ---------------------------------------------------------------------------
 # Formation Protocol Analysis
 # ---------------------------------------------------------------------------
@@ -920,7 +906,6 @@ def render_formation_protocol_expander(df: pd.DataFrame, cell_id: str) -> None:
         except Exception as _form_e:
             st.info(f"Formation analysis unavailable: {_form_e}")
 
-
 # ---------------------------------------------------------------------------
 # Rate Capability Analysis
 # ---------------------------------------------------------------------------
@@ -979,7 +964,6 @@ def render_rate_capability_expander(df: pd.DataFrame, cell_id: str) -> None:
             _md_html(f"""<div style="background:rgba(26,32,44,0.7);border:1px solid #2d3748;border-radius:8px;padding:12px 16px;font-size:13px"><span style="color:{_ret_color};font-weight:700">{_ret_msg}</span><span style="color:#a0aec0;margin-left:10px">k_rate = {_k_rate:.3f} (resistance-scaled). >85% at 2C = good fast-charge fitness; &lt;70% = rate-limited application only.</span></div>""")
         except Exception as _rate_e:
             st.info(f"Rate capability analysis unavailable: {_rate_e}")
-
 
 # ---------------------------------------------------------------------------
 # Physics-Based RUL Projection (PyBaMM SPM) vs GBRT
@@ -1376,7 +1360,6 @@ def render_physics_rul_expander(df: pd.DataFrame, _rdf: pd.DataFrame, cell_id: s
 
                 f"</div>"
             )
-
 
 # ---------------------------------------------------------------------------
 # Orchestrator — called once from page_health() when Engineering details is on

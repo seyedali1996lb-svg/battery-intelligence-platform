@@ -1,18 +1,14 @@
 """Page: Live Monitor (MQTT BMS streaming + anomaly detection)."""
 
-import sys
-import os
 import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
+import os
+import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import plotly.graph_objects as go
 
 from utils import _md_html, _empty_state, _action_bar, base_layout
 from chemistry_profiles import ChemistryProfile
-
 
 def page_live_monitor(cell_ids: list, active_fdfs: dict):
     _action_bar("live_monitor")

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from src.health_aware_dispatch import health_constrained_band
+from health_aware_dispatch import health_constrained_band
 
 # Default allowed SOC band for a healthy cell in the aggregate offer.
 DEFAULT_SOC_LOW_PCT = 10.0

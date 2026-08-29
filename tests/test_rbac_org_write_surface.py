@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 
 import rbac
 import db as db_module
-from src.api import app, _create_access_token
+from api import app, _create_access_token
 
 _TEST_ENCRYPTION_KEY = "03ZJHIomd1hhT9w4FWvNxoN2wqPUnjfg3bSycZqUmgY="  # test-only, not the fallback
 

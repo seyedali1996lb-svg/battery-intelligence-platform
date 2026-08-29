@@ -5,8 +5,8 @@ dispatch, and the healthy-assumption vs health-aware comparison.
 
 import pytest
 
-from src.market_data import SyntheticMarketAdapter
-from src.health_aware_dispatch import (
+from market_data import SyntheticMarketAdapter
+from health_aware_dispatch import (
     health_constrained_band,
     arbitrage_schedule,
     schedule_comparison,
