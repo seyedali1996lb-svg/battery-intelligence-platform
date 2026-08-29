@@ -8,6 +8,9 @@ Surfaces covered beyond the Decision/CMMS tickets:
   - decision.log            -> append to the org's decision log (admin/engineer/fleet)
   - webhooks.manage         -> add/edit/remove webhook destinations (admin)
   - fleet-assets.manage     -> site/fleet/pack CRUD + cell assignment (admin)
+  - team.manage             -> invite teammates (admin)
+  - cohort.manage           -> tag a cell with a cohort/batch label (admin/engineer/fleet)
+  - settings.manage         -> org-wide settings writes (admin)
 
 For each: the pure rbac matrix, the db.py-level refusal (nothing persisted), and
 the API boundary (403 for denied roles, 200 for granted, reads open for every
@@ -16,6 +19,7 @@ authenticated role).
 
 import pathlib
 import re
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -257,3 +261,144 @@ def test_db_unit_helpers_delegate_to_registry(db):
         db._require_cap(rbac.ROLE_COMPLIANCE, rbac.WEBHOOKS_MANAGE, "probe")
     with pytest.raises(db_module.InsufficientRoleError):
         db._require_cap(rbac.ROLE_COMPLIANCE, rbac.FLEET_ASSETS_MANAGE, "probe")
+
+
+# ── Team members, cohort tags, settings (last single-writer folds) ──────────
+
+def test_team_and_cohort_matrix():
+    assert rbac.allowed_roles(rbac.TEAM_MANAGE) == {rbac.ROLE_ADMIN}
+    assert rbac.allowed_roles(rbac.COHORT_MANAGE) == set(_OPERATOR_ROLES)
+    for role in _OPERATOR_ROLES:
+        assert rbac.can(role, rbac.COHORT_MANAGE)
+    assert not rbac.can(rbac.ROLE_COMPLIANCE, rbac.COHORT_MANAGE)
+    assert not rbac.can(None, rbac.COHORT_MANAGE)
+    assert not rbac.can(rbac.ROLE_ENGINEER, rbac.TEAM_MANAGE)
+    # Personas never gain these.
+    for cap in (rbac.TEAM_MANAGE, rbac.COHORT_MANAGE):
+        for persona in (rbac.PERSONA_ENGINEER, rbac.PERSONA_FLEET,
+                        rbac.PERSONA_EXECUTIVE, rbac.PERSONA_COMPLIANCE):
+            assert not rbac.can(persona, cap), (persona, cap)
+
+
+def test_create_user_refuses_non_admin(db):
+    for role in (None, "engineer", "compliance"):
+        with pytest.raises(db_module.InsufficientRoleError):
+            db_module.create_user(1, "rogue", "password1", "engineer", caller_role=role)
+    assert db_module.get_user_by_username("rogue") is None
+    ok = db_module.create_user(1, "carol_ok", "password1", "fleet", "Carol", caller_role="admin")
+    assert "user_id" in ok
+    assert db_module.get_user_by_username("carol_ok") is not None
+
+
+def test_cohort_tag_refuses_compliance_and_missing_role(db):
+    for role in (None, "compliance"):
+        with pytest.raises(db_module.InsufficientRoleError):
+            db_module.save_cohort_tag(1, "B0005", "Batch-A", caller_role=role)
+    assert "B0005" not in db_module.load_cohort_tags(1)
+    db_module.save_cohort_tag(1, "B0005", "Batch-A", caller_role="engineer")
+    assert db_module.load_cohort_tags(1)["B0005"] == "Batch-A"
+
+
+def test_remove_cell_from_pack_refuses_non_admin(db):
+    site = db_module.create_site(1, "S", caller_role="admin")
+    fleet = db_module.create_fleet(1, site["id"], "F", caller_role="admin")
+    pack = db_module.create_pack(1, fleet["id"], "P", caller_role="admin")
+    db_module.add_cell_to_pack(1, pack["id"], "B0005", caller_role="admin")
+    for role in (None, "engineer"):
+        with pytest.raises(db_module.InsufficientRoleError):
+            db_module.remove_cell_from_pack(1, pack["id"], "B0005", caller_role=role)
+    assert db_module.list_pack_cells(1, pack["id"]) == ["B0005"]
+    db_module.remove_cell_from_pack(1, pack["id"], "B0005", caller_role="admin")
+    assert db_module.list_pack_cells(1, pack["id"]) == []
+
+
+def test_set_setting_maps_to_registry(db):
+    # Admin-only settings writes now fail via rbac.can(role, CAP_SETTINGS_MANAGE).
+    for role in (None, "compliance", "engineer"):
+        with pytest.raises(db_module.InsufficientRoleError):
+            db_module.set_setting(1, "eol_threshold_pct", 82.0, role=role)
+    assert db_module.get_setting(1, "eol_threshold_pct") is None
+    db_module.set_setting(1, "eol_threshold_pct", 82.0, role="admin")
+    assert db_module.get_setting(1, "eol_threshold_pct") == 82.0
+    # Per-user convenience keys stay open with no role at all.
+    db_module.set_setting(1, "pinned_cell", "B0005")
+    assert db_module.get_setting(1, "pinned_cell") == "B0005"
+
+
+# ── API boundary: team members, cohort tags, settings ───────────────────────
+
+def test_team_members_api(client):
+    # Unique username so reruns of the same suite never collide on the API's
+    # (shared) DB -- matching how the other endpoint tests stay idempotent.
+    uname = f"ned_{uuid.uuid4().hex[:8]}"
+    body = {"username": uname, "password": "secret1", "role": "engineer"}
+    assert client.get("/team/members", headers=_headers("engineer")).status_code == 200
+    assert client.post("/team/members", json=body, headers=_headers("engineer")).status_code == 403
+    assert client.post("/team/members", json=body, headers=_headers("compliance")).status_code == 403
+    created = client.post("/team/members", json=body, headers=_headers("admin"))
+    assert created.status_code == 200
+    names = {u["username"] for u in client.get("/team/members", headers=_headers("admin")).json()}
+    assert uname in names
+
+
+def test_team_members_api_short_password_and_duplicate(client):
+    uname = f"terry_{uuid.uuid4().hex[:8]}"
+    bad = client.post("/team/members", json={"username": uname, "password": "abc", "role": "engineer"},
+                      headers=_headers("admin"))
+    assert bad.status_code == 400
+    client.post("/team/members", json={"username": uname, "password": "secret1", "role": "engineer"},
+               headers=_headers("admin"))
+    dup = client.post("/team/members", json={"username": uname, "password": "secret2", "role": "admin"},
+                      headers=_headers("admin"))
+    assert dup.status_code == 409
+
+
+def test_cohort_tags_api(client):
+    assert client.get("/cohort-tags", headers=_headers("compliance")).status_code == 200
+    body = {"tag": "Batch-A"}
+    assert client.post("/cells/B0005/cohort-tag", json=body,
+                       headers=_headers("compliance")).status_code == 403
+    assert client.post("/cells/B0005/cohort-tag", json=body,
+                       headers=_headers("engineer")).status_code == 200
+    tags = client.get("/cohort-tags", headers=_headers("engineer")).json()
+    assert tags["B0005"] == "Batch-A"
+    assert client.get("/cohort-tags", headers=_headers("compliance")).json()["B0005"] == "Batch-A"
+
+
+def test_settings_api(client):
+    assert client.get("/settings/eol_threshold_pct",
+                      headers=_headers("engineer")).status_code == 200
+    # non-admin can read, cannot write org-wide config
+    assert client.put("/settings/eol_threshold_pct", json={"value": 82.0},
+                      headers=_headers("engineer")).status_code == 403
+    ok = client.put("/settings/eol_threshold_pct", json={"value": 82.0},
+                    headers=_headers("admin"))
+    assert ok.status_code == 200
+    got = client.get("/settings/eol_threshold_pct", headers=_headers("engineer")).json()
+    assert got["value"] == 82.0
+
+
+def test_tci_write_requires_auth(client):
+    assert client.post("/team/members", json={"username": "n", "password": "password1",
+                                              "role": "engineer"}).status_code == 401
+    assert client.post("/cells/B0005/cohort-tag", json={"tag": "A"}).status_code == 401
+    assert client.put("/settings/eol_threshold_pct", json={"value": 82}).status_code == 401
+
+
+# ── Structural drift guards (final folds) ───────────────────────────────────
+
+def test_settings_binds_team_to_team_manage():
+    src = _SETTINGS_PY.read_text(encoding="utf-8")
+    assert "rbac.can(st.session_state.get(\"auth_role\"), rbac.TEAM_MANAGE)" in src
+
+
+def test_db_maps_last_helpers_to_registry():
+    src = _DB_PY.read_text(encoding="utf-8")
+    # Settings writes, cohort tags, team invites, pack-cell removal all read the
+    # registry; no hand-rolled role string remains in the boundary functions.
+    assert "rbac.can(role, rbac.CAP_SETTINGS_MANAGE)" in src       # set_setting
+    assert "rbac.COHORT_MANAGE" in src                              # save_cohort_tag
+    assert "rbac.TEAM_MANAGE" in src                                # create_user
+    # The two hand-rolled role checks that used to live here are gone.
+    assert "caller_role != \"admin\"" not in src
+    assert "role != \"admin\"" not in src

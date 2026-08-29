@@ -598,12 +598,10 @@ def create_user(org_id: int, username: str, password: str, role: str,
     """Admin-invites-teammate: adds another user to an existing org.
 
     caller_role is the ROLE OF THE USER MAKING THIS CALL, distinct from
-    `role` (the new user's role being created) -- must be "admin"."""
-    if caller_role != "admin":
-        raise InsufficientRoleError(
-            "Refusing to create a user -- inviting teammates is restricted "
-            "to the admin role."
-        )
+    `role` (the new user's role being created) -- must have the `team.manage`
+    capability (admin)."""
+    _require_cap(caller_role, rbac.TEAM_MANAGE, "invite a teammate to the organization")
+
     with Session() as s:
         if s.query(User).filter_by(username=username.strip().lower()).one_or_none() is not None:
             return {"error": "That username is already taken."}
@@ -617,6 +615,16 @@ def create_user(org_id: int, username: str, password: str, role: str,
         s.commit()
         s.refresh(user)
         return {"user_id": user.id}
+
+
+def list_users(org_id: int) -> list[dict]:
+    """Every user in `org_id`, excluding their password hash."""
+    with Session() as s:
+        rows = s.query(User).filter_by(org_id=org_id).order_by(User.created_at, User.id).all()
+        return [
+            {"id": u.id, "username": u.username, "display_name": u.display_name, "role": u.role}
+            for u in rows
+        ]
 
 
 def get_user_by_username(username: str) -> "dict | None":
@@ -954,7 +962,12 @@ def delete_webhook_subscription(org_id: int, subscription_id: str, caller_role: 
 # Cohort tags
 # ---------------------------------------------------------------------------
 
-def save_cohort_tag(org_id: int, cell_id: str, tag: str) -> None:
+def save_cohort_tag(org_id: int, cell_id: str, tag: str,
+                    caller_role: "str | None" = None) -> None:
+    """Set a cell's cohort/batch tag. Gated by the `cohort.manage` capability
+    (admin/engineer/fleet -- the identities that work the cell fleet); the
+    read-only compliance role and any omitted role are refused."""
+    _require_cap(caller_role, rbac.COHORT_MANAGE, "set a cohort tag")
     with Session() as s:
         s.merge(CellCohortTag(org_id=org_id, cell_id=cell_id, tag=tag))
         s.commit()
@@ -1027,11 +1040,17 @@ def get_settings(org_id: int, keys: "list[str] | None" = None) -> dict:
 
 
 def set_setting(org_id: int, key: str, value, role: "str | None" = None) -> None:
-    if key in _ADMIN_ONLY_SETTING_KEYS and role != "admin":
+    # Org-wide config (the _ADMIN_ONLY_SETTING_KEYS set) is gated by the
+    # `settings.manage` capability from src/rbac.py -- the same capability the
+    # Settings UI reads before rendering those sections -- so the db boundary
+    # and the UI can't drift. Per-user convenience keys (not in that set) stay
+    # open to any authenticated role. role=None fails closed.
+    if key in _ADMIN_ONLY_SETTING_KEYS and not rbac.can(role, rbac.CAP_SETTINGS_MANAGE):
         raise InsufficientRoleError(
-            f"Refusing to set {key!r} -- this is org-wide configuration, "
-            "restricted to the admin role. Pass role=<caller's actual role> "
-            "explicitly (fail-closed: a missing role is treated as unauthorized)."
+            f"Refusing to set {key!r} -- this is org-wide configuration under "
+            f"the {rbac.CAP_SETTINGS_MANAGE} capability ({rbac.describe(rbac.CAP_SETTINGS_MANAGE)}); "
+            "pass role=<caller's actual role> (fail-closed: a missing role is "
+            "treated as unauthorized)."
         )
     encoded = json.dumps(value)
     if key in _SECRET_SETTING_KEYS:
@@ -1474,7 +1493,11 @@ def add_cell_to_pack(org_id: int, pack_id: int, cell_id: str, position: "int | N
         s.commit()
 
 
-def remove_cell_from_pack(org_id: int, pack_id: int, cell_id: str) -> None:
+def remove_cell_from_pack(org_id: int, pack_id: int, cell_id: str,
+                          caller_role: "str | None" = None) -> None:
+    """Remove a cell from a pack. Same `fleet-assets.manage` gate as the
+    rest of the site/fleet/pack write surface (admin only)."""
+    _require_cap(caller_role, rbac.FLEET_ASSETS_MANAGE, "remove a cell from a pack")
     with Session() as s:
         row = s.query(PackCell).filter_by(org_id=org_id, pack_id=pack_id, cell_id=cell_id).one_or_none()
         if row is not None:

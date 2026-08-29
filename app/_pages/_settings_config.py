@@ -916,7 +916,7 @@ def render_maintenance_writeback() -> None:
 
 
 def render_team_members() -> None:
-    if not rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
+    if not rbac.can(st.session_state.get("auth_role"), rbac.TEAM_MANAGE):
         return
     _section(f"Team Members — {st.session_state.get('auth_org_name', '')}")
     _md_html(

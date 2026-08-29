@@ -101,7 +101,10 @@ import numpy as np
 
 from src.db import (
     get_user_by_username, verify_password, init_db,
+    create_user, list_users,
     save_decision, load_decisions,
+    save_cohort_tag, load_cohort_tags,
+    get_setting, set_setting,
     save_webhook_subscription, delete_webhook_subscription, get_webhook_subscriptions,
     create_site, list_sites,
     create_fleet, list_fleets,
@@ -947,9 +950,12 @@ from src.managed_charging import managed_charge_plan
 from src.fleet_aggregation import fleet_dispatchable_offer
 from src.ml_anomaly import detect_anomalous_cycles
 from src import model_cards
-from rbac import can, allowed_roles, describe, \
-    ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET, \
-    DECISION_LOG, WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE
+from rbac import (
+    can, allowed_roles, describe,
+    ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET,
+    DECISION_LOG, WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE, TEAM_MANAGE, COHORT_MANAGE,
+    CAP_SETTINGS_MANAGE,
+)
 
 
 class ActionCreateRequest(BaseModel):
@@ -1277,8 +1283,89 @@ def remove_pack_cell_api(
     cell_id: str,
     current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
 ) -> dict:
-    remove_cell_from_pack(current_user["org_id"], pack_id, cell_id)
+    remove_cell_from_pack(current_user["org_id"], pack_id, cell_id,
+                           caller_role=current_user["role"])
     return {"pack_id": pack_id, "cell_id": cell_id, "deleted": True}
+
+
+# ── Team members, cohort tags, settings ─────────────────────────────────────
+# The last single-writer helpers, now on the same src/rbac.py capability keys
+# the Streamlit UI reads -- folder onto the REST boundary with require_action:
+#   - team.manage (admin)          create_user() -- invite a teammate
+#   - cohort.manage (admin/eng/fleet) save_cohort_tag() -- tag a cell
+#   - settings.manage (admin)      set_setting() on org-wide config keys
+# Reads stay open to every authenticated role (org-scoped). Each write passes
+# its authenticated role through as caller_role so the db layer applies the
+# identical check even if the route is ever bypassed.
+
+
+class TeamMemberCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str
+    display_name: Optional[str] = ""
+
+
+class CohortTagRequest(BaseModel):
+    tag: str
+
+
+class SettingsValueRequest(BaseModel):
+    value: Any
+
+
+@app.get("/team/members", summary="List the organization's members")
+def list_team_members_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return list_users(current_user["org_id"])
+
+
+@app.post("/team/members", summary="Invite a teammate to the organization")
+def create_team_member_api(
+    req: TeamMemberCreateRequest,
+    current_user: dict = Depends(require_action(TEAM_MANAGE)),
+) -> dict:
+    if not req.username.strip() or len(req.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="username is required and password must be at least 6 characters.",
+        )
+    result = create_user(
+        current_user["org_id"], req.username, req.password, req.role, req.display_name,
+        caller_role=current_user["role"],
+    )
+    if "error" in result:
+        raise HTTPException(status_code=409, detail=result["error"])
+    return result
+
+
+@app.get("/cohort-tags", summary="List the cohort/batch tags for this org's cells")
+def list_cohort_tags_api(current_user: dict = Depends(get_current_user)) -> dict:
+    return load_cohort_tags(current_user["org_id"])
+
+
+@app.post("/cells/{cell_id}/cohort-tag", summary="Set a cell's cohort/batch tag")
+def set_cohort_tag_api(
+    cell_id: str,
+    req: CohortTagRequest,
+    current_user: dict = Depends(require_action(COHORT_MANAGE)),
+) -> dict:
+    save_cohort_tag(current_user["org_id"], cell_id, req.tag, caller_role=current_user["role"])
+    return {"cell_id": cell_id, "tag": req.tag}
+
+
+@app.get("/settings/{key}", summary="Read one org setting (any authenticated member)")
+def get_setting_api(key: str, current_user: dict = Depends(get_current_user)) -> dict:
+    return {"key": key, "value": get_setting(current_user["org_id"], key)}
+
+
+@app.put("/settings/{key}", summary="Write an org-wide setting (requires settings.manage)")
+def set_setting_api(
+    key: str,
+    req: SettingsValueRequest,
+    current_user: dict = Depends(require_action(CAP_SETTINGS_MANAGE)),
+) -> dict:
+    set_setting(current_user["org_id"], key, req.value, role=current_user["role"])
+    return {"key": key, "value": req.value}
 
 
 # ── Partial Cycles & Field Telemetry Analytics ───────────────────────────────

@@ -451,7 +451,8 @@ def _page_explore_cohort(active_fdfs: dict):
                                      placeholder="e.g. Batch-A")
             if _new_tag != _cur_tag:
                 st.session_state["cell_cohort_tags"][_tcid] = _new_tag
-                db.save_cohort_tag(st.session_state["auth_org_id"], _tcid, _new_tag)
+                db.save_cohort_tag(st.session_state["auth_org_id"], _tcid, _new_tag,
+                                   caller_role=st.session_state.get("auth_role"))
                 st.rerun()
 
     # ── Cohort analysis ────────────────────────────────────────────────────────

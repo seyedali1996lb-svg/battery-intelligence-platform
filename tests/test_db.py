@@ -127,12 +127,12 @@ def test_decision_round_trip(db):
 
 
 def test_cohort_tags_round_trip(db):
-    db.save_cohort_tag(DEMO_ORG_ID, "Cell1", "Batch-A")
-    db.save_cohort_tag(DEMO_ORG_ID, "Cell2", "Batch-B")
+    db.save_cohort_tag(DEMO_ORG_ID, "Cell1", "Batch-A", caller_role="admin")
+    db.save_cohort_tag(DEMO_ORG_ID, "Cell2", "Batch-B", caller_role="admin")
     assert db.load_cohort_tags(DEMO_ORG_ID) == {"Cell1": "Batch-A", "Cell2": "Batch-B"}
 
     # Re-saving the same cell_id overwrites, doesn't duplicate
-    db.save_cohort_tag(DEMO_ORG_ID, "Cell1", "Batch-C")
+    db.save_cohort_tag(DEMO_ORG_ID, "Cell1", "Batch-C", caller_role="admin")
     assert db.load_cohort_tags(DEMO_ORG_ID)["Cell1"] == "Batch-C"
 
 
@@ -436,8 +436,8 @@ def test_cross_org_isolation(db):
     assert [d["id"] for d in db.load_decisions(org_a)] == ["dA"]
     assert [d["id"] for d in db.load_decisions(org_b)] == ["dB"]
 
-    db.save_cohort_tag(org_a, "B0005", "batch-A")
-    db.save_cohort_tag(org_b, "B0005", "batch-Z")
+    db.save_cohort_tag(org_a, "B0005", "batch-A", caller_role="admin")
+    db.save_cohort_tag(org_b, "B0005", "batch-Z", caller_role="admin")
     assert db.load_cohort_tags(org_a) == {"B0005": "batch-A"}
     assert db.load_cohort_tags(org_b) == {"B0005": "batch-Z"}
 
@@ -532,7 +532,7 @@ def test_site_fleet_pack_hierarchy_crud(db):
     db.add_cell_to_pack(DEMO_ORG_ID, pack["id"], "B0006", position=1, caller_role="admin")
     assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0005", "B0006"]
 
-    db.remove_cell_from_pack(DEMO_ORG_ID, pack["id"], "B0005")
+    db.remove_cell_from_pack(DEMO_ORG_ID, pack["id"], "B0005", caller_role="admin")
     assert db.list_pack_cells(DEMO_ORG_ID, pack["id"]) == ["B0006"]
 
 

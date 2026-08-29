@@ -73,6 +73,10 @@ ACTION_DISPATCH_TICKET = "action.dispatch"  # Commit a ticket to CMMS/Warranty/C
 DECISION_LOG = "decision.log"          # Append a row to the org's decision log
 WEBHOOKS_MANAGE = "webhooks.manage"    # Add/edit/remove webhook destinations (org-wide integration config)
 FLEET_ASSETS_MANAGE = "fleet-assets.manage"  # Site/fleet/pack CRUD + cell assignment (org-wide asset topology)
+TEAM_MANAGE = "team.manage"            # Invite/add teammates to the org (org-wide admin action)
+COHORT_MANAGE = "cohort.manage"        # Tag a cell with a cohort/batch label (operational annotation)
+# Settings writes: keys in src/db.py's _ADMIN_ONLY_SETTING_KEYS are org-wide
+# config and map to CAP_SETTINGS_MANAGE; per-user convenience keys stay open.
 
 # Org-wide configuration sections (Settings page). Mirrors src/db.py's
 # `_require_admin`/`_ADMIN_ONLY_SETTING_KEYS` boundary: the UI hides these
@@ -99,8 +103,8 @@ _ALL_WRITES = frozenset({ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISP
 # Org-wide integration/asset config is admin-only (same policy as
 # CAP_SETTINGS_MANAGE); DECISION_LOG follows the operator identities that may
 # actually act on cells (admin + engineer + fleet), not the read-only role.
-_ADMIN_ORG_WRITES = frozenset({WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE})
-_DECISION_IDENTITY_WRITES = frozenset({DECISION_LOG})
+_ADMIN_ORG_WRITES = frozenset({WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE, TEAM_MANAGE})
+_DECISION_IDENTITY_WRITES = frozenset({DECISION_LOG, COHORT_MANAGE})
 
 
 # ── The registry ────────────────────────────────────────────────────────────

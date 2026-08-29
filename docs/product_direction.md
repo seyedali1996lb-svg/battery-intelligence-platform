@@ -95,12 +95,17 @@ first time.
   Settings admin-only sections via `settings.manage` plus the granular
   webhook/fleet-asset sections via their specific capability, the sidebar's
   per-persona nav front-loading via `ui.nav.*`/`ui.frontload.*`) — so UI
-  affordances and server enforcement can't drift apart. What remains is
-  purely edge breadth, not the split: a handful of single-writer helpers
-  (e.g. cohort tagging, settings writes keyed off
-  `_ADMIN_ONLY_SETTING_KEYS`) still route around the registry, and the
-  full operational write surface isn't yet reached by API clients end to
-  end. The fleet-operator-facing work
+  affordances and server enforcement can't drift apart. The last
+  single-writer helpers were folded onto the registry too — `team.manage`
+  (invite teammates) → admin, `cohort.manage` (tag a cell with a
+  cohort/batch label) → admin/engineer/fleet, and `set_setting()` on
+  `_ADMIN_ONLY_SETTING_KEYS` now gates on `settings.manage` instead of a
+  raw `role != "admin"` — and team-members / cohort-tag / settings writes
+  are reachable at the REST boundary on the same keys. What remains is
+  purely edge breadth, not the split or the surface: a handful of
+  single-writer read paths and session-only conveniences never reach API
+  clients end to end, and per-user convenience settings are still written
+  only through the UI. The fleet-operator-facing work
   already in flight (Phase 4 in `README.md`'s roadmap preview) continues —
   this note doesn't stop it — it just isn't the thing being claimed as
   *done* right now.
