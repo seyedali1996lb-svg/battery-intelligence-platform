@@ -33,9 +33,8 @@ from _sidebar import (
     NAV_GROUPS,
 )
 from _router import route, _render_role_onboarding, _render_mode_onboarding
+from _session import hydrate_persistence, partition_cells, resolve_data_mode
 from utils import _md_html, cached_match_fleet, load_tenant_bundle_cached
-import cell_store
-from chemistry_profiles import ChemistryProfile
 from trajectory_memory import TrajectoryMemory
 
 
@@ -231,84 +230,26 @@ def main() -> None:
         st.session_state["trajectory_memory"] = _tm
     trajectory_memory: TrajectoryMemory = st.session_state["trajectory_memory"]
 
-    # ── Separate built-in cells by type ──────────────────────────────────────
-    nasa_fdfs  = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "nasa"])
-    sev_fdfs   = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "severson"])
-    synth_fdfs = cell_store.LazyCellFrameMap([k for k in featured_dfs_all if ChemistryProfile.for_cell(k).source_kind == "synth"])
-    nasa_sc    = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "nasa"}
-    sev_sc     = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "severson"}
-    synth_sc   = {k: v for k, v in split_cycles_all.items() if ChemistryProfile.for_cell(k).source_kind == "synth"}
+    # ── Separate built-in cells + hydrate session state ──────────────────────
+    parts = partition_cells(featured_dfs_all, split_cycles_all)
+    nasa_fdfs, sev_fdfs, synth_fdfs = parts["nasa_fdfs"], parts["sev_fdfs"], parts["synth_fdfs"]
+    nasa_sc, sev_sc, synth_sc = parts["nasa_sc"], parts["sev_sc"], parts["synth_sc"]
 
-    # ── Session state init ────────────────────────────────────────────────────
-    if "data_mode" not in st.session_state:
-        default_mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
-        st.session_state["data_mode"] = default_mode
-    if "uploaded_mode_meta" not in st.session_state:
-        st.session_state["uploaded_mode_meta"] = None
-
-    # ── Persistence hydration ─────────────────────────────────────────────────
-    import db as _db_main
-    _db_main.init_db()
-    if "decision_log" not in st.session_state:
-        st.session_state["decision_log"] = _db_main.load_decisions(st.session_state["auth_org_id"])
-    _settings = _db_main.get_settings(
-        st.session_state["auth_org_id"],
-        keys=["pinned_cell", "app_profile", "cost_of_delay_mult",
-              "webhook_url", "webhook_secret", "webhook_events", "eol_threshold_pct"],
-    )
-    if "pinned_cell" not in st.session_state:
-        st.session_state["pinned_cell"] = _settings.get("pinned_cell")
-    if "app_profile" not in st.session_state:
-        _persisted_profile = _settings.get("app_profile")
-        if _persisted_profile is not None:
-            st.session_state["app_profile"] = _persisted_profile
-    if "cost_of_delay_mult" not in st.session_state:
-        _persisted_cod = _settings.get("cost_of_delay_mult")
-        if _persisted_cod is not None:
-            st.session_state["cost_of_delay_mult"] = _persisted_cod
-    for _wh_key in ("webhook_url", "webhook_secret", "webhook_events"):
-        if _wh_key not in st.session_state:
-            _persisted_wh = _settings.get(_wh_key)
-            if _persisted_wh is not None:
-                st.session_state[_wh_key] = _persisted_wh
-    if "eol_threshold_pct" not in st.session_state:
-        _persisted_eol = _settings.get("eol_threshold_pct")
-        st.session_state["eol_threshold_pct"] = _persisted_eol if _persisted_eol is not None else 80.0
+    hydrate_persistence(st.session_state["auth_org_id"])
 
     # ── Resolve active data from current mode ─────────────────────────────────
-    mode    = st.session_state["data_mode"]
-    up_meta = st.session_state["uploaded_mode_meta"]
-
     _tenant = load_tenant_bundle_cached(st.session_state["auth_org_id"])
     if _tenant is not None:
         up_fdfs, up_bundle, up_sc = _tenant
     else:
         up_fdfs, up_sc, up_bundle = {}, {}, None
+    up_meta = st.session_state.get("uploaded_mode_meta")
 
-    if mode == "uploaded" and (not up_fdfs or up_bundle is None):
-        st.session_state["data_mode"] = "nasa"
-        mode = "nasa"
-    if mode not in ("nasa", "synthetic", "severson", "uploaded"):
-        mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
-        st.session_state["data_mode"] = mode
-
-    if mode == "severson":
-        active_fdfs   = sev_fdfs
-        active_sc     = sev_sc
-        active_bundle = bundles.get("severson") or bundles.get("nasa")
-    elif mode == "nasa":
-        active_fdfs   = nasa_fdfs
-        active_sc     = nasa_sc
-        active_bundle = bundles["nasa"]
-    elif mode == "synthetic":
-        active_fdfs   = synth_fdfs
-        active_sc     = synth_sc
-        active_bundle = bundles["synth"]
-    else:  # uploaded
-        active_fdfs   = up_fdfs
-        active_sc     = up_sc
-        active_bundle = up_bundle
-
+    mode, active_fdfs, active_sc, active_bundle = resolve_data_mode(
+        nasa_fdfs=nasa_fdfs, sev_fdfs=sev_fdfs, synth_fdfs=synth_fdfs,
+        nasa_sc=nasa_sc, sev_sc=sev_sc, synth_sc=synth_sc,
+        bundles=bundles, up_fdfs=up_fdfs, up_bundle=up_bundle, up_sc=up_sc,
+    )
     cell_ids = list(active_fdfs.keys())
 
     # ── Onboarding interstitials ──────────────────────────────────────────────
