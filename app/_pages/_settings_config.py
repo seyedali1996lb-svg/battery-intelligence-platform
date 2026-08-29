@@ -496,7 +496,11 @@ def render_webhook_subscriptions() -> None:
     src/db.py's WebhookSubscription table + src/notifications.py's
     notify_subscribers(), fanned out from the same 7 real event call
     sites the single webhook already fires from, additively (see
-    notify_subscribers()'s own docstring)."""
+    notify_subscribers()'s own docstring). Gated by the same
+    `webhooks.manage` capability the API boundary enforces, so the UI hides
+    the section for exactly the roles that a direct API call would refuse."""
+    if not rbac.can(st.session_state.get("auth_role"), rbac.WEBHOOKS_MANAGE):
+        return
     _section("Additional Webhook Destinations")
     _md_html(
         "<div style='font-size:13px;color:#8896a8;margin-bottom:14px;line-height:1.6'>"
@@ -951,7 +955,7 @@ def render_team_members() -> None:
 
 
 def render_sites_and_fleets(featured_dfs: dict) -> None:
-    if not rbac.can(st.session_state.get("auth_role"), rbac.CAP_SETTINGS_MANAGE):
+    if not rbac.can(st.session_state.get("auth_role"), rbac.FLEET_ASSETS_MANAGE):
         return
     _section("Sites & Fleets")
     _md_html(

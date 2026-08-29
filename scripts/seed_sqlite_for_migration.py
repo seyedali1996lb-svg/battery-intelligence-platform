@@ -55,7 +55,7 @@ def main() -> int:
     )
     db.save_decision(1, {"id": "dec-demo-1", "cell_id": "B0005", "action": "continue",
                          "confidence": "Medium", "soh_pct": 71.4, "timestamp": "2026-08-01T10:00:00",
-                         "status": "Completed"})
+                         "status": "Completed"}, caller_role="admin")
 
     # ── Org 2 (Migrate Test Co) — its own admin + rows ──────────────────────
     org2 = db.create_organization_with_admin(
@@ -72,7 +72,7 @@ def main() -> int:
     )
     db.save_decision(org2_id, {"id": "dec-mt-1", "cell_id": "b1c13", "action": "replace",
                                "confidence": "High", "soh_pct": 66.0, "timestamp": "2026-08-02T10:00:00",
-                               "status": "Pending"})
+                               "status": "Pending"}, caller_role="admin")
 
     # Report the per-org row counts so the post-migration comparison has
     # exact expected numbers.

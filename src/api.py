@@ -59,6 +59,7 @@ if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
 import datetime
+import uuid
 from typing import Any, Optional, Literal
 
 try:
@@ -79,7 +80,15 @@ except ImportError as _e:
 
 import numpy as np
 
-from src.db import get_user_by_username, verify_password, init_db
+from src.db import (
+    get_user_by_username, verify_password, init_db,
+    save_decision, load_decisions,
+    save_webhook_subscription, delete_webhook_subscription, get_webhook_subscriptions,
+    create_site, list_sites,
+    create_fleet, list_fleets,
+    create_pack, list_packs,
+    list_pack_cells, add_cell_to_pack, remove_cell_from_pack,
+)
 from src.chemistry_profiles import ChemistryProfile
 
 # ── App metadata ──────────────────────────────────────────────────────────────
@@ -920,7 +929,8 @@ from src.fleet_aggregation import fleet_dispatchable_offer
 from src.ml_anomaly import detect_anomalous_cycles
 from src import model_cards
 from rbac import can, allowed_roles, describe, \
-    ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET
+    ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET, \
+    DECISION_LOG, WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE
 
 
 class ActionCreateRequest(BaseModel):
@@ -1093,6 +1103,163 @@ def dispatch_action_ticket(
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── Org Write Surface: decision log, webhooks, site/fleet/pack CRUD ──────────
+# The "remaining app write surface" the API boundary now enforces on the SAME
+# src/rbac.py capability keys the Streamlit UI reads -- `webhooks.manage` and
+# `fleet-assets.manage` are admin-only, `decision.log` covers the operator
+# identities (admin/engineer/fleet). Reads stay open to every authenticated
+# role (org-scoped); only the writes are gated. Each write endpoint passes its
+# authenticated `role` through as `caller_role`, so even if this route is ever
+# bypassed the db layer applies the identical check.
+
+
+class DecisionLogRequest(BaseModel):
+    id: str
+    cell_id: Optional[str] = None
+    action: Optional[str] = None
+    confidence: Optional[str] = None
+    soh_pct: Optional[float] = None
+    timestamp: Optional[str] = None
+    status: str = "Pending"
+    outcome_soh: Optional[float] = None
+
+
+class WebhookSubscriptionRequest(BaseModel):
+    id: Optional[str] = None
+    name: str
+    url: str
+    secret: Optional[str] = ""
+    event_types: Optional[list[str]] = []
+    created_at: Optional[str] = None
+
+
+class SiteCreateRequest(BaseModel):
+    name: str
+
+
+class FleetCreateRequest(BaseModel):
+    name: str
+
+
+class PackCreateRequest(BaseModel):
+    name: str
+
+
+class PackCellRequest(BaseModel):
+    cell_id: str
+    position: Optional[int] = None
+
+
+@app.get("/decisions", summary="List the organization's decision log")
+def list_decisions_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return load_decisions(current_user["org_id"])
+
+
+@app.post("/decisions", summary="Append an entry to the organization's decision log")
+def log_decision_api(
+    req: DecisionLogRequest,
+    current_user: dict = Depends(require_action(DECISION_LOG)),
+) -> dict:
+    entry = {k: v for k, v in req.model_dump().items() if v is not None}
+    save_decision(current_user["org_id"], entry, caller_role=current_user["role"])
+    return entry
+
+
+@app.get("/webhooks", summary="List configured webhook destinations")
+def list_webhooks_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return get_webhook_subscriptions(current_user["org_id"])
+
+
+@app.post("/webhooks", summary="Add or update a webhook destination")
+def save_webhook_api(
+    req: WebhookSubscriptionRequest,
+    current_user: dict = Depends(require_action(WEBHOOKS_MANAGE)),
+) -> dict:
+    entry = req.model_dump()
+    if not entry.get("id"):
+        entry["id"] = uuid.uuid4().hex
+    if not entry.get("created_at"):
+        entry["created_at"] = datetime.datetime.now().isoformat()
+    save_webhook_subscription(current_user["org_id"], entry, caller_role=current_user["role"])
+    return entry
+
+
+@app.delete("/webhooks/{subscription_id}", summary="Remove a webhook destination")
+def delete_webhook_api(
+    subscription_id: str,
+    current_user: dict = Depends(require_action(WEBHOOKS_MANAGE)),
+) -> dict:
+    delete_webhook_subscription(current_user["org_id"], subscription_id, caller_role=current_user["role"])
+    return {"id": subscription_id, "deleted": True}
+
+
+@app.get("/sites", summary="List sites for the organization")
+def list_sites_api(current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return list_sites(current_user["org_id"])
+
+
+@app.post("/sites", summary="Create a site")
+def create_site_api(
+    req: SiteCreateRequest,
+    current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
+) -> dict:
+    return create_site(current_user["org_id"], req.name, caller_role=current_user["role"])
+
+
+@app.get("/sites/{site_id}/fleets", summary="List fleets under a site")
+def list_site_fleets_api(site_id: int, current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return list_fleets(current_user["org_id"], site_id=site_id)
+
+
+@app.post("/sites/{site_id}/fleets", summary="Create a fleet under a site")
+def create_fleet_api(
+    site_id: int,
+    req: FleetCreateRequest,
+    current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
+) -> dict:
+    return create_fleet(current_user["org_id"], site_id, req.name, caller_role=current_user["role"])
+
+
+@app.get("/fleets/{fleet_id}/packs", summary="List packs under a fleet")
+def list_fleet_packs_api(fleet_id: int, current_user: dict = Depends(get_current_user)) -> list[dict]:
+    return list_packs(current_user["org_id"], fleet_id=fleet_id)
+
+
+@app.post("/fleets/{fleet_id}/packs", summary="Create a pack under a fleet")
+def create_pack_api(
+    fleet_id: int,
+    req: PackCreateRequest,
+    current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
+) -> dict:
+    return create_pack(current_user["org_id"], fleet_id, req.name, caller_role=current_user["role"])
+
+
+@app.get("/packs/{pack_id}/cells", summary="List the cells assigned to a pack")
+def list_pack_cells_api(pack_id: int, current_user: dict = Depends(get_current_user)) -> list[str]:
+    return list_pack_cells(current_user["org_id"], pack_id)
+
+
+@app.post("/packs/{pack_id}/cells", summary="Assign a cell to a pack")
+def add_pack_cell_api(
+    pack_id: int,
+    req: PackCellRequest,
+    current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
+) -> dict:
+    add_cell_to_pack(current_user["org_id"], pack_id, req.cell_id,
+                     position=req.position, caller_role=current_user["role"])
+    return {"pack_id": pack_id, "cell_id": req.cell_id, "position": req.position}
+
+
+@app.delete("/packs/{pack_id}/cells/{cell_id}", summary="Remove a cell from a pack")
+def remove_pack_cell_api(
+    pack_id: int,
+    cell_id: str,
+    current_user: dict = Depends(require_action(FLEET_ASSETS_MANAGE)),
+) -> dict:
+    remove_cell_from_pack(current_user["org_id"], pack_id, cell_id)
+    return {"pack_id": pack_id, "cell_id": cell_id, "deleted": True}
 
 
 # ── Partial Cycles & Field Telemetry Analytics ───────────────────────────────

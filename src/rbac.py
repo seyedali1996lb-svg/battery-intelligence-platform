@@ -13,13 +13,16 @@ drift from server enforcement. Now both live here and both flow through the
 same `role_capabilities()` object:
 
   - **Server write enforcement** (src/api.py `require_action`): the
-    Decision/CMMS-ticket write actions you see below, checked with
+    Decision/CMMS-ticket write actions and the org write surface (webhooks,
+    site/fleet/pack CRUD, decision logging) below, checked with
     `can(role, action)`.
   - **UI affordances** (app/_pages/_settings_config.py, app/main.py):
     `settings.manage` gates the org-wide config sections (admin only, the
-    same policy `src/db.py`'s `_require_admin()` enforces server-side), and
-    the `ui.nav.*` / `ui.frontload.*` capabilities drive which nav groups a
-    role can reach and which start expanded in the sidebar.
+    same policy `src/db.py`'s `_require_admin()` enforces server-side), the
+    granular `webhooks.manage` / `fleet-assets.manage` capability keys gate
+    the specific Settings sections that the API boundary enforces on the
+    same keys, and the `ui.nav.*` / `ui.frontload.*` capabilities drive which
+    nav groups a role can reach and which start expanded in the sidebar.
 
 Because every affordance is a capability key in this one registry, adding or
 loosening a permission updates the UI automatically and vice-versa — the app
@@ -64,6 +67,13 @@ ACTION_CREATE_TICKET = "action.create"      # Author an action-center / decision
 ACTION_TRIAGE_TICKET = "action.triage"      # Change a ticket's status / assignment
 ACTION_DISPATCH_TICKET = "action.dispatch"  # Commit a ticket to CMMS/Warranty/Circularity
 
+# The remaining app write surface, enforced at the API boundary on the SAME
+# capability keys the Streamlit UI reads (so hiding a section and refusing a
+# write can never drift apart):
+DECISION_LOG = "decision.log"          # Append a row to the org's decision log
+WEBHOOKS_MANAGE = "webhooks.manage"    # Add/edit/remove webhook destinations (org-wide integration config)
+FLEET_ASSETS_MANAGE = "fleet-assets.manage"  # Site/fleet/pack CRUD + cell assignment (org-wide asset topology)
+
 # Org-wide configuration sections (Settings page). Mirrors src/db.py's
 # `_require_admin`/`_ADMIN_ONLY_SETTING_KEYS` boundary: the UI hides these
 # sections for anyone `can(role, CAP_SETTINGS_MANAGE)` returns False for, and
@@ -86,15 +96,22 @@ def _frontload(g: str) -> str:
 
 _NAV_ACCESS = _nav_caps(UI_NAV_GROUPS)  # every role can reach every group
 _ALL_WRITES = frozenset({ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET, ACTION_DISPATCH_TICKET})
+# Org-wide integration/asset config is admin-only (same policy as
+# CAP_SETTINGS_MANAGE); DECISION_LOG follows the operator identities that may
+# actually act on cells (admin + engineer + fleet), not the read-only role.
+_ADMIN_ORG_WRITES = frozenset({WEBHOOKS_MANAGE, FLEET_ASSETS_MANAGE})
+_DECISION_IDENTITY_WRITES = frozenset({DECISION_LOG})
 
 
 # ── The registry ────────────────────────────────────────────────────────────
 # role -> full capability set. Anything not listed for a role is denied.
 _ROLE_CAPABILITIES: dict[str, FrozenSet[str]] = {
     # Auth identities (security boundary).
-    ROLE_ADMIN: _ALL_WRITES | _NAV_ACCESS | frozenset({CAP_SETTINGS_MANAGE}),
-    ROLE_ENGINEER: _ALL_WRITES | _NAV_ACCESS,
-    ROLE_FLEET: frozenset({ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET}) | _NAV_ACCESS,
+    ROLE_ADMIN: _ALL_WRITES | _ADMIN_ORG_WRITES | _DECISION_IDENTITY_WRITES \
+        | _NAV_ACCESS | frozenset({CAP_SETTINGS_MANAGE}),
+    ROLE_ENGINEER: _ALL_WRITES | _DECISION_IDENTITY_WRITES | _NAV_ACCESS,
+    ROLE_FLEET: frozenset({ACTION_CREATE_TICKET, ACTION_TRIAGE_TICKET}) \
+        | _DECISION_IDENTITY_WRITES | _NAV_ACCESS,
     ROLE_COMPLIANCE: _NAV_ACCESS,
 
     # Personas (nav UX only). Write actions are deliberately NOT granted here

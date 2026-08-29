@@ -25,6 +25,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+# The single role->capability registry (src/rbac.py). This module is the
+# server-side trust boundary for the Streamlit UI's writes, so its admin-only
+# / org-write checks read from the same registry the API boundary and the UI
+# affordances read -- never a second, hand-rolled copy of role knowledge.
+import rbac
+
 DB_PATH = pathlib.Path(__file__).parent.parent / "data" / "app.db"
 
 # SQLite by default (the single-user demo deployment); a production
@@ -756,8 +762,15 @@ def provision_or_link_sso_user(
 # Decisions
 # ---------------------------------------------------------------------------
 
-def save_decision(org_id: int, entry: dict) -> None:
-    """Insert a new decision log row. entry keys match the Decision columns."""
+def save_decision(org_id: int, entry: dict, caller_role: "str | None" = None) -> None:
+    """Insert a new decision log row. entry keys match the Decision columns.
+
+    Logging an operational decision is a write on the org's decision log, so
+    it is gated server-side by the `decision.log` capability (admin + engineer
+    + fleet -- the identities that can actually act on a cell; the read-only
+    compliance role and any omitted role are refused).
+    """
+    _require_cap(caller_role, rbac.DECISION_LOG, "log a decision")
     with Session() as s:
         s.merge(Decision(
             id=entry["id"],
@@ -890,9 +903,9 @@ def save_webhook_subscription(org_id: int, entry: dict, caller_role: "str | None
     primitive set_setting() uses for credential-shaped Setting rows —
     scoped simpler here (no fallback-key write guard) since this is a
     locally-generated signing secret, not a third-party-granted credential.
-    Admin-only, same as every other org-wide integration config -- see
-    _require_admin()."""
-    _require_admin(caller_role, "add or edit a webhook destination")
+    Admin-only (the `webhooks.manage` capability src/rbac.py grants to admin),
+    same as every other org-wide integration config."""
+    _require_cap(caller_role, rbac.WEBHOOKS_MANAGE, "add or edit a webhook destination")
     with Session() as s:
         secret = entry.get("secret") or ""
         encrypted_secret = _get_fernet().encrypt(secret.encode()).decode() if secret else None
@@ -929,7 +942,7 @@ def get_webhook_subscriptions(org_id: int) -> list[dict]:
 
 
 def delete_webhook_subscription(org_id: int, subscription_id: str, caller_role: "str | None" = None) -> None:
-    _require_admin(caller_role, "remove a webhook destination")
+    _require_cap(caller_role, rbac.WEBHOOKS_MANAGE, "remove a webhook destination")
     with Session() as s:
         row = s.query(WebhookSubscription).filter_by(org_id=org_id, id=subscription_id).one_or_none()
         if row is not None:
@@ -1372,17 +1385,31 @@ class PackCell(Base):
 # FleetAsset hierarchy -- CRUD
 # ---------------------------------------------------------------------------
 
-def _require_admin(caller_role: "str | None", action: str) -> None:
-    """Shared role check for the FleetAsset hierarchy's write functions --
-    see InsufficientRoleError's docstring for why this exists."""
-    if caller_role != "admin":
+def _require_cap(caller_role: "str | None", capability: str, action: str) -> None:
+    """Shared role check for every org write surface (webhooks, site/fleet/
+    pack CRUD, decision logging) against src/rbac.py's capability registry --
+    the SAME prerequisite the Streamlit UI reads when it hides the matching
+    section, so concealing a widget and refusing a write can never drift
+    apart. `caller_role is None` fails closed (a call site that forgets to
+    pass the authenticated role is denied, not silently allowed). See
+    InsufficientRoleError's docstring for why this exists."""
+    if not rbac.can(caller_role, capability):
         raise InsufficientRoleError(
-            f"Refusing to {action} -- restricted to the admin role."
+            f"Refusing to {action} -- requires capability '{capability}' "
+            f"({rbac.describe(capability)}), not role {caller_role!r}."
         )
 
 
+def _require_admin(caller_role: "str | None", action: str) -> None:
+    """'Admin-only' mapped to the CAP_SETTINGS_MANAGE capability -- the same
+    boundary src/rbac.py's registry and the Settings UI gate the org-wide
+    config sections behind. Kept as a shared helper (and by existing tests)
+    so the admin policy has exactly one home."""
+    _require_cap(caller_role, rbac.CAP_SETTINGS_MANAGE, action)
+
+
 def create_site(org_id: int, name: str, caller_role: "str | None" = None) -> dict:
-    _require_admin(caller_role, "create a site")
+    _require_cap(caller_role, rbac.FLEET_ASSETS_MANAGE, "create a site")
     with Session() as s:
         site = Site(org_id=org_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(site)
@@ -1398,7 +1425,7 @@ def list_sites(org_id: int) -> list[dict]:
 
 
 def create_fleet(org_id: int, site_id: int, name: str, caller_role: "str | None" = None) -> dict:
-    _require_admin(caller_role, "create a fleet")
+    _require_cap(caller_role, rbac.FLEET_ASSETS_MANAGE, "create a fleet")
     with Session() as s:
         fleet = Fleet(org_id=org_id, site_id=site_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(fleet)
@@ -1419,7 +1446,7 @@ def list_fleets(org_id: int, site_id: "int | None" = None) -> list[dict]:
 
 
 def create_pack(org_id: int, fleet_id: int, name: str, caller_role: "str | None" = None) -> dict:
-    _require_admin(caller_role, "create a pack")
+    _require_cap(caller_role, rbac.FLEET_ASSETS_MANAGE, "create a pack")
     with Session() as s:
         pack = Pack(org_id=org_id, fleet_id=fleet_id, name=name.strip(), created_at=datetime.datetime.now().isoformat())
         s.add(pack)
@@ -1441,7 +1468,7 @@ def list_packs(org_id: int, fleet_id: "int | None" = None) -> list[dict]:
 
 def add_cell_to_pack(org_id: int, pack_id: int, cell_id: str, position: "int | None" = None,
                       caller_role: "str | None" = None) -> None:
-    _require_admin(caller_role, "add a cell to a pack")
+    _require_cap(caller_role, rbac.FLEET_ASSETS_MANAGE, "add a cell to a pack")
     with Session() as s:
         s.merge(PackCell(org_id=org_id, pack_id=pack_id, cell_id=cell_id, position=position))
         s.commit()

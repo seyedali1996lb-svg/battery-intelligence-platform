@@ -151,7 +151,7 @@ def test_pooled_concurrent_writes_across_orgs_no_lost_updates(scratch_db):
                 "soh_pct": 88.0 + j,
                 "timestamp": "2026-01-01T00:00:00",
                 "status": "Pending",
-            })
+            }, caller_role="admin")
 
     jobs = [(oid, k) for oid in org_ids for k in range(PER_ORG_THREADS)]
     with ThreadPoolExecutor(max_workers=16) as ex:
@@ -176,7 +176,7 @@ def test_concurrent_update_same_row_no_deadlock(scratch_db):
         "id": "lock-row", "cell_id": "B0005", "action": "Graded",
         "confidence": 0.8, "soh_pct": 90.0, "timestamp": "2026-01-01T00:00:00",
         "status": "start",
-    })
+    }, caller_role="admin")
 
     def bump(i: int):
         db.update_decision(org_id, "lock-row", status=f"status-{i}")
@@ -210,7 +210,7 @@ def test_rls_isolation_under_concurrency(scratch_db):
                 "id": f"t-{oid}-{k}", "cell_id": "B0005", "action": "Graded",
                 "confidence": 0.7, "soh_pct": 91.0 + k,
                 "timestamp": "2026-01-01T00:00:00", "status": "Pending",
-            })
+            }, caller_role="admin")
 
     engine = sa.create_engine(_tenant_url(scratch_db["url"]))
 
@@ -251,7 +251,7 @@ def test_soak_burst_mixed_workload(scratch_db):
                     "id": f"b-{oid}-{k}", "cell_id": "B0005", "action": "Graded",
                     "confidence": 0.6, "soh_pct": 92.0 + k,
                     "timestamp": "2026-01-01T00:00:00", "status": "Pending",
-                })
+                }, caller_role="admin")
             db.update_decision(oid, f"b-{oid}-3", status="Closed")
             assert len(db.load_decisions(oid)) == 6
         except Exception as e:  # noqa: BLE001

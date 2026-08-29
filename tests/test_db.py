@@ -117,7 +117,7 @@ def test_decision_round_trip(db):
         "confidence": "high", "soh_pct": 95.0, "timestamp": "2026-01-01T00:00",
         "status": "Pending", "outcome_soh": None,
     }
-    db.save_decision(DEMO_ORG_ID, entry)
+    db.save_decision(DEMO_ORG_ID, entry, caller_role="admin")
     loaded = db.load_decisions(DEMO_ORG_ID)
     assert len(loaded) == 1
     assert loaded[0]["cell_id"] == "Cell1"
@@ -431,8 +431,8 @@ def test_cross_org_isolation(db):
     org_a = db.create_organization_with_admin("Org A", "a_admin", "passwordA")["org_id"]
     org_b = db.create_organization_with_admin("Org B", "b_admin", "passwordB")["org_id"]
 
-    db.save_decision(org_a, {"id": "dA", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"})
-    db.save_decision(org_b, {"id": "dB", "cell_id": "B0005", "action": "Inspect", "timestamp": "2026-01-01"})
+    db.save_decision(org_a, {"id": "dA", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"}, caller_role="admin")
+    db.save_decision(org_b, {"id": "dB", "cell_id": "B0005", "action": "Inspect", "timestamp": "2026-01-01"}, caller_role="admin")
     assert [d["id"] for d in db.load_decisions(org_a)] == ["dA"]
     assert [d["id"] for d in db.load_decisions(org_b)] == ["dB"]
 
@@ -509,7 +509,7 @@ def test_new_org_gets_default_site_and_fleet_immediately(db):
 def test_migration_does_not_disturb_pre_existing_data(db):
     """Adding the FleetAsset tables/backfill must not alter any
     pre-existing decisions/settings/etc. -- purely additive."""
-    db.save_decision(DEMO_ORG_ID, {"id": "d1", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"})
+    db.save_decision(DEMO_ORG_ID, {"id": "d1", "cell_id": "B0005", "action": "Continue", "timestamp": "2026-01-01"}, caller_role="admin")
     db.set_setting(DEMO_ORG_ID, "eol_threshold_pct", 82.0, role="admin")
 
     db.init_db()  # re-run migration/backfill

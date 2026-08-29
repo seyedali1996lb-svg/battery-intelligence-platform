@@ -614,7 +614,8 @@ def page_decision(
         if "decision_log" not in st.session_state:
             st.session_state["decision_log"] = []
         st.session_state["decision_log"].append(_entry)
-        _db.save_decision(st.session_state["auth_org_id"], _entry)
+        _db.save_decision(st.session_state["auth_org_id"], _entry,
+                          caller_role=st.session_state.get("auth_role"))
         st.success(f"Logged: {action_label} for {selected}")
 
     # ── U4: CMMS/ERP write-back ──────────────────────────────────────────────
