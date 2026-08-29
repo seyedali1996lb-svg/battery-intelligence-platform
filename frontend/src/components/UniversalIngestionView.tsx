@@ -44,20 +44,20 @@ export default function UniversalIngestionView() {
       {/* Header */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <h1 style={{ fontSize: 20, margin: 0 }}>Universal Cycler Auto-Ingestion Wizard</h1>
+          <h1 style={{ fontSize: 20, margin: 0 }}>Cycler Ingestion</h1>
           <p className="subtitle" style={{ margin: 0, marginTop: 4 }}>
-            Instant schema detection, unit normalization, and cycle aggregation for all major test bench hardware
+            Upload data from any test bench — we detect the format, normalize units, and prepare it for degradation modeling
           </p>
         </div>
-        {loading && <span className="badge badge-accent">Analyzing Schema...</span>}
+        {loading && <span className="badge badge-energy">Analyzing…</span>}
       </div>
 
 
       {/* Preset Cycler Format Buttons */}
       <div className="card">
         <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Test Bench Hardware Presets</div>
-        <p style={{ fontSize: 12, color: "var(--c-muted)", margin: "0 0 12px 0" }}>
-          Select a hardware cycler format to simulate instantaneous column header detection and unit scaling:
+        <p className="subtitle" style={{ fontSize: 12, margin: "0 0 12px 0" }}>
+          Pick a cycler format to preview how we auto-map column headers and scale units:
         </p>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -67,7 +67,7 @@ export default function UniversalIngestionView() {
               onClick={() => handleTestPreset(p)}
               style={{
                 background: selectedPreset === p ? "var(--c-accent)" : "transparent",
-                color: selectedPreset === p ? "#0e1117" : "var(--c-text)",
+                color: selectedPreset === p ? "#080B09" : "var(--c-text)",
                 border: "1px solid var(--c-border)",
                 padding: "8px 16px",
                 fontSize: 13,
@@ -114,8 +114,8 @@ export default function UniversalIngestionView() {
             </tbody>
           </table>
 
-          <button style={{ width: "100%", background: "var(--c-healthy)", color: "#0e1117", fontWeight: 700 }}>
-            Ingest & Train Leave-Cell-Out Degradation Model
+          <button style={{ width: "100%", background: "var(--c-healthy)", color: "#080B09", fontWeight: 700 }}>
+            Ingest & Start Training
           </button>
         </div>
       )}

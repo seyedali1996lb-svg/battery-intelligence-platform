@@ -74,14 +74,14 @@ export default function LiveMonitorView() {
       {/* Header */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <h1 style={{ fontSize: 20, margin: 0 }}>High-Frequency BMS Live Telemetry Monitor</h1>
+          <h1 style={{ fontSize: 20, margin: 0 }}>Live Telemetry Monitor</h1>
           <p className="subtitle" style={{ margin: 0, marginTop: 4 }}>
-            Sub-10ms continuous streaming anomaly detection (CUSUM, Mahalanobis Distance, IEC 62619 TRP)
+            Real-time voltage, current, and temperature streaming with automatic anomaly detection
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <span className="badge badge-healthy">
-            {streaming ? "● Streaming Active (1.2s)" : "Paused"}
+          <span className="badge badge-healthy badge-live">
+            {streaming ? "Streaming" : "Paused"}
           </span>
           <button
             onClick={() => setStreaming(!streaming)}
@@ -89,7 +89,7 @@ export default function LiveMonitorView() {
               padding: "6px 14px",
               background: streaming ? "transparent" : "var(--c-accent)",
               border: "1px solid var(--c-border)",
-              color: streaming ? "var(--c-text)" : "#0e1117",
+              color: streaming ? "var(--c-text)" : "#080B09",
             }}
           >
             {streaming ? "Pause Stream" : "Resume Stream"}
@@ -100,78 +100,77 @@ export default function LiveMonitorView() {
       {/* KPI Stats */}
       <div className="kpi-grid">
         <div className="card">
-          <div className="kpi-label">Cell Voltage (Latest)</div>
+          <div className="kpi-label">Cell Voltage</div>
           <div className="kpi-value" style={{ color: "var(--c-healthy)" }}>
             {data.length > 0 ? `${data[data.length - 1].voltage} V` : "--"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Pack Bus Monitored</div>
+          <div className="kpi-sub">Latest reading</div>
         </div>
         <div className="card">
           <div className="kpi-label">Cell Current</div>
-          <div className="kpi-value" style={{ color: "var(--c-accent)" }}>
+          <div className="kpi-value" style={{ color: "var(--c-energy)" }}>
             {data.length > 0 ? `${data[data.length - 1].current} A` : "--"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Discharge Rate</div>
+          <div className="kpi-sub">Discharge rate</div>
         </div>
         <div className="card">
           <div className="kpi-label">Surface Temperature</div>
-          <div className="kpi-value" style={{ color: "var(--c-high)" }}>
+          <div className="kpi-value" style={{ color: "var(--c-degraded)" }}>
             {data.length > 0 ? `${data[data.length - 1].temperature} °C` : "--"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Thermocouple T1</div>
+          <div className="kpi-sub">Thermocouple T1</div>
         </div>
         <div className="card">
-          <div className="kpi-label">Mahalanobis Distance</div>
-          <div className="kpi-value">
+          <div className="kpi-label">Anomaly Score</div>
+          <div className="kpi-value" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
             {data.length > 0 ? `${data[data.length - 1].anomalyScore}` : "0.0"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Threshold: 3.0</div>
+          <div className="kpi-sub">Mahalanobis distance · threshold 3.0</div>
         </div>
       </div>
 
       {/* Real-time Streaming Charts */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div className="card">
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Live Terminal Voltage & Current Stream</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: "var(--c-text)" }}>Voltage & Current Stream</div>
           <div style={{ height: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-                <XAxis dataKey="time" stroke="#8896a8" fontSize={10} />
-                <YAxis yAxisId="left" domain={[3.6, 4.0]} stroke="#68d391" fontSize={10} unit="V" />
-                <YAxis yAxisId="right" orientation="right" domain={[-3, 0]} stroke="#63b3ed" fontSize={10} unit="A" />
-                <Tooltip contentStyle={{ backgroundColor: "#1e2a38", border: "1px solid #2d3748", borderRadius: 6 }} />
-                <Line yAxisId="left" type="monotone" dataKey="voltage" stroke="#68d391" strokeWidth={2} dot={false} name="Voltage (V)" />
-                <Line yAxisId="right" type="monotone" dataKey="current" stroke="#63b3ed" strokeWidth={2} dot={false} name="Current (A)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#253028" />
+                <XAxis dataKey="time" stroke="#6E7F72" fontSize={10} />
+                <YAxis yAxisId="left" domain={[3.6, 4.0]} stroke="#34D399" fontSize={10} unit="V" />
+                <YAxis yAxisId="right" orientation="right" domain={[-3, 0]} stroke="#4AE3C2" fontSize={10} unit="A" />
+                <Tooltip contentStyle={{ backgroundColor: "#121814", border: "1px solid #253028", borderRadius: 8, fontSize: 12 }} />
+                <Line yAxisId="left" type="monotone" dataKey="voltage" stroke="#34D399" strokeWidth={2} dot={false} name="Voltage (V)" />
+                <Line yAxisId="right" type="monotone" dataKey="current" stroke="#4AE3C2" strokeWidth={2} dot={false} name="Current (A)" />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Continuous Mahalanobis Anomaly Z-Score</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: "var(--c-text)" }}>Anomaly Z-Score (Mahalanobis)</div>
           <div style={{ height: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2d3748" />
-                <XAxis dataKey="time" stroke="#8896a8" fontSize={10} />
-                <YAxis domain={[0, 4.0]} stroke="#8896a8" fontSize={10} />
-                <Tooltip contentStyle={{ backgroundColor: "#1e2a38", border: "1px solid #2d3748", borderRadius: 6 }} />
-                <Line type="monotone" dataKey="anomalyScore" stroke="#f6ad55" strokeWidth={2} dot={false} name="Z-Score" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#253028" />
+                <XAxis dataKey="time" stroke="#6E7F72" fontSize={10} />
+                <YAxis domain={[0, 4.0]} stroke="#6E7F72" fontSize={10} />
+                <Tooltip contentStyle={{ backgroundColor: "#121814", border: "1px solid #253028", borderRadius: 8, fontSize: 12 }} />
+                <Line type="monotone" dataKey="anomalyScore" stroke="#F5A623" strokeWidth={2} dot={false} name="Z-Score" />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
       </div>
 
-      {/* Streaming Anomaly Trigger Log */}
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", background: "#17202c", fontWeight: 700, fontSize: 13, borderBottom: "1px solid var(--c-border)" }}>
-          Real-Time Streaming Anomaly Log (IEC 62619 & Statistical Change-Points)
+      {/* Streaming Anomaly Trigger Log */}        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", fontWeight: 700, fontSize: 13, borderBottom: "1px solid var(--c-border)" }}>
+          Streaming Anomaly Log
         </div>
         {anomalyLogs.length === 0 ? (
           <div style={{ padding: "16px", textAlign: "center", color: "var(--c-muted)", fontSize: 13 }}>
-            ✓ Continuous stream nominal — no threshold violations or CUSUM drift detected.
+            Stream nominal — no anomalies detected right now.
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>

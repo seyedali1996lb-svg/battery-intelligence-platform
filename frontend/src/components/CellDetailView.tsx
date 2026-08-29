@@ -76,14 +76,14 @@ export default function CellDetailView() {
         <div className="card">
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={history.history}>
-              <CartesianGrid stroke="#2d3748" />
-              <XAxis dataKey="cycle_number" stroke="#8896a8" tick={{ fontSize: 11 }} />
-              <YAxis stroke="#8896a8" tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+              <CartesianGrid stroke="#253028" />
+              <XAxis dataKey="cycle_number" stroke="#6E7F72" tick={{ fontSize: 11 }} />
+              <YAxis stroke="#6E7F72" tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
               <Tooltip
-                contentStyle={{ background: "#1e2a38", border: "1px solid #2d3748", fontSize: 12 }}
-                labelStyle={{ color: "#e2e8f0" }}
+                contentStyle={{ background: "#121814", border: "1px solid #253028", borderRadius: 8, fontSize: 12 }}
+                labelStyle={{ color: "#E4EAE6" }}
               />
-              <Line type="monotone" dataKey="soh_pct" stroke="#63b3ed" dot={false} name="SOH %" strokeWidth={2} />
+              <Line type="monotone" dataKey="soh_pct" stroke="#4AE3C2" dot={false} name="SOH %" strokeWidth={2} />
             </LineChart>
           </ResponsiveContainer>
         </div>

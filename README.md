@@ -78,7 +78,7 @@ The platform is organized into five engineering modules:
 - **Grid Services page** (`app/_pages/operations.py`): the Streamlit surface for the Lifecycle Intelligence layer — health-aware dispatch (with the healthy-vs-health-aware comparison), grid-services revenue, managed charging, fleet dispatchable-capacity offers, and the ML anomaly scan, all read-only estimates with the modules' own labels
 - **W3C Verifiable Credential Battery Passport** (`src/dynamic_circularity.py`): EU Battery Regulation (EU 2023/1542) JSON-LD digital product passport generator with cryptographic Ed25519 signatures
 - Automated Second-Life Auction & Bid Matcher connecting certified cell health (SOH, SoP%, RUL) with buyer application profiles
-- **Modern React 19 / TypeScript SPA Frontend** (`frontend/`): 60fps electrochemical cycle scrubber, real-time live telemetry canvas, and multi-view operations dashboard alongside the Streamlit application
+- **Modern React 19 / TypeScript SPA Frontend** (`frontend/`): 60fps electrochemical cycle scrubber, real-time live telemetry canvas, and multi-view operations dashboard alongside the Streamlit application — designed with an energy-lab aesthetic (electrolyte-teal accent, Inter + JetBrains Mono type pairing, state-of-health-derived color ramp, Lucide SVG icons) that reads as an instrument panel rather than a generic dark dashboard
 
 
 ## Architecture

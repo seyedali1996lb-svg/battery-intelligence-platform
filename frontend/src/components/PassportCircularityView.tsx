@@ -43,13 +43,13 @@ export default function PassportCircularityView() {
       {/* Header */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <h1 style={{ fontSize: 20, margin: 0 }}>EU Battery Passport & Circularity Marketplace</h1>
+          <h1 style={{ fontSize: 20, margin: 0 }}>Passport & Circularity</h1>
           <p className="subtitle" style={{ margin: 0, marginTop: 4 }}>
-            Regulation (EU) 2023/1542 digital product passports, dynamic use-phase LCA carbon footprint, and second-life buyer matching
+            Generate EU 2023/1542 digital product passports, track lifecycle carbon, and match second-life buyers
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {loading && <span className="badge badge-accent">Loading...</span>}
+          {loading &&          <span className="badge badge-energy">Loading...</span>}
           <select
             value={selectedCell}
             onChange={(e) => setSelectedCell(e.target.value)}
@@ -83,22 +83,22 @@ export default function PassportCircularityView() {
           </div>
 
           <div className="kpi-grid">
-            <div className="card" style={{ background: "#141c24" }}>
+            <div className="card card-inner">
               <div className="kpi-label">Manufacturing Emissions</div>
               <div className="kpi-value" style={{ color: "var(--c-text)" }}>{lca.mfg_co2_kg} kg</div>
               <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Cathode & Cell Assembly</div>
             </div>
-            <div className="card" style={{ background: "#141c24" }}>
+            <div className="card card-inner">
               <div className="kpi-label">Use-Phase Charging Losses</div>
               <div className="kpi-value" style={{ color: "var(--c-high)" }}>{lca.use_phase_co2_kg} kg</div>
               <div style={{ fontSize: 11, color: "var(--c-muted)" }}>At {lca.grid_intensity_g_kwh} g CO₂e/kWh</div>
             </div>
-            <div className="card" style={{ background: "#141c24" }}>
+            <div className="card card-inner">
               <div className="kpi-label">Recycling Avoided Credit</div>
               <div className="kpi-value" style={{ color: "var(--c-healthy)" }}>{lca.eol_recycling_credit_kg} kg</div>
               <div style={{ fontSize: 11, color: "var(--c-muted)" }}>Closed-Loop Recovery</div>
             </div>
-            <div className="card" style={{ background: "#141c24" }}>
+            <div className="card card-inner">
               <div className="kpi-label">Intensity Per kWh Delivered</div>
               <div className="kpi-value" style={{ color: "var(--c-accent)" }}>{lca.carbon_intensity_kg_per_kwh_delivered}</div>
               <div style={{ fontSize: 11, color: "var(--c-muted)" }}>kg CO₂e / kWh throughput</div>
@@ -113,7 +113,7 @@ export default function PassportCircularityView() {
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontWeight: 700, fontSize: 14 }}>Automated Second-Life Marketplace Bids</span>
-            <span className="badge badge-accent">Live Valuation</span>
+            <span className="badge badge-energy">Live Valuation</span>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -132,9 +132,9 @@ export default function PassportCircularityView() {
               >
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{b.buyer_name}</div>
-                  <div style={{ fontSize: 11, color: "var(--c-muted)", marginTop: 2 }}>{b.application} ({b.region})</div>
+                  <div className="kpi-sub" style={{ marginTop: 2 }}>{b.application} · {b.region}</div>
                   <div style={{ fontSize: 11, marginTop: 4 }}>
-                    Fit Score: <span style={{ fontWeight: 700, color: "var(--c-healthy)" }}>{b.fit_score}%</span>
+                    <span className="kpi-sub">Fit Score: </span><span style={{ fontWeight: 700, color: "var(--c-healthy)", fontFamily: "'JetBrains Mono', monospace" }}>{b.fit_score}%</span>
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -172,7 +172,7 @@ export default function PassportCircularityView() {
             {passport && viewJson && (
               <pre
                 style={{
-                  background: "#0e1117",
+                  background: "var(--c-bg)",
                   padding: 10,
                   borderRadius: 6,
                   fontSize: 10,

@@ -21,7 +21,7 @@ export default function Login({ onLoggedIn }: Props) {
       setToken(result.access_token);
       onLoggedIn(result);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to reach the API.");
+      setError(err instanceof ApiError ? err.message : "Unable to reach the server. Please check your connection and try again.");
     } finally {
       setLoading(false);
     }
@@ -29,8 +29,11 @@ export default function Login({ onLoggedIn }: Props) {
 
   return (
     <form className="login-form" onSubmit={handleSubmit}>
-      <h1>Battery Intelligence</h1>
-      <p className="subtitle">Sign in with the same account used in the Streamlit app.</p>
+      <h1 style={{ letterSpacing: "-0.03em" }}>Battery Intelligence</h1>
+      <p className="subtitle">
+        Welcome back. Sign in with your team account to access diagnostics,
+        fleet monitoring, and compliance tools.
+      </p>
       <input
         placeholder="Username"
         value={username}
@@ -47,8 +50,8 @@ export default function Login({ onLoggedIn }: Props) {
         {loading ? "Signing in…" : "Sign in"}
       </button>
       {error && <div className="error-text">{error}</div>}
-      <p className="subtitle">
-        Demo credentials (Demo Org): <code>engineer</code> / <code>battery</code>
+      <p className="subtitle" style={{ fontSize: 12, lineHeight: 1.5 }}>
+        Try the demo: <code>engineer</code> / <code>battery</code> (Demo Org)
       </p>
     </form>
   );

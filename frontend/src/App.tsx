@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FlaskConical, BarChart3, Target, Leaf, UploadCloud, Radio } from "lucide-react";
 import Login from "./components/Login";
 import FleetSummaryView from "./components/FleetSummaryView";
 import ElectrochemicalWorkbench from "./components/ElectrochemicalWorkbench";
@@ -9,7 +10,16 @@ import LiveMonitorView from "./components/LiveMonitorView";
 import { clearToken, getToken } from "./api";
 import type { LoginResponse } from "./types";
 
-type Tab = "fleet" | "workbench" | "actions" | "passport" | "ingest" | "monitor";
+type Tab = "workbench" | "fleet" | "actions" | "passport" | "ingest" | "monitor";
+
+const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
+  { key: "workbench", label: "Diagnostic Workbench", icon: <FlaskConical size={15} /> },
+  { key: "fleet", label: "Fleet Analytics", icon: <BarChart3 size={15} /> },
+  { key: "actions", label: "Action Center", icon: <Target size={15} /> },
+  { key: "passport", label: "Passport & Circularity", icon: <Leaf size={15} /> },
+  { key: "ingest", label: "Cycler Ingestion", icon: <UploadCloud size={15} /> },
+  { key: "monitor", label: "Live Telemetry", icon: <Radio size={15} /> },
+];
 
 function App() {
   const [user, setUser] = useState<LoginResponse | null>(null);
@@ -28,14 +38,14 @@ function App() {
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div>
       {/* Top Header */}
       <div className="topbar">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-          <h1>Battery Intelligence Platform</h1>
-          <span style={{ fontSize: 12, color: "var(--c-accent)", fontWeight: 700 }}>v2.0 Enterprise</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <h1>Battery Intelligence</h1>
+          <span className="version">v2.0</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <span className="org">{user.org_name} · {user.display_name} ({user.role})</span>
           <button
             className="signout"
@@ -49,30 +59,23 @@ function App() {
           </button>
         </div>
       </div>
-      <p className="subtitle">
-        Validated electrochemical analytics, Leave-Cell-Out RUL, real-time BMS streaming, and EU 2023/1542 digital product passports.
+      <p className="subtitle" style={{ marginBottom: 20 }}>
+        Track cell health, predict remaining useful life, stream live BMS data,
+        and generate EU-compliant battery passports — all from one place.
       </p>
 
       {/* Navigation Tabs */}
-      <nav className="tabs" style={{ flexWrap: "wrap", gap: 6, marginBottom: 24 }}>
-        <button className={tab === "workbench" ? "active" : ""} onClick={() => setTab("workbench")}>
-          ⚡ Cell Diagnostic Workbench
-        </button>
-        <button className={tab === "fleet" ? "active" : ""} onClick={() => setTab("fleet")}>
-          📊 Fleet Analytics
-        </button>
-        <button className={tab === "actions" ? "active" : ""} onClick={() => setTab("actions")}>
-          🎯 Operations Action Center
-        </button>
-        <button className={tab === "passport" ? "active" : ""} onClick={() => setTab("passport")}>
-          🌱 Passport & Circularity
-        </button>
-        <button className={tab === "ingest" ? "active" : ""} onClick={() => setTab("ingest")}>
-          📥 Universal Cycler Ingestion
-        </button>
-        <button className={tab === "monitor" ? "active" : ""} onClick={() => setTab("monitor")}>
-          📡 Live Telemetry Monitor
-        </button>
+      <nav className="tabs">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            className={tab === t.key ? "active" : ""}
+            onClick={() => setTab(t.key)}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
       </nav>
 
       {/* Active View Container */}
