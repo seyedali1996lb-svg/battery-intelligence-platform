@@ -356,7 +356,7 @@ To host the interactive dashboard for free on Streamlit Cloud:
    ```
 5. Click **Deploy**.
 
-The configured entry point must remain `app/main.py`. The file bootstraps the repository root before importing `_paths.py`, so it works with Streamlit Cloud's script execution model (where only `app/` is initially on `sys.path`) as well as local launches from any working directory. If an older deployment reports `ModuleNotFoundError: No module named '_paths'`, redeploy the latest revision and verify that the main file path is exactly `app/main.py`.
+The configured entry point must remain `app/main.py`. The file bootstraps the repository root before importing `_paths.py`, so it works with Streamlit Cloud's script execution model (where only `app/` is initially on `sys.path`) as well as local launches from any working directory. The shared UI helpers load widget re-exports only after their helper definitions, preventing a circular import during Cloud startup. If an older deployment reports `ModuleNotFoundError: No module named '_paths'` or an import traceback ending in `_ui_helpers.py`/`_pack_builder.py`, redeploy the latest revision and verify that the main file path is exactly `app/main.py`.
 
 ---
 

@@ -20,9 +20,8 @@ from _design_tokens import (
 )
 from design_system import provenance_banner, BADGE_MEASURED, BADGE_SIMULATED, BADGE_SYNTHETIC
 
-# ── Re-exports from extracted widget modules (backward compat) ─────────────
-from _pack_builder import render_pack_builder  # noqa: F401
-from _report_regen import render_regenerate_report_button  # noqa: F401
+# Widget re-exports are installed at the end of this module.  Importing them
+# here would create a cycle because the widgets use helpers defined below.
 
 
 # ---------------------------------------------------------------------------
@@ -181,3 +180,9 @@ def _cell_source(cell_id: str) -> str:
     from chemistry_profiles import ChemistryProfile
     _kind = ChemistryProfile.for_cell(cell_id).source_kind
     return {"synth": "synthetic", "upload": "uploaded"}.get(_kind, _kind)  # pyright: ignore[reportReturnType]
+
+
+# Backward-compatible widget re-exports.  They are imported only after all
+# helper definitions exist, avoiding the _ui_helpers <-> _pack_builder cycle.
+from _pack_builder import render_pack_builder  # noqa: F401, E402
+from _report_regen import render_regenerate_report_button  # noqa: F401, E402
