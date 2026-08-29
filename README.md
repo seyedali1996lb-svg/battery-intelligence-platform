@@ -190,7 +190,7 @@ streamlit run app/main.py
 python -m app
 ```
 
-Path resolution is handled by `_paths.py`, which walks up from its own directory to find the repo root — so the app works when launched from any working directory.
+Path resolution is handled by `_paths.py`, which walks up from its own directory to find the repo root — so the app works when launched from any working directory. `app/main.py` also bootstraps that root before importing `_paths.py`, which is required when Streamlit Cloud executes the file directly rather than as a package module.
 
 See [`docs/history.md`](docs/history.md) for its full build history and architecture.
 
@@ -355,6 +355,8 @@ To host the interactive dashboard for free on Streamlit Cloud:
    ANTHROPIC_API_KEY = "your-claude-api-key"
    ```
 5. Click **Deploy**.
+
+The configured entry point must remain `app/main.py`. The file bootstraps the repository root before importing `_paths.py`, so it works with Streamlit Cloud's script execution model (where only `app/` is initially on `sys.path`) as well as local launches from any working directory. If an older deployment reports `ModuleNotFoundError: No module named '_paths'`, redeploy the latest revision and verify that the main file path is exactly `app/main.py`.
 
 ---
 

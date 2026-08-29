@@ -17,6 +17,17 @@ before the app starts.
 
 from __future__ import annotations
 
+# Streamlit Cloud executes this file as a script, so Python initially adds
+# ``app/`` rather than the repository root to sys.path.  Bootstrap the root
+# before importing the root-level path helper; this also preserves the normal
+# package/module launch behavior locally.
+import os
+import sys
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
 import streamlit as st
