@@ -105,7 +105,8 @@ Each layer is independently usable — `batlab` runs standalone as a Python libr
 The Streamlit app (`app/`) is split into focused modules:
 - **`app/main.py`** — thin orchestrator (~300 lines): auth gate, data loading, training, and page dispatch
 - **`app/_data.py`** — data loading and caching logic
-- **`app/_sidebar.py`** — sidebar navigation, role switching, and onboarding
+- **`app/_sidebar.py`** — sidebar navigation, role switching, and data-mode switching
+- **`app/_onboarding.py`** — guided tour, command palette, and first-run overlay dialogs
 - **`app/_router.py`** — page routing/dispatch
 - **`app/_session.py`** — session-state initialization, DB persistence hydration, cell partitioning, and data-mode resolution
 - **`app/_pages/`** — individual page renderers (one per page)
@@ -114,8 +115,10 @@ A centralized **`_paths.py`** at the project root ensures `src/`, `app/`, and `s
 
 The `src/` layer provides:
 - **Dependency-injection protocols** (`src/protocols.py`) — `BMSAdapter`, `MarketDataAdapter`, `DataStore`, `ImportAdapter`, `NotificationSender`, `KnowledgeRetriever` Protocol interfaces defining subsystem boundaries
+- **DI entry points** (`src/api.py`) — `get_store()`/`set_store()` and `get_market_adapter()`/`set_market_adapter()` let tests inject fakes without changing call sites
 - **Shared API contracts** (`src/contracts.py`) — `TypedDict` definitions for every REST response shape (`CellSummary`, `HealthResponse`, `FleetSummary`, `DecisionRecord`, `TwinResponse`, `DispatchSchedule`, `PassportData`) consumed by both the Streamlit dashboard and React frontend
-- **Domain groupings** (`src/_domain/`) — the 69 `src/` modules organized into 8 named domains (core, auth, analytics, connectors, lifecycle, exports, copilot, intelligence) for IDE navigation, while all existing bare imports remain unchanged
+- **Domain groupings** (`src/__init__.py` + `src/_domain/`) — lazy re-exports via `__getattr__` so `from src import db` works alongside bare `import db`; the 69 `src/` modules organized into 8 named domains for IDE navigation
+- **pyright CI gate** — type checking runs on every push/PR via `.github/workflows/ci.yml` (non-blocking while ramping up)
 
 ## Methodology
 
