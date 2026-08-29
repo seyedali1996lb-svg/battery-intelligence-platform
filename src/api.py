@@ -104,6 +104,47 @@ from db import (
     list_pack_cells, add_cell_to_pack, remove_cell_from_pack,
 )
 from chemistry_profiles import ChemistryProfile
+from protocols import MarketDataAdapter, DataStore
+
+# ── Dependency-injection entry points ───────────────────────────────────────
+# These allow tests and future refactors to swap implementations without
+# changing every call site.  Production code uses the defaults below; tests
+# can call set_store() / set_market_adapter() to inject fakes.
+
+_store: DataStore | None = None
+_market_adapter: MarketDataAdapter | None = None
+
+
+def get_store() -> DataStore:
+    """Return the active DataStore.  Falls back to the real db module."""
+    global _store
+    if _store is not None:
+        return _store
+    # Lazy import to avoid circular deps at module load time.
+    import db as _db
+    return _db  # db module already satisfies the DataStore protocol
+
+
+def set_store(store: DataStore) -> None:
+    """Override the DataStore (for tests or alternative backends)."""
+    global _store
+    _store = store
+
+
+def get_market_adapter() -> MarketDataAdapter:
+    """Return the active MarketDataAdapter.  Falls back to the real one."""
+    global _market_adapter
+    if _market_adapter is not None:
+        return _market_adapter
+    from market_data import get_market_adapter as _real_get
+    return _real_get()
+
+
+def set_market_adapter(adapter: MarketDataAdapter) -> None:
+    """Override the MarketDataAdapter (for tests)."""
+    global _market_adapter
+    _market_adapter = adapter
+
 
 # ── App metadata ──────────────────────────────────────────────────────────────
 

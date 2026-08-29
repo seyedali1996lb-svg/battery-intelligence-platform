@@ -71,7 +71,7 @@ _ALLOWLIST = {
         "capacity_anomaly/resistance_anomaly boolean columns to count "
         "total flags and recent-window flags, not just the latest value."
     ),
-    "src/api.py:390": (
+    "src/api.py:431": (
         "Inside _cell_stat_rows() -- iterates only the requesting org's "
         "own small, session-bounded uploaded fleet (org_fdfs from "
         "load_tenant_bundle()), which is explicitly out of scope for "

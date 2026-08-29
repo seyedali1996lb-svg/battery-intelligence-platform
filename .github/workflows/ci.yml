@@ -39,6 +39,14 @@ jobs:
           print(f'All Python files OK')
           "
 
+      - name: Type check with pyright
+        run: |
+          pip install pyright
+          pyright --pythonversion 3.10 src/ app/ batlab/ || true
+        # Non-blocking for now — run in warning mode until the codebase
+        # is clean enough to enforce. The || true keeps CI green while
+        # we ramp up coverage. Remove it once pyright passes cleanly.
+
       - name: Run test suite
         run: python -m pytest tests/ -v
 
