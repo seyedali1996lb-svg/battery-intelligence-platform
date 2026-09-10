@@ -24,6 +24,71 @@ This is harder than it looks, for reasons this platform is built specifically to
 
 `batlab`, the research framework underneath this platform, exists to fix the last two problems directly: one standardized schema across all five datasets, and one validation methodology (leave-cell-out) applied by default to every model it trains.
 
+## Why this project is relevant to battery testing
+
+Battery testing — whether in a research lab cycling pouch cells on a Neware or Maccor cycler, in a vehicle integration facility running drive-cycle emulation, or in a field deployment logging BESS data — produces the same fundamental artifacts: timestamped voltage, current, temperature, and capacity measurements, accumulated across hundreds or thousands of cycles. The challenge is never the data collection itself. It's the chain of engineering steps that turns raw cycler output into a trustworthy statement about a cell's condition and future.
+
+This platform is built to close exactly that gap. Every step in the pipeline below is implemented, tested, and documented — not as a research prototype that works on one dataset, but as a reproducible, schema-validated system that runs across five public battery datasets from four independent labs.
+
+```mermaid
+flowchart LR
+    A["🔋 Battery Test Data\n──────────────\nArbin · BioLogic · Maccor\nNeware · Novonix · Bitrode\nCSV · HDF5 · MAT"]
+    B["✅ Data Validation\n──────────────\nSchema enforcement\nUnit normalization\nChecksum verification\nSchemaError on violation"]
+    C["📊 SOH Estimation\n──────────────\nCapacity fade tracking\nResistance growth\nCycle-by-cycle\ndischarge integration"]
+    D["🔬 Degradation Indicators\n──────────────\ndQ/dV peak shifts\nKnee-point detection\nFade rate · EFC/DoD\nLLI · LAM decomposition"]
+    E["⚛️ Physics-Based Projection\n──────────────\nSEI sqrt-fade model\nPyBaMM SPM anchoring\nPINN electrochemical-\nthermal coupling"]
+    F["🩺 Health Assessment\n──────────────\nSOH · RUL Q10/Q90\nState-of-Power\nAnomaly flags\nEU Battery Passport"]
+
+    A --> B --> C --> D --> E --> F
+```
+
+### What each stage means in practice
+
+**Battery Test Data → Data Validation**
+
+Raw cycler files from different vendors use incompatible column names, unit conventions, and file formats. A capacity column may be labeled `Charge_Capacity(Ah)`, `Q_chg`, or `cap_mah` depending on the instrument. Before any analysis can be trusted, the data must be normalized to one consistent schema. `batlab.datasets.cycler_mapper` performs heuristic auto-detection across Arbin, BioLogic, Maccor, Neware, Novonix, and Bitrode exports, normalizing units and column names on ingest. Every loaded DataFrame is then validated by `validate_schema()`, which raises a `SchemaError` with a precise, actionable message if any required field is missing or out of range. Dataset downloads are SHA-256 checksum-verified so a corrupted or partially-downloaded file is caught before it silently contaminates results.
+
+**Data Validation → State-of-Health Estimation**
+
+SOH is derived deterministically from measured data: the ratio of a cycle's measured discharge capacity to the cell's initial rated capacity, with resistance growth tracked from the voltage response at the start of each discharge pulse. These are engineering formulas applied to validated measurements — not model outputs. The exact formula behind every derived quantity is documented in [`METHODOLOGY.md`](METHODOLOGY.md), so the number a testing engineer sees on the dashboard traces all the way back to the raw cycler file with no ambiguity about what was computed and how.
+
+**SOH → Degradation Indicators**
+
+A single SOH number tells you where a cell is. Degradation indicators tell you *why* it got there and *how fast* it's moving. This layer computes:
+
+- **dQ/dV (differential capacity) analysis** — peak positions in the differential capacity curve correspond to specific electrochemical phase transitions; shifts in those peaks reveal which electrode is limiting capacity, separating cathode degradation from anode degradation without disassembling the cell.
+- **Knee-point detection** — identifies the inflection point where a fade curve transitions from gradual linear loss to accelerating nonlinear decline, the single most important early-warning signal for end-of-life scheduling.
+- **Equivalent Full Cycle (EFC) accumulation** — ASTM E1049-85 compliant Rainflow Cycle Counting on irregular charge/discharge profiles, enabling fair cycle-count comparison across different duty cycles (lab cycling vs. EV driving vs. BESS dispatch).
+- **LLI / LAM decomposition** — per-cell decomposition of capacity loss into Loss of Lithium Inventory (LLI, driven by SEI growth) and Loss of Active Material (LAM, driven by particle cracking), anchored by PyBaMM single-particle model discharge curves.
+
+These indicators are the inputs to both the ML models and the physics projection, and they're what make the RUL number *explainable* rather than a black-box output.
+
+**Degradation Indicators → Physics-Based Projection**
+
+The platform offers two complementary projection approaches, both built on the degradation indicators extracted above:
+
+- **SEI sqrt-fade model** (`src/digital_twin.py`): a classical electrochemical model where capacity loss due to SEI growth scales as the square root of equivalent full cycles — mechanistically grounded and interpretable, re-fit on each cell's own measured history on every update.
+- **Physics-Informed Neural Network (PINN)** (`src/pinn_model.py`): a neural network whose loss function includes a physics residual — it must simultaneously fit the measured capacity fade data *and* satisfy the coupled SEI diffusion-limited LLI and mechanical particle cracking LAM differential equations. A monotonicity regularization term prevents the network from predicting capacity recovery, which is physically impossible for calendar or cycle aging.
+
+Both approaches are clearly labeled as projections, not predictions. The SEI model's ±2σ fit band and the GBRT model's Q10/Q90 quantile interval are shown together on the same SOH axis in the Cell Workbench's Health view, so a testing engineer can see where the data-driven and physics-based forecasts agree and where they diverge — and treat the divergence itself as diagnostic information.
+
+**Physics-Based Projection → Health Assessment**
+
+The final health assessment packages all of the above into actionable outputs designed for the decisions that battery testing engineers and operators actually need to make:
+
+- **SOH + RUL with honest confidence bounds** — RUL is reported as a Q10/Q90 quantile interval, not a point estimate, and only when the cell has enough cycling history for the per-cell reliability floor to be met. The interval is calibrated using conformal quantile recalibration (Romano et al. 2019) applied leave-cell-out, so the stated coverage is empirically verified, not just assumed.
+- **State-of-Power** — peak power capability derived from resistance growth, flagging cells that have retained capacity but lost the ability to deliver rated power — critical for pulse-power applications like UPS or high-rate EV discharge.
+- **Anomaly detection** — two complementary engines: a CUSUM statistical change-point detector for rule-based threshold alarms (IEC 62619:2022 Thermal Runaway Precursor), and a per-cell Isolation Forest that learns each cell's own normal operating region and flags cycles that are anomalous *relative to that cell's own history*, catching patterns no fixed threshold rule anticipates.
+- **EU Battery Passport** — a W3C Verifiable Credential (EU 2023/1542) JSON-LD document with Ed25519 cryptographic signature, carrying chemistry, R-code end-of-life routing, second-life application fit, and a traceable link back to the leave-cell-out-validated model card that produced the SOH/RUL numbers.
+
+### Why the validation methodology matters for testing
+
+A battery testing lab's core deliverable is a number someone else will make a high-stakes decision with. The validation section of this README ([Validation](#validation)) reproduces a concrete demonstration of why the *method* used to produce that number determines its honesty: the same GBRT model on the same 4 NASA cells reports **R² = 0.998** with a naive random row-split and **R² = 0.806** with leave-cell-out. The 0.998 is real — it's not an error — but it answers the wrong question. It measures how well the model interpolates between cycles of cells it has already partly seen, not how well it generalizes to a cell it has never seen. The latter is what matters when the model will be applied to a new cell coming off a test stand.
+
+`batlab.validation.run_lco` applies leave-cell-out by default, not as an opt-in mode.
+
+---
+
 ## Core philosophy
 
 **Reliable battery intelligence requires honest validation.**
