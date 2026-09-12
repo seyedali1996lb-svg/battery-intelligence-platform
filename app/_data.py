@@ -412,6 +412,20 @@ def load_everything() -> tuple[Any, dict, dict]:
         if calce_cell_dicts:
             _study_datasets["calce"] = calce_cell_dicts
 
+        # df-shaped featured map shared by the PINN and prospective studies
+        # (both consume full featured frames, unlike the LCO study's (X, y)
+        # tuples). Computed once here, outside every study's try/except, so
+        # a failure in one study can never leave a later one with an
+        # undefined name — each study independently degrades to a skip.
+        _df_featured: dict = {}
+        for _pkey in _study_datasets:
+            try:
+                _pfc = load_features_cached(_pkey, _study_datasets.get(_pkey, {}))
+                if _pfc is not None:
+                    _df_featured[_pkey] = _pfc[0]  # {cid: df_feat}
+            except Exception:
+                pass
+
         try:
             import experiment_registry as _reg_study
 
@@ -469,11 +483,7 @@ def load_everything() -> tuple[Any, dict, dict]:
                     cid: c["cycles"] for cid, c in calce_cell_dicts.items()
                 }
 
-            _pinn_featured: dict = {}
-            for _pkey in _pinn_datasets:
-                _pfc = load_features_cached(_pkey, _study_datasets.get(_pkey, {}))
-                if _pfc is not None:
-                    _pinn_featured[_pkey] = _pfc[0]  # {cid: df_feat} — avoids a rebuild
+            _pinn_featured = _df_featured
 
             _pinn_baselines = {
                 k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
@@ -485,6 +495,26 @@ def load_everything() -> tuple[Any, dict, dict]:
                 featured=_pinn_featured,
                 baselines=_pinn_baselines,
                 org_id=_reg_pinn.PLATFORM_ORG_ID,
+            )
+        except Exception:
+            pass
+
+        # ── Prospective (temporal-holdout) benchmark ───────────────────────
+        # The only evaluation that separates forecasting from curve-fitting:
+        # train on the first half of each cell's cycles, score the remainder.
+        # Leave-cell-out still lets the model see the held-out cell's future;
+        # this split withholds it. Idempotent per (dataset, FEATURE_VERSION,
+        # train_fraction) — a warm start is a registry read, not a retrain.
+        try:
+            import experiment_registry as _reg_prosp
+
+            _reg_prosp.run_prospective_benchmark_study(
+                _study_datasets,
+                # The df-featured map (same cache the PINN study reuses) —
+                # the prospective harness needs full featured frames, not
+                # the (X, y) tuples the LCO study consumes.
+                featured=_df_featured,
+                org_id=_reg_prosp.PLATFORM_ORG_ID,
             )
         except Exception:
             pass

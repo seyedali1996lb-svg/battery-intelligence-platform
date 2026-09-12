@@ -323,7 +323,66 @@ def page_benchmark(org_id: int) -> None:
                     f"**{_x['train_dataset']} → {_x['eval_dataset']} — not evaluated:** {_x['notes']}"
                 )
 
-    # ── Fold-level drill-down ───────────────────────────────────────────────
+    # ── Prospective split: forecasting vs curve-fitting ──────────────────
+    # The evaluation the LCO tables cannot perform: withhold the FUTURE. A
+    # model trained on the first half of each cell's life is scored only on
+    # the second half — the deployment question. The gap between the LCO
+    # number and this one is the interpolation the LCO setup was silently
+    # earning, so it sits here as its own section rather than a footnote.
+    st.markdown("#### Prospective split — does the model forecast, or only curve-fit?")
+    prosp_rows = reg.prospective_benchmark(tenant_org_id=org_id)
+    if not prosp_rows:
+        st.caption(
+            "No prospective-split study logged yet — this table fills in "
+            "automatically once the reference fleets have trained."
+        )
+    else:
+        from batlab.validation.bootstrap import format_ci as _fmt_ci
+        prosp_table = pd.DataFrame([
+            {
+                "Dataset":       p["dataset"],
+                "Chemistry":     p["chemistry"],
+                "Train fraction": (
+                    f"{p['train_fraction']:.0%}" if p.get("train_fraction") is not None else "—"
+                ),
+                "Cells":         p["n_cells"],
+                "SOH R2":        _fmt(p["soh_r2"]),
+                "SOH 95% CI":    _fmt_ci((p.get("ci_intervals") or {}).get("soh_r2")),
+                "LCO SOH R2":    _fmt(p.get("lco_soh_r2")),
+                "Forecasting gap": (
+                    f"{p['forecasting_gap']:+.3f}" if p.get("forecasting_gap") is not None else "—"
+                ),
+                "Trend baseline": _fmt(p.get("baseline_soh_r2")),
+                "RUL R2":        _fmt(p["rul_r2"]),
+                "Formula base.": _fmt(p.get("rul_formula_baseline_r2")),
+                "RUL labels obs.": (
+                    f"{p['rul_label_coverage'] * 100:.0f}%"
+                    if p.get("rul_label_coverage") is not None else "—"
+                ),
+            }
+            for p in prosp_rows
+        ])
+        st.dataframe(prosp_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "**Method:** the model trains ONLY on the first half of each cell's "
+            "recorded cycles and is scored ONLY on the remainder — it never "
+            "sees a cycle from the window it is evaluated on. This is NOT "
+            "leave-cell-out (the same cell supplies its early cycles to "
+            "training and its late cycles to testing); it is the deployment "
+            "question — \"what happens NEXT for a cell we have history for?\" — "
+            "which no held-out-cell evaluation can answer. **Forecasting gap** "
+            "is prospective minus LCO: negative means the model loses that much "
+            "skill when denied the future, i.e. how much of the LCO number was "
+            "interpolation rather than forecasting. **Trend baseline** is a "
+            "per-cell straight line fit on the train window and extrapolated "
+            "forward — the null hypothesis here; a model below it has learned "
+            "nothing beyond extending the early trend. **Formula base.** is the "
+            "RUL closed form under the identical split. A negative SOH R² means "
+            "the model is worse than predicting the training window's mean on "
+            "the future — reported as-is, because that IS the forecasting skill."
+        )
+
+    # ── Fold-level drill-down ─────────────────────────────────────────────
     st.markdown("#### Fold-level drill-down")
     run_labels = {f"{r['run_id']}  ·  {r['dataset']} ({r['chemistry'] or '—'})": r["run_id"] for r in runs}
     picked_label = st.selectbox("Select a run", list(run_labels.keys()), key="bench_drilldown_run")

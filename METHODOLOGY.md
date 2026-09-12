@@ -183,6 +183,27 @@ n_estimators=200, max_depth=4, learning_rate=0.05, subsample=0.8, random_state=4
 
 *the validation *methodology* itself, not a calculation that produces a per-cell number — but it's the thing that makes every number in §6 meaningful rather than misleading.*
 
+## 7a. Prospective split — the only test that separates forecasting from curve-fitting
+
+Leave-cell-out holds out whole cells, but the held-out cell's **future** is still in the evaluation pool: the model is scored on the same recorded window it was trained alongside. The deployment question is different — *this cell has produced 200 cycles, what happens next?* — and no held-out-cell evaluation answers it.
+
+`batlab/validation/prospective.py` makes the time axis the boundary: train ONLY on each cell's first half of cycles, evaluate ONLY on the remainder. Features stay causal (rolling windows use past data only — the leakage lint enforces the target side); the split is per cell by relative fraction, so a fast-aging cell still has a test window. RUL follows the same §2a honesty rules (observed-EOL rows only), and the baselines run under the identical split:
+
+- **Trend baseline** — a straight line fit on the train window, extrapolated across the test window. This is the null hypothesis here: "you don't need a model, just extend each cell's own early fade line." It can extrapolate; a regression tree cannot.
+- **Formula baseline** — the RUL closed form (§2a) under the same split.
+
+**The results, and why they are published as-is:**
+
+| Fleet | LCO SOH R² | Prospective SOH R² | Trend baseline | Prospective RUL R² (obs) | Formula baseline |
+|---|---|---|---|---|---|
+| NASA (4 LiCoO₂) | 0.958 | 0.492 [−1.23, 0.57] | −0.241 | −0.42 | 0.430 |
+| Zhu 2022 (9 NCM+NCA) | 0.999 | −3.176 [−3.58, −2.84] | 0.141 | −41.7 | 0.404 |
+| Severson (12 LFP) | 0.981 | −0.774 [−1.53, −1.10] | −0.422 | not evaluable (0% observed) | n/a |
+
+The mechanism is structural, not a bug: a gradient-boosted tree cannot predict a value below its lowest training leaf. Trained on the first half of life (SOH 96–99%), it saturates there and cannot follow the fleet into the second half's lower SOH — while the trivial linear baseline, which does extrapolate, beats it on two of three fleets, and the closed-form RUL forecast beats the GBRT on every fleet where RUL is evaluable. **The LCO-vs-prospective gap is the amount of interpolation that was riding along in every held-out-cell number.** The platform's headline accuracy claims are therefore now stated as two complementary numbers: leave-cell-out for "a cell we have never seen", prospective for "the future of a cell we have" — and a deployment decision that depends on forecasting should quote the prospective row, not the LCO one.
+
+Both evaluations run automatically on every platform load and are logged permanently in the experiment registry (`dataset="<key>_prospective"`, idempotent per feature version and split fraction); the Benchmark page renders them side by side with the gap column, and the prospective rows are excluded from every leave-cell-out accuracy table so the two populations can never be averaged.
+
 ---
 
 ## 8. Failure trajectory memory — cosine-similarity pattern matching

@@ -360,6 +360,12 @@ def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
     for r in runs:
         if r.get("soh_r2") is None or r.get("baseline_soh_r2") is None:
             continue  # not an LCO run with a baseline — nothing comparable to report
+        # Prospective-split runs evaluate a DIFFERENT population (each cell's
+        # test window under a temporal holdout, not leave-cell-out folds) —
+        # they are the per-chemistry table's complement, reported in their
+        # own section, and must never be averaged into these rows.
+        if (r.get("dataset") or "").endswith("_prospective"):
+            continue
         # GBRT only: this table is the per-chemistry accuracy of the
         # production model. PINN runs are reported through
         # model_kind_comparison() instead, so a physics-estimator number can
@@ -436,6 +442,10 @@ def model_kind_comparison(tenant_org_id: "int | None" = None) -> list[dict]:
     latest: dict = {}
     for r in runs:
         if r.get("soh_r2") is None:
+            continue
+        # Prospective-split rows compare against themselves (their own
+        # section) — a different population than LCO folds.
+        if (r.get("dataset") or "").endswith("_prospective"):
             continue
         key = (r.get("dataset"), r.get("chemistry"), r.get("model_kind") or "gbrt")
         prev = latest.get(key)
@@ -1039,6 +1049,181 @@ def run_pinn_benchmark_study(
         })
         logged.add((key, FEATURE_VERSION))
     return out
+
+
+def run_prospective_benchmark_study(
+    datasets: dict,
+    featured: "dict | None" = None,
+    org_id: int = PLATFORM_ORG_ID,
+    refresh: bool = False,
+    train_fraction: float = 0.5,
+) -> list[dict]:
+    """
+    Run and log the PROSPECTIVE evaluation — train on the first half of each
+    cell's cycles, predict the remainder — for every supplied reference
+    dataset, under the identical RUL-honesty rules the LCO harness uses.
+
+    This is the only evaluation here that separates forecasting from
+    curve-fitting: leave-cell-out holds out whole CELLS but still lets the
+    model see the held-out cell's future; the prospective split withholds
+    the future itself. The LCO-vs-prospective gap is the amount of
+    interpolation that was riding along in the LCO number. Runs are logged
+    under dataset=f"{key}_prospective" so they can never be averaged into
+    the LCO accuracy tables (accuracy_by_source / model_kind_comparison
+    exclude the suffix).
+
+    Idempotent per (dataset, FEATURE_VERSION, train_fraction): a warm start
+    is a cheap registry read, and it re-runs when the feature set or the
+    split fraction changes — exactly when the number could legitimately move.
+    """
+    from batlab.features.engineering import FEATURE_VERSION
+    from batlab.models.gbrt import GBRT_PARAMS
+    from batlab.validation.prospective import (
+        run_prospective,
+        trivial_soh_baseline_prospective,
+        rul_formula_baseline_prospective,
+    )
+    from chemistry_profiles import ChemistryProfile
+
+    all_runs = leaderboard(tenant_org_id=None)
+    logged = {
+        (r.get("dataset") or "", r.get("feature_version"), r.get("seed"))
+        for r in all_runs
+        if (r.get("dataset") or "").endswith("_prospective")
+    }
+
+    out: list[dict] = []
+    for key, cell_cycles in (datasets or {}).items():
+        if not cell_cycles:
+            continue
+        ds_key = f"{key}_prospective"
+        if not refresh and (ds_key, FEATURE_VERSION, int(train_fraction * 100)) in logged:
+            continue
+        try:
+            metrics = run_prospective(
+                cell_cycles,
+                featured=(featured or {}).get(key),
+                train_fraction=train_fraction,
+            )
+            soh_base = trivial_soh_baseline_prospective(
+                cell_cycles, featured=(featured or {}).get(key),
+                train_fraction=train_fraction,
+            )
+            rul_base = rul_formula_baseline_prospective(
+                cell_cycles, featured=(featured or {}).get(key),
+                train_fraction=train_fraction,
+            )
+        except Exception:
+            # A dataset the prospective split genuinely cannot run on (e.g.
+            # too few cycles per cell) is skipped, not logged with a
+            # fabricated number.
+            continue
+
+        if metrics.get("n_cells_evaluated", 0) < 2:
+            continue
+
+        sample_cell = next(iter(cell_cycles))
+        run_id = log_run(
+            org_id=org_id,
+            dataset=ds_key,
+            chemistry=ChemistryProfile.for_cell(sample_cell).short_name,
+            feature_set=list(metrics.get("features") or []),
+            feature_version=FEATURE_VERSION,
+            hyperparams={**GBRT_PARAMS, "train_fraction": train_fraction},
+            seed=int(train_fraction * 100),  # split fraction is part of the identity
+            cell_ids=list(cell_cycles.keys()),
+            n_rows=(metrics.get("n_train_rows") or 0) + (metrics.get("n_test_rows") or 0),
+            lco_metrics={
+                **metrics,
+                "baseline_soh_r2": soh_base.get("baseline_soh_r2"),
+                "baseline_per_cell": soh_base.get("per_cell") or None,
+                "rul_formula_baseline_r2": rul_base.get("rul_formula_baseline_r2"),
+                "rul_baseline_pool": "observed",
+            },
+            notes=(
+                "PROSPECTIVE evaluation — the only test here that separates "
+                "forecasting from curve-fitting. Train window = first "
+                f"{train_fraction:.0%} of each cell's cycles; the model is "
+                "scored only on the remainder and never sees a cycle from "
+                "the window it is evaluated on. NOT leave-cell-out: the same "
+                "cell supplies its early cycles to training and its late "
+                "cycles to testing (the deployment question — what happens "
+                "NEXT for a cell we have history for — is the opposite axis "
+                "from LCO's new-cell question). The LCO-vs-prospective gap "
+                "measures interpolation the LCO number was quietly earning. "
+                + (metrics.get("train_fraction_note") or "")
+            ),
+        )
+        out.append({
+            "dataset": key, "run_id": run_id,
+            "soh_r2": metrics.get("soh_r2"), "soh_mae": metrics.get("soh_mae"),
+            "rul_r2": metrics.get("rul_r2"), "rul_mae": metrics.get("rul_mae"),
+            "baseline_soh_r2": soh_base.get("baseline_soh_r2"),
+            "rul_formula_baseline_r2": rul_base.get("rul_formula_baseline_r2"),
+        })
+    return out
+
+
+def prospective_benchmark(tenant_org_id: "int | None" = None) -> list[dict]:
+    """
+    Every logged prospective-split result, newest per dataset — the
+    Benchmark page's forecasting-vs-curve-fitting section.
+
+    Each entry carries the LCO headline next to it when available, because
+    the GAP is the finding: soh_r2 vs the same dataset's LCO soh_r2 shows
+    how much of the leave-cell-out number survives contact with the future.
+    """
+    runs = leaderboard(tenant_org_id=tenant_org_id)
+    latest: dict = {}
+    for r in runs:
+        ds = r.get("dataset") or ""
+        if not ds.endswith("_prospective"):
+            continue
+        prev = latest.get(ds)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[ds] = r
+
+    lco_by_ds: dict = {}
+    for r in runs:
+        if (r.get("dataset") or "").endswith("_prospective"):
+            continue
+        if (r.get("model_kind") or "gbrt") != "gbrt" or r.get("soh_r2") is None:
+            continue
+        ds = r.get("dataset")
+        prev = lco_by_ds.get(ds)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            lco_by_ds[ds] = r
+
+    rows = []
+    for ds, r in latest.items():
+        base_ds = ds[: -len("_prospective")]
+        lco = lco_by_ds.get(base_ds)
+        rows.append({
+            "dataset":       base_ds,
+            "chemistry":     r.get("chemistry") or "—",
+            "train_fraction": (
+                (r.get("hyperparams") or {}).get("train_fraction")
+                if isinstance(r.get("hyperparams"), dict) else None
+            ),
+            "n_cells":       r.get("n_cells"),
+            "soh_r2":        r.get("soh_r2"),
+            "lco_soh_r2":    lco.get("soh_r2") if lco else None,
+            "forecasting_gap": (
+                (float(r["soh_r2"]) - float(lco["soh_r2"]))
+                if (r.get("soh_r2") is not None and lco and lco.get("soh_r2") is not None)
+                else None
+            ),
+            "baseline_soh_r2": r.get("baseline_soh_r2"),
+            "rul_r2":        r.get("rul_r2"),
+            "rul_formula_baseline_r2": r.get("rul_formula_baseline_r2"),
+            "rul_label_coverage": r.get("rul_label_coverage"),
+            "rul_reliable":  r.get("rul_reliable"),
+            "ci_intervals":  r.get("ci_intervals"),
+            "feature_version": r.get("feature_version"),
+            "timestamp":     r.get("timestamp"),
+            "notes":         r.get("notes"),
+        })
+    return rows
 
 
 def cross_chemistry_benchmark(tenant_org_id: "int | None" = None) -> list[dict]:

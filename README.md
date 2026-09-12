@@ -226,6 +226,16 @@ The same honesty rule is applied to RUL. RUL can only be *measured* for a cell w
 
 This is public-data validation, not industrial validation — the 0.958 describes generalization across 4 NASA cells, not across a manufacturer's fleet. Treat it as evidence the methodology is sound, not as a number that transfers directly to a different chemistry or duty cycle.
 
+**The prospective split — forecasting, not curve-fitting.** Leave-cell-out holds out whole cells but still shows the model the held-out cell's *future*: its full recorded curve is in the evaluation pool. The deployment question is the opposite one — *this cell has produced 200 cycles, what happens next?* `batlab.validation.prospective` answers it by training only on the first half of each cell's cycles and scoring only the remainder, under the same RUL-honesty rules and with the trend/formula baselines under the identical split. The result is the most deflating table on the Benchmark page, and the most important one:
+
+| Fleet | LCO SOH R² | Prospective SOH R² | Per-cell trend baseline |
+|---|---|---|---|
+| NASA (4 LiCoO₂) | 0.958 | 0.492 [−1.23, 0.57] | −0.241 |
+| Zhu 2022 (9 NCM+NCA) | 0.999 | −3.176 [−3.58, −2.84] | 0.141 |
+| Severson (12 LFP) | 0.981 | −0.774 [−1.53, −1.10] | −0.422 |
+
+Denied the future, gradient-boosted trees — which interpolate within their training label range but cannot extrapolate beyond it — collapse below a per-cell straight line on two of three fleets, and the prospective RUL number loses to the closed-form fade formula on every fleet where RUL is evaluable. The gap between the LCO column and this one is the amount of interpolation that was riding along in every held-out-cell number. Both evaluations are reported side by side on the Benchmark page, because they answer different questions: LCO is new-cell generalization, the prospective split is same-cell forecasting, and a deployment needs both to be stated separately.
+
 ## Demo Application
 
 `app/` is a Streamlit application, built on `batlab` — an engineering prototype demonstrating what the platform's analytics look like assembled into an engineer-facing tool, not a production deployment:

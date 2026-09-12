@@ -800,3 +800,81 @@ def test_pinn_benchmark_study_logs_a_first_class_run(db, monkeypatch):
     )
     assert again == []
     assert len([r for r in reg.leaderboard(None) if r["model_kind"] == "pinn"]) == 1
+
+
+# ── Prospective (temporal-holdout) benchmark study ──────────────────────────
+
+
+def test_run_prospective_benchmark_study_logs_and_is_idempotent(db, monkeypatch):
+    """The study logs one run per dataset under the `_prospective` suffix and
+    a second call is a cheap registry read — no duplicate runs."""
+    _fake_clock(monkeypatch)
+    datasets = {
+        "synth": {f"Cell{i}": make_cycles_df(n_cycles=200) for i in range(4)},
+    }
+    first = reg.run_prospective_benchmark_study(datasets, org_id=reg.PLATFORM_ORG_ID)
+    assert len(first) == 1
+    run = reg.get_run(reg.PLATFORM_ORG_ID, first[0]["run_id"])
+    assert run["dataset"] == "synth_prospective"
+    assert run["model_kind"] == "gbrt"
+    assert "PROSPECTIVE evaluation" in (run["notes"] or "")
+    assert "forecasting from curve-fitting" in (run["notes"] or "")
+    # The trivial + formula baselines travel with the run.
+    assert run["baseline_soh_r2"] is not None
+
+    again = reg.run_prospective_benchmark_study(datasets, org_id=reg.PLATFORM_ORG_ID)
+    assert again == []
+    pros = [r for r in reg.leaderboard(None) if (r["dataset"] or "").endswith("_prospective")]
+    assert len(pros) == 1
+
+
+def test_prospective_rows_excluded_from_lco_aggregators(db, monkeypatch):
+    """A `_prospective` run evaluates a different population (test windows
+    under a temporal holdout, not leave-cell-out folds) — it must never be
+    averaged into the per-chemistry LCO table or the GBRT-vs-PINN rows."""
+    _fake_clock(monkeypatch)
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="synth", chemistry="LiCoO2",
+        feature_set=["cycle_number"], feature_version="v-test",
+        hyperparams={}, seed=42, cell_ids=["CellA"], n_rows=100,
+        lco_metrics={"soh_mae": 1.0, "soh_r2": 0.9, "baseline_soh_r2": 0.6},
+    )
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="synth_prospective", chemistry="LiCoO2",
+        feature_set=["cycle_number"], feature_version="v-test",
+        hyperparams={}, seed=50, cell_ids=["CellA"], n_rows=100,
+        lco_metrics={"soh_mae": 9.0, "soh_r2": -0.5, "baseline_soh_r2": 0.4},
+    )
+
+    rows = reg.accuracy_by_source()
+    assert [r["dataset"] for r in rows] == ["synth"]
+    assert rows[0]["soh_r2"] == 0.9
+
+    kinds = reg.model_kind_comparison()
+    assert kinds and kinds[0]["dataset"] == "synth"
+    assert not any((r.get("dataset") or "").endswith("_prospective") for r in kinds)
+
+
+def test_prospective_benchmark_reader_reports_the_gap(db, monkeypatch):
+    """The reader must place the prospective number NEXT to its dataset's LCO
+    number — the gap between them is the finding."""
+    _fake_clock(monkeypatch)
+    reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="synth", chemistry="LiCoO2",
+        feature_set=["cycle_number"], feature_version="v-test",
+        hyperparams={}, seed=42, cell_ids=["CellA"], n_rows=100,
+        lco_metrics={"soh_mae": 1.0, "soh_r2": 0.95, "baseline_soh_r2": 0.6},
+    )
+    datasets = {
+        "synth": {f"Cell{i}": make_cycles_df(n_cycles=200) for i in range(4)},
+    }
+    logged = reg.run_prospective_benchmark_study(datasets, org_id=reg.PLATFORM_ORG_ID)
+    assert logged
+
+    rows = reg.prospective_benchmark()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["dataset"] == "synth"
+    assert row["lco_soh_r2"] == 0.95
+    assert row["soh_r2"] is not None
+    assert row["forecasting_gap"] == row["soh_r2"] - 0.95
