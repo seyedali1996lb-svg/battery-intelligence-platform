@@ -26,7 +26,17 @@ _SORT_OPTIONS = {
 
 
 def _fmt(v, decimals=3):
-    return f"{v:.{decimals}f}" if v is not None else "—"
+    # v12: RUL metrics can legitimately be NaN in-memory (no observed-EOL
+    # rows to score) or None after a SQLite roundtrip (SQLite stores NaN as
+    # NULL). Both render as "—", never as "nan".
+    if v is None:
+        return "—"
+    try:
+        if v != v:  # NaN != NaN
+            return "—"
+    except TypeError:
+        pass
+    return f"{v:.{decimals}f}"
 
 
 def page_benchmark(org_id: int) -> None:
@@ -82,9 +92,12 @@ def page_benchmark(org_id: int) -> None:
             "Run ID":     r["run_id"],
             "Dataset":    r["dataset"],
             "Chemistry":  r["chemistry"] or "—",
+            "Model":      ("PINN" if (r.get("model_kind") == "pinn") else "GBRT"),
             "Cells":      r["n_cells"],
             "SOH MAE":    _fmt(r["soh_mae"]),
             "SOH R2":     _fmt(r["soh_r2"]),
+            "Baseline R2": _fmt(r.get("baseline_soh_r2")),
+            "Model +vs base": _fmt((r["soh_r2"] - r["baseline_soh_r2"]) if (r.get("soh_r2") is not None and r.get("baseline_soh_r2") is not None) else None, 3),
             "RUL MAE":    _fmt(r["rul_mae"], 1),
             "RUL R2":     _fmt(r["rul_r2"]),
             "Reliable":   "✓" if r["rul_reliable"] else "—",
@@ -96,8 +109,211 @@ def page_benchmark(org_id: int) -> None:
     st.dataframe(table, use_container_width=True, hide_index=True)
     st.caption(
         f"{len(runs)} run(s) · scope: this org's uploaded-data runs + the "
-        "shared platform reference-dataset runs (NASA/synthetic/Severson)"
+        "shared platform reference-dataset runs (NASA/synthetic/Severson). "
+        "Where a run has a baseline R², the 'Model +vs base' column shows the "
+        "model's real advantage over a trivial cycle-number->SOH linear fit under "
+        "the same leave-cell-out folds — most of a raw R² is smooth aging curves, "
+        "not model skill. Runs are labelled by **Model**: GBRT is the production "
+        "model; PINN is the physics-regularized estimator benchmarked through "
+        "the same folds (see the model-comparison table below)."
     )
+
+    # ── Accuracy by source: model R² vs the trivial baseline ────────────────
+    # Grouped by (dataset, chemistry) rather than chemistry alone — the
+    # synthetic fleet and the NASA PCoE cells share the chemistry "LiCoO2",
+    # so a chemistry-only grouping would conflate a simulated fleet with real
+    # measured cells. Only LCO runs carrying a baseline are shown (a
+    # cross-chemistry transfer run has no baseline by construction).
+    st.markdown("#### Accuracy by chemistry / source")
+    acc_rows = reg.accuracy_by_source(tenant_org_id=org_id)
+    # Which model SELECTION would pick for each chemistry — the row with the
+    # largest genuine advantage, not the largest raw R². Reported from the same
+    # registry this table is built on, so the rule that answers a cell is
+    # auditable instead of implicit (src/model_selection.py).
+    from model_selection import per_chemistry_accuracy as _per_chem
+    _selected_by_chem = {
+        r["chemistry"]: r["selected_key"] for r in _per_chem(tenant_org_id=org_id)
+    }
+    if not acc_rows:
+        st.caption(
+            "No LCO run with a baseline logged yet — this table fills in once "
+            "a reference fleet or an uploaded dataset has trained on this "
+            "deployment."
+        )
+    else:
+        acc_table = pd.DataFrame([
+            {
+                "Source":          a["dataset"],
+                "Chemistry":       a["chemistry"],
+                "Selected":        ("✓ best skill" if _selected_by_chem.get(a["chemistry"]) == a["dataset"] else ""),
+                "Cells":           a["n_cells"],
+                "Model R2":        _fmt(a["soh_r2"]),
+                "Baseline R2":     _fmt(a["baseline_soh_r2"]),
+                "Real advantage":  f"{a['advantage']:+.3f}",
+                "RUL R2":          _fmt(a["rul_r2"]),
+                "RUL labels obs.": (
+                    f"{a['rul_label_coverage'] * 100:.0f}%"
+                    if a.get("rul_label_coverage") is not None else "—"
+                ),
+                "RUL reliable":    "✓" if a["rul_reliable"] else "—",
+            }
+            for a in acc_rows
+        ])
+        st.dataframe(acc_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "**Selected** marks the model this platform would use to answer a new "
+            "cell of that chemistry: the one with the largest **Real advantage**, not "
+            "the largest raw R² (a chemistry whose aging curves are smooth would "
+            "otherwise always win on R² alone). Where two sources share a chemistry "
+            "— NASA and the synthetic fleet are both LiCoO2 — only one carries the "
+            "mark, and a cell whose own source has a model always uses that one "
+            "regardless of this ranking."
+        )
+        st.caption(
+            "**Model R2** is the GBRT's leave-cell-out R² on cells it never saw. "
+            "**Baseline R2** is a trivial linear fit of cycle_number → SOH under the "
+            "*identical* folds — what a dumb straight line already explains. "
+            "**Real advantage** is the difference: how much the model and its "
+            "engineered features actually earn. **RUL R2** is scored only on "
+            "rows whose cell actually reached end-of-life inside its recorded "
+            "window (measured labels); **RUL labels obs.** shows what fraction "
+            "of each population's RUL rows that is — a RUL R² on a population "
+            "with 0% observed labels does not exist and is shown as —, never "
+            "extrapolated to look complete."
+        )
+        st.caption(
+            "Reading the baseline honestly: a **positive** baseline means aging "
+            "curves are smooth enough that a straight line captures much of the "
+            "variance, so part of the model's raw R² is the shape of aging, not "
+            "model skill (NASA is the clearest case). A **negative** baseline means "
+            "a single global line is worse than just predicting the mean — the "
+            "cells have genuinely different fade rates — so the model's advantage "
+            "there reflects real cross-cell prediction. Either way, the advantage "
+            "column, not the raw R², is the honest measure of learned skill. "
+            "Sample sizes (the Cells column) are small — NASA's LCO rests on 4 "
+            "held-out cells — so treat these as directional, not fleet-scale "
+            "guarantees."
+        )
+
+    # ── Model kind: GBRT vs PINN on identical folds ─────────────────────────
+    # The GBRT had an honest published number; the physics-regularized PINN
+    # did not, so "which model should we use?" was answered by assertion.
+    # Both are now fitted and evaluated by the same leave-cell-out harness and
+    # the same trivial baseline, so the only difference is the model itself —
+    # and the table reports the result even when the PINN loses.
+    st.markdown("#### Model comparison — production GBRT vs physics-regularized PINN")
+    mk_rows = reg.model_kind_comparison(tenant_org_id=org_id)
+    if not mk_rows:
+        st.caption(
+            "No model-kind comparison logged yet — the PINN is benchmarked "
+            "through the same leave-cell-out harness as the GBRT, and this "
+            "table fills in automatically once the reference fleets have trained."
+        )
+    else:
+        gbrt_rows = [r for r in mk_rows if r["model_kind"] == "gbrt"]
+        pinned = [r for r in gbrt_rows if r.get("has_counterpart")]
+        mk_table = pd.DataFrame([
+            {
+                "Source":       r["dataset"],
+                "Chemistry":    r["chemistry"],
+                "Model":        r["model_label"],
+                "Cells":        r["n_cells"],
+                "SOH R2":       _fmt(r["soh_r2"]),
+                "SOH MAE (%)":  _fmt(r["soh_mae"]),
+                "Baseline R2":  _fmt(r.get("baseline_soh_r2")),
+                "Real adv.":    _fmt(r.get("advantage")),
+                "RUL R2":       _fmt(r["rul_r2"]),
+                "RUL MAE (cy)": _fmt(r["rul_mae"], 1),
+                "vs GBRT":      (_fmt(r["pinn_minus_gbrt_soh_r2"])
+                                 if r.get("pinn_minus_gbrt_soh_r2") is not None else "—"),
+            }
+            for r in mk_rows
+        ])
+        st.dataframe(mk_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "**Baseline R2** and the leave-cell-out folds are IDENTICAL for both "
+            "rows — the trivial `cycle_number → SOH` baseline is model-independent, "
+            "so it is reused rather than recomputed. The only difference between "
+            "the two numbers is the model. **vs GBRT** is the PINN's SOH R² minus "
+            "the GBRT's; a negative value means the physics estimator lost on "
+            "held-out cells, and is reported as-is."
+        )
+        st.caption(
+            "Scope of the PINN row: its degradation law is shared across cells "
+            "and fitted on the *training* cells only, with each cell anchored at "
+            "its own first observed SOH (`s0 - β_sei·√n - β_lam·n^γ`). Its RUL is a "
+            "projection of that fitted curve to the 80% EOL threshold, which can "
+            "fall outside the observed window — an extrapolation, not a measured "
+            "miss. So treat a weak PINN number as 'the physics shape fits the "
+            "population poorly', not as a defect in the harness. The GBRT is the "
+            "production model; this table exists so the choice is measured, and it "
+            "currently reports the GBRT ahead."
+        )
+        if not pinned:
+            st.caption(
+                "No dataset has both model kinds logged yet, so no head-to-head "
+                "delta is available — a single-model row carries no comparison."
+            )
+
+    # ── Cross-chemistry transfer: the counterexample ────────────────────────
+    # Deliberately sits immediately after the per-chemistry LCO table, with
+    # no divider: that table says "on a held-out cell of the SAME chemistry,
+    # the model is this good"; this one says what happens on a cell of a
+    # DIFFERENT chemistry the model has never seen a single row of. The gap
+    # between the two tables is the real cost of "a cell I haven't seen",
+    # and it is the single most informative accuracy number on the platform
+    # — so it must be impossible to miss, not tucked into a one-off study.
+    st.markdown("#### Cross-chemistry transfer — will the model work on an unseen cell?")
+    xfer_rows = reg.cross_chemistry_benchmark(tenant_org_id=org_id)
+    if not xfer_rows:
+        st.caption(
+            "No cross-chemistry transfer study logged yet — this table fills "
+            "in automatically once the reference fleets have trained."
+        )
+    else:
+        xfer_table = pd.DataFrame([
+            {
+                "Train → Eval":  f"{x['train_dataset']} → {x['eval_dataset']}",
+                "Chemistry":     x["chemistry"],
+                "SOH R2":        _fmt(x["soh_r2"]),
+                "SOH MAE (%)":   _fmt(x["soh_mae"]),
+                "RUL MAE (cy)":  _fmt(x["rul_mae"], 1),
+                "RUL R2":        _fmt(x["rul_r2"]),
+                "Shared feats":  str(x["n_features"]) if x["evaluated"] else "—",
+                "Status":        "evaluated" if x["evaluated"] else "not evaluated",
+            }
+            for x in xfer_rows
+        ])
+        st.dataframe(xfer_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "**Method (not the same thing as the table above):** one GBRT model "
+            "is trained on *all* cells of the training domain — no cell is held "
+            "out, because there is no same-chemistry held-out cell to spare — "
+            "then evaluated, unmodified, on *all* cells of a different "
+            "chemistry it has never seen a single row of. It may only use the "
+            "feature columns both domains actually have (the *Shared feats* "
+            "column), so a smaller number there is a weaker model, not a "
+            "cleaner comparison. Rows are sorted worst-first, and a negative R² "
+            "means the transferred model is **worse than predicting the "
+            "training domain's mean**."
+        )
+        st.caption(
+            "**Why this matters more than any number above it:** a laboratory "
+            "leave-cell-out R² answers \"does this generalize to another cell "
+            "of the same chemistry?\" This table answers the question a buyer "
+            "actually asks — \"will this work on *my* cells?\" — and the honest "
+            "answer for a chemistry the model wasn't trained on is: not yet. "
+            "The NASA → Severson result (LiCoO2 → LFP) is the clearest "
+            "counterexample on the platform and the reason per-chemistry "
+            "reporting above is not interchangeable with a general accuracy "
+            "claim. See `src/battery_knowledge.py`'s why-resistance-scales-differ "
+            "entry for the mechanism behind it."
+        )
+        for _x in xfer_rows:
+            if not _x["evaluated"] and _x.get("notes"):
+                st.caption(
+                    f"**{_x['train_dataset']} → {_x['eval_dataset']} — not evaluated:** {_x['notes']}"
+                )
 
     # ── Fold-level drill-down ───────────────────────────────────────────────
     st.markdown("#### Fold-level drill-down")

@@ -36,13 +36,16 @@ def db(tmp_path, monkeypatch):
     return db_module
 
 
-def _lco_metrics(soh_mae=1.0, soh_r2=0.8, rul_mae=20.0, rul_r2=0.5, rul_reliable=True, per_cell=None):
+def _lco_metrics(soh_mae=1.0, soh_r2=0.8, rul_mae=20.0, rul_r2=0.5, rul_reliable=True, per_cell=None,
+                 baseline_soh_r2=None, baseline_per_cell=None):
     return {
         "soh_mae": soh_mae, "soh_r2": soh_r2,
         "rul_mae": rul_mae, "rul_r2": rul_r2,
         "rul_reliable": rul_reliable,
         "per_cell": per_cell or {"CellA": {"soh_mae": soh_mae, "soh_r2": soh_r2,
                                             "rul_mae": rul_mae, "rul_r2": rul_r2}},
+        "baseline_soh_r2": baseline_soh_r2,
+        "baseline_per_cell": baseline_per_cell,
     }
 
 
@@ -87,6 +90,40 @@ def test_log_run_and_get_run_round_trip(db):
     assert got["notes"] == "unit test run"
     assert got["git_commit"]  # non-empty string, "unknown" is an acceptable value
     assert got["timestamp"]
+
+
+def test_log_run_persists_trivial_baseline(db):
+    """The honest accuracy denominator must survive the DB round-trip, not just
+    live in the in-memory bundle — otherwise the Benchmark page's baseline
+    column and the model card's model-advantage line would always read '—'."""
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID,
+        dataset="nasa",
+        chemistry="LiCoO2",
+        feature_set=["cycle_number"],
+        feature_version=FEATURE_VERSION,
+        hyperparams={},
+        seed=42,
+        cell_ids=["CellA", "CellB"],
+        n_rows=300,
+        lco_metrics=_lco_metrics(
+            soh_r2=0.806,
+            baseline_soh_r2=0.603,
+            baseline_per_cell={"CellA": {"baseline_soh_r2": 0.6}},
+        ),
+    )
+    got = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert got["baseline_soh_r2"] == 0.603
+    assert got["baseline_per_cell"] == {"CellA": {"baseline_soh_r2": 0.6}}
+
+
+def test_log_run_baseline_absent_is_null_not_fabricated(db):
+    """A run logged without a baseline (e.g. a cross-chemistry transfer, where
+    LCO folds don't exist) stores NULL — never a fabricated number."""
+    run_id = _log(db, dataset="nasa_to_severson")
+    got = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert got["baseline_soh_r2"] is None
+    assert got["baseline_per_cell"] is None
 
 
 def test_get_run_returns_none_for_unknown_run_id(db):
@@ -187,13 +224,104 @@ def test_leaderboard_with_no_tenant_shows_only_platform_runs(db):
 
 
 # ---------------------------------------------------------------------------
+# accuracy_by_source
+# ---------------------------------------------------------------------------
+
+def _log_acc(db, dataset, chemistry, soh_r2, baseline, n_cells=4, rul_r2=0.7,
+             rul_reliable=True, org_id=reg.PLATFORM_ORG_ID):
+    return reg.log_run(
+        org_id=org_id,
+        dataset=dataset,
+        chemistry=chemistry,
+        feature_set=["cycle_number"],
+        feature_version=FEATURE_VERSION,
+        hyperparams={},
+        seed=42,
+        cell_ids=[f"C{i}" for i in range(n_cells)],
+        n_rows=n_cells * 100,
+        lco_metrics=_lco_metrics(
+            soh_r2=soh_r2,
+            rul_r2=rul_r2,
+            rul_reliable=rul_reliable,
+            baseline_soh_r2=baseline,
+        ),
+    )
+
+
+def test_accuracy_by_source_reports_advantage(db):
+    _log_acc(db, "nasa", "LiCoO2", soh_r2=0.759, baseline=0.603)
+    _log_acc(db, "severson", "LFP", soh_r2=0.986, baseline=-0.758)
+
+    rows = reg.accuracy_by_source(tenant_org_id=None)
+    assert len(rows) == 2
+
+    # Sorted by real advantage descending: Severson (+1.744) before NASA (+0.156).
+    assert [r["dataset"] for r in rows] == ["severson", "nasa"]
+
+    nasa = next(r for r in rows if r["dataset"] == "nasa")
+    assert abs(nasa["advantage"] - 0.156) < 1e-9
+    assert nasa["baseline_soh_r2"] == 0.603
+    assert nasa["soh_r2"] == 0.759
+
+    sev = next(r for r in rows if r["dataset"] == "severson")
+    assert abs(sev["advantage"] - 1.744) < 1e-9
+    assert sev["chemistry"] == "LFP"
+
+
+def test_accuracy_by_source_groups_by_dataset_not_chemistry(db):
+    """The synthetic fleet and NASA cells are BOTH 'LiCoO2' — they must not be
+    collapsed into one row, or a simulated fleet would masquerade as real cells."""
+    _log_acc(db, "nasa", "LiCoO2", soh_r2=0.759, baseline=0.603)
+    _log_acc(db, "synth", "LiCoO2", soh_r2=0.998, baseline=-1.967)
+
+    rows = reg.accuracy_by_source(tenant_org_id=None)
+    assert len(rows) == 2
+    assert {r["dataset"] for r in rows} == {"nasa", "synth"}
+
+
+def test_accuracy_by_source_excludes_runs_without_baseline(db):
+    """A cross-chemistry transfer run has no baseline by construction and must
+    be excluded, not shown with a fabricated advantage."""
+    _log_acc(db, "nasa", "LiCoO2", soh_r2=0.759, baseline=0.603)
+    _log(db, dataset="nasa_to_severson", chemistry="LiCoO2 -> LFP")
+
+    rows = reg.accuracy_by_source(tenant_org_id=None)
+    assert [r["dataset"] for r in rows] == ["nasa"]
+
+
+def test_accuracy_by_source_reports_newest_run_per_group(db):
+    """Repeated runs (or a retrain) for the same group: the newest wins — the
+    older duplicate must not appear as a second row."""
+    _log_acc(db, "nasa", "LiCoO2", soh_r2=0.500, baseline=0.400)
+    _log_acc(db, "nasa", "LiCoO2", soh_r2=0.900, baseline=0.600)
+
+    rows = reg.accuracy_by_source(tenant_org_id=None)
+    assert len(rows) == 1
+    assert rows[0]["soh_r2"] == 0.900
+    assert abs(rows[0]["advantage"] - 0.300) < 1e-9
+
+
+def test_accuracy_by_source_returns_empty_when_no_baselines(db):
+    _log(db, dataset="nasa", chemistry="LiCoO2")
+    assert reg.accuracy_by_source(tenant_org_id=None) == []
+
+
+def test_accuracy_by_source_scoped_to_tenant(db):
+    _log_acc(db, "uploaded", "LFP", soh_r2=0.9, baseline=0.5, org_id=5)
+    assert reg.accuracy_by_source(tenant_org_id=None) == []   # platform only
+    assert len(reg.accuracy_by_source(tenant_org_id=5)) == 1  # org 5 sees its own
+
+
+# ---------------------------------------------------------------------------
 # replay_run
 # ---------------------------------------------------------------------------
 
 def test_replay_run_reproduces_recorded_metrics(db):
+    # Fast fade so both cells cross EOL in-window: the RUL metrics this test
+    # replays are computed on observed rows (v12), not None.
     cell_data = {
-        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
-        "CellB": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+        "CellA": make_cycles_df(n_cycles=300, fade_per_cycle=0.003),
+        "CellB": make_cycles_df(n_cycles=300, fade_per_cycle=0.0035, initial_resistance_ohm=0.06),
     }
     lco = run_lco(cell_data, seed=42)
     run_id = reg.log_run(
@@ -353,3 +481,298 @@ def test_cross_chemistry_runs_for_train_dataset_filters_by_prefix(db):
 
 def test_cross_chemistry_runs_for_train_dataset_empty_when_none_logged(db):
     assert reg.cross_chemistry_runs_for_train_dataset("nasa") == []
+
+
+# ---------------------------------------------------------------------------
+# Permanent cross-chemistry benchmark (aggregator)
+# ---------------------------------------------------------------------------
+
+def _fake_clock(monkeypatch):
+    """Patch experiment_registry's datetime so each log_run() gets a strictly
+    increasing timestamp -- the aggregators pick the NEWEST run per pairing by
+    comparing ISO timestamp strings, and two log_run() calls in one test can
+    otherwise land on the same microsecond."""
+    import datetime as _dt
+    from types import SimpleNamespace
+    ticks = {"n": 0}
+
+    class _Clock:
+        @staticmethod
+        def now():
+            ticks["n"] += 1
+            return _dt.datetime(2026, 1, 1, 0, 0, ticks["n"])
+
+    monkeypatch.setattr(reg, "datetime", SimpleNamespace(datetime=_Clock))
+
+
+def _log_transfer(dataset, soh_r2, rul_r2=-1.0, chemistry="LiCoO2 -> LFP"):
+    return reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset=dataset, chemistry=chemistry,
+        feature_set=["cycle_number", "fade_rate_30cy"], feature_version=FEATURE_VERSION,
+        hyperparams={"random_state": 42}, seed=42, cell_ids=["A"], n_rows=10,
+        lco_metrics=_lco_metrics(soh_mae=22.0, soh_r2=soh_r2, rul_mae=1350.0, rul_r2=rul_r2,
+                                rul_reliable=False, per_cell={}),
+    )
+
+
+def test_cross_chemistry_benchmark_keeps_newest_run_per_pair(db, monkeypatch):
+    _fake_clock(monkeypatch)
+    _log_transfer("nasa_to_severson", soh_r2=-34.6)   # older, superseded
+    _log_transfer("nasa_to_severson", soh_r2=-9.9)    # newer, must win
+
+    rows = reg.cross_chemistry_benchmark()
+    assert len(rows) == 1
+    assert rows[0]["train_dataset"] == "nasa"
+    assert rows[0]["eval_dataset"] == "severson"
+    assert rows[0]["soh_r2"] == pytest.approx(-9.9)
+    assert rows[0]["evaluated"] is True
+    assert rows[0]["n_features"] == 2
+
+
+def test_cross_chemistry_benchmark_sorts_worst_transfer_first(db, monkeypatch):
+    """The point of this table is the counterexample -- the most negative
+    SOH R² must come first, and the honest "not evaluated" rows must be
+    present (after the numbers) rather than omitted."""
+    _fake_clock(monkeypatch)
+    _log_transfer("severson_to_synth", soh_r2=-2.0, chemistry="LFP -> LiCoO2")
+    _log_transfer("nasa_to_severson", soh_r2=-34.6)
+    reg.log_cross_chemistry_unavailable("nasa", "oxford", "schema incompatible")
+
+    rows = reg.cross_chemistry_benchmark()
+    assert [(r["train_dataset"], r["eval_dataset"]) for r in rows] == [
+        ("nasa", "severson"), ("severson", "synth"), ("nasa", "oxford"),
+    ]
+    assert rows[-1]["evaluated"] is False
+    assert rows[-1]["soh_r2"] is None
+    assert "schema incompatible" in rows[-1]["notes"]
+
+
+def test_cross_chemistry_benchmark_excludes_plain_lco_runs(db):
+    _log(db, dataset="nasa", chemistry="LiCoO2")
+    assert reg.cross_chemistry_benchmark() == []
+
+
+# ---------------------------------------------------------------------------
+# run_cross_chemistry_study -- the PERMANENT study (not a one-off script)
+# ---------------------------------------------------------------------------
+
+def _study_datasets():
+    """Two datasets whose chemistries differ: "CellA" resolves to the synthetic
+    LiCoO2 profile, "S-b1c2" to the Severson LFP profile."""
+    return {
+        "synth":    {"CellA": make_cycles_df(n_cycles=120)},
+        "severson": {"S-b1c2": make_cycles_df(n_cycles=120, fade_per_cycle=0.0008)},
+    }
+
+
+def test_run_cross_chemistry_study_only_runs_cross_chemistry_pairs(db, monkeypatch):
+    _fake_clock(monkeypatch)
+    result = reg.run_cross_chemistry_study(_study_datasets())
+
+    pairs = {r["dataset"] for r in reg.leaderboard(tenant_org_id=None)}
+    assert pairs == {"synth_to_severson", "severson_to_synth"}
+    assert len(result["evaluated"]) == 2
+
+
+def test_run_cross_chemistry_study_skips_same_chemistry_pair(db, monkeypatch):
+    """Two LiCoO2 sources are a domain shift, not a cross-chemistry transfer —
+    pairing them would inflate the table with a same-chemistry result."""
+    _fake_clock(monkeypatch)
+    datasets = {
+        "synth": {"CellA": make_cycles_df(n_cycles=120)},
+        "other": {"CellB": make_cycles_df(n_cycles=120)},
+    }
+    result = reg.run_cross_chemistry_study(datasets)
+    assert result["evaluated"] == []
+    assert reg.cross_chemistry_benchmark() == []
+
+
+def test_run_cross_chemistry_study_is_idempotent_per_feature_version(db, monkeypatch):
+    """Second call (same FEATURE_VERSION) must be a cheap registry read, not a
+    retrain — otherwise every process start re-runs the study."""
+    _fake_clock(monkeypatch)
+    first = reg.run_cross_chemistry_study(_study_datasets())
+    second = reg.run_cross_chemistry_study(_study_datasets())
+
+    assert len(first["evaluated"]) == 2
+    assert second["evaluated"] == []
+    assert set(second["skipped"]) == {"synth_to_severson", "severson_to_synth"}
+    # No duplicate runs accumulated.
+    assert len(reg.leaderboard(tenant_org_id=None)) == 2
+
+
+def test_run_cross_chemistry_study_reruns_when_feature_version_changes(db, monkeypatch):
+    """The number depends on the feature set, so a FEATURE_VERSION bump must
+    re-run and log a fresh row rather than serving a stale transfer metric."""
+    _fake_clock(monkeypatch)
+    reg.run_cross_chemistry_study(_study_datasets())
+
+    import batlab.features.engineering as engineering
+    monkeypatch.setattr(engineering, "FEATURE_VERSION", "v99-test")
+
+    again = reg.run_cross_chemistry_study(_study_datasets())
+    assert len(again["evaluated"]) == 2
+    assert again["skipped"] == []
+
+
+def test_run_cross_chemistry_study_logs_unavailable_pairing_once(db, monkeypatch):
+    _fake_clock(monkeypatch)
+    datasets = _study_datasets()
+    reason = "Oxford's checkpoint schema has no cycle_number "
+    first = reg.run_cross_chemistry_study(datasets, unavailable=[("synth", "oxford", reason)])
+    second = reg.run_cross_chemistry_study(datasets, unavailable=[("synth", "oxford", reason)])
+
+    assert first["unavailable"][0]["pair"] == "synth_to_oxford"
+    assert second["unavailable"] == []  # schema reason is version-independent — once ever
+    assert "synth_to_oxford" in second["skipped"]
+
+    rows = reg.cross_chemistry_benchmark()
+    oxford = next(r for r in rows if r["eval_dataset"] == "oxford")
+    assert oxford["evaluated"] is False
+    assert oxford["soh_r2"] is None
+
+
+# ---------------------------------------------------------------------------
+# Hyperparameter divergence -- the shared replay-contract check
+# ---------------------------------------------------------------------------
+
+def test_hyperparams_divergence_empty_when_run_matches_current_params(db):
+    from batlab.models.gbrt import GBRT_PARAMS
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number"], feature_version=FEATURE_VERSION,
+        hyperparams=dict(GBRT_PARAMS), seed=GBRT_PARAMS["random_state"],
+        cell_ids=["A"], n_rows=10, lco_metrics=_lco_metrics(),
+    )
+    run = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert reg.hyperparams_divergence(run) == {}
+    assert reg.format_hyperparams_diff({}) == ""
+
+
+def test_hyperparams_divergence_names_recorded_and_current_values(db):
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number"], feature_version=FEATURE_VERSION,
+        hyperparams={"n_estimators": 1}, seed=42,
+        cell_ids=["A"], n_rows=10, lco_metrics=_lco_metrics(),
+    )
+    run = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    diff = reg.hyperparams_divergence(run)
+    assert diff, "a partial/old snapshot must register as diverged"
+    for recorded, current in diff.values():
+        assert recorded != current
+    text = reg.format_hyperparams_diff(diff)
+    assert "→" in text
+
+
+def test_hyperparams_divergence_none_and_missing_snapshot_are_diverged(db):
+    """A run with no recorded hyperparameters at all must register as diverged
+    (we cannot claim it is reproducible), and must not raise."""
+    assert reg.hyperparams_divergence(None)
+    assert reg.hyperparams_divergence({})
+
+
+# ---------------------------------------------------------------------------
+# model_kind — GBRT vs PINN side by side
+# ---------------------------------------------------------------------------
+
+def _log_kind(db, kind, dataset="nasa", chemistry="LiCoO2", soh_r2=0.8):
+    return reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset=dataset, chemistry=chemistry,
+        feature_set=["cycle_number"], feature_version=FEATURE_VERSION,
+        hyperparams={"model_kind": kind}, seed=42,
+        cell_ids=["CellA", "CellB"], n_rows=300,
+        lco_metrics=_lco_metrics(soh_r2=soh_r2, baseline_soh_r2=0.5),
+        model_kind=kind,
+    )
+
+
+def test_model_kind_defaults_to_gbrt_and_round_trips(db):
+    """An unlabelled run is a GBRT fit (the production model) — never NULL,
+    so no call site needs a special 'NULL means gbrt' rule."""
+    run_id = _log(db)
+    assert reg.get_run(reg.PLATFORM_ORG_ID, run_id)["model_kind"] == "gbrt"
+
+    pinn_id = _log_kind(db, "pinn")
+    assert reg.get_run(reg.PLATFORM_ORG_ID, pinn_id)["model_kind"] == "pinn"
+
+
+def test_pinn_runs_never_pollute_per_chemistry_gbrt_accuracy(db):
+    """The per-chemistry accuracy table is the PRODUCTION model's number. A
+    PINN run on the same dataset must not be averaged into it or mistaken
+    for it — silently conflating the two would misstate production accuracy."""
+    _log_kind(db, "gbrt", soh_r2=0.90)
+    _log_kind(db, "pinn", soh_r2=0.10)  # deliberately much worse
+
+    rows = reg.accuracy_by_source(tenant_org_id=None)
+    nasa = [r for r in rows if r["dataset"] == "nasa"]
+    assert len(nasa) == 1
+    assert nasa[0]["soh_r2"] == 0.90
+
+
+def test_model_kind_comparison_pairs_kinds_and_reports_signed_delta(db):
+    """Both kinds must appear for the same (dataset, chemistry), and the GBRT
+    row must carry the PINN-minus-GBRT delta — negative when the PINN loses,
+    which is a result, not something to hide."""
+    _log_kind(db, "gbrt", soh_r2=0.98)
+    _log_kind(db, "pinn", soh_r2=0.40)
+
+    rows = reg.model_kind_comparison(tenant_org_id=None)
+    kinds = {r["model_kind"] for r in rows}
+    assert kinds == {"gbrt", "pinn"}
+
+    gbrt_row = next(r for r in rows if r["model_kind"] == "gbrt")
+    pinn_row = next(r for r in rows if r["model_kind"] == "pinn")
+    assert gbrt_row["has_counterpart"] is True
+    assert pinn_row["has_counterpart"] is True
+    # The delta sits on the PINN row (the GBRT is the reference).
+    assert pinn_row["pinn_minus_gbrt_soh_r2"] == pytest.approx(0.40 - 0.98)
+    assert gbrt_row["pinn_minus_gbrt_soh_r2"] is None
+    # The PINN row still carries its own genuine-advantage number.
+    assert pinn_row["advantage"] == pytest.approx(0.40 - 0.5)
+
+
+def test_model_kind_comparison_marks_absent_counterpart(db):
+    _log_kind(db, "gbrt", soh_r2=0.9)
+    rows = reg.model_kind_comparison(tenant_org_id=None)
+    gbrt_row = next(r for r in rows if r["model_kind"] == "gbrt")
+    assert gbrt_row["has_counterpart"] is False
+    assert gbrt_row["pinn_minus_gbrt_soh_r2"] is None
+    # No counterpart means no head-to-head row at all — only the GBRT row.
+    assert {r["model_kind"] for r in rows} == {"gbrt"}
+
+
+def test_pinn_benchmark_study_logs_a_first_class_run(db, monkeypatch):
+    """The study runner must log a PINN run through log_run() with the
+    shared baseline, and be idempotent for the current FEATURE_VERSION."""
+    import batlab.validation.pinn_lco as pinn_lco
+
+    cells = {
+        "CellA": make_cycles_df(n_cycles=120, fade_per_cycle=0.0006),
+        "CellB": make_cycles_df(n_cycles=120, fade_per_cycle=0.0008,
+                                initial_resistance_ohm=0.06),
+    }
+    datasets = {"nasa": cells}
+
+    # Build features once so the study doesn't pay the full pipeline here.
+    from batlab.features.engineering import build_features
+    featured = {"nasa": {cid: build_features(df, cell_id=cid)
+                         for cid, df in cells.items()}}
+
+    first = reg.run_pinn_benchmark_study(
+        datasets, featured=featured, baselines={"nasa": 0.5},
+        org_id=reg.PLATFORM_ORG_ID,
+    )
+    assert len(first) == 1
+    run = reg.get_run(reg.PLATFORM_ORG_ID, first[0]["run_id"])
+    assert run["model_kind"] == "pinn"
+    assert run["baseline_soh_r2"] == 0.5
+    assert run["hyperparams"]["model_kind"] == "pinn"
+
+    # Second call is a cheap registry read — no duplicate run.
+    again = reg.run_pinn_benchmark_study(
+        datasets, featured=featured, baselines={"nasa": 0.5},
+        org_id=reg.PLATFORM_ORG_ID,
+    )
+    assert again == []
+    assert len([r for r in reg.leaderboard(None) if r["model_kind"] == "pinn"]) == 1

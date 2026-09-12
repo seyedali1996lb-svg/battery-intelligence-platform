@@ -22,6 +22,7 @@ from utils import (
 from data_loader import CELL_STRESS_PROFILES
 from design_system import provenance_banner, ACTION_META, CONF_META
 from chemistry_profiles import ChemistryProfile
+from accuracy_provenance import cell_model_provenance, provenance_label
 from _pages._health_diagnostics import render_engineering_diagnostics
 
 # ---------------------------------------------------------------------------
@@ -383,6 +384,21 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # RUL comparison strip: validated GBRT (leave-cell-out) vs the physics fit.
     _rul_comp_cols = st.columns(2)
     _gbrt_rul_val = "—"
+    # Provenance travels with the number: fold count + chemistry source, not a
+    # bare "LCO-validated" adjective that reads as a fleet-scale claim. The
+    # selection record (src/model_selection.py) names the model that actually
+    # answered and flags a chemistry-matched stand-in rather than assuming the
+    # cell's own source produced this number.
+    from model_selection import describe_bundle_for_cell, per_chemistry_accuracy_line
+    _selection = describe_bundle_for_cell(bundle, cell_id)
+    _prov = cell_model_provenance(bundle, cell_id, selection=_selection)
+    _prov_label = provenance_label(_prov)
+    _gbrt_rul_note = "Data-driven model — suppressed when the fold R² floor is not met"
+    if _prov_label:
+        _gbrt_rul_note += f" · {_prov_label}"
+    _chem_accuracy_line = per_chemistry_accuracy_line(
+        _selection.get("chemistry"), bundles={"selected": bundle} if bundle else None,
+    )
     if rul_reliable and "rul_pred" in latest.index and latest["rul_pred"] is not None \
             and pd.notna(latest["rul_pred"]):
         _gbrt_rul_val = f"{float(latest['rul_pred']):.0f} cy"
@@ -392,7 +408,7 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     with _rul_comp_cols[0]:
         render_card(
             metric_tile_html("GBRT RUL (LCO-validated)", _gbrt_rul_val,
-                             "Data-driven model — suppressed when the fold R² floor is not met",
+                             _gbrt_rul_note,
                              value_color="#63b3ed")
         )
     with _rul_comp_cols[1]:
@@ -400,6 +416,11 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             metric_tile_html("Physics RUL (SEI √fade)", _phys_rul_val,
                              "Central projection crossing the EOL threshold — ±2σ band shown on the chart",
                              value_color="#48bb78")
+        )
+    if _chem_accuracy_line:
+        st.caption(
+            f"Accuracy by chemistry (registry-derived, reported per chemistry "
+            f"rather than platform-wide): {_chem_accuracy_line}"
         )
 
     _fig_e1_col, _fig_twin_col = st.columns(2)
@@ -525,6 +546,18 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             _rec_h  = _rec_classify(_soh_h, _f30_h, _f50_h, rul_reliable, _rul_h, _fit_h)
             _al_h, _ac_h, _abg_h = ACTION_META[_rec_h["action"]]
             _cc_h, _cl_h = CONF_META[_rec_h["confidence"]]
+            # The mechanism verdict is computed earlier on this page (from the
+            # shared knowledge-graph edge, or diagnose_mechanism() when no graph
+            # is supplied). classify() never sees that signal, so without this
+            # note a "Continue" card can sit directly beside an LAM-dominant
+            # verdict with nothing connecting them -- the same
+            # mechanism_corroboration_note() pattern the Decision page already
+            # uses, applied to this page's always-visible action card.
+            try:
+                from recommendations import mechanism_corroboration_note as _mcn_h
+                _corr_h = _mcn_h(_rec_h["action"], _mech) if _mech else None
+            except Exception:
+                _corr_h = None
             _md_html(
                 f"<div style='background:{_abg_h};border:2px solid {_ac_h}55;border-radius:10px;"
                 f"padding:14px 20px'>"
@@ -534,7 +567,13 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 f"<div style='margin-top:6px'>"
                 f"<span style='background:{_cc_h}22;border:1px solid {_cc_h}55;color:{_cc_h};"
                 f"font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px'>{_cl_h}</span>"
-                f"</div></div>"
+                f"</div>"
+                + (
+                    f"<div style='margin-top:8px;font-size:11px;color:#f6ad55;"
+                    f"border-top:1px solid {_ac_h}33;padding-top:8px'>⚠ {_corr_h}</div>"
+                    if _corr_h else ""
+                )
+                + "</div>"
             )
             if st.button("Full decision analysis →", key=f"h_to_dec_{cell_id}", use_container_width=True):
                 st.session_state.page = "decision"

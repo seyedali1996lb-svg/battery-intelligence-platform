@@ -289,7 +289,26 @@ def main() -> None:
 
     df          = active_fdfs[selected]
     split_cycle = active_sc[selected]
-    bundle      = active_bundle
+
+    # ── Model selection for THIS cell, by chemistry ──────────────────────────
+    # The router used to hand every page the one bundle belonging to the active
+    # data MODE, while several pages independently re-resolved a per-cell
+    # bundle with a silent `bundles.get(kind) or bundles.get("synth")`
+    # fallback. Either path could answer a cell with a model of a different
+    # chemistry and say nothing about it. Selection is now explicit and
+    # chemistry-keyed (src/model_selection.py): the model trained on this
+    # cell's own source when it exists, else the best SAME-chemistry model —
+    # which the pages disclose as a chemically-matched reference model, not a
+    # validation on this cell — else an empty model so RUL is withheld rather
+    # than scored by something unrelated.
+    #
+    # The org's uploaded bundle is merged in under "upload" so an uploaded cell
+    # resolves to the model actually trained on its own data instead of falling
+    # through to a reference model of unknown relevance.
+    from model_selection import select_model_for_cell
+    _route_bundles = {**bundles, "upload": up_bundle} if up_bundle else bundles
+    _selection = select_model_for_cell(selected, _route_bundles)
+    bundle = _selection["bundle"] if _selection["found"] else {"metrics": {}}
 
     # ── Route to the selected page ────────────────────────────────────────────
     route(
@@ -298,10 +317,12 @@ def main() -> None:
         split_cycle       = split_cycle,
         bundle            = bundle,
         active_fdfs       = active_fdfs,
-        bundles           = bundles,
+        bundles           = _route_bundles,
         cell_ids          = cell_ids,
-        rul_reliable      = bundle["metrics"].get("per_cell_rul_reliable", {}).get(
-            selected, bundle["metrics"].get("rul_reliable", True)
+        rul_reliable      = (
+            bundle["metrics"].get("per_cell_rul_reliable", {}).get(
+                selected, bundle["metrics"].get("rul_reliable", True)
+            ) if _selection["found"] else False
         ),
         graph             = graph,
         up_bundle         = up_bundle,

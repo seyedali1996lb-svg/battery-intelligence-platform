@@ -382,6 +382,43 @@ def test_failure_signatures_round_trip(db):
     assert abs(loaded[0].trend_vector[0] - 0.1) < 1e-9
 
 
+def test_migration_backfills_model_kind_on_a_pre_existing_runs_table(tmp_path, monkeypatch):
+    """An experiment_runs table created before the model_kind column existed
+    must gain it additively AND have its existing rows backfilled to 'gbrt' —
+    every run logged before the column was introduced was a GBRT fit, so no
+    call site should need a 'NULL means gbrt' rule (which would silently
+    mislabel a PINN run as the production model)."""
+    old_db_path = tmp_path / "old_runs.db"
+    conn = sqlite3.connect(old_db_path)
+    conn.execute(
+        "CREATE TABLE experiment_runs (run_id TEXT PRIMARY KEY, org_id INTEGER, "
+        "dataset TEXT NOT NULL, chemistry TEXT, feature_set TEXT, feature_version TEXT, "
+        "hyperparams TEXT, seed INTEGER, cell_ids TEXT, n_cells INTEGER, n_rows INTEGER, "
+        "soh_mae REAL, soh_r2 REAL, rul_mae REAL, rul_r2 REAL, rul_reliable INTEGER, "
+        "fold_metrics TEXT, git_commit TEXT, timestamp TEXT, notes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO experiment_runs (run_id, org_id, dataset, chemistry) "
+        "VALUES ('old_run', 0, 'nasa', 'LiCoO2')"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(db_module, "DB_PATH", old_db_path)
+    monkeypatch.setattr(
+        db_module, "engine",
+        db_module.create_engine(f"sqlite:///{old_db_path}", connect_args={"check_same_thread": False}),
+    )
+    monkeypatch.setattr(db_module, "Session", db_module.sessionmaker(bind=db_module.engine))
+
+    db_module.init_db()  # must not raise
+
+    runs = db_module.load_experiment_runs(0)
+    assert len(runs) == 1
+    assert runs[0]["run_id"] == "old_run"
+    assert runs[0]["model_kind"] == "gbrt"
+
+
 def test_migration_preserves_pre_existing_rows_without_org_id(tmp_path, monkeypatch):
     """
     Simulates a pre-multi-tenancy local DB (tables exist but have no org_id

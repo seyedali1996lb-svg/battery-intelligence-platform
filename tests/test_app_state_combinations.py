@@ -515,17 +515,24 @@ def test_workbench_manual_view_switch_has_no_crash(isolated_db):
     assert "What should I do" in _all_text(at)
 
 
-@pytest.mark.parametrize("data_mode,cell,expected_n", [
-    ("nasa", "B0005", "n=4"),
-    ("severson", "S-b1c2", "n=12"),
+@pytest.mark.parametrize("data_mode,cell,expected_n,expected_phrase", [
+    # NASA B0005: observed-EOL labels, fold R² above floor → reliable, and the
+    # thin-population caveat travels with the number.
+    ("nasa", "B0005", "n=4", "thin population"),
+    # Severson S-b1c2 (Tier-0 v12): NO cell reaches EOL in-window, so its RUL
+    # labels are formula extrapolations — RUL is now withheld and the badge
+    # must say WHY, not show a number with a caveat.
+    ("severson", "S-b1c2", "n=12", "RUL not evaluable"),
 ])
-def test_overview_hero_card_shows_lco_sample_size(isolated_db, data_mode, cell, expected_n):
+def test_overview_hero_card_shows_lco_sample_size(isolated_db, data_mode, cell, expected_n, expected_phrase):
     """
     Regression test (Battery Engineering Accuracy review finding): n=4
     (NASA) / n=12 (Severson) leave-cell-out validation is a thin population
     for any fleet-scale reliability claim -- this used to only be
     discoverable in a settings-page footnote. The confidence badge next to
-    every RUL number on Overview must now carry the actual cell count.
+    every RUL number on Overview must now carry the actual cell count — and
+    (Tier-0 v12) when the fold's RUL labels are formula extrapolations, the
+    withholding must say so rather than imply a validation happened.
     """
     at = _logged_in_app(
         role="Engineer", page="overview", data_mode=data_mode,
@@ -535,7 +542,7 @@ def test_overview_hero_card_shows_lco_sample_size(isolated_db, data_mode, cell, 
     assert not at.exception, f"Overview crashed for {cell} in {data_mode} mode: {at.exception}"
     text = _all_text(at)
     assert expected_n in text
-    assert "thin population" in text
+    assert expected_phrase in text
 
 
 def test_decide_and_ask_shows_mechanism_caution_note_when_signals_disagree(isolated_db):
@@ -1002,8 +1009,16 @@ def test_benchmark_page_renders_leaderboard_with_logged_runs(isolated_db):
     assert not at.exception
     text = _all_text(at)
     assert "Model Benchmark" in text
-    assert len(at.dataframe) == 2  # leaderboard table + fold drill-down table
-    assert "nasa" in at.dataframe[0].value["Dataset"].values
+    # Identify tables by their columns rather than by a brittle count — the
+    # page legitimately renders several now (leaderboard, per-chemistry
+    # accuracy, model-kind comparison, cross-chemistry, fold drill-down).
+    leaderboards = [df.value for df in at.dataframe
+                    if "Run ID" in getattr(df.value, "columns", [])]
+    assert len(leaderboards) == 1
+    assert "nasa" in leaderboards[0]["Dataset"].values
+    drilldowns = [df.value for df in at.dataframe
+                  if "Cell" in getattr(df.value, "columns", [])]
+    assert len(drilldowns) == 1
 
 
 def test_benchmark_page_physics_divergence_button_runs_for_nasa(isolated_db):
@@ -1115,6 +1130,90 @@ def test_overview_shows_not_evaluated_cross_chem_badge_for_incompatible_pairing(
     assert "oxford" in text.lower()
 
 
+def test_overview_rul_label_carries_fold_count_and_chemistry(isolated_db):
+    """Every visible RUL number must carry its held-out population and its
+    chemistry source next to it -- the sample-size disclosure used to live
+    only in a Settings footnote, which is exactly where a non-expert reading
+    a single R² would never look. This asserts the wiring on the real page,
+    not just that the helper formats a string."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Overview page crashed: {at.exception}"
+    text = _all_text(at)
+    assert "n=" in text, text[:2000]
+    assert "NASA LiCoO2" in text, text[:2000]
+
+
+def test_overview_reports_accuracy_per_chemistry_separately(isolated_db):
+    """Per-chemistry accuracy must be stated next to the prediction, not as one
+    platform-wide number — a single aggregate R² would hide that NASA's 0.76 is
+    mostly the shape of an aging curve. The line falls back to the in-memory
+    models when the (fresh, in this test) registry has no logged runs yet."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Overview page crashed: {at.exception}"
+    captions = "\n".join(c.value for c in at.caption)
+    assert "Accuracy by chemistry" in captions, captions[:2000]
+    assert "per-chemistry" in captions
+    assert "LiCoO2" in captions
+
+
+def test_fleet_ranking_names_the_model_and_reports_per_chemistry_accuracy(isolated_db):
+    """Several models can share a chemistry (NASA and the synthetic fleet are
+    both LiCoO2), so the fleet page must report the chemistry's accuracy
+    separately and label each row's RUL with the model that produced it."""
+    at = _logged_in_app(role="Engineer", page="fleet", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Fleet page crashed: {at.exception}"
+    captions = "\n".join(c.value for c in at.caption)
+    assert "Accuracy by chemistry" in captions, captions[:2000]
+    assert "LiCoO2" in captions
+    # Emission that several models cover one chemistry is the point here.
+    assert "2 model(s)" in captions, captions[:2000]
+
+
+def test_health_reports_accuracy_per_chemistry_separately(isolated_db):
+    at = _logged_in_app(role="Engineer", page="health", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Health page crashed: {at.exception}"
+    captions = "\n".join(c.value for c in at.caption)
+    assert "Accuracy by chemistry" in captions, captions[:2000]
+
+
+def test_decision_page_states_rul_provenance_at_the_point_of_decision(isolated_db):
+    """The Decision page's recommendation rides on this cell's predicted RUL,
+    so the population it was validated on must be stated there -- the same
+    reason the per-cell reliability gate exists rather than a dataset
+    average: an aggregate can hide a cell the model cannot predict."""
+    at = _logged_in_app(role="Engineer", page="decision", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Decision page crashed: {at.exception}"
+    text = _all_text(at)
+    assert "Provenance for the RUL behind this recommendation" in text, text[:2000]
+    assert "NASA LiCoO2" in text, text[:2000]
+
+
+def test_fleet_ranking_rul_column_carries_per_row_provenance(isolated_db):
+    """The ranking table must not rely on a single page-level "n=4 / n=12 / n=8"
+    caption a reader can't tie to a row: each cell's Est. RUL value carries its
+    own held-out population and chemistry source."""
+    at = _logged_in_app(role="Engineer", page="fleet", data_mode="nasa")
+    at.run()
+    assert not at.exception, f"Fleet page crashed: {at.exception}"
+    text = _all_text(at)
+    assert "value · held-out population" in text
+    assert "NASA LiCoO2" in text, text[:2000]
+
+
+def test_health_gbrt_rul_tile_carries_fold_count_and_chemistry(isolated_db):
+    at = _logged_in_app(role="Engineer", page="health", data_mode="nasa", selected_cell="B0005")
+    at.run()
+    assert not at.exception, f"Health page crashed: {at.exception}"
+    text = _all_text(at)
+    assert "GBRT RUL (LCO-validated)" in text
+    assert "NASA LiCoO2" in text, text[:2000]
+
+
 def test_regenerate_report_button_replays_and_shows_recorded_vs_reproduced(isolated_db, monkeypatch):
     """utils.render_regenerate_report_button() end-to-end: given a bundle
     carrying a logged experiment_run_id, clicking Regenerate must replay
@@ -1131,8 +1230,11 @@ def test_regenerate_report_button_replays_and_shows_recorded_vs_reproduced(isola
     from batlab.features.engineering import FEATURE_VERSION
 
     cell_data = {
-        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
-        "CellB": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+        # Fast fade so both cells cross EOL in-window: the replay's RUL metrics
+        # are computed on observed rows (v12) and are populated, so this test
+        # can assert the reproduced number appears verbatim.
+        "CellA": make_cycles_df(n_cycles=300, fade_per_cycle=0.003),
+        "CellB": make_cycles_df(n_cycles=300, fade_per_cycle=0.0035, initial_resistance_ohm=0.06),
     }
     lco = run_lco(cell_data, seed=42)
     run_id = reg.log_run(
@@ -1154,21 +1256,77 @@ render_regenerate_report_button(bundle, org_id=1, key_suffix="test")
     at.run()
     assert not at.exception, f"Initial render raised: {at.exception}"
 
+    # This test's hyperparams={"random_state": 42} is a partial fixture dict
+    # (not a real dict(GBRT_PARAMS) copy), so the run has diverged from the
+    # current GBRT_PARAMS. That divergence must be a PRE-FLIGHT gate
+    # (src/experiment_registry.py's "The replay contract" section +
+    # app/_report_regen.py's docstring): the button is disabled and an
+    # explicit acknowledgment checkbox is required before it can be clicked,
+    # so a reader can't click straight past it and read the result as a
+    # faithful reproduction.
+    errors_ = [e.value for e in at.error]
+    assert any("cannot be faithfully regenerated" in e for e in errors_), errors_
+    _regen_btn = next(b for b in at.button if "Regenerate" in b.label)
+    assert _regen_btn.disabled is True
+
+    at.checkbox[0].check().run()
+    assert not at.exception, f"Acknowledging raised: {at.exception}"
+
     btn = next(b for b in at.button if "Regenerate" in b.label)
+    assert btn.disabled is False
     btn.click().run()
     assert not at.exception, f"Click raised: {at.exception}"
 
     texts = _all_text(at)
     assert "Recorded" in texts
-    assert "Reproduced now" in texts
-    assert f"{lco['rul_mae']:.1f}" in texts  # the reproduced number matches the recorded one exactly
+    # Diverged run: the reproduced column must be labelled as NOT this run's
+    # number, and the error must be repeated before the values are shown.
+    assert "not this run's" in texts
+    # The reproduced RUL number still matches this fixture's — and, because
+    # the fixture has observed-EOL rows, it is a real number, not the v12
+    # "not evaluable" withholding.
+    assert f"{lco['rul_mae']:.1f}" in texts
+    assert "not evaluable" not in texts
+    post_errors = [e.value for e in at.error]
+    assert any("NOT a reproduction" in e for e in post_errors), post_errors
 
-    # This test's hyperparams={"random_state": 42} is a partial fixture dict
-    # (not a real dict(GBRT_PARAMS) copy), so the hyperparams-drift warning
-    # (src/experiment_registry.py's "The replay contract" section) must fire
-    # -- st.warning() is its own AppTest element type, not markdown.
-    warnings_ = [w.value for w in at.warning]
-    assert any("GBRT hyperparameters" in w for w in warnings_), warnings_
+
+def test_regenerate_report_faithful_run_has_no_divergence_gate(isolated_db, monkeypatch):
+    """The counterpart to the divergence test: a run whose recorded
+    hyperparameters are exactly the current GBRT_PARAMS must render with NO
+    divergence error, NO acknowledgment checkbox, and an enabled Regenerate
+    button -- the gate must only fire on real divergence, never as a blanket
+    friction on every replay."""
+    import experiment_registry as reg
+    from conftest import make_cycles_df
+    from batlab.validation.lco import run_lco
+    from batlab.features.engineering import FEATURE_VERSION
+    from batlab.models.gbrt import GBRT_PARAMS
+
+    cell_data = {
+        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
+        "CellB": make_cycles_df(n_cycles=200, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+    }
+    lco = run_lco(cell_data, seed=GBRT_PARAMS["random_state"])
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID, dataset="nasa", chemistry="LiCoO2",
+        feature_set=["cycle_number", "fade_rate_30cy"], feature_version=FEATURE_VERSION,
+        hyperparams=dict(GBRT_PARAMS), seed=GBRT_PARAMS["random_state"],
+        cell_ids=list(cell_data.keys()), n_rows=400, lco_metrics=lco,
+    )
+    monkeypatch.setattr(reg, "reload_reference_cell_data", lambda dataset, cell_ids=None: cell_data)
+
+    script = f"""
+from utils import render_regenerate_report_button
+bundle = {{"metrics": {{"experiment_run_id": {run_id!r}}}}}
+render_regenerate_report_button(bundle, org_id=1, key_suffix="faithful")
+"""
+    at = AppTest.from_string(script)
+    at.run()
+    assert not at.exception, f"Initial render raised: {at.exception}"
+    assert not at.error
+    assert len(at.checkbox) == 0
+    assert next(b for b in at.button if "Regenerate" in b.label).disabled is False
 
 
 # ---------------------------------------------------------------------------

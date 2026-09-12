@@ -274,6 +274,11 @@ class ExperimentRun(Base):
     org_id          = Column(Integer, primary_key=True, default=_DEMO_ORG_ID)
     dataset         = Column(String, nullable=False)   # "nasa" | "synth" | "severson" | "uploaded" | "nasa_to_severson" ...
     chemistry       = Column(String)                   # e.g. "LiCoO2", "LFP", "NCA"
+    # "gbrt" (the production model) | "pinn" (the physics-regularized
+    # estimator, benchmarked through the same LCO harness). Kept as a column
+    # rather than inferred from the dataset so a PINN run can never be
+    # mistaken for — or averaged into — the per-chemistry GBRT accuracy.
+    model_kind      = Column(String, default="gbrt")
     feature_set     = Column(Text)                      # JSON-encoded list[str] of columns actually used
     feature_version = Column(String)                    # batlab.features.engineering.FEATURE_VERSION at log time
     hyperparams     = Column(Text)                      # JSON-encoded dict (GBRT_PARAMS)
@@ -283,10 +288,17 @@ class ExperimentRun(Base):
     n_rows          = Column(Integer)
     soh_mae         = Column(Float)
     soh_r2          = Column(Float)
+    baseline_soh_r2 = Column(Float)                      # trivial cycle_number->SOH baseline R², same LCO folds
     rul_mae         = Column(Float)
-    rul_r2          = Column(Float)
+    rul_r2          = Column(Float)                      # observed-EOL rows only (v12+); None when no fold has observed rows
     rul_reliable    = Column(Integer)                   # 0/1 — SQLite has no native bool
+    rul_formula_baseline_r2 = Column(Float)              # closed form that generated extrapolated labels, same folds
+    rul_baseline_pool = Column(String)                   # which pool the headline baseline R² is from: observed|extrapolated|none
+    rul_label_coverage = Column(Float)                   # fraction of evaluated RUL rows with measured (observed-EOL) labels
+    n_rul_observed_rows = Column(Integer)
+    n_rul_extrapolated_rows = Column(Integer)
     fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
+    baseline_per_cell = Column(Text)                     # JSON-encoded per-cell baseline R² breakdown
     git_commit      = Column(String)
     timestamp       = Column(String)
     notes           = Column(Text)
@@ -461,6 +473,38 @@ def _ensure_login_lockout_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN email TEXT"))
 
 
+def _ensure_experiment_run_baseline_columns() -> None:
+    """Additive migration for pre-existing local DBs, same pattern as
+    _ensure_login_lockout_columns() above — an experiment_runs table created
+    before this module gained the trivial-baseline columns won't get them
+    automatically from Base.metadata.create_all() alone."""
+    insp = inspect(engine)
+    if "experiment_runs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("experiment_runs")}
+    with engine.begin() as conn:
+        if "baseline_soh_r2" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN baseline_soh_r2 FLOAT"))
+        if "baseline_per_cell" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN baseline_per_cell TEXT"))
+        if "model_kind" not in cols:
+            # Pre-existing rows are all GBRT fits by construction; backfilling
+            # rather than leaving NULL keeps the leaderboard's filter honest
+            # without a special "NULL means gbrt" rule at every call site.
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN model_kind VARCHAR DEFAULT 'gbrt'"))
+            conn.execute(text("UPDATE experiment_runs SET model_kind = 'gbrt' WHERE model_kind IS NULL"))
+        if "rul_formula_baseline_r2" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN rul_formula_baseline_r2 FLOAT"))
+        if "rul_baseline_pool" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN rul_baseline_pool VARCHAR"))
+        if "rul_label_coverage" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN rul_label_coverage FLOAT"))
+        if "n_rul_observed_rows" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN n_rul_observed_rows INTEGER"))
+        if "n_rul_extrapolated_rows" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN n_rul_extrapolated_rows INTEGER"))
+
+
 def _seed_demo_org_and_users() -> None:
     """Idempotent: creates the Demo Org + its 4 demo accounts on first run only."""
     with Session() as s:
@@ -488,6 +532,7 @@ def init_db() -> None:
                "failure_signatures", "experiment_runs", "kg_nodes", "kg_edges"):
         _ensure_org_id_column(_t)
     _ensure_login_lockout_columns()
+    _ensure_experiment_run_baseline_columns()
     _seed_demo_org_and_users()
     _seed_default_fleet_hierarchy()
 
@@ -1240,6 +1285,7 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             org_id=org_id,
             dataset=entry.get("dataset"),
             chemistry=entry.get("chemistry"),
+            model_kind=entry.get("model_kind", "gbrt"),
             feature_set=entry.get("feature_set"),
             feature_version=entry.get("feature_version"),
             hyperparams=entry.get("hyperparams"),
@@ -1249,10 +1295,17 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             n_rows=entry.get("n_rows"),
             soh_mae=entry.get("soh_mae"),
             soh_r2=entry.get("soh_r2"),
+            baseline_soh_r2=entry.get("baseline_soh_r2"),
             rul_mae=entry.get("rul_mae"),
             rul_r2=entry.get("rul_r2"),
             rul_reliable=entry.get("rul_reliable"),
             fold_metrics=entry.get("fold_metrics"),
+            baseline_per_cell=entry.get("baseline_per_cell"),
+            rul_formula_baseline_r2=entry.get("rul_formula_baseline_r2"),
+            rul_baseline_pool=entry.get("rul_baseline_pool"),
+            rul_label_coverage=entry.get("rul_label_coverage"),
+            n_rul_observed_rows=entry.get("n_rul_observed_rows"),
+            n_rul_extrapolated_rows=entry.get("n_rul_extrapolated_rows"),
             git_commit=entry.get("git_commit"),
             timestamp=entry.get("timestamp"),
             notes=entry.get("notes"),
@@ -1266,6 +1319,7 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "org_id":          r.org_id,
         "dataset":         r.dataset,
         "chemistry":       r.chemistry,
+        "model_kind":      r.model_kind or "gbrt",
         "feature_set":     json.loads(r.feature_set) if r.feature_set else [],  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "feature_version": r.feature_version,
         "hyperparams":     json.loads(r.hyperparams) if r.hyperparams else {},  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
@@ -1275,10 +1329,17 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "n_rows":          r.n_rows,
         "soh_mae":         r.soh_mae,
         "soh_r2":          r.soh_r2,
+        "baseline_soh_r2": r.baseline_soh_r2,
         "rul_mae":         r.rul_mae,
         "rul_r2":          r.rul_r2,
         "rul_reliable":    bool(r.rul_reliable),
         "fold_metrics":    json.loads(r.fold_metrics) if r.fold_metrics else {},  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
+        "baseline_per_cell": json.loads(r.baseline_per_cell) if r.baseline_per_cell else None,  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
+        "rul_formula_baseline_r2": r.rul_formula_baseline_r2,
+        "rul_baseline_pool": r.rul_baseline_pool,
+        "rul_label_coverage": r.rul_label_coverage,
+        "n_rul_observed_rows": r.n_rul_observed_rows,
+        "n_rul_extrapolated_rows": r.n_rul_extrapolated_rows,
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,

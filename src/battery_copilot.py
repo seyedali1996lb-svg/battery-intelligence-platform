@@ -186,9 +186,16 @@ def build_cell_context(
     source_kind = ChemistryProfile.for_cell(cell_id).source_kind
     is_nasa     = source_kind == "nasa"   # kept for backward compat with callers below
 
-    bundle = bundles.get(source_kind)
-    if bundle is None:
-        bundle = bundles.get("nasa") or next(iter(bundles.values()))
+    # Chemistry-keyed selection (src/model_selection.py), not key order: this
+    # cell's own source model when one exists, else the best SAME-chemistry
+    # model (disclosed as a chemically-matched reference model), else nothing.
+    # The previous `bundles.get("nasa") or next(iter(bundles.values()))`
+    # fallback could answer a cell with an arbitrary model of a different
+    # chemistry — a cross-chemistry transfer this platform measures at
+    # SOH R² ≈ -34 and never claims is reliable.
+    from model_selection import select_model_for_cell
+    _selection = select_model_for_cell(cell_id, bundles)
+    bundle = _selection["bundle"] if _selection["found"] else {"metrics": {}}
 
     df     = featured_dfs[cell_id]
     latest = df.iloc[-1]
@@ -225,7 +232,14 @@ def build_cell_context(
     rul_q10      = float(latest["rul_q10"])  if (rul_reliable and "rul_q10" in latest.index) else None
     rul_q90      = float(latest["rul_q90"])  if (rul_reliable and "rul_q90" in latest.index) else None
 
-    fi           = feature_importance_df(bundle, "soh")
+    # Guards the not-found selection case above (bundle = {"metrics": {}}),
+    # which has no trained model to attribute — a missing feature-importance
+    # breakdown must degrade to "no drivers", never crash the Copilot.
+    try:
+        fi = feature_importance_df(bundle, "soh")
+    except Exception:
+        import pandas as _pd_fi
+        fi = _pd_fi.DataFrame(columns=["feature", "importance", "importance_pct"])
     top_features = fi.head(5).to_dict(orient="records")
 
     if source_kind == "nasa":
@@ -358,10 +372,14 @@ def build_fleet_stats(org_id: int, featured_dfs: dict, bundles: dict) -> dict:
         # wrong model bundle and grouping them with the wrong peers in
         # answer_anomaly()/answer_fleet_compare() below.
         source = ChemistryProfile.for_cell(cell_id).source_kind
-        bundle = bundles.get(source)
-
-        if bundle is None:
+        # Same chemistry-keyed selection as build_cell_context() above — a cell
+        # with no chemistry-compatible model is skipped rather than scored by
+        # an unrelated model's reliability map.
+        from model_selection import select_model_for_cell
+        _selection = select_model_for_cell(cell_id, bundles)
+        if not _selection["found"]:
             continue
+        bundle = _selection["bundle"]
         per_cell_ok  = bundle["metrics"].get("per_cell_rul_reliable", {})
         rul_reliable = per_cell_ok.get(cell_id, bundle["metrics"].get("rul_reliable", False))
 

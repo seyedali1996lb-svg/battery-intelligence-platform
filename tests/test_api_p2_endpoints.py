@@ -43,13 +43,23 @@ def test_cell_health_full_record(client, auth_headers):
     # RUL fields present; values gated on the per-cell reliability floor.
     assert "rul_pred" in data and "rul_q10" in data and "rul_q90" in data
     assert isinstance(data["rul_reliable"], bool)
-    assert set(data["confidence"]) == {"soh", "rul", "sop"}
+    assert set(data["confidence"]) == {"soh", "rul", "sop", "rul_model_selection"}
     assert "passport_fragments" in data
     fragments = data["passport_fragments"]
     assert fragments["chemistry"]
     assert fragments["r_code"].startswith("R")
     assert "best_second_life_application" in fragments
     assert "model_card" in data
+
+    # Which model answered, and that CHEMISTRY's accuracy — reported separately
+    # rather than as one platform-wide number (src/model_selection.py).
+    assert "model_selection" in data
+    sel = data["model_selection"]
+    assert sel["selection"] in ("native", "chemistry_match", "none")
+    assert isinstance(sel["native"], bool)
+    assert sel["reason"]
+    assert "accuracy" in sel
+    assert "chemistry_accuracy" in data
 
 
 def test_cell_health_requires_auth(client):

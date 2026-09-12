@@ -28,19 +28,36 @@ def test_interval_width_mean():
 
 
 def test_run_lco_quantiles_structure():
+    # Fast fade so cells cross EOL in-window → observed RUL labels exist.
     cell_data = {
-        "CellA": make_cycles_df(n_cycles=150, fade_per_cycle=0.0006),
-        "CellB": make_cycles_df(n_cycles=150, fade_per_cycle=0.0008, initial_resistance_ohm=0.06),
+        "CellA": make_cycles_df(n_cycles=300, fade_per_cycle=0.003),
+        "CellB": make_cycles_df(n_cycles=300, fade_per_cycle=0.0035, initial_resistance_ohm=0.06),
     }
     result = run_lco_quantiles(cell_data)
     for key in ("rul_interval_coverage", "rul_interval_width_mean", "rul_r2",
-                "rul_mae", "rul_reliable", "per_cell"):
+                "rul_mae", "rul_reliable", "per_cell", "rul_label_coverage"):
         assert key in result
     assert set(result["per_cell"]) == {"CellA", "CellB"}
     for fold in result["per_cell"].values():
+        assert fold["rul_interval_coverage"] is not None
         assert 0.0 <= fold["rul_interval_coverage"] <= 1.0
         assert fold["rul_true"].shape == fold["rul_q10"].shape == fold["rul_q90"].shape
         assert fold["rul_interval_width_mean"] >= 0.0
+    assert result["rul_label_coverage"] == 1.0
+
+
+def test_run_lco_quantiles_without_observed_rows_is_not_reliable():
+    """A fleet whose cells never reach EOL has 100% formula-extrapolated RUL
+    labels: interval quality on those rows is formula recovery, so coverage
+    must come back not-evaluable and reliability False (Tier-0 regression)."""
+    cell_data = {
+        f"Cell{i}": make_cycles_df(n_cycles=300, fade_per_cycle=0.0002 + i * 1e-5)
+        for i in range(3)
+    }
+    result = run_lco_quantiles(cell_data)
+    assert result["rul_interval_coverage"] != result["rul_interval_coverage"]  # NaN
+    assert result["rul_reliable"] is False
+    assert result["rul_label_coverage"] == 0.0
 
 
 def test_recalibration_widens_overconfident_intervals_toward_nominal():

@@ -214,3 +214,85 @@ def test_resolve_carbon_static_fallback():
 def test_resolve_carbon_falls_back_when_adapter_unsupported():
     result = resolve_carbon_intensity("GERMANY", EIAAdapter("key"))
     assert result["source"] == "static"
+
+
+# ---------------------------------------------------------------------------
+# Provenance + the centralized FX assumption
+# ---------------------------------------------------------------------------
+
+def test_fx_assumption_is_one_named_place_and_aliased():
+    """There is exactly one number to audit: the module constant is an alias
+    of the documented assumption dict, so they cannot drift apart."""
+    assert market_data.USD_TO_EUR == market_data.FX_ASSUMPTION["usd_to_eur"]
+    assert market_data.FX_ASSUMPTION["sourced"] is False
+    assert "not sourced" in market_data.FX_ASSUMPTION["label"].lower()
+    assert market_data.FX_ASSUMPTION["citation"]
+
+
+def test_synthetic_results_are_labelled_illustrative():
+    """The default price/carbon feed is qualitative, and must say so on the
+    result itself rather than relying on the reader knowing which adapter ran."""
+    syn = SyntheticMarketAdapter()
+    prices = syn.fetch_hourly_prices()
+    carbon = syn.fetch_carbon_intensity()
+    assert prices["provenance"] == market_data.ILLUSTRATIVE
+    assert carbon["provenance"] == market_data.ILLUSTRATIVE
+    assert prices["provenance_note"]
+
+
+def test_vendor_adapters_label_results_sourced(monkeypatch):
+    """A configured vendor feed is sourced — and an unlabelled result must
+    never be presented as sourced."""
+    eia = EIAAdapter("key")
+    monkeypatch.setattr(eia, "fetch_hourly_prices", lambda **kw: {
+        "adapter": eia.name, "unit": "USD/kWh", "prices": [0.05],
+        "provenance": market_data.SOURCED,
+        "provenance_note": "EIA Open Data v2 hourly wholesale price, reported $/MWh.",
+    })
+    prov = market_data.market_provenance(eia.fetch_hourly_prices())
+    assert prov["provenance"] == market_data.SOURCED
+    assert prov["label"] == "Sourced market data"
+
+    # An unlabelled dict is assumed NOT sourced — the safe direction.
+    unknown = market_data.market_provenance({"unit": "EUR/kWh", "prices": [0.1]})
+    assert unknown["provenance"] == "unknown"
+
+
+def test_market_provenance_maps_carbon_source_field():
+    live = market_data.market_provenance({
+        "source": "live", "feed": "X", "g_co2_per_kwh": 100.0,
+        "provenance_note": "live series",
+    })
+    static = market_data.market_provenance({
+        "source": "static", "g_co2_per_kwh": 300.0, "note": "IEA/EEA average",
+    })
+    assert live["provenance"] == market_data.SOURCED
+    assert static["provenance"] == market_data.ILLUSTRATIVE
+    assert static["note"] == "IEA/EEA average"
+
+
+def test_currency_conversion_cannot_upgrade_an_illustrative_fx_rate():
+    """A converted price is only as sourced as the weaker of its two inputs:
+    a vendor feed converted at the illustrative FX rate must be downgraded."""
+    result = {
+        "unit": "USD/kWh", "prices": [0.10],
+        "provenance": market_data.SOURCED, "provenance_note": "vendor feed",
+    }
+    out = to_eur_per_kwh(result)
+    assert out["provenance"] == market_data.ILLUSTRATIVE
+    assert out["fx_assumption"]["sourced"] is False
+
+
+def test_supplying_a_real_fx_rate_flips_the_layer_to_sourced():
+    """A dated reference rate is the one change needed to make a USD-converted
+    price sourced — without touching any dispatch math."""
+    result = {
+        "unit": "USD/kWh", "prices": [0.10],
+        "provenance": market_data.SOURCED, "provenance_note": "vendor feed",
+    }
+    out = to_eur_per_kwh(result, fx_usd_eur=0.87)
+    assert out["prices"] == [round(0.10 * 0.87, 5)]
+    assert out["fx_assumption"]["sourced"] is True
+    assert out["fx_assumption"]["usd_to_eur"] == 0.87
+    # The vendor feed's own sourced status survives a sourced conversion.
+    assert out["provenance"] == market_data.SOURCED

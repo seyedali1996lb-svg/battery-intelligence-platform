@@ -32,6 +32,14 @@ def _synthetic_prices() -> list:
     return data["prices"]
 
 
+def _price_provenance() -> dict:
+    """The provenance of the price window this page dispatches on. Every
+    revenue/dispatch figure below inherits its data quality, so the page
+    states it once rather than implying sourced market prices."""
+    from market_data import SyntheticMarketAdapter, market_provenance
+    return market_provenance(SyntheticMarketAdapter(seed=7).fetch_hourly_prices())
+
+
 def _cell_signals(df: pd.DataFrame) -> dict:
     """The health signals the P1 modules consume, from one cell's featured df."""
     latest = df.iloc[-1]
@@ -95,6 +103,12 @@ def page_operations(cell_ids: list, active_fdfs: dict) -> None:
     # ── Dispatch ─────────────────────────────────────────────────────────────
     with tab_dispatch:
         from health_aware_dispatch import arbitrage_schedule, schedule_comparison
+
+        _prov = _price_provenance()
+        st.caption(
+            f"Price input: **{_prov['label']}** — {_prov['note']} "
+            "Every revenue and dispatch figure on this page inherits this data quality."
+        )
 
         prices = _synthetic_prices()
         result = arbitrage_schedule(

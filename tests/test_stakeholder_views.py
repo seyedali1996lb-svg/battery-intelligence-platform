@@ -65,6 +65,44 @@ def test_operator_view_includes_action_and_financials_not_mechanism():
     assert not any("mechanism" in l.lower() for l in labels)  # OEM-only concept
 
 
+def test_operator_view_surfaces_mechanism_action_disagreement():
+    """The operator view is where a bare recommendation would otherwise sit
+    alone. A low-urgency verdict on top of an LAM-dominant mechanism read is
+    a real disagreement and must be shown, not left implicit."""
+    fields = build_operator_view(
+        "B0005", "LiCoO2", "nasa", 95.0, 100, 0.0002, 0.0002, None,
+        rul_reliable=True, rul_pred=800.0, rul_q10=700.0, rul_q90=900.0,
+        mechanism={
+            "verdict": "LAM-dominated (particle cracking)",
+            "confidence": 0.6,
+            "confidence_label": "Medium",
+        },
+    )
+    labels = [f["label"] for f in fields]
+    assert any("Degradation mechanism" in l for l in labels)
+    disagree = next(f for f in fields if f["label"] == "Mechanism vs recommended action")
+    assert disagree["value"] == "Models disagree — read before acting"
+    assert "LAM" in disagree["note"]
+    assert "elevated caution" in disagree["note"].lower()
+
+
+def test_operator_view_omits_disagreement_when_mechanism_confidence_is_low():
+    """A weak mechanism reading must not manufacture a warning — the note
+    only fires on a real, confident disagreement."""
+    fields = build_operator_view(
+        "B0005", "LiCoO2", "nasa", 95.0, 100, 0.0002, 0.0002, None,
+        rul_reliable=True, rul_pred=800.0, rul_q10=700.0, rul_q90=900.0,
+        mechanism={
+            "verdict": "LAM-dominated (particle cracking)",
+            "confidence": 0.1,
+            "confidence_label": "Low",
+        },
+    )
+    labels = [f["label"] for f in fields]
+    assert any("Degradation mechanism" in l for l in labels)
+    assert not any("Mechanism vs recommended action" in l for l in labels)
+
+
 def test_operator_view_unreliable_rul_shown_honestly():
     fields = build_operator_view(
         "B0005", "LiCoO2", "nasa", 80.0, 10, 0.001, 0.0009, None,

@@ -31,6 +31,18 @@ actual org_id. leaderboard() takes both so a tenant's view combines its
 own runs with the shared platform benchmark, mirroring src/api.py's
 _get_featured_dfs()/_get_bundles() merge pattern.
 
+The cross-chemistry benchmark is permanent, not a one-off study
+----------------------------------------------------------------
+run_cross_chemistry_study() fits and logs the zero-shot transfer for every
+ordered pair of available datasets whose chemistries differ, and
+app/_data.py's load_everything() calls it so the counterexample is a
+standing, visible part of the Benchmark (see cross_chemistry_benchmark())
+rather than a number someone has to re-derive from a script. It is
+idempotent per FEATURE_VERSION, so a warm deployment pays a registry read,
+and it re-runs exactly when the feature set changes — the one thing that
+could legitimately move the number. Pairings that cannot be evaluated at
+all are logged as honest "not evaluated" rows instead of being omitted.
+
 The replay contract — which RunRecord fields replay_run() actually uses
 ------------------------------------------------------------------------
 RunRecord stores 15 fields, but replay_run() (via
@@ -76,6 +88,7 @@ import json
 import pathlib
 import subprocess
 import uuid
+import numpy as np
 from dataclasses import dataclass
 
 PLATFORM_ORG_ID = 0  # shared reference-dataset runs (NASA/synthetic/Severson)
@@ -89,6 +102,7 @@ class RunRecord:
     org_id: int
     dataset: str
     chemistry: str
+    model_kind: str
     feature_set: list[str]
     feature_version: str
     hyperparams: dict
@@ -100,11 +114,21 @@ class RunRecord:
     soh_r2: float
     rul_mae: float
     rul_r2: float
+    baseline_soh_r2: float | None
     rul_reliable: bool
     fold_metrics: dict
+    baseline_per_cell: dict | None
     git_commit: str
     timestamp: str
     notes: "str | None" = None
+    # Tier-0 RUL-label-provenance fields (FEATURE_VERSION v12+). rul_r2 above
+    # is observed-EOL rows only from v12 on; these carry the honest denominator
+    # and the formula baseline next to it.
+    rul_formula_baseline_r2: "float | None" = None
+    rul_baseline_pool: "str | None" = None
+    rul_label_coverage: "float | None" = None
+    n_rul_observed_rows: "int | None" = None
+    n_rul_extrapolated_rows: "int | None" = None
 
 
 _git_commit_cache: "str | None" = None
@@ -141,11 +165,16 @@ def log_run(
     n_rows: int,
     lco_metrics: dict,
     notes: "str | None" = None,
+    model_kind: str = "gbrt",
 ) -> str:
     """
     Log one completed GBRT fit. `lco_metrics` is the dict returned by
     batlab.validation.lco.run_lco() (soh_mae/soh_r2/rul_mae/rul_r2/
-    rul_reliable/per_cell). Returns the generated run_id.
+    rul_reliable/per_cell). `baseline_r2` is the trivial linear baseline
+    (cycle_number -> SOH) R² under the same leave-cell-out folds, from
+    batlab.validation.trivial_baseline.baseline_lco_r2() — the honest
+    "how much of this R² is smooth curves vs. the model" denominator.
+    Returns the generated run_id.
     """
     import db
 
@@ -157,6 +186,7 @@ def log_run(
         org_id=org_id,
         dataset=dataset,
         chemistry=chemistry,
+        model_kind=model_kind,
         feature_set=list(feature_set),
         feature_version=feature_version,
         hyperparams=hyperparams,
@@ -168,8 +198,15 @@ def log_run(
         soh_r2=lco_metrics.get("soh_r2"),  # pyright: ignore[reportArgumentType]
         rul_mae=lco_metrics.get("rul_mae"),  # pyright: ignore[reportArgumentType]
         rul_r2=lco_metrics.get("rul_r2"),  # pyright: ignore[reportArgumentType]
+        baseline_soh_r2=(lco_metrics.get("baseline_soh_r2") if isinstance(lco_metrics, dict) else None),
         rul_reliable=bool(lco_metrics.get("rul_reliable", False)),
         fold_metrics=lco_metrics.get("per_cell", {}),
+        baseline_per_cell=(lco_metrics.get("baseline_per_cell") if isinstance(lco_metrics, dict) else None),
+        rul_formula_baseline_r2=(lco_metrics.get("rul_formula_baseline_r2") if isinstance(lco_metrics, dict) else None),
+        rul_baseline_pool=(lco_metrics.get("rul_baseline_pool") if isinstance(lco_metrics, dict) else None),
+        rul_label_coverage=(lco_metrics.get("rul_label_coverage") if isinstance(lco_metrics, dict) else None),
+        n_rul_observed_rows=(lco_metrics.get("n_rul_observed_rows") if isinstance(lco_metrics, dict) else None),
+        n_rul_extrapolated_rows=(lco_metrics.get("n_rul_extrapolated_rows") if isinstance(lco_metrics, dict) else None),
         git_commit=_git_commit_hash(),
         timestamp=timestamp,
         notes=notes,
@@ -178,6 +215,7 @@ def log_run(
         "run_id":          record.run_id,
         "dataset":         record.dataset,
         "chemistry":       record.chemistry,
+        "model_kind":      record.model_kind,
         "feature_set":     json.dumps(record.feature_set),
         "feature_version": record.feature_version,
         "hyperparams":     json.dumps(record.hyperparams),
@@ -187,10 +225,18 @@ def log_run(
         "n_rows":          record.n_rows,
         "soh_mae":         record.soh_mae,
         "soh_r2":          record.soh_r2,
+        "baseline_soh_r2": record.baseline_soh_r2,
         "rul_mae":         record.rul_mae,
         "rul_r2":          record.rul_r2,
         "rul_reliable":    int(record.rul_reliable),
         "fold_metrics":    json.dumps(record.fold_metrics),
+        "baseline_per_cell": (json.dumps(record.baseline_per_cell)
+                              if record.baseline_per_cell is not None else None),
+        "rul_formula_baseline_r2": record.rul_formula_baseline_r2,
+        "rul_baseline_pool": record.rul_baseline_pool,
+        "rul_label_coverage": record.rul_label_coverage,
+        "n_rul_observed_rows": record.n_rul_observed_rows,
+        "n_rul_extrapolated_rows": record.n_rul_extrapolated_rows,
         "git_commit":      record.git_commit,
         "timestamp":       record.timestamp,
         "notes":           record.notes,
@@ -203,6 +249,39 @@ def get_run(org_id: int, run_id: str) -> "dict | None":
     for a shared reference-dataset run)."""
     import db
     return db.get_experiment_run(org_id, run_id)
+
+
+def hyperparams_divergence(run: "dict | None") -> dict:
+    """
+    Compare a logged run's recorded GBRT hyperparameters against the ones
+    the installed code would actually train with today — the single source
+    of truth for this comparison, shared by replay_run(), the model card,
+    and the "Regenerate this report" UI so those three can never disagree
+    about whether a run is still faithfully reproducible.
+
+    Returns {param: (recorded, current)} for every differing key — an empty
+    dict means the run would be reproduced with the same hyperparameters it
+    was trained with. See this module's "The replay contract" docstring for
+    why this check exists at all: run_lco() has no hyperparams argument, so
+    replay always uses the current module-level GBRT_PARAMS regardless of
+    what the run recorded.
+    """
+    from batlab.validation.lco import GBRT_PARAMS as _current
+    recorded = (run or {}).get("hyperparams") or {}
+    if not isinstance(recorded, dict):
+        recorded = {}
+    return {
+        k: (recorded.get(k), v)
+        for k, v in _current.items()
+        if recorded.get(k) != v
+    }
+
+
+def format_hyperparams_diff(diff: dict) -> str:
+    """Human-readable one-liner for a hyperparams_divergence() dict, e.g.
+    "n_estimators: 100 → 200; learning_rate: 0.05 → 0.1". Returns "" when
+    there is no divergence."""
+    return "; ".join(f"{k}: {rec} → {cur}" for k, (rec, cur) in (diff or {}).items())
 
 
 def leaderboard(
@@ -241,6 +320,170 @@ def leaderboard(
     return runs
 
 
+def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
+    """
+    Per-source accuracy summary for the Benchmark page: one row per
+    (dataset, chemistry) LCO run, showing the model R², the trivial
+    baseline R², and the model's real advantage over it.
+
+    Grouped by (dataset, chemistry), not chemistry alone — the synthetic
+    reference fleet and the NASA PCoE cells are BOTH chemistry "LiCoO2", so
+    grouping by chemistry would silently conflate a simulated fleet with real
+    measured cells. Keeping the dataset in the group key keeps a real-vs-
+    simulated comparison honest while still making the NASA-vs-Severson LFP
+    contrast directly visible.
+
+    Only runs that actually carry a trivial baseline are included. A
+    cross-chemistry transfer run has no baseline by construction (a single
+    train-on-one-domain / eval-on-the-other split, not leave-cell-out), so it
+    is excluded rather than shown with a fabricated "—"-derived advantage.
+    Where several runs exist for the same group (repeated processes, or a
+    retrain), the NEWEST is reported — the older duplicates are superseded by
+    definition.
+
+    Returns a list sorted by real advantage descending (largest genuine model
+    skill first), each entry:
+        {
+          "dataset", "chemistry", "n_cells", "feature_version",
+          "timestamp", "soh_r2", "baseline_soh_r2", "advantage",
+          "rul_r2", "rul_reliable",
+        }
+    """
+    runs = leaderboard(tenant_org_id=tenant_org_id)
+
+    latest: dict = {}
+    for r in runs:
+        if r.get("soh_r2") is None or r.get("baseline_soh_r2") is None:
+            continue  # not an LCO run with a baseline — nothing comparable to report
+        # GBRT only: this table is the per-chemistry accuracy of the
+        # production model. PINN runs are reported through
+        # model_kind_comparison() instead, so a physics-estimator number can
+        # never be averaged into — or mistaken for — the GBRT's accuracy.
+        if (r.get("model_kind") or "gbrt") != "gbrt":
+            continue
+        key = (r.get("dataset"), r.get("chemistry"))
+        prev = latest.get(key)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[key] = r
+
+    rows = []
+    for r in latest.values():
+        soh_r2 = float(r["soh_r2"])
+        baseline = float(r["baseline_soh_r2"])
+        # ── Honest RUL gate (Tier-0) ──
+        # rul_reliable from v12 on already encodes "observed-row R² above the
+        # floor AND observed coverage above the floor". For older runs (and
+        # as defense in depth) a stored reliable flag must also survive two
+        # checks we can always apply here: the run's RUL R² must beat the
+        # formula baseline (when one was computed) and the run must have
+        # declared an observed-coverage fraction at all.
+        rul_r2 = r.get("rul_r2")
+        formula_baseline = r.get("rul_formula_baseline_r2")
+        beats_formula = (
+            rul_r2 is None or formula_baseline is None
+            or (not (isinstance(rul_r2, float) and rul_r2 != rul_r2) and float(rul_r2) > float(formula_baseline))
+        )
+        coverage = r.get("rul_label_coverage")
+        rul_ok = bool(r.get("rul_reliable")) and beats_formula and (coverage is None or float(coverage) >= 0.5)
+        rows.append({
+            "dataset":          r.get("dataset"),
+            "chemistry":        r.get("chemistry") or "—",
+            "n_cells":          r.get("n_cells"),
+            "feature_version":  r.get("feature_version"),
+            "timestamp":        r.get("timestamp"),
+            "soh_r2":           soh_r2,
+            "baseline_soh_r2":  baseline,
+            "advantage":        soh_r2 - baseline,
+            "rul_r2":           rul_r2,
+            "rul_formula_baseline_r2": formula_baseline,
+            "rul_label_coverage": coverage,
+            "n_rul_observed_rows": r.get("n_rul_observed_rows"),
+            "rul_reliable":     rul_ok,
+        })
+    rows.sort(key=lambda d: d["advantage"], reverse=True)
+    return rows
+
+
+MODEL_KIND_LABELS = {
+    "gbrt": "GBRT (production)",
+    "pinn": "PINN (physics-regularized)",
+}
+
+
+def model_kind_comparison(tenant_org_id: "int | None" = None) -> list[dict]:
+    """
+    GBRT vs PINN, side by side, on the SAME leave-cell-out population.
+
+    Both model kinds are fitted and evaluated by the same harness shape
+    (leave-one-cell-out, identical folds, identical trivial baseline), so the
+    only difference between the two numbers is the model itself. This is the
+    honest answer to "is the physics-regularized estimator actually better?"
+    — including when it is not.
+
+    One row per (dataset, chemistry, model_kind), newest run of each kind,
+    plus a `delta` field on the GBRT row of each group expressing the PINN's
+    SOH R² minus the GBRT's. A negative delta is reported as-is (the PINN
+    lost), never hidden. Returns [] when nothing is logged.
+    """
+    runs = leaderboard(tenant_org_id=tenant_org_id)
+
+    latest: dict = {}
+    for r in runs:
+        if r.get("soh_r2") is None:
+            continue
+        key = (r.get("dataset"), r.get("chemistry"), r.get("model_kind") or "gbrt")
+        prev = latest.get(key)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[key] = r
+
+    # Group by (dataset, chemistry) so the two model kinds sit together.
+    groups: dict = {}
+    for (dataset, chemistry, kind), r in latest.items():
+        groups.setdefault((dataset, chemistry), {})[kind] = r
+
+    rows = []
+    for (dataset, chemistry), kinds in groups.items():
+        gbrt = kinds.get("gbrt")
+        pinn = kinds.get("pinn")
+        delta = None
+        if gbrt is not None and pinn is not None:
+            try:
+                delta = float(pinn["soh_r2"]) - float(gbrt["soh_r2"])
+            except (TypeError, ValueError):
+                delta = None
+        for kind, r in (("gbrt", gbrt), ("pinn", pinn)):
+            if r is None:
+                continue
+            baseline = r.get("baseline_soh_r2")
+            rows.append({
+                "dataset":       dataset,
+                "chemistry":     chemistry or "—",
+                "model_kind":    kind,
+                "model_label":   MODEL_KIND_LABELS.get(kind, kind),
+                "n_cells":       r.get("n_cells"),
+                "n_rows":        r.get("n_rows"),
+                "soh_r2":        r.get("soh_r2"),
+                "soh_mae":       r.get("soh_mae"),
+                "baseline_soh_r2": baseline,
+                "advantage": (None if baseline is None
+                              else float(r["soh_r2"]) - float(baseline)),
+                "rul_r2":        r.get("rul_r2"),
+                "rul_mae":       r.get("rul_mae"),
+                "rul_reliable":  bool(r.get("rul_reliable")),
+                "hyperparams":   r.get("hyperparams") or {},
+                "feature_version": r.get("feature_version"),
+                "timestamp":     r.get("timestamp"),
+                "notes":         r.get("notes"),
+                # Carried on the PINN row, where it reads naturally: PINN R²
+                # minus GBRT R². The GBRT row shows no delta (it is the
+                # reference). Negative means the physics estimator lost.
+                "pinn_minus_gbrt_soh_r2": (delta if kind == "pinn" else None),
+                "has_counterpart": (gbrt is not None if kind == "pinn" else pinn is not None),
+            })
+    rows.sort(key=lambda d: (d["dataset"] or "", d["model_kind"] == "pinn"))
+    return rows
+
+
 def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     """
     Re-run the exact recorded leave-cell-out pipeline for a logged run
@@ -273,7 +516,6 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     a required cell (propagated from evaluate_from_manifest).
     """
     from batlab.validation.manifest import evaluate_from_manifest
-    from batlab.validation.lco import GBRT_PARAMS as _CURRENT_REPLAY_GBRT_PARAMS
 
     run = get_run(org_id, run_id)
     if run is None:
@@ -292,12 +534,7 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
     }
     result["run"] = run
 
-    recorded_hyperparams = run.get("hyperparams") or {}
-    hyperparams_diff = {
-        k: (recorded_hyperparams.get(k), v)
-        for k, v in _CURRENT_REPLAY_GBRT_PARAMS.items()
-        if recorded_hyperparams.get(k) != v
-    }
+    hyperparams_diff = hyperparams_divergence(run)
     result["hyperparams_match"] = not hyperparams_diff
     result["hyperparams_diff"] = hyperparams_diff
     return result
@@ -398,6 +635,8 @@ def run_cross_chemistry_transfer(
     eval_dataset: str,
     eval_cell_data: dict,
     org_id: int = PLATFORM_ORG_ID,
+    train_featured: "dict | None" = None,
+    eval_featured: "dict | None" = None,
 ) -> dict:
     """
     Fit a GBRT model on train_cell_data (all cells, single fit — not LCO),
@@ -405,6 +644,14 @@ def run_cross_chemistry_transfer(
     registry under dataset=f"{train_dataset}_to_{eval_dataset}", and
     return {"run_id", "soh_mae", "soh_r2", "rul_mae", "rul_r2",
     "n_common_features"}.
+
+    train_featured / eval_featured are optional {cell_id: (X, y_soh, y_rul)}
+    dicts (the shape bundle_cache.load_features_cached() returns as its
+    second element) so a caller that has already run build_features() —
+    load_everything()'s reference pipelines — can reuse those frames
+    instead of paying for the full feature pipeline (including the
+    PyBaMM-backed physics calibration) a second time. Omit either and the
+    corresponding domain is featured here.
 
     Raises ValueError if the two domains share fewer than
     MIN_COMMON_FEATURES_FOR_TRANSFER usable feature columns — a genuine
@@ -428,8 +675,8 @@ def run_cross_chemistry_transfer(
             out[cid] = (X, y_soh, y_rul)
         return out
 
-    train_inputs = _featured(train_cell_data)
-    eval_inputs  = _featured(eval_cell_data)
+    train_inputs = train_featured if train_featured else _featured(train_cell_data)
+    eval_inputs  = eval_featured if eval_featured else _featured(eval_cell_data)
 
     train_cols = set(next(iter(train_inputs.values()))[0].columns)
     eval_cols  = set(next(iter(eval_inputs.values()))[0].columns)
@@ -458,8 +705,40 @@ def run_cross_chemistry_transfer(
 
     soh_mae = float(mean_absolute_error(y_soh_eval, preds["soh_pred"]))
     soh_r2  = float(r2_score(y_soh_eval, preds["soh_pred"]))
-    rul_mae = float(mean_absolute_error(y_rul_eval, preds["rul_pred"]))
-    rul_r2  = float(r2_score(y_rul_eval, preds["rul_pred"]))
+
+    # ── RUL split by label provenance (same rule as run_lco, FEATURE_VERSION >= v12) ──
+    # rul_label_kind is constant WITHIN a cell — a cell either reached EOL in-window
+    # (all rows observed) or it did not (all rows formula-extrapolated) — so the eval
+    # pool's kinds can be derived from the raw cycle tables without re-featuring.
+    # Reporting the extrapolated pool's R² as transfer skill would grade formula
+    # recovery (Severson eval rows were 100% extrapolated: the old -1.11 was scored
+    # against labels GENERATED by fade_rate_50cy, itself a model feature).
+    def _cell_label_kind(raw_df) -> str:
+        eol_capacity = float(raw_df["capacity_ah"].iloc[0]) * 0.80
+        return "observed" if bool((raw_df["capacity_ah"] <= eol_capacity).any()) else "extrapolated"
+
+    obs_mask_parts = []
+    for cid, (X_c, _ys, _yr) in eval_inputs.items():
+        kind = _cell_label_kind(eval_cell_data[cid])
+        obs_mask_parts.append(np.full(len(X_c), kind == "observed", dtype=bool))
+    obs_mask = np.concatenate(obs_mask_parts) if obs_mask_parts else np.array([], dtype=bool)
+
+    rul_true = np.asarray(y_rul_eval, dtype=float)
+    rul_pred = np.asarray(preds["rul_pred"], dtype=float)
+    n_obs = int(obs_mask.sum())
+    n_ext = int(len(obs_mask) - n_obs)
+
+    def _pooled_r2(mask) -> float:
+        if int(mask.sum()) < 2 or float(np.var(rul_true[mask])) <= 0.0:
+            return float("nan")
+        return float(r2_score(rul_true[mask], rul_pred[mask]))
+
+    rul_r2 = _pooled_r2(obs_mask)              # headline: measured labels only
+    rul_r2_extrapolated = _pooled_r2(~obs_mask)  # formula-recovery diagnostic
+    rul_mae = (
+        float(mean_absolute_error(rul_true[obs_mask], rul_pred[obs_mask]))
+        if n_obs >= 2 else float("nan")
+    )
 
     train_sample = next(iter(train_cell_data))
     eval_sample  = next(iter(eval_cell_data))
@@ -478,9 +757,11 @@ def run_cross_chemistry_transfer(
         n_rows=len(X_train) + len(X_eval),
         lco_metrics={
             "soh_mae": soh_mae, "soh_r2": soh_r2,
+            "baseline_soh_r2": None,  # not leave-cell-out — baseline_lco_r2 requires LCO folds
             "rul_mae": rul_mae, "rul_r2": rul_r2,
             "rul_reliable": False,  # never claim reliable on an out-of-domain zero-shot transfer
             "per_cell": {},         # not leave-cell-out — a single train-on-all/eval-on-all split
+            "baseline_per_cell": None,
         },
         notes=(
             f"Cross-chemistry generalization study: trained on {train_dataset} "
@@ -489,6 +770,10 @@ def run_cross_chemistry_transfer(
             f"{len(common)} feature column(s) both domains have available "
             f"({', '.join(common)}). Not leave-cell-out — a single "
             "train-on-all-of-one-domain / eval-on-all-of-the-other split. "
+            f"RUL R² is computed on observed-EOL rows only ({n_obs} of "
+            f"{n_obs + n_ext} eval rows; nan means the eval domain has no "
+            "measured-EOL rows, so its RUL labels are formula extrapolations "
+            "and no RUL transfer claim is evaluable there). "
             "Report the number honestly, including a poor one — see "
             "src/battery_knowledge.py's why-resistance-scales-differ entry "
             "for why cross-chemistry transfer is expected to be weak."
@@ -498,7 +783,261 @@ def run_cross_chemistry_transfer(
     return {
         "run_id": run_id, "soh_mae": soh_mae, "soh_r2": soh_r2,
         "rul_mae": rul_mae, "rul_r2": rul_r2, "n_common_features": len(common),
+        "n_rul_observed_rows": n_obs,
+        "n_rul_extrapolated_rows": n_ext,
+        "rul_r2_extrapolated": rul_r2_extrapolated,
     }
+
+
+def dataset_chemistry(cell_data: dict) -> str:
+    """The chemistry short-name of a dataset, taken from its first cell —
+    used to decide which dataset pairings are genuinely cross-chemistry.
+    Raises if cell_data is empty."""
+    from chemistry_profiles import ChemistryProfile
+    return ChemistryProfile.for_cell(next(iter(cell_data))).short_name
+
+
+def run_cross_chemistry_study(
+    datasets: dict,
+    featured: "dict | None" = None,
+    org_id: int = PLATFORM_ORG_ID,
+    refresh: bool = False,
+    unavailable: "list[tuple[str, str, str]] | None" = None,
+) -> dict:
+    """
+    Run and log the zero-shot cross-chemistry transfer study for every
+    ordered pair of the supplied datasets whose chemistries DIFFER, so the
+    resulting counterexample is a permanent, visible part of the platform's
+    benchmark rather than a one-off script output.
+
+    Parameters
+    ----------
+    datasets : {dataset_key: {cell_id: raw_cycles_df}} — the reference
+        datasets available on this deployment (e.g. nasa/severson/synth).
+    featured : optional {dataset_key: {cell_id: (X, y_soh, y_rul)}} so an
+        already-featured domain isn't re-featured (see
+        run_cross_chemistry_transfer()).
+    refresh : re-run a pairing that is already logged for the current
+        FEATURE_VERSION. False (the default) makes this safe to call on
+        every process start — it becomes a cheap registry read.
+    unavailable : optional [(train_dataset, eval_dataset, reason)] pairings
+        that cannot be evaluated at all (schema incompatibility). These are
+        logged as honest "not evaluated" rows instead of being silently
+        omitted.
+
+    Idempotence is keyed two different ways, deliberately: an *evaluated*
+    pairing is re-run when FEATURE_VERSION changes (the number itself
+    depends on the feature set), while an *unavailable* pairing is logged
+    once ever — its reason is a schema fact about the two domains, not a
+    function of the feature code.
+
+    Returns {"evaluated": [...], "unavailable": [...], "skipped": [...]}.
+    """
+    from batlab.features.engineering import FEATURE_VERSION
+
+    all_runs = leaderboard(tenant_org_id=None)
+    logged_current = {(r["dataset"], r["feature_version"]) for r in all_runs}
+    logged_any_pair = {r["dataset"] for r in all_runs}
+
+    evaluated: list[dict] = []
+    unavailable_logged: list[dict] = []
+    skipped: list[str] = []
+
+    def _log_unavailable(train_ds: str, eval_ds: str, reason: str) -> None:
+        pair = f"{train_ds}_to_{eval_ds}"
+        log_cross_chemistry_unavailable(train_ds, eval_ds, reason, org_id=org_id)
+        logged_any_pair.add(pair)
+        unavailable_logged.append({"pair": pair, "reason": reason})
+
+    for train_ds, train_cells in datasets.items():
+        for eval_ds, eval_cells in datasets.items():
+            if train_ds == eval_ds or not train_cells or not eval_cells:
+                continue
+            try:
+                if dataset_chemistry(train_cells) == dataset_chemistry(eval_cells):
+                    continue  # same chemistry — a domain shift, not cross-chemistry
+            except Exception:
+                continue
+
+            pair = f"{train_ds}_to_{eval_ds}"
+            if not refresh and (pair, FEATURE_VERSION) in logged_current:
+                skipped.append(pair)
+                continue
+            try:
+                result = run_cross_chemistry_transfer(
+                    train_ds, train_cells, eval_ds, eval_cells, org_id=org_id,
+                    train_featured=(featured or {}).get(train_ds),
+                    eval_featured=(featured or {}).get(eval_ds),
+                )
+            except ValueError as exc:
+                # A genuine schema incompatibility (too few shared feature
+                # columns) — record it honestly rather than dropping the pair.
+                if not refresh and pair in logged_any_pair:
+                    skipped.append(pair)
+                else:
+                    _log_unavailable(train_ds, eval_ds, str(exc))
+                continue
+            evaluated.append(result)
+            logged_current.add((pair, FEATURE_VERSION))
+
+    for train_ds, eval_ds, reason in (unavailable or []):
+        pair = f"{train_ds}_to_{eval_ds}"
+        if not refresh and pair in logged_any_pair:
+            skipped.append(pair)
+            continue
+        _log_unavailable(train_ds, eval_ds, reason)
+
+    return {"evaluated": evaluated, "unavailable": unavailable_logged, "skipped": skipped}
+
+
+def run_pinn_benchmark_study(
+    datasets: dict,
+    featured: "dict | None" = None,
+    baselines: "dict | None" = None,
+    org_id: int = PLATFORM_ORG_ID,
+    refresh: bool = False,
+) -> list[dict]:
+    """
+    Run and log the PINN physics estimator through the SAME leave-cell-out
+    harness as the GBRT, for every supplied reference dataset, so the two
+    model kinds sit side by side in the leaderboard with a comparable number
+    — including when the PINN loses, which is a result too.
+
+    Parameters
+    ----------
+    datasets : {dataset_key: {cell_id: raw_cycles_df}}.
+    featured : optional {dataset_key: {cell_id: df_feat}} so the (expensive)
+        feature build is not repeated.
+    baselines : optional {dataset_key: trivial_baseline_soh_r2}. The baseline
+        is model-independent (cycle_number -> SOH under identical folds), so
+        the GBRT's already-computed denominator applies to the PINN row
+        unchanged — the comparison is then apples-to-apples.
+    refresh : re-run a dataset already logged for the current FEATURE_VERSION.
+        False (the default) makes this a cheap registry read on a warm start.
+
+    Returns the list of newly logged PINN results ([] when everything was
+    already up to date).
+    """
+    from batlab.features.engineering import FEATURE_VERSION
+    from batlab.validation.pinn_lco import run_pinn_lco, MODEL_KIND, pinn_hyperparams
+    from chemistry_profiles import ChemistryProfile
+
+    all_runs = leaderboard(tenant_org_id=None)
+    logged = {
+        (r["dataset"], r["feature_version"])
+        for r in all_runs
+        if (r.get("model_kind") or "gbrt") == MODEL_KIND
+    }
+
+    out: list[dict] = []
+    for key, cell_cycles in (datasets or {}).items():
+        if not cell_cycles:
+            continue
+        if not refresh and (key, FEATURE_VERSION) in logged:
+            continue
+        try:
+            metrics = run_pinn_lco(
+                cell_cycles,
+                featured=(featured or {}).get(key),
+            )
+        except Exception:
+            # A dataset the physics fit genuinely cannot run on is skipped,
+            # not logged with a fabricated number.
+            continue
+
+        baseline = (baselines or {}).get(key)
+        metrics = {
+            **metrics,
+            "baseline_soh_r2": baseline,
+            "baseline_per_cell": None,
+        }
+        sample_cell = next(iter(cell_cycles))
+        n_rows = sum(len(df) for df in cell_cycles.values())
+        run_id = log_run(
+            org_id=org_id,
+            dataset=key,
+            chemistry=ChemistryProfile.for_cell(sample_cell).short_name,
+            feature_set=["cycle_number", "soh_pct"],  # the PINN's actual inputs
+            feature_version=FEATURE_VERSION,
+            hyperparams=pinn_hyperparams(),
+            seed=42,
+            cell_ids=list(cell_cycles.keys()),
+            n_rows=n_rows,
+            lco_metrics=metrics,
+            model_kind=MODEL_KIND,
+            notes=(
+                "PINN physics-regularized estimator benchmarked through the "
+                "SAME leave-cell-out folds as the GBRT (see "
+                "batlab/validation/pinn_lco.py). Fitted on the training cells' "
+                "pooled degradation curve; each cell anchored at its own first "
+                "observed SOH. Report the number even when it is worse than "
+                "the GBRT — that is the useful result."
+            ),
+        )
+        out.append({
+            "dataset": key, "run_id": run_id,
+            "soh_r2": metrics.get("soh_r2"), "soh_mae": metrics.get("soh_mae"),
+            "rul_r2": metrics.get("rul_r2"), "rul_mae": metrics.get("rul_mae"),
+            "baseline_soh_r2": baseline,
+        })
+        logged.add((key, FEATURE_VERSION))
+    return out
+
+
+def cross_chemistry_benchmark(tenant_org_id: "int | None" = None) -> list[dict]:
+    """
+    Every logged cross-chemistry transfer result — the honest answer to
+    "will this model work on a cell it has never seen?" — newest record per
+    (train, eval) pairing, for the Benchmark page's permanent
+    cross-chemistry section.
+
+    Includes BOTH evaluated pairings and the honest "not evaluated" rows
+    (e.g. nasa_to_oxford), since the latter is itself a real disclosure and
+    belongs next to the numbers rather than being omitted.
+
+    Rows are sorted so the most negative SOH R² comes FIRST: the point of
+    this table is the counterexample, and it must be impossible to miss.
+    Not-evaluated rows follow the evaluated ones.
+
+    Each entry:
+        {
+          "train_dataset", "eval_dataset", "chemistry", "evaluated",
+          "soh_r2", "soh_mae", "rul_mae", "rul_r2", "n_features",
+          "feature_version", "timestamp", "notes",
+        }
+    """
+    latest: dict = {}
+    for r in leaderboard(tenant_org_id=tenant_org_id):
+        ds = r.get("dataset") or ""
+        if "_to_" not in ds:
+            continue
+        train_ds, eval_ds = ds.split("_to_", 1)
+        key = (train_ds, eval_ds)
+        prev = latest.get(key)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[key] = r
+
+    rows = []
+    for (train_ds, eval_ds), r in latest.items():
+        rows.append({
+            "train_dataset":   train_ds,
+            "eval_dataset":    eval_ds,
+            "chemistry":       r.get("chemistry") or "—",
+            "evaluated":       r.get("rul_r2") is not None,
+            "soh_r2":          r.get("soh_r2"),
+            "soh_mae":         r.get("soh_mae"),
+            "rul_mae":         r.get("rul_mae"),
+            "rul_r2":          r.get("rul_r2"),
+            "n_features":      len(r.get("feature_set") or []),
+            "feature_version": r.get("feature_version"),
+            "timestamp":       r.get("timestamp"),
+            "notes":           r.get("notes"),
+        })
+    rows.sort(key=lambda d: (
+        not d["evaluated"],
+        d["soh_r2"] if d["soh_r2"] is not None else 0.0,
+    ))
+    return rows
 
 
 def cross_chemistry_runs_for_train_dataset(train_dataset: str, tenant_org_id: "int | None" = None) -> list[dict]:
@@ -514,6 +1053,40 @@ def cross_chemistry_runs_for_train_dataset(train_dataset: str, tenant_org_id: "i
     all_runs = leaderboard(tenant_org_id=tenant_org_id)
     prefix = f"{train_dataset}_to_"
     return [r for r in all_runs if r["dataset"].startswith(prefix)]
+
+
+def log_dataset_unavailable_for_modelling(
+    dataset: str,
+    reason: str,
+    org_id: int = PLATFORM_ORG_ID,
+) -> str:
+    """
+    Log an honest "this dataset cannot be modelled by the default pipeline"
+    record — e.g. Oxford's checkpoint-indexed schema has no
+    cycle_number/resistance_ohm/temperature_c, so build_features() cannot
+    even run on it and no LCO number exists. Every metric is None (not a
+    fabricated number, not silently skipped) — the Benchmark leaderboard
+    shows this row with "—" for every metric and `reason` in its notes,
+    same transparency the rest of this registry gives every other run.
+    """
+    return log_run(
+        org_id=org_id,
+        dataset=dataset,
+        chemistry="not evaluable",
+        feature_set=[],
+        feature_version="n/a",
+        hyperparams={},
+        seed=0,
+        cell_ids=[],
+        n_rows=0,
+        lco_metrics={
+            "soh_mae": None, "soh_r2": None, "baseline_soh_r2": None,
+            "rul_mae": None, "rul_r2": None,
+            "rul_reliable": False, "per_cell": {},
+            "baseline_per_cell": None,
+        },
+        notes=f"Not evaluable by the default pipeline: {reason}",
+    )
 
 
 def log_cross_chemistry_unavailable(
@@ -543,8 +1116,9 @@ def log_cross_chemistry_unavailable(
         cell_ids=[],
         n_rows=0,
         lco_metrics={
-            "soh_mae": None, "soh_r2": None, "rul_mae": None, "rul_r2": None,
+            "soh_mae": None, "soh_r2": None, "baseline_soh_r2": None, "rul_mae": None, "rul_r2": None,
             "rul_reliable": False, "per_cell": {},
+            "baseline_per_cell": None,
         },
         notes=f"Not evaluated: {reason}",
     )

@@ -83,9 +83,11 @@ The health assessment packages everything above into outputs for the decisions t
 
 ### Why the validation methodology matters for testing
 
-A battery testing lab's core deliverable is a number someone else will make a high-stakes decision with. The [Validation](#validation) section of this README reproduces a concrete demonstration of why the *method* used to produce that number matters: the same GBRT model on the same 4 NASA cells reports **R² = 0.998** with a naive random row-split and **R² = 0.806** with leave-cell-out. The 0.998 is real, not a computation error, but it answers the wrong question. It measures how well the model interpolates between cycles of cells it has already partly seen, not how well it generalizes to a cell it has never seen before. The latter is what matters when the model gets applied to a new cell coming off a test stand.
+A battery testing lab's core deliverable is a number someone else will make a high-stakes decision with. The [Validation](#validation) section of this README reproduces a concrete demonstration of why the *method* used to produce that number matters: the same GBRT model on the same 4 NASA cells reports **R² ≈ 1.00** with a naive random row-split and **R² = 0.958** with leave-cell-out. The ≈ 1.00 is real, not a computation error, but it answers the wrong question. It measures how well the model interpolates between cycles of cells it has already partly seen, not how well it generalizes to a cell it has never seen before. The latter is what matters when the model gets applied to a new cell coming off a test stand.
 
-`batlab.validation.run_lco` uses leave-cell-out by default.
+The same discipline applies to *labels*, not just splits. A row whose cell never reaches end-of-life in the data carries an **extrapolated** RUL label — a closed-form projection, not a measurement. Training a model on such labels and scoring it against them measures formula recovery, not forecasting skill. An earlier evaluation setup did exactly that on the Severson fleet and reported RUL R² = 0.999; the fix (per-row label provenance, observed-only scoring, and a formula baseline the model must beat) is now part of the default evaluation described below.
+
+`batlab.validation.run_lco` uses leave-cell-out by default, scores RUL only on rows with *observed* end-of-life labels, and reports the formula baseline alongside the model.
 
 ---
 
@@ -210,13 +212,17 @@ Every result this platform produces falls into exactly one of five categories, a
 
 | Validation method | SOH R² | What it actually measures |
 |---|---|---|
-| Naive random row-level split | **0.998** | How well the model interpolates within cells it has already partly seen |
-| Leave-cell-out (this platform's default) | **0.806** | How well the model generalizes to a cell it has never seen |
-| Trivial baseline (cycle number → SOH, no engineered features), same LCO folds | 0.603 | The floor — how much of the 0.806 is the smooth shape of aging curves, not the model |
+| Naive random row-level split | **≈ 1.00** | How well the model interpolates within cells it has already partly seen |
+| Leave-cell-out (this platform's default) | **0.958** | How well the model generalizes to a cell it has never seen |
+| Trivial baseline (cycle number → SOH, no engineered features), same LCO folds | 0.603 | The floor — how much of the 0.958 is the smooth shape of aging curves, not the model |
 
-The 0.998 is real and reproducible — and it's also the wrong number to report, because it doesn't answer the question that matters for a deployed model. The honest 0.806 is what `batlab.validation.run_lco` reports by default. Comparing it against the 0.603 trivial-baseline floor under the identical fold structure shows the engineered features are worth a real **+0.203** — not the full 0.806.
+Numbers are from the current feature set (v12). The notebook's stored outputs predate it slightly (0.998 / 0.806 with the pre-v12 features) — re-running it reproduces the numbers above, and the story is identical either way.
 
-This is public-data validation, not industrial validation — the 0.806 describes generalization across 4 NASA cells, not across a manufacturer's fleet. Treat it as evidence the methodology is sound, not as a number that transfers directly to a different chemistry or duty cycle.
+The ≈ 1.00 is real and reproducible — and it's also the wrong number to report, because it doesn't answer the question that matters for a deployed model. The honest 0.958 is what `batlab.validation.run_lco` reports by default. Comparing it against the 0.603 trivial-baseline floor under the identical fold structure shows the engineered features are worth a real **+0.355** — not the full 0.958.
+
+The same honesty rule is applied to RUL. RUL can only be *measured* for a cell whose data actually reaches the 80% end-of-life threshold; rows from cells that don't carry a closed-form **extrapolated** label instead. `run_lco` scores RUL only on the observed-label population and discloses its size — on NASA all 620 RUL rows here carry observed labels; on the 12 Severson cells **zero** rows qualify, so Severson RUL is reported as **not evaluable** rather than quoted from extrapolated labels. The earlier evaluation setup quoted Severson RUL R² = 0.999 from exactly that extrapolated pool, and `rul_formula_baseline_lco()` — the closed form that generates the labels, run under the identical folds — scores R² ≈ 1.0 on it, which is the proof. On the honest NASA pool the GBRT reaches **0.761** against a **0.731** formula baseline: a real but thin margin, published side by side rather than hidden. `rul_reliable` additionally requires ≥50% observed coverage, and a fold with no observed rows shows "not evaluable" instead of a number.
+
+This is public-data validation, not industrial validation — the 0.958 describes generalization across 4 NASA cells, not across a manufacturer's fleet. Treat it as evidence the methodology is sound, not as a number that transfers directly to a different chemistry or duty cycle.
 
 ## Demo Application
 

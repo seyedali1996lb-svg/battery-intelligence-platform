@@ -175,12 +175,18 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 up_bndl["metrics"]["lco_rul_r2"]   = lco["rul_r2"]
                 up_bndl["metrics"]["rul_reliable"]  = lco["rul_reliable"]
                 up_bndl["metrics"]["lco_per_cell"]  = lco["per_cell"]
+                up_bndl["metrics"]["rul_label_coverage"] = lco.get("rul_label_coverage")
                 _step("lco", "✓", f"LCO complete — SOH R²={lco['soh_r2']:.2f}  RUL R²={lco['rul_r2']:.2f}")
 
                 # 6 — Per-cell reliability
                 _step("reliability", "⏳", "Computing per-cell reliability…")
+                # A fold with no observed-EOL rows has rul_r2=None — it cannot
+                # be validated, which is unreliable by definition.
                 per_cell_ok = {
-                    cid: (fold["rul_r2"] >= RUL_RELIABLE_FLOOR)
+                    cid: (
+                        fold.get("rul_r2") is not None
+                        and fold["rul_r2"] >= RUL_RELIABLE_FLOOR
+                    )
                     for cid, fold in lco["per_cell"].items()
                 }
                 up_bndl["metrics"]["per_cell_rul_reliable"] = per_cell_ok
@@ -198,6 +204,40 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 from batlab.features.engineering import FEATURE_VERSION as _FV
                 from chemistry_profiles import ChemistryProfile as _CP
                 _sample_cell = next(iter(battery["cells"]))
+                # Attach the trivial-baseline denominator so uploaded-data runs
+                # carry the same honest accuracy framing as the reference fleets.
+                try:
+                    from batlab.validation.trivial_baseline import baseline_lco_r2
+                    # Reuse the feature frames already built above — rebuilding
+                    # them here would re-run the whole pipeline (incl. the
+                    # PyBaMM-backed physics calibration) a second time.
+                    _up_base = baseline_lco_r2(
+                        {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
+                        featured={cid: pair[0] for cid, pair in cell_featured.items()},
+                    )
+                    _up_lco_metrics = dict(lco)
+                    _up_lco_metrics["baseline_soh_r2"] = _up_base["baseline_soh_r2"]
+                    _up_lco_metrics["baseline_per_cell"] = _up_base["per_cell"]
+                except Exception:
+                    _up_lco_metrics = dict(lco)
+                    _up_lco_metrics.setdefault("baseline_soh_r2", None)
+                    _up_lco_metrics.setdefault("baseline_per_cell", None)
+                # RUL formula baseline — the honest "did the model beat the
+                # label-generating formula?" denominator for uploaded data too.
+                try:
+                    from batlab.validation.trivial_baseline import rul_formula_baseline_lco
+                    _up_fb = rul_formula_baseline_lco(
+                        {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
+                        featured={cid: pair[0] for cid, pair in cell_featured.items()},
+                    )
+                    _up_lco_metrics["rul_formula_baseline_r2"] = _up_fb["rul_formula_baseline_r2"]
+                    _up_lco_metrics["rul_baseline_pool"] = _up_fb["rul_baseline_pool"]
+                    up_bndl["metrics"]["rul_formula_baseline_r2"] = _up_fb["rul_formula_baseline_r2"]
+                    up_bndl["metrics"]["rul_baseline_pool"] = _up_fb["rul_baseline_pool"]
+                except Exception:
+                    _up_lco_metrics.setdefault("rul_formula_baseline_r2", None)
+                    _up_lco_metrics.setdefault("rul_baseline_pool", None)
+
                 up_bndl["metrics"]["experiment_run_id"] = _reg.log_run(
                     org_id=st.session_state["auth_org_id"],
                     dataset="uploaded",
@@ -208,7 +248,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                     seed=GBRT_PARAMS["random_state"],
                     cell_ids=list(battery["cells"].keys()),
                     n_rows=len(X_all),
-                    lco_metrics=lco,
+                    lco_metrics=_up_lco_metrics,
                     notes=_warm_start_note,
                 )
 

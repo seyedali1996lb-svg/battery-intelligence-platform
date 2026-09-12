@@ -61,6 +61,80 @@ import requests
 from dynamic_circularity import GRID_CARBON_INTENSITY  # single source of truth
 
 
+# ---------------------------------------------------------------------------
+# Provenance + documented assumptions (one place to audit)
+# ---------------------------------------------------------------------------
+#
+# Every price/carbon result this module returns carries a `provenance` marker
+# so a reader can tell a market-sourced series from an illustrative one
+# WITHOUT knowing which adapter produced it. Surfaces (API, Operations page)
+# render `market_provenance()` rather than inferring from the adapter name,
+# so a new adapter cannot ship a number that looks sourced while being made
+# up.
+SOURCED = "sourced"            # measured / vendor-reported market data
+ILLUSTRATIVE = "illustrative"  # qualitative or assumed — not a market feed
+
+# Documented FX assumption, kept separate from every feed so it is one named
+# place to audit and override. `label` is the exact string surfaces display;
+# `sourced` is False until a real FX feed is wired in, which is what makes an
+# FX-converted price visibly illustrative rather than silently assumed.
+FX_ASSUMPTION = {
+    "usd_to_eur": 0.92,
+    "label": "Illustrative — not sourced",
+    "sourced": False,
+    "citation": (
+        "Mid-2020s EUR/USD level, rounded to two decimals. Not a live FX "
+        "feed and not tied to a dated ECB reference rate — override with "
+        "an ECB/EBA reference rate before treating a USD-converted price "
+        "as sourced."
+    ),
+}
+
+# Backwards-compatible module constant (tests and any external caller read
+# this name). Defined as an alias so there is exactly one number to change.
+USD_TO_EUR = FX_ASSUMPTION["usd_to_eur"]
+
+
+def market_provenance(result: "dict | None") -> dict:
+    """Normalized provenance for any market result dict (price or carbon),
+    so every surface describes data quality the same way. Returns
+    {"provenance": "sourced"|"illustrative"|"unknown", "label": str,
+    "note": str, "adapter": str|None, "fx_assumption": dict|None}.
+
+    Unknown/unlabelled results default to 'illustrative' — an unlabelled
+    number is assumed NOT sourced, which is the safe direction for a
+    disclosure (never the other way round)."""
+    if not isinstance(result, dict):
+        return {
+            "provenance": "unknown",
+            "label": "Unknown",
+            "note": "No market result to describe.",
+            "adapter": None,
+            "fx_assumption": None,
+        }
+    provenance = result.get("provenance")
+    if provenance not in (SOURCED, ILLUSTRATIVE):
+        # Carbon results signal quality via source="live"|"static".
+        if result.get("source") == "live":
+            provenance = SOURCED
+        elif result.get("source") == "static":
+            provenance = ILLUSTRATIVE
+        else:
+            provenance = "unknown"
+    label = {
+        SOURCED: "Sourced market data",
+        ILLUSTRATIVE: "Illustrative — not sourced",
+    }.get(provenance, "Unknown provenance")
+    note = result.get("provenance_note") or result.get("note") or ""
+    return {
+        "provenance": provenance,
+        "label": label,
+        "note": note,
+        "adapter": result.get("adapter") or result.get("feed"),
+        "fx_assumption": result.get("fx_assumption"),
+    }
+
+
 @runtime_checkable
 class MarketDataAdapter(Protocol):
     """Structural contract every market-data connector in this module
@@ -180,6 +254,13 @@ class SyntheticMarketAdapter:
             "start": _default_start_iso(),
             "hours": n_hours,
             "prices": prices,
+            "provenance": ILLUSTRATIVE,
+            "provenance_note": (
+                "Deterministic daily price shape — a qualitative model of a "
+                "day-ahead curve, not a measured or market-sourced series. "
+                "Register an EIA/ENTSO-E adapter to upgrade this layer to "
+                "sourced market data."
+            ),
         }
 
     def fetch_carbon_intensity(
@@ -205,6 +286,11 @@ class SyntheticMarketAdapter:
             "start": _default_start_iso(),
             "hours": n_hours,
             "series": series,
+            "provenance": ILLUSTRATIVE,
+            "provenance_note": (
+                "Daily carbon shape around the static EU average — a proxy "
+                "for 'cleaner when wind is up', not a live intensity feed."
+            ),
         }
 
 
@@ -297,6 +383,8 @@ class EIAAdapter:
             "prices": prices,
             "respondent": self.respondent,
             "respondent_name": EIA_RESPONDENTS.get(self.respondent, self.respondent),
+            "provenance": SOURCED,
+            "provenance_note": "EIA Open Data v2 hourly wholesale price, reported $/MWh.",
         }
 
     def fetch_carbon_intensity(
@@ -401,6 +489,8 @@ class ENTSOEAdapter:
             "prices": prices,
             "bidding_zone": self.bidding_zone,
             "bidding_zone_name": ENTSOE_BIDDING_ZONES.get(self.bidding_zone, self.bidding_zone),
+            "provenance": SOURCED,
+            "provenance_note": "ENTSO-E Transparency day-ahead price (documentType A44).",
         }
 
     def fetch_carbon_intensity(
@@ -470,28 +560,45 @@ def _resolve_hours(start: Optional[str], end: Optional[str]) -> int:
 
 
 # Documented FX assumption, kept separate from any feed so it is one place
-# to audit (see the ASSUMPTIONS convention in src/consequences.py).
-USD_TO_EUR = 0.92  # "Illustrative — not sourced": mid-2020s EUR/USD level
+# to audit — now expressed once, above, as FX_ASSUMPTION (USD_TO_EUR is a
+# backwards-compatible alias of it).
 
 
-def to_eur_per_kwh(result: dict) -> dict:
+def to_eur_per_kwh(result: dict, fx_usd_eur: "float | None" = None) -> dict:
     """Normalize a fetch_hourly_prices() result to EUR/kWh so downstream
     engines (dispatch, revenue, charging) can consume any feed uniformly.
     EUR-denominated results pass through unchanged; USD results are
-    converted at USD_TO_EUR, with the assumption recorded in the returned
-    dict's `fx_assumption` field. A result dict already in EUR keeps its
-    unit and gains no fx_assumption."""
+    converted at the FX assumption (FX_ASSUMPTION, or `fx_usd_eur` when a
+    caller supplies a dated reference rate), with the assumption — and its
+    sourced/illustrative status — recorded in the returned dict's
+    `fx_assumption` field. A result dict already in EUR keeps its unit and
+    gains no fx_assumption.
+
+    Passing `fx_usd_eur` marks the conversion as sourced, so a caller that
+    wires a real ECB/central-bank rate flips the whole layer from
+    illustrative to sourced without touching the dispatch math."""
     if result.get("unit") == "EUR/kWh":
         return dict(result)
     if result.get("unit") == "USD/kWh":
         out = dict(result)
         out["unit"] = "EUR/kWh"
-        out["prices"] = [round(p * USD_TO_EUR, 5) for p in result["prices"]]
+        rate = FX_ASSUMPTION["usd_to_eur"] if fx_usd_eur is None else float(fx_usd_eur)
+        sourced = fx_usd_eur is not None
+        out["prices"] = [round(p * rate, 5) for p in result["prices"]]
         out["fx_assumption"] = {
-            "usd_to_eur": USD_TO_EUR,
-            "label": "Illustrative — not sourced",
-            "note": "Mid-2020s EUR/USD level; not a live FX feed.",
+            "usd_to_eur": rate,
+            "label": "Sourced FX rate" if sourced else FX_ASSUMPTION["label"],
+            "sourced": sourced,
+            "note": FX_ASSUMPTION["citation"],
         }
+        # A converted price is only as sourced as the weaker of the two
+        # inputs: an illustrative FX rate can never yield a sourced result.
+        if not sourced and out.get("provenance") == SOURCED:
+            out["provenance"] = ILLUSTRATIVE
+            out["provenance_note"] = (
+                "Vendor price feed converted to EUR at an illustrative FX "
+                "rate — supply a dated reference rate to treat as sourced."
+            )
         return out
     raise ValueError(f"Unknown price unit {result.get('unit')!r} in market data result.")
 
@@ -513,14 +620,19 @@ def resolve_carbon_intensity(
             series = live["series"]
             return {
                 "source": "live",
+                "provenance": SOURCED,
                 "feed": live.get("adapter", adapter.name),
                 "g_co2_per_kwh": round(float(sum(series)) / len(series), 1),
                 "per_hour": series,
                 "region": region,
+                "provenance_note": live.get(
+                    "provenance_note", "Live per-hour carbon intensity from the configured adapter."
+                ),
             }
     static = GRID_CARBON_INTENSITY.get(region.upper(), GRID_CARBON_INTENSITY["EU_AVG"])
     return {
         "source": "static",
+        "provenance": ILLUSTRATIVE,
         "g_co2_per_kwh": float(static),
         "per_hour": None,
         "region": region,

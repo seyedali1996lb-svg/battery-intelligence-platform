@@ -16,6 +16,7 @@ from data_loader import CELL_STRESS_PROFILES, _stress_factor
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
 from trajectory_memory import reconcile_rul_estimates
 from chemistry_profiles import ChemistryProfile
+from accuracy_provenance import cell_model_provenance, provenance_label
 
 try:
     from typing import TYPE_CHECKING
@@ -239,11 +240,41 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         if cell_id in _lco_per_cell:
             _n_lco_cells = len(_lco_per_cell)
 
+    # Provenance for this cell's accuracy numbers (single shared resolver, so
+    # this page can't describe the model differently from Decision/Health/
+    # Fleet). Appended to every visible RUL label below, so the fold count
+    # and chemistry travel with the number instead of living in a Settings
+    # footnote -- see src/accuracy_provenance.py.
+    #
+    # describe_bundle_for_cell() answers "which model produced this number, and
+    # was it even the right chemistry?" from the bundle the router handed this
+    # page (src/model_selection.py), so the label names the model that actually
+    # answered rather than the cell's source by assumption.
+    from model_selection import describe_bundle_for_cell, per_chemistry_accuracy_line
+    _selection  = describe_bundle_for_cell(bundle, cell_id)
+    _prov       = cell_model_provenance(bundle, cell_id, selection=_selection)
+    _prov_label = provenance_label(_prov)
+    _prov_suffix = f" · {_prov_label}" if _prov_label else ""
+    # Accuracy stated separately by CHEMISTRY, not one platform-wide number --
+    # several models can share a chemistry (NASA and the synthetic fleet are
+    # both LiCoO2), so the chemistry is the honest unit of comparison.
+    _chem_accuracy_line = per_chemistry_accuracy_line(
+        _selection.get("chemistry"), bundles={"selected": bundle} if bundle else None,
+    )
+
     # RUL display: suppress when model doesn't generalise (LCO R² < floor)
     # or when early-cycle features haven't stabilised yet.
     rul_calibrating = (not rul_reliable) or (confidence == "Calibrating")
     rul_display     = "—" if rul_calibrating else f"{current_rul:.0f}"
-    rul_sub         = "not calibrated" if not rul_reliable else "cycles to 80% SOH"
+    # When RUL is withheld, the provenance travels with the WITHHOLDING: the
+    # population size and (v12) the reason — a fold whose RUL labels are all
+    # formula extrapolations is a statement about the data, not a glitch.
+    if rul_reliable:
+        rul_sub = f"cycles to 80% SOH{_prov_suffix}"
+    elif _prov_label:
+        rul_sub = f"withheld — {_prov_label}"
+    else:
+        rul_sub = "not calibrated"
 
     # Application EOL threshold — adjust displayed RUL after rul_calibrating is known
     app_eol = float(st.session_state.get("eol_threshold_pct", 80.0))
@@ -253,7 +284,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         if fade_50 > 1e-6:
             adj_rul = max(0, (current_soh - app_eol) / fade_50)
         rul_display = f"{adj_rul:.0f}"
-        rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold)"
+        rul_sub     = f"cycles to {app_eol:.0f}% SOH (app threshold){_prov_suffix}"
 
     if rul_calibrating:
         if fold_r2 is not None and fold_r2 > 0:
@@ -305,28 +336,66 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
 
         if _cell_dataset:
             _transfer_runs = _reg.cross_chemistry_runs_for_train_dataset(_cell_dataset)
-            _evaluated = [r for r in _transfer_runs if r["rul_mae"] is not None]
-            if _evaluated:
-                _t = _evaluated[0]
+            # v12: three distinct facts can coexist across pairings, and each
+            # is its own badge (they are different claims about different
+            # eval domains, so collapsing them would misstate one of them):
+            #   WEAK          — evaluated, and the transfer measured poorly;
+            #   RUL N/A       — evaluated, but the eval domain has no
+            #                   measured-EOL rows, so only its SOH number is
+            #                   real (RUL labels there are formula
+            #                   extrapolations — quoting an R² would be
+            #                   grading formula recovery);
+            #   NOT EVALUATED — schema-incompatible pairing, no number at all.
+            def _finite(v):
+                return v is not None and v == v
+
+            _weak_rows = [r for r in _transfer_runs if _finite(r["rul_mae"])]
+            _rul_na_rows = [
+                r for r in _transfer_runs
+                if not _finite(r["rul_mae"]) and _finite(r["soh_r2"])
+            ]
+            _not_eval_rows = [
+                r for r in _transfer_runs
+                if not _finite(r["rul_mae"]) and not _finite(r["soh_r2"])
+            ]
+
+            _badges = []
+            _reasons = []
+            if _weak_rows:
+                _t = _weak_rows[0]
                 _eval_ds = _t["dataset"].split("_to_", 1)[1]
-                _tooltip = (
+                _badges.append((
+                    f"CROSS-CHEM TRANSFER: WEAK ({_eval_ds})",
                     f"Trained on {_cell_dataset}, zero-shot evaluated on {_eval_ds} — "
                     f"RUL MAE {_t['rul_mae']:.0f} cycles, R²={_t['rul_r2']:.2f}. "
-                    "Cross-chemistry transfer is expected to be weak; see Benchmark for the full record."
-                )
-                _transfer_html = (
-                    f"<span class='tag-calibrating' title=\"{_html_mod.escape(_tooltip)}\">"
-                    f"CROSS-CHEM TRANSFER: WEAK ({_eval_ds})</span>"
-                )
-                _transfer_reason = _tooltip
-            elif _transfer_runs:
-                _t = _transfer_runs[0]
+                    "Cross-chemistry transfer is expected to be weak; see Benchmark for the full record.",
+                ))
+            if _rul_na_rows:
+                _t = _rul_na_rows[0]
                 _eval_ds = _t["dataset"].split("_to_", 1)[1]
-                _transfer_html = (
-                    f"<span class='tag-calibrating' title=\"{_html_mod.escape(_t['notes'] or '')}\">"
-                    f"CROSS-CHEM TRANSFER: NOT EVALUATED ({_eval_ds})</span>"
+                _badges.append((
+                    f"CROSS-CHEM TRANSFER: RUL N/A ({_eval_ds})",
+                    f"Trained on {_cell_dataset}, zero-shot evaluated on {_eval_ds} — "
+                    "RUL not evaluable there: the eval domain has no measured-EOL rows, "
+                    "so its RUL labels are formula extrapolations. Only its SOH transfer number is real.",
+                ))
+            if _not_eval_rows:
+                _t = _not_eval_rows[0]
+                _eval_ds = _t["dataset"].split("_to_", 1)[1]
+                _badges.append((
+                    f"CROSS-CHEM TRANSFER: NOT EVALUATED ({_eval_ds})",
+                    _t["notes"] or f"{_cell_dataset} → {_eval_ds} could not be evaluated at all.",
+                ))
+
+            if _badges:
+                _transfer_html = "".join(
+                    f"&nbsp;·&nbsp;<span class='tag-calibrating' title=\"{_html_mod.escape(reason)}\">"
+                    f"{_html_mod.escape(label)}</span>"
+                    for label, reason in _badges
                 )
-                _transfer_reason = _t["notes"] or ""
+                # First badge's reason leads; the rest follow so the visible
+                # text keeps every disclosure, not just the hoverable one.
+                _transfer_reason = " ".join(reason for _, reason in _badges)
     except Exception:
         _transfer_html = ""  # honesty badge is best-effort -- never block the page over it
     rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
@@ -464,6 +533,12 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"padding:6px 12px;background:#1a202c;border-radius:6px;"
             f"border-left:3px solid #a0aec0'>{html.escape(_transfer_reason)}</div>",
             unsafe_allow_html=True,
+        )
+
+    if _chem_accuracy_line:
+        st.caption(
+            f"Accuracy by chemistry (from the experiment registry, per-chemistry "
+            f"not platform-wide): {_chem_accuracy_line}"
         )
 
     # ── Plain-English summary sentence ───────────────────────────────────────

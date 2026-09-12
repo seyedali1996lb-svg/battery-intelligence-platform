@@ -65,6 +65,11 @@ def page_stakeholder_view(selected: str, df: pd.DataFrame, bundle: dict, rul_rel
             selected, _profile.short_name, source, soh, cycle_count, fade_30, fade_50, None,
             rul_reliable=rul_reliable, rul_pred=rul_pred, rul_q10=rul_q10, rul_q90=rul_q90,
             sop_pct=sop_pct,
+            # mechanism is already computed above for the OEM view — passing it
+            # here too is what stops this surface from showing a recommended
+            # action with no mechanism corroboration (the exact silent
+            # disagreement mechanism_corroboration_note() exists to catch).
+            mechanism=mechanism,
         )
     else:
         _region = st.selectbox("Recycler region preference", ["North America", "Europe", "Asia"], key="stakeholder_recycler_region")

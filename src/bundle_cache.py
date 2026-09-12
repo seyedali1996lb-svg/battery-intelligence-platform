@@ -48,7 +48,18 @@ CACHE_DIR = pathlib.Path(__file__).parent.parent / ".cache" / "bundles"
 # before the shape change would still match on cell IDs/cycle counts and
 # get treated as a hit, and the caller's tuple-unpacking would crash on the
 # old shape instead of cleanly missing and rebuilding.
-MODEL_VERSION = "v2-gbrt-quantile-lazy-cell-store"
+MODEL_VERSION = "v4-rul-label-provenance"
+# v3-baseline-metrics: cached reference-fleet bundles now also carry the
+# trivial-baseline R² (batlab.validation.trivial_baseline.baseline_lco_r2)
+# in bundle["metrics"]["baseline_soh_r2"] / ["baseline_lco_per_cell"]. A
+# pre-existing v2 cache would still match on cell IDs/cycle counts and be
+# treated as a hit, silently returning a bundle with baseline_soh_r2=None
+# — the exact stale-content failure this constant exists to prevent.
+# v4-rul-label-provenance: bundles now carry the Tier-0 RUL-label-provenance
+# metrics — rul_label_coverage / n_rul_observed_rows / n_rul_extrapolated_rows
+# and the rul_formula_baseline (the closed form that generated extrapolated
+# labels, under the same folds) — and rul_r2/rul_reliable now mean OBSERVED-EOL
+# rows only. A pre-v4 cached bundle would silently serve a mixed-pool RUL R².
 
 CACHE_VERSION = f"{FEATURE_VERSION}+{MODEL_VERSION}"
 

@@ -3,9 +3,9 @@
 A citable, honest research library for battery degradation analysis.
 
 - Standardized loaders for five public li-ion cycling datasets (NASA, Severson, Oxford, CALCE, Zhu 2022) — one documented schema, not five ad hoc shapes.
-- Literature-cited feature engineering (fade rate, dQ/dV, knee detection, Coulombic Efficiency, stress index).
-- Gradient-boosted SOH/RUL models validated with **leave-cell-out** cross-validation, not a row-level split that quietly leaks near-neighbor cycles into the test set.
-- A reproducible benchmark manifest format that records the exact seed, fold assignments, and feature-engineering version behind a reported number.
+- Literature-cited feature engineering (fade rate, dQ/dV, knee detection, Coulombic Efficiency, stress index) with mechanical leakage-lint guardrail over the label-generating expressions.
+- Gradient-boosted SOH/RUL models validated with **leave-cell-out** cross-validation, not a row-level split that quietly leaks near-neighbor cycles into the test set. RUL is scored only on rows whose end-of-life was actually observed (per-row label provenance), and a formula baseline reproducing the label-generating closed form is reported alongside the model — a model must beat it to claim skill.
+- A reproducible benchmark manifest format that records the exact seed, fold assignments, and feature-engineering version behind a reported number, plus a sealed, content-hashed holdout manifest that verifies holdout cells were never touched by training.
 
 ## Install
 
@@ -38,7 +38,9 @@ The full ten-minute tour, with plots, is [`notebooks/01_quickstart.ipynb`](https
 
 ## Why leave-cell-out?
 
-A row-level train/test split on cycles pooled across multiple cells looks fine — until you notice the held-out rows are the near-neighbors of rows the model already trained on. `notebooks/02_data_leakage.ipynb` reproduces this on real NASA data: a naive split reports **R² = 0.998**; leave-cell-out on the identical data and model reports **R² = 0.806**. Neither number is fake — they're answering different questions, and only one of them is the question "does this generalize to a cell the model has never seen?" This is the credibility argument for the whole library: every model in `batlab.models` is validated the second way by default.
+A row-level train/test split on cycles pooled across multiple cells looks fine — until you notice the held-out rows are the near-neighbors of rows the model already trained on. `notebooks/02_data_leakage.ipynb` reproduces this on real NASA data: a naive split reports **R² ≈ 1.00**; leave-cell-out on the identical data and model reports **R² = 0.958**. Neither number is fake — they're answering different questions, and only one of them is the question "does this generalize to a cell the model has never seen?" This is the credibility argument for the whole library: every model in `batlab.models` is validated the second way by default.
+
+The same honesty applies to *what the model is asked to predict*. A RUL label is only a measurement when the cell's data reaches the 80% end-of-life threshold; otherwise it is a closed-form extrapolation, and scoring a model against extrapolated labels tests formula recovery, not forecasting. `run_lco` reports RUL only on the observed-label population, marks populations with none as not evaluable, and publishes `rul_formula_baseline_lco()` — the label formula itself, run under identical folds — so a model's RUL claim can always be compared against the floor it must beat. (This rule exists because its absence once produced a Severson RUL R² of 0.9994 that was pure formula recovery.)
 
 ## What this is not
 

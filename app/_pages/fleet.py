@@ -21,6 +21,7 @@ from utils import (
 )
 from design_system import make_badge
 from chemistry_profiles import ChemistryProfile
+from accuracy_provenance import cell_model_provenance, provenance_label
 from _pages._fleet_diagnostics import render_fleet_diagnostics
 
 try:
@@ -102,8 +103,15 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
     import db as _db_rows
     rows = []
 
-    def _bundle_for_cell(cid: str) -> dict | None:
-        return bundles.get(ChemistryProfile.for_cell(cid).source_kind)  # pyright: ignore[reportUndefinedVariable]
+    def _selection_for_cell(cid: str) -> dict:
+        # Chemistry-keyed selection (src/model_selection.py): this cell's own
+        # source model when available, else the best SAME-chemistry model
+        # (disclosed via the record's `native`/`reason`), else not found — so
+        # the cell is left out of the ranking rather than scored by an
+        # unrelated chemistry's model. The record travels with the row so the
+        # table can name the model that produced each RUL value.
+        from model_selection import select_model_for_cell
+        return select_model_for_cell(cid, bundles)  # pyright: ignore[reportUndefinedVariable]
 
     _summaries_by_id = {
         r["cell_id"]: r for r in _db_rows.get_cell_summaries(_org_id) if r["cell_id"] in _active_ids
@@ -112,9 +120,10 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         _r = _summaries_by_id.get(cell_id)
         if _r is None:
             continue  # not yet summarized (e.g. race with cell_store population)
-        bndl      = _bundle_for_cell(cell_id)
-        if bndl is None:
+        _sel      = _selection_for_cell(cell_id)
+        if not _sel["found"]:
             continue
+        bndl      = _sel["bundle"]
         per_cell  = bndl["metrics"].get("per_cell_rul_reliable", {})
         rul_ok    = per_cell.get(cell_id, bndl["metrics"].get("rul_reliable", False))
         _profile  = ChemistryProfile.for_cell(cell_id)  # pyright: ignore[reportUndefinedVariable]
@@ -138,6 +147,12 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         trend  = _r["fade_trend"]
         _grade = _r["grade"]
 
+        # Resolved once per cell: provenance for this cell's own RUL number
+        # (fold count, fold R², and the model that actually answered), surfaced
+        # in the ranking table next to the value instead of only as a page-level
+        # "n=4 / n=12 / n=8" caption a reader can't tie to a specific row.
+        _prov = cell_model_provenance(bndl, cell_id, selection=_sel)
+
         rows.append({
             "cell_id":      cell_id,
             "source":       _profile.source_label,
@@ -147,6 +162,8 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             "fade_30":      fade_30,
             "rul":          rul,
             "rul_ok":       rul_ok,
+            "prov":         _prov,
+            "prov_label":   provenance_label(_prov),
             "eol_at":       eol_at,
             "cycles_to_eol": cycles_to_eol,
             "trend":        trend,

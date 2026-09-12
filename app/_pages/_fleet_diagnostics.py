@@ -322,7 +322,7 @@ def render_filter_and_view_selector(rows: list, featured_dfs: dict, bundles: dic
 # Weekly digest + Health Ranking table + jump buttons + CSV export
 # ---------------------------------------------------------------------------
 
-def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
+def render_health_ranking_and_export(rows: list, _traj_matches: dict, bundles: "dict | None" = None) -> None:
     # ── E6: Weekly fleet health summary card ──────────────────────────────────
     import datetime as _dt_e6
     _e6_today    = _dt_e6.date.today().strftime("%d %b %Y")
@@ -361,10 +361,28 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
 
     st.markdown("<h4 class='section-header'>Health Ranking — Worst First</h4>", unsafe_allow_html=True)
     st.caption(
-        "Est. RUL comes from leave-cell-out cross-validation on each cell's data source "
-        "(NASA n=4, Severson n=12, synthetic n=8) — a thin population for any fleet-scale "
+        "Est. RUL comes from leave-cell-out cross-validation on each cell's data source, and "
+        "each RUL value below carries its own fold count and chemistry source — NASA's estimate "
+        "rests on 4 held-out cells and Severson's on 12, a thin population for any fleet-scale "
         "reliability claim. Treat as directional; see Overview for per-cell confidence."
     )
+
+    # Accuracy by chemistry, stated SEPARATELY from any platform-wide number:
+    # this fleet spans more than one chemistry, and a single aggregate R² would
+    # hide that Severson/LFP's R² is almost entirely earned while NASA's is
+    # mostly the shape of an aging curve (see the Benchmark page's per-chemistry
+    # table). Only the chemistries actually present in this ranking are listed.
+    from chemistry_profiles import ChemistryProfile as _CP_rank
+    from model_selection import chemistry_accuracy_report, chemistry_accuracy_line
+    _chem_rows = chemistry_accuracy_report(bundles) if bundles else []
+    if _chem_rows and rows:
+        _present_chem = {_CP_rank.for_cell(r["cell_id"]).short_name for r in rows}
+        _chem_rows = [cr for cr in _chem_rows if cr.get("chemistry") in _present_chem]
+    if _chem_rows:
+        st.caption(
+            "Accuracy by chemistry (per chemistry, not platform-wide): "
+            + "  |  ".join(chemistry_accuracy_line(cr) for cr in _chem_rows)
+        )
 
     STATUS_COLOUR = {"Healthy": "#48bb78", "Degrading": "#f6e05e", "End of Life": "#fc8181"}
     SOURCE_STYLE  = {
@@ -381,8 +399,13 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
         soh_bar = int(max(0, min(100, r["soh"])))
         bar_colour = sc
 
+        _rul_prov = r.get("prov_label") or ""
+        _rul_prov_html = (
+            f"<div style='font-size:10px;color:#a0aec0;margin-top:2px'>{_rul_prov}</div>"
+            if _rul_prov else ""
+        )
         rul_cell = (
-            f"{r['rul']:.0f} cy" if (r["rul"] is not None and r["rul_ok"])
+            f"{r['rul']:.0f} cy{_rul_prov_html}" if (r["rul"] is not None and r["rul_ok"])
             else "<span style='color:#a0aec0'>—</span>"
         )
         eol_cell = (
@@ -452,7 +475,7 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict) -> None:
                     <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Fade Rate</th>
                     <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
-                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL</th>
+                               text-transform:uppercase;letter-spacing:0.08em;font-weight:600">Est. RUL<br><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">value · held-out population</span></th>
                     <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
                                text-transform:uppercase;letter-spacing:0.08em;font-weight:600">EOL Proximity</th>
                     <th scope="col" style="padding:10px 12px;text-align:left;font-size:11px;color:#a0aec0;
@@ -1076,7 +1099,7 @@ def render_fleet_diagnostics(rows: list, featured_dfs: dict, bundles: dict, traj
     if rows is None:
         return
 
-    render_health_ranking_and_export(rows, _traj_matches)
+    render_health_ranking_and_export(rows, _traj_matches, bundles)
     render_soh_distribution_chart(rows)
     render_risk_matrix(rows)
     render_spread_trending(featured_dfs)

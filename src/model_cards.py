@@ -93,13 +93,11 @@ def build_model_card(run: dict) -> dict:
     # Reproducibility: replay_run() trains with the CURRENT GBRT_PARAMS,
     # not the run's own logged snapshot. Recorded-vs-current divergence is
     # surfaced here (see experiment_registry.py's module docstring for why
-    # this check exists at all).
-    from batlab.validation.lco import GBRT_PARAMS as _CURRENT_GBRT_PARAMS
-    hyperparams_diff = {
-        k: (hyperparams.get(k), v)
-        for k, v in _CURRENT_GBRT_PARAMS.items()
-        if hyperparams.get(k) != v
-    }
+    # this check exists at all). hyperparams_divergence() is the shared
+    # resolver so the card, replay_run() and the Regenerate-report UI can
+    # never disagree about whether this run is still faithfully reproducible.
+    from experiment_registry import hyperparams_divergence
+    hyperparams_diff = hyperparams_divergence(run)
 
     return {
         "model": {
@@ -125,11 +123,18 @@ def build_model_card(run: dict) -> dict:
             "method": "Leave-Cell-Out (LCO) — train on N-1 cells, evaluate on the held-out cell; per-cell reliability floor RUL_RELIABLE_FLOOR = 0.3",
             "soh_mae": run.get("soh_mae"),
             "soh_r2": run.get("soh_r2"),
+            "baseline_soh_r2": run.get("baseline_soh_r2"),
+            "model_advantage_over_baseline": (
+                (run.get("soh_r2") - run.get("baseline_soh_r2"))
+                if (run.get("soh_r2") is not None and run.get("baseline_soh_r2") is not None)
+                else None
+            ),
             "rul_mae": run.get("rul_mae"),
             "rul_r2": run.get("rul_r2"),
             "rul_reliable": bool(run.get("rul_reliable")),
             "n_folds": len(fold_metrics),
             "fold_metrics": fold_metrics,
+            "baseline_per_cell": run.get("baseline_per_cell"),
         },
         "hyperparameters": hyperparams,
         "reproducibility": {
@@ -157,6 +162,19 @@ def _LIMITATIONS(run: dict) -> list:
         )
     if base == "synth":
         limitations.append("Trained on the platform's internally generated synthetic fleet — not a measurement of real cells.")
+    try:
+        from experiment_registry import hyperparams_divergence, format_hyperparams_diff
+        _diff = hyperparams_divergence(run)
+    except Exception:
+        _diff = {}
+    if _diff:
+        limitations.append(
+            "This run is no longer faithfully reproducible: the GBRT "
+            f"hyperparameters the platform currently trains with differ from the "
+            f"run's own recorded snapshot ({format_hyperparams_diff(_diff)}). Any "
+            "'regenerate' replay uses the CURRENT settings, so it does not "
+            "reproduce this run's numbers."
+        )
     return limitations
 
 
@@ -182,7 +200,9 @@ def model_card_markdown(card: dict) -> str:
         f"**License:** {d['license']}",
         "",
         "#### Validation (Leave-Cell-Out)",
-        f"**SOH** — MAE: {_fmt(v.get('soh_mae'))}% · R²: {_fmt(v.get('soh_r2'))}",
+        f"**SOH** — MAE: {_fmt(v.get('soh_mae'))}% · R²: {_fmt(v.get('soh_r2'))}"
+        + (f" · Baseline R²: {_fmt(v.get('baseline_soh_r2'))} · Model advantage: {_fmt(v.get('model_advantage_over_baseline'))}"
+           if v.get("baseline_soh_r2") is not None else ""),
         f"**RUL** — MAE: {_fmt(v.get('rul_mae'), 1)} cycles · R²: {_fmt(v.get('rul_r2'))} · "
         f"Reliable: {'✓' if v.get('rul_reliable') else '—'} (per-cell floor 0.3)",
         f"**Folds:** {v.get('n_folds')}",
@@ -192,8 +212,17 @@ def model_card_markdown(card: dict) -> str:
         "",
         "#### Reproducibility",
         f"{rep.get('replay', '')}.",
-        f"Recorded hyperparameters {'match' if rep.get('hyperparams_match_current_gbrt_params') else 'DIVERGE from'} the current GBRT_PARAMS"
-        + (f" ({json.dumps(rep.get('hyperparams_diff_vs_current'), default=str)})" if rep.get("hyperparams_diff_vs_current") else ""),
+        (
+            "Recorded hyperparameters match the current GBRT_PARAMS — replaying "
+            "this run re-trains with the same settings it was trained with."
+            if rep.get("hyperparams_match_current_gbrt_params") else
+            "⚠ **NOT FAITHFULLY REPRODUCIBLE.** Recorded hyperparameters DIVERGE "
+            "from the current GBRT_PARAMS "
+            f"({json.dumps(rep.get('hyperparams_diff_vs_current'), default=str)}) — "
+            "a replay would train with TODAY'S settings, so its numbers are not "
+            "this run's numbers and any difference must not be read as "
+            "environment or data drift."
+        ),
         "",
         "#### Limitations",
     ]

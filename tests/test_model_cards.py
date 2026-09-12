@@ -125,3 +125,37 @@ def test_markdown_renders_sections_and_metrics():
 def test_markdown_notes_included():
     md = model_card_markdown(build_model_card(_run(notes="custom note here")))
     assert "custom note here" in md
+
+
+# ---------------------------------------------------------------------------
+# Trivial-baseline honesty framing
+# ---------------------------------------------------------------------------
+
+def test_card_reports_baseline_and_model_advantage():
+    """When a run carries the trivial-baseline R², the card must surface it
+    alongside the model R² and the real advantage (the notebook's +0.203
+    framing), not the bare model number alone."""
+    card = build_model_card(_run(soh_r2=0.806, baseline_soh_r2=0.603))
+    v = card["validation"]
+    assert v["baseline_soh_r2"] == 0.603
+    assert abs(v["model_advantage_over_baseline"] - 0.203) < 1e-9
+
+
+def test_card_baseline_absent_is_backward_compatible():
+    """A pre-baseline logged run (no baseline_soh_r2) must still build a
+    valid card, with the baseline/advantage fields explicitly None."""
+    card = build_model_card(_run())
+    v = card["validation"]
+    assert v["baseline_soh_r2"] is None
+    assert v["model_advantage_over_baseline"] is None
+
+
+def test_markdown_includes_baseline_when_present():
+    md = model_card_markdown(build_model_card(_run(soh_r2=0.806, baseline_soh_r2=0.603)))
+    assert "Baseline R²" in md
+    assert "Model advantage" in md
+
+
+def test_markdown_omits_baseline_when_absent():
+    md = model_card_markdown(build_model_card(_run()))
+    assert "Baseline R²" not in md

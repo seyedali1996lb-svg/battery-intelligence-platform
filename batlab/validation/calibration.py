@@ -39,7 +39,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
 
-from batlab.features.engineering import build_features, get_model_matrix
+from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
 from batlab.models.gbrt import GBRT_PARAMS, GBRT_QUANTILE_PARAMS
 
 # The Q10/Q90 pair nominally brackets an 80% interval.
@@ -79,31 +79,42 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
 
     Returns:
         {
-          "rul_interval_coverage":   float,  # empirical coverage of [Q10, Q90] across ALL folds
-          "rul_interval_width_mean": float,  # mean interval width (cycles)
-          "rul_r2":                  float,  # point-estimate RUL R2 across all folds
+          "rul_interval_coverage":   float,  # empirical coverage of [Q10, Q90], OBSERVED-EOL rows only
+          "rul_interval_width_mean": float,  # mean interval width (cycles), observed rows
+          "rul_r2":                  float,  # point-estimate RUL R2, observed-EOL rows only (nan when none)
           "rul_mae":                 float,
-          "rul_reliable":            bool,   # rul_r2 >= RUL_RELIABLE_FLOOR
+          "rul_reliable":            bool,   # observed-row rul_r2 >= RUL_RELIABLE_FLOOR AND coverage >= floor
+          "rul_label_coverage":      float,  # fraction of evaluated RUL rows with observed labels
           "per_cell": {
               cell_id: {
                   "rul_true":  np.ndarray,   # observed RUL on the held-out fold
                   "rul_q10":   np.ndarray,   # predicted Q10
                   "rul_q90":   np.ndarray,   # predicted Q90
-                  "rul_interval_coverage":   float,
+                  "rul_label_observed": np.ndarray,  # bool mask: label is measured, not formula-extrapolated
+                  "rul_interval_coverage":   float,  # observed rows only (None when no observed rows)
                   "rul_interval_width_mean": float,
-                  "rul_mae":  float,
+                  "rul_mae":  float,   # observed rows only (None when none)
                   "rul_r2":   float,
               }, ...
           },
         }
+
+    Like run_lco(), interval metrics are computed on OBSERVED-EOL rows only:
+    an interval around a formula-generated target would measure how tightly
+    the model reproduces the extrapolation formula, not calibrated
+    uncertainty around a measured quantity.
     """
-    from batlab.validation.lco import RUL_RELIABLE_FLOOR  # avoid circular import
+    from batlab.validation.lco import (
+        RUL_RELIABLE_FLOOR, MIN_RUL_LABEL_OBSERVED_FRACTION,
+        _LABEL_OBSERVED,
+    )  # avoid circular import
 
     featured = {}
     for cell_id, df in cell_data.items():
         df_feat = build_features(df, cell_id=cell_id)
         X, _y_soh, y_rul = get_model_matrix(df_feat)
-        featured[cell_id] = (X, y_rul)
+        kinds = get_rul_label_kinds(df_feat)
+        featured[cell_id] = (X, y_rul, kinds)
 
     cell_ids = list(featured.keys())
     if len(cell_ids) < 2:
@@ -111,6 +122,7 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
             "rul_interval_coverage": float("nan"), "rul_interval_width_mean": float("nan"),
             "rul_r2": float("nan"), "rul_mae": float("nan"),
             "rul_reliable": False, "per_cell": {},
+            "rul_label_coverage": 0.0,
         }
 
     point_params = {**GBRT_PARAMS, "random_state": seed}
@@ -123,7 +135,7 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
         train_cells = [c for c in cell_ids if c != test_cell]
         X_train = pd.concat([featured[c][0] for c in train_cells])
         y_train = pd.concat([featured[c][1] for c in train_cells])
-        X_test, y_test = featured[test_cell]
+        X_test, y_test, _kinds = featured[test_cell]
 
         scaler = StandardScaler()
         Xtr = scaler.fit_transform(X_train)
@@ -137,32 +149,71 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
         q10 = np.clip(q10_m.predict(Xte), 0, None)
         q90 = np.clip(q90_m.predict(Xte), 0, None)
 
-        all_true.append(rul_true)
-        all_q10.append(q10)
-        all_q90.append(q90)
-        all_mae.append(mean_absolute_error(rul_true, rul_m.predict(Xte)))
-        all_r2.append(r2_score(rul_true, rul_m.predict(Xte)))
+        # Observed-EOL rows only for every reported metric (see run_lco()):
+        # interval quality around a formula-generated target is formula
+        # recovery, not calibrated uncertainty.
+        kinds = featured[test_cell][2]
+        obs_mask = (
+            (kinds.reindex(X_test.index) == _LABEL_OBSERVED).to_numpy()
+            if kinds is not None else np.zeros(len(X_test), dtype=bool)
+        )
+        n_obs = int(obs_mask.sum())
+
+        fold_true, fold_q10, fold_q90 = (
+            rul_true[obs_mask], q10[obs_mask], q90[obs_mask]
+        ) if n_obs >= 2 else ([], [], [])
+
+        all_true.append(np.asarray(fold_true, dtype=float))
+        all_q10.append(np.asarray(fold_q10, dtype=float))
+        all_q90.append(np.asarray(fold_q90, dtype=float))
+        if n_obs >= 2:
+            all_mae.append(mean_absolute_error(fold_true, rul_m.predict(Xte)[obs_mask]))
+            fold_r2 = r2_score(fold_true, rul_m.predict(Xte)[obs_mask])
+            if not np.isnan(fold_r2):
+                all_r2.append(fold_r2)
 
         per_cell[test_cell] = {
             "rul_true": rul_true,
             "rul_q10": q10,
             "rul_q90": q90,
-            "rul_interval_coverage": empirical_coverage(rul_true, q10, q90),
-            "rul_interval_width_mean": interval_width_mean(q10, q90),
-            "rul_mae": all_mae[-1],
-            "rul_r2": all_r2[-1],
+            "rul_label_observed": obs_mask,
+            "rul_interval_coverage": (
+                empirical_coverage(fold_true, fold_q10, fold_q90) if n_obs >= 2 else None
+            ),
+            "rul_interval_width_mean": (
+                interval_width_mean(fold_q10, fold_q90) if n_obs >= 2 else None
+            ),
+            "rul_mae": all_mae[-1] if n_obs >= 2 else None,
+            "rul_r2": (all_r2[-1] if (n_obs >= 2 and all_r2 and not np.isnan(all_r2[-1])) else None),
         }
 
-    y_all = np.concatenate(all_true)
-    q10_all = np.concatenate(all_q10)
-    q90_all = np.concatenate(all_q90)
-    mean_rul_r2 = float(np.mean(all_r2))
+    y_all = np.concatenate([np.asarray(t, dtype=float) for t in all_true]) if all_true else np.array([])
+    q10_all = np.concatenate([np.asarray(t, dtype=float) for t in all_q10]) if all_q10 else np.array([])
+    q90_all = np.concatenate([np.asarray(t, dtype=float) for t in all_q90]) if all_q90 else np.array([])
+    mean_rul_r2 = float(np.mean(all_r2)) if all_r2 else float("nan")
+
+    n_obs_total = int(sum(len(t) for t in all_true))
+    # Count evaluated rows from the per-fold masks (NOT `~mask.sum()`, which
+    # bitwise-NOTs the sum — a real bug this comment now documents).
+    n_rows_total = int(sum(len(per_cell[c]["rul_label_observed"]) for c in per_cell))
+    n_ext_total = n_rows_total - n_obs_total
+    coverage = (n_obs_total / n_rows_total) if n_rows_total > 0 else 0.0
     return {
-        "rul_interval_coverage": empirical_coverage(y_all, q10_all, q90_all),
-        "rul_interval_width_mean": interval_width_mean(q10_all, q90_all),
+        "rul_interval_coverage": (
+            empirical_coverage(y_all, q10_all, q90_all)
+            if len(y_all) >= 2 else float("nan")
+        ),
+        "rul_interval_width_mean": (
+            interval_width_mean(q10_all, q90_all) if len(q10_all) else float("nan")
+        ),
         "rul_r2": mean_rul_r2,
-        "rul_mae": float(np.mean(all_mae)),
-        "rul_reliable": mean_rul_r2 >= RUL_RELIABLE_FLOOR,
+        "rul_mae": float(np.mean(all_mae)) if all_mae else float("nan"),
+        "rul_reliable": bool(
+            all_r2
+            and mean_rul_r2 >= RUL_RELIABLE_FLOOR
+            and coverage >= MIN_RUL_LABEL_OBSERVED_FRACTION
+        ),
+        "rul_label_coverage": float(coverage),
         "per_cell": per_cell,
     }
 

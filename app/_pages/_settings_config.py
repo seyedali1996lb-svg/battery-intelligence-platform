@@ -232,8 +232,11 @@ def render_rul_reliability_threshold(bundles: dict) -> None:
         lco_per = bundle["metrics"].get("lco_per_cell", {})
         for cell_id, fold in lco_per.items():
             rul_r2 = fold.get("rul_r2", None)
-            active_ok  = rul_r2 >= RUL_RELIABLE_FLOOR if rul_r2 is not None else True
-            preview_ok = rul_r2 >= preview_floor       if rul_r2 is not None else True
+            # v12: rul_r2=None means no observed-EOL rows — the fold's RUL
+            # labels are formula extrapolations, so there is nothing a floor
+            # can be applied to. It stays unreliable at any floor value.
+            active_ok  = rul_r2 >= RUL_RELIABLE_FLOOR if rul_r2 is not None else False
+            preview_ok = rul_r2 >= preview_floor       if rul_r2 is not None else False
             changed = active_ok != preview_ok
             preview_rows.append((cell_id, rul_r2, active_ok, preview_ok, changed))
 
@@ -264,7 +267,7 @@ def render_rul_reliability_threshold(bundles: dict) -> None:
             "<span style='color:#d69e2e;font-weight:600'>⚑ Would flip</span>" if changed
             else "<span style='color:#2d3748'>—</span>"
         )
-        r2_str = f"{rul_r2:.2f}" if rul_r2 is not None else "—"
+        r2_str = f"{rul_r2:.2f}" if rul_r2 is not None else "no observed rows"
         row = st.columns([2, 1, 1, 1, 2])
         row[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
         row[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{r2_str}</div>", unsafe_allow_html=True)

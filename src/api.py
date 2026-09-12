@@ -528,29 +528,40 @@ def _soh_status(soh: float) -> str:
         return "Degrading"
     return "End of Life"
 
+# Human-readable provenance for the RUL field, keyed by selection["native"] —
+# the point of which is that a consumer can tell a figure validated on this
+# cell's own source from one borrowed from the same chemistry elsewhere.
+_RUL_MODEL_PHRASES = {
+    True:  "the cell's own source model",
+    False: "a chemically-matched reference model — NOT a validation on this cell",
+}
+
+
+def _model_for_cell(cell_id: str, bundles: dict) -> dict:
+    """The selection record (src/model_selection.py) for whichever model
+    answers this cell: its own source's model when one exists, else the best
+    same-chemistry model, else a not-found record. Chemistry-keyed, not
+    dict-key-order — the previous `bundles.get(kind) or bundles.get("synth")`
+    chain could hand a cell to a model of a different chemistry without ever
+    saying so."""
+    from model_selection import select_model_for_cell
+    return select_model_for_cell(cell_id, bundles)
+
+
 def _rul_reliable_for(cell_id: str, bundles: dict) -> bool:
-    _kind = ChemistryProfile.for_cell(cell_id).source_kind
-    if _kind == "nasa":
-        bndl = bundles.get("nasa", {})
-    elif _kind == "severson":
-        bndl = bundles.get("severson", {})
-    else:
-        # "synth" and "upload" are both real keys once an org has uploaded
-        # data, so a plain dict.get("synth", dict.get("upload", {})) fallback
-        # would always pick "synth" first even for a cell that's only in the
-        # org's own upload bundle — pick whichever one actually lists this
-        # cell in its per-cell reliability map instead of guessing by key order.
-        for _key in ("synth", "upload"):
-            _candidate = bundles.get(_key, {})
-            if cell_id in _candidate.get("metrics", {}).get("per_cell_rul_reliable", {}):
-                bndl = _candidate
-                break
-        else:
-            bndl = bundles.get("upload") or bundles.get("synth", {})
-    if not bndl:
+    """Per-cell RUL reliability for the model that actually answers this cell.
+
+    Read from `per_cell_rul_reliable` first and the dataset-level flag only as
+    a fallback, and gated on the model being chemistry-compatible at all: when
+    nothing on this deployment matches the cell's chemistry the honest answer
+    is False — withhold the RUL rather than score it with an unrelated model.
+    """
+    selection = _model_for_cell(cell_id, bundles)
+    if not selection["found"]:
         return False
-    per_cell = bndl.get("metrics", {}).get("per_cell_rul_reliable", {})
-    return per_cell.get(cell_id, bndl.get("metrics", {}).get("rul_reliable", False))
+    metrics = selection["bundle"].get("metrics", {})
+    per_cell = metrics.get("per_cell_rul_reliable", {})
+    return bool(per_cell.get(cell_id, metrics.get("rul_reliable", False)))
 
 def _cell_not_found(cell_id: str):
     raise HTTPException(status_code=404, detail=f"Cell '{cell_id}' not found in loaded bundle.")
@@ -821,6 +832,10 @@ def cell_stakeholder_view(
             rul_q10=_sf("rul_q10") if rul_ok else None,
             rul_q90=_sf("rul_q90") if rul_ok else None,
             sop_pct=sop_pct,
+            # Same mechanism the OEM branch reads — an action exposed without
+            # its corroboration check is the silent-disagreement gap
+            # mechanism_corroboration_note() exists to close.
+            mechanism=diagnose_mechanism(df),
         )
     else:
         fields = build_recycler_view(cell_id, profile.short_name, soh, fade_30, sop_pct=sop_pct, user_region=region)
@@ -939,6 +954,7 @@ from market_data import (
     registered_market_adapters,
     to_eur_per_kwh,
     resolve_carbon_intensity,
+    market_provenance,
 )
 from health_aware_dispatch import arbitrage_schedule, schedule_comparison
 from grid_services import grid_services_revenue
@@ -1391,7 +1407,29 @@ def get_market_prices(
     normalized["hours"] = len(normalized["prices"])
 
     carbon = resolve_carbon_intensity(region=region, adapter=mkt)
-    return {"prices": normalized, "carbon_intensity": carbon}
+    # Single machine-readable statement of data quality, so a consumer never
+    # has to infer sourced-vs-illustrative from the adapter name. `sourced`
+    # is true only when BOTH the price series and the carbon series are
+    # vendor-sourced — the conservative direction for a disclosure.
+    price_prov = market_provenance(normalized)
+    carbon_prov = market_provenance(carbon)
+    return {
+        "prices": normalized,
+        "carbon_intensity": carbon,
+        "data_quality": {
+            "prices": price_prov,
+            "carbon_intensity": carbon_prov,
+            "sourced": (
+                price_prov["provenance"] == "sourced"
+                and carbon_prov["provenance"] == "sourced"
+            ),
+            "label": (
+                "Sourced market data"
+                if price_prov["provenance"] == "sourced" and carbon_prov["provenance"] == "sourced"
+                else "Illustrative — not sourced"
+            ),
+        },
+    }
 
 @app.post("/analytics/dispatch-schedule", summary="Health-aware arbitrage dispatch schedule")
 def run_dispatch_schedule(
@@ -1567,6 +1605,13 @@ class CellHealth(BaseModel):
     confidence: dict
     passport_fragments: dict
     model_card: dict
+    # Which model answered this cell, and that CHEMISTRY's accuracy —
+    # reported separately, never as one platform-wide number. A consumer
+    # reading a single RUL must be able to tell whether it came from the
+    # cell's own source model or a same-chemistry reference model
+    # (src/model_selection.py).
+    model_selection: dict
+    chemistry_accuracy: Optional[dict] = None
 
 @app.get("/cells/{cell_id}/health", response_model=CellHealth, summary="Health-as-a-service: LCO-validated SOH/RUL/SoP + confidence + passport fragments")
 def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
@@ -1608,12 +1653,34 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
     # experiment-registry record the Benchmark page shows. The bundle's
     # own "run_id" (if logged) is used; otherwise the card is built from
     # the bundle's recorded metadata.
-    bndl = bundles.get(profile.source_kind, {}) if profile else {}
+    # Chemistry-keyed selection record for THIS cell (src/model_selection.py).
+    # The endpoint reports it rather than only using it internally, so a client
+    # can't receive a bare RUL without being able to see which model produced
+    # it and how that chemistry's accuracy compares to the rest of the platform.
+    from model_selection import per_chemistry_accuracy
+    selection = _model_for_cell(cell_id, bundles)
+    bndl = selection["bundle"]
+    _chem_rows = per_chemistry_accuracy(chemistry=selection.get("chemistry"))
+    chemistry_accuracy = _chem_rows[0] if _chem_rows else None
     run = bndl.get("run") if isinstance(bndl, dict) else None
     card = model_cards.build_model_card(run) if run else {
         "model": {"run_id": None, "note": "No experiment-registry run record for this bundle — card fields unavailable."},
         "dataset": model_cards.dataset_license(profile.source_kind if profile else "upload"),
     }
+
+    # Plain-text provenance of the RUL field, so a consumer reading just this
+    # string still learns which model answered and whether it was validated on
+    # this cell's own source or only on the same chemistry.
+    if rul_ok:
+        _rul_conf_text = (
+            "LCO-validated quantile interval from the " + str(selection["model_label"])
+            + " model (" + _RUL_MODEL_PHRASES[bool(selection["native"])]
+            + "), per-cell fold R² ≥ 0.3"
+        )
+    elif not selection["found"]:
+        _rul_conf_text = "Withheld — " + str(selection["reason"])
+    else:
+        _rul_conf_text = "Withheld — per-cell LCO RUL R² below the 0.3 reliability floor"
 
     return CellHealth(
         cell_id=cell_id,
@@ -1629,10 +1696,29 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
         is_power_limited=is_power_limited,
         confidence={
             "soh": "Measured/derived — capacity vs the cell's own first cycle (batlab.datasets.schema.compute_soh_pct)",
-            "rul": ("LCO-validated GBRT quantile interval (leave-cell-out, per-cell fold R² ≥ 0.3)" if rul_ok
-                    else "Withheld — per-cell LCO RUL R² below the 0.3 reliability floor"),
+            "rul": _rul_conf_text,
+            "rul_model_selection": selection["reason"],
             "sop": "Rate-capability proxy from resistance growth (1/R), not a measured power test",
         },
+        model_selection={
+            "found":         selection["found"],
+            "selection":    selection["selection"],
+            "native":       selection["native"],
+            "model_label":  selection["model_label"],
+            "bundle_key":   selection["key"],
+            "chemistry":    selection["chemistry"],
+            "reason":       selection["reason"],
+            "n_candidates": selection["n_candidates"],
+            "accuracy": {
+                "n_folds":          selection["accuracy"].get("n_folds"),
+                "soh_r2":           selection["accuracy"].get("soh_r2"),
+                "baseline_soh_r2":  selection["accuracy"].get("baseline_soh_r2"),
+                "advantage":        selection["accuracy"].get("advantage"),
+                "rul_r2":           selection["accuracy"].get("rul_r2"),
+                "rul_reliable":     selection["accuracy"].get("rul_reliable"),
+            } if selection["accuracy"] else None,
+        },
+        chemistry_accuracy=chemistry_accuracy,
         passport_fragments={
             "chemistry": profile.short_name if profile else "Unknown",
             "source_kind": profile.source_kind if profile else "upload",

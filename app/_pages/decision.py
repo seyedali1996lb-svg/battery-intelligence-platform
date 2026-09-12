@@ -10,6 +10,10 @@ import pandas as pd
 from utils import _action_bar, _md_html, _empty_state, render_card, metric_tile_html
 from design_system import make_badge, ACTION_META, CONF_META
 from chemistry_profiles import ChemistryProfile
+from accuracy_provenance import (
+    cell_model_provenance, provenance_label, per_cell_reliability_detail,
+)
+from batlab.validation.lco import RUL_RELIABLE_FLOOR
 
 from _pages.consequences import page_consequences
 
@@ -75,6 +79,18 @@ def page_decision(
     action_label, action_colour, action_bg = ACTION_META[action]
     conf_colour, conf_label = CONF_META[result["confidence"]]
 
+    # Every decision on this page rides on this cell's predicted RUL, so its
+    # provenance travels with the recommendation -- one shared resolver, not
+    # per-page formatting, so Decision can't describe the same model
+    # differently from Overview/Health/Fleet. RUL is gated per cell
+    # (RUL_RELIABLE_FLOOR) rather than on a dataset-average R² precisely
+    # because an aggregate can hide a cell the model cannot predict; this
+    # makes the population behind that gate visible at the point of decision.
+    from model_selection import select_model_for_cell
+    _dec_selection = select_model_for_cell(selected, bundles or {})
+    _dec_prov       = cell_model_provenance(_dec_selection["bundle"], selected, selection=_dec_selection)
+    _dec_prov_label = provenance_label(_dec_prov, include_baseline=True)
+
     st.markdown(f"# What should I do with {selected}?")
 
     # Mechanism verdict read from the shared Battery Knowledge Graph exhibits
@@ -122,6 +138,30 @@ def page_decision(
         f"font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px'>{conf_label}</span>"
         f"</div>{reason_html}</div>"
     )
+
+    if _dec_prov_label:
+        st.markdown(
+            f"<div style='font-size:11px;color:#8896a8;margin:-12px 0 20px;"
+            f"padding:7px 14px;background:#111827;border-radius:6px;border-left:3px solid #2d3748'>"
+            f"Provenance for the RUL behind this recommendation: "
+            f"{per_cell_reliability_detail(_dec_prov, RUL_RELIABLE_FLOOR)} "
+            f"<span style='color:#a0aec0'>[{_dec_prov_label}]</span></div>",
+            unsafe_allow_html=True,
+        )
+
+    # Accuracy by chemistry, reported SEPARATELY: this decision's numbers belong
+    # to a chemistry, and more than one model can cover a chemistry (NASA and
+    # the synthetic fleet are both LiCoO2). A platform-wide R² would hide which
+    # one earned its accuracy.
+    from model_selection import per_chemistry_accuracy_line
+    _dec_chem_line = per_chemistry_accuracy_line(
+        _dec_selection.get("chemistry"), bundles=bundles,
+    )
+    if _dec_chem_line:
+        st.caption(
+            f"Accuracy by chemistry for the model behind this decision "
+            f"(per chemistry, not platform-wide): {_dec_chem_line}"
+        )
 
     # ── Compact mechanism verdict (U3: merged from Health page's LLI/LAM classifier) ──
     if _dec_mech is not None:
@@ -760,8 +800,10 @@ def page_decision(
     # guarantee).
     from bankability_report import build_bankability_report
     from report_pdf import build_bankability_pdf
-    from utils import _PACK_BUNDLE_KEY as _BANK_BUNDLE_KEY
-    _bank_bundle = bundles.get(_BANK_BUNDLE_KEY.get(source, "synth"), {}) or {}
+    # Same chemistry-keyed selection as the recommendation above (was a
+    # `_PACK_BUNDLE_KEY.get(source, "synth")` fallback, which could hand the
+    # bankability report a different chemistry's model's LCO numbers).
+    _bank_bundle = _dec_selection["bundle"]
     _bank_metrics = _bank_bundle.get("metrics", {})
     _bank_report = build_bankability_report(
         cell_id=selected, source=source, chemistry=_profile.short_name, soh=soh,
@@ -864,7 +906,11 @@ def page_decision(
     # ── Inline Copilot panel (merged Decision + Copilot) ─────────────────────
     st.markdown("<h4 class='section-header'>Ask about this cell</h4>", unsafe_allow_html=True)
     st.caption("Explains the recommendation above in plain language — grounded only on values already computed by the model pipeline. It does not make the decision; the recommendation engine above does.")
-    _dc_bundle = bundles.get(ChemistryProfile.for_cell(selected).source_kind)
+    # Same chemistry-keyed selection the recommendation above used, so this
+    # inline Copilot panel can never explain a cell with a different model than
+    # the one that produced the recommendation.
+    from model_selection import select_model_for_cell as _select_for_cell
+    _dc_bundle = _select_for_cell(selected, bundles or {})["bundle"]
     if _dc_bundle:
         try:
             from battery_copilot import build_cell_context, answer_query, llm_answer

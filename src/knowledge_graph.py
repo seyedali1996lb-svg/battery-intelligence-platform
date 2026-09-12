@@ -485,9 +485,17 @@ def populate_reference_fleet(g: nx.MultiDiGraph, featured_dfs: dict, bundles: "d
 
         if bundles is None:
             continue
-        bundle = bundles.get(dataset_key) or bundles.get("synth")
-        if bundle is None:
+        # Chemistry-keyed selection (src/model_selection.py), not
+        # `dataset_key or "synth"` key order: a cell is answered by its own
+        # source's model, else the best SAME-chemistry model, else the RUL
+        # verdict is simply not computed — never by a different chemistry's
+        # model, whose cross-chemistry transfer error this platform measures
+        # and reports rather than papers over.
+        from model_selection import select_model_for_cell
+        _selection = select_model_for_cell(cell_id, bundles)
+        if not _selection["found"]:
             continue
+        bundle = _selection["bundle"]
         latest = df.iloc[-1]
         soh     = float(latest["soh_pct"])
         fade_30 = float(latest.get("fade_rate_30cy", 0.0))

@@ -24,6 +24,13 @@ def page_settings(featured_dfs: dict, bundles: dict):
     from batlab.validation.lco import RUL_RELIABLE_FLOOR
     from design_system import C_GREEN, C_ORANGE
 
+    def _fmt_rul_r2(v) -> str:
+        """RUL R² can legitimately be None (no observed-EOL rows in any fold)."""
+        return "not evaluable" if v is None else f"{float(v):.3f}"
+
+    def _fmt_coverage(v) -> str:
+        return "—" if v is None else f"{float(v) * 100:.0f}%"
+
     def _section(title: str):
         st.markdown(section_header_html(title), unsafe_allow_html=True)
 
@@ -191,11 +198,17 @@ def page_settings(featured_dfs: dict, bundles: dict):
             ok      = per_cell_ok.get(cell_id, True)
             status_c = C_GREEN if ok else C_ORANGE
             status_l = "Calibrated" if ok else "Not calibrated"
-            note = "" if ok else f"fold R²={rul_r2:.2f} < {RUL_RELIABLE_FLOOR} floor — RUL withheld"
+            # v12: rul_r2=None means this fold has no observed-EOL rows — its
+            # RUL labels are formula extrapolations, so there is nothing to
+            # validate against. Say that, rather than formatting None.
+            if rul_r2 is None:
+                note = "no observed-EOL rows — RUL labels are formula-extrapolated, nothing to validate"
+            else:
+                note = "" if ok else f"fold R²={rul_r2:.2f} < {RUL_RELIABLE_FLOOR} floor — RUL withheld"
             row_cols = st.columns([2, 1, 1, 1, 2])
             row_cols[0].markdown(f"<div style='font-size:13px;color:#e2e8f0;padding:4px 0'>{cell_id}</div>", unsafe_allow_html=True)
             row_cols[1].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{soh_r2:.2f}</div>", unsafe_allow_html=True)
-            row_cols[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{rul_r2:.2f}</div>", unsafe_allow_html=True)
+            row_cols[2].markdown(f"<div style='font-size:13px;color:#a0aec0;padding:4px 0'>{'—' if rul_r2 is None else f'{rul_r2:.2f}'}</div>", unsafe_allow_html=True)
             row_cols[3].markdown(f"<div style='font-size:13px;color:{status_c};padding:4px 0'>{status_l}</div>", unsafe_allow_html=True)
             row_cols[4].markdown(f"<div style='font-size:11px;color:#a0aec0;padding:4px 0'>{note}</div>", unsafe_allow_html=True)
 
@@ -203,7 +216,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
             f"<div style='display:flex;gap:24px;font-size:12px;color:#8896a8;"
             f"padding:8px 0;border-top:1px solid #2d3748;margin-top:4px'>"
             f"<span>Dataset SOH R²: <strong style='color:#e2e8f0'>{m.get('lco_soh_r2', 0):.3f}</strong></span>"
-            f"<span>Dataset RUL R²: <strong style='color:#e2e8f0'>{m.get('lco_rul_r2', 0):.3f}</strong></span>"
+            f"<span>Dataset RUL R² (observed-EOL folds only): <strong style='color:#e2e8f0'>{_fmt_rul_r2(m.get('lco_rul_r2'))}</strong></span>"
+            f"<span>RUL label coverage: <strong style='color:#e2e8f0'>{_fmt_coverage(m.get('rul_label_coverage'))}</strong></span>"
             f"<span>Training cells: <strong style='color:#e2e8f0'>{m.get('n_cells', '—')}</strong></span>"
             f"<span>Training rows: <strong style='color:#e2e8f0'>{m.get('n_rows', 0):,}</strong></span>"
             f"</div>",

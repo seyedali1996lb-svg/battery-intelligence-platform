@@ -87,7 +87,7 @@ PHYSICS_FEATURE_COLUMNS = [
 #     only on feature values, not on model training code.
 # Both now import it from here instead, so it is structurally impossible
 # for them to disagree with each other or with this module.
-FEATURE_VERSION = "v11-usage-profile"
+FEATURE_VERSION = "v12-rul-label-provenance"
 
 def build_features(
     df: pd.DataFrame, eol_threshold_pct: float = 80.0, cell_id: "str | None" = None,
@@ -179,14 +179,38 @@ def build_features(
     df["is_power_limited"] = df["sop_pct"] < 70.0
 
     # ── RUL target ──
+    # The target has two fundamentally different label populations, and the
+    # `rul_label_kind` column records which one every row belongs to:
+    #
+    #   "observed"       — the cell actually reached the EOL threshold inside
+    #                      its recorded window, so RUL = (EOL cycle − current
+    #                      cycle) is a measured quantity. Honest to evaluate
+    #                      and train on.
+    #   "extrapolated"   — the cell never reached EOL in-window, so RUL is a
+    #                      CLOSED-FORM linear extrapolation from
+    #                      fade_rate_50cy — which is itself FEATURE_COLUMNS
+    #                      entry #3. A model scored on these labels is being
+    #                      graded on recovering the formula that generated
+    #                      its own target (R² ≈ 1 is an identity there, not
+    #                      skill), over horizons up to 10× the observed data.
+    #
+    # The values in `rul` are unchanged by this column — it is pure label
+    # PROVENANCE, so every consumer (LCO evaluation, training, baselines,
+    # the leakage lint) can split the two populations instead of mixing
+    # them into one headline number. It is deliberately NOT in
+    # FEATURE_COLUMNS, so it can never leak into the feature matrix.
+    # See batlab/validation/leakage_lint.py, which mechanically checks this
+    # split stays honest.
     eol_capacity = df["capacity_ah"].iloc[0] * (eol_threshold_pct / 100.0)
     eol_cycles = df.loc[df["capacity_ah"] <= eol_capacity, "cycle_number"]
 
     if len(eol_cycles) > 0:
         eol_at = eol_cycles.iloc[0]
+        df["rul_label_kind"] = "observed"
         df["rul"] = (eol_at - df["cycle_number"]).clip(lower=0)
     else:
         fade_rate = df["fade_rate_50cy"].clip(lower=1e-6)
+        df["rul_label_kind"] = "extrapolated"
         df["rul"] = ((df["capacity_ah"] - eol_capacity) / fade_rate).clip(lower=0)
 
     # ── Coulombic Efficiency features ──
@@ -319,9 +343,16 @@ FEATURE_COLUMNS = [
     # Age
     "cycle_number",
     # Fade rate signals
+    # NOTE: fade_rate_50cy is deliberately NOT a model feature (v12): it is
+    # the denominator of the expression that generates extrapolated RUL
+    # labels (see the RUL-target block in build_features()). Keeping it here
+    # let the model recover its own target's formula — the mechanism behind
+    # Severson's former RUL R² = 0.9994. It remains in the featured DataFrame
+    # for the RUL formula baseline (trivial_baseline.rul_formula_baseline_lco)
+    # and for diagnostics. fade_rate_10cy/_30cy stay: they are distinct
+    # windows, not the label expression's operand.
     "fade_rate_10cy",
     "fade_rate_30cy",
-    "fade_rate_50cy",
     # Fade dynamics
     "fade_acceleration",
     "soh_velocity_50cy",
@@ -404,6 +435,31 @@ def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Seri
     matrix.replace([np.inf, -np.inf], np.nan, inplace=True)
     matrix = matrix.dropna(subset=available)
     return matrix[available], matrix[TARGET_SOH], matrix[TARGET_RUL]
+
+
+def get_rul_label_kinds(df: pd.DataFrame) -> "pd.Series | None":
+    """Per-row RUL label provenance ('observed' | 'extrapolated'), aligned to
+    the same rows get_model_matrix() keeps.
+
+    Returns None when the featured frame predates rul_label_kind (features
+    built by FEATURE_VERSION < v12) or when no rows survive — callers that
+    cannot prove which population a label came from must treat the RUL
+    number as unverifiable rather than assume the honest case.
+    """
+    if "rul_label_kind" not in df.columns:
+        return None
+    # Align by applying the same filtering get_model_matrix() applies: rows
+    # kept are exactly those where every available feature column is finite.
+    # rul_label_kind is never NaN (constant per cell), so filtering df itself
+    # by the same mask reproduces the surviving rows in the same order.
+    available = [
+        c for c in FEATURE_COLUMNS
+        if c in df.columns
+        and df[c].notna().any()
+        and not np.isinf(df[c].replace([np.nan], 0)).all()
+    ]
+    keep = df[available].replace([np.inf, -np.inf], np.nan).notna().all(axis=1)
+    return df.loc[keep, "rul_label_kind"]
 
 
 def feature_summary(df: pd.DataFrame) -> pd.DataFrame:

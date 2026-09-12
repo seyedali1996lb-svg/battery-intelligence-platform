@@ -106,6 +106,7 @@ def build_operator_view(
     rul_q10: "float | None",
     rul_q90: "float | None",
     sop_pct: "float | None" = None,
+    mechanism: "dict | None" = None,
 ) -> list:
     """
     What the current owner/fleet operator actually needs to act on
@@ -116,12 +117,21 @@ def build_operator_view(
     approximated from fade_30) because classify()'s fade-acceleration
     signal is the ratio of the two windows — collapsing them to one
     value would silently disable that signal.
+
+    `mechanism` (recommendations.diagnose_mechanism()'s output, or the
+    knowledge graph's equivalent verdict edge) is surfaced as its own field
+    plus recommendations.mechanism_corroboration_note()'s divergence warning
+    when it fires. This is the surface where a bare action would otherwise be
+    presented alone: classify() never sees the mechanism signal, so a
+    "Continue" verdict sitting on top of an LAM-dominant mechanism read is a
+    real disagreement that must be shown, not left implicit.
     """
     from consequences import ASSUMPTIONS, application_fit, financial_comparison
-    from recommendations import classify
+    from recommendations import classify, mechanism_corroboration_note
 
     fit_scores = application_fit(soh, fade_30_mah_cy, fleet_fade_median, sop_pct=sop_pct)
     result = classify(soh, fade_30_mah_cy, fade_50_mah_cy, rul_reliable, rul_pred if rul_reliable else None, fit_scores)
+    corroboration = mechanism_corroboration_note(result["action"], mechanism) if mechanism else None
 
     a = {k: v["value"] for k, v in ASSUMPTIONS.items()}
     financial = financial_comparison(
@@ -136,6 +146,20 @@ def build_operator_view(
         {"label": "Recommended action", "value": result["action"].replace("_", " ").title(), "state": "available",
          "note": f"Confidence: {result['confidence']}"},
     ]
+    if mechanism:
+        fields.append({
+            "label": "Degradation mechanism",
+            "value": mechanism.get("verdict", "insufficient_data"),
+            "state": "estimated" if mechanism.get("verdict") != "insufficient_data" else "unavailable",
+            "note": f"Confidence: {mechanism.get('confidence', 'n/a')}",
+        })
+        if corroboration:
+            fields.append({
+                "label": "Mechanism vs recommended action",
+                "value": "Models disagree — read before acting",
+                "state": "estimated",
+                "note": corroboration,
+            })
     if rul_reliable and rul_pred is not None:
         fields.append({
             "label": "Remaining Useful Life",

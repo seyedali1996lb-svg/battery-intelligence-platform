@@ -37,6 +37,21 @@ def test_market_prices_synthetic(client, auth_headers):
     assert data["carbon_intensity"]["source"] == "live"
 
 
+def test_market_prices_reports_data_quality(client, auth_headers):
+    """A consumer must be able to tell sourced from illustrative without
+    inferring it from the adapter name, and the default synthetic feed must
+    never be presented as sourced market data."""
+    res = client.get("/market/prices?adapter=synthetic&region=GERMANY", headers=auth_headers)
+    assert res.status_code == 200
+    dq = res.json()["data_quality"]
+    assert dq["sourced"] is False
+    assert dq["label"] == "Illustrative — not sourced"
+    assert dq["prices"]["provenance"] == "illustrative"
+    assert dq["prices"]["note"]
+    # Carbon resolution provenance is reported alongside the price provenance.
+    assert dq["carbon_intensity"]["provenance"] in ("sourced", "illustrative")
+
+
 def test_market_prices_unconfigured_adapter(client, auth_headers):
     res = client.get("/market/prices?adapter=eia", headers=auth_headers)
     assert res.status_code == 400
