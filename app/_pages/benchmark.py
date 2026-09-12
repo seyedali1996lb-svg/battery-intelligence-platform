@@ -141,6 +141,7 @@ def page_benchmark(org_id: int) -> None:
             "deployment."
         )
     else:
+        from batlab.validation.bootstrap import format_ci as _fmt_ci
         acc_table = pd.DataFrame([
             {
                 "Source":          a["dataset"],
@@ -148,9 +149,11 @@ def page_benchmark(org_id: int) -> None:
                 "Selected":        ("✓ best skill" if _selected_by_chem.get(a["chemistry"]) == a["dataset"] else ""),
                 "Cells":           a["n_cells"],
                 "Model R2":        _fmt(a["soh_r2"]),
+                "SOH 95% CI":      _fmt_ci((a.get("ci_intervals") or {}).get("soh_r2")),
                 "Baseline R2":     _fmt(a["baseline_soh_r2"]),
                 "Real advantage":  f"{a['advantage']:+.3f}",
                 "RUL R2":          _fmt(a["rul_r2"]),
+                "RUL 95% CI":      _fmt_ci((a.get("ci_intervals") or {}).get("rul_r2")),
                 "RUL labels obs.": (
                     f"{a['rul_label_coverage'] * 100:.0f}%"
                     if a.get("rul_label_coverage") is not None else "—"
@@ -171,15 +174,20 @@ def page_benchmark(org_id: int) -> None:
         )
         st.caption(
             "**Model R2** is the GBRT's leave-cell-out R² on cells it never saw. "
-            "**Baseline R2** is a trivial linear fit of cycle_number → SOH under the "
-            "*identical* folds — what a dumb straight line already explains. "
-            "**Real advantage** is the difference: how much the model and its "
-            "engineered features actually earn. **RUL R2** is scored only on "
-            "rows whose cell actually reached end-of-life inside its recorded "
-            "window (measured labels); **RUL labels obs.** shows what fraction "
-            "of each population's RUL rows that is — a RUL R² on a population "
-            "with 0% observed labels does not exist and is shown as —, never "
-            "extrapolated to look complete."
+            "The **95% CI** brackets are fold-level bootstrap intervals: the "
+            "aggregate is a mean over leave-one-cell-out folds, and the bracket's "
+            "width IS part of the accuracy claim — a wide interval on a 4-cell "
+            "fleet means thin evidence, stated plainly (resampling unit is the "
+            "cell, not the row; RUL intervals describe only the folds with "
+            "measured labels). **Baseline R2** is a trivial linear fit of "
+            "cycle_number → SOH under the *identical* folds — what a dumb "
+            "straight line already explains. **Real advantage** is the difference: "
+            "how much the model and its engineered features actually earn. "
+            "**RUL R2** is scored only on rows whose cell actually reached "
+            "end-of-life inside its recorded window (measured labels); **RUL "
+            "labels obs.** shows what fraction of each population's RUL rows "
+            "that is — a RUL R² on a population with 0% observed labels does "
+            "not exist and is shown as —, never extrapolated to look complete."
         )
         st.caption(
             "Reading the baseline honestly: a **positive** baseline means aging "

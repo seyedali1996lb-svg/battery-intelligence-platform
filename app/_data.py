@@ -275,30 +275,69 @@ def load_everything() -> tuple[Any, dict, dict]:
         except Exception:
             pass
 
-        # Run three pipelines concurrently
+        # Zhu 2022 (NCM+NCA — third chemistry) and CALCE CS2 (second real
+        # LiCoO2 source). Both degrade gracefully: Zhu serves from committed
+        # per-cycle summaries (auto-download only if absent), CALCE raises
+        # CalceDataNotFoundError without a manual download — an absent source
+        # simply yields no bundle, and every consumer already handles that.
+        zhu_cell_dicts: dict[str, dict] = {}
+        try:
+            from batlab.datasets.zhu2022 import load_zhu2022_cells
+            zhu_cells = load_zhu2022_cells(status_fn=lambda msg: None)
+            if zhu_cells:
+                zhu_cell_dicts = {cid: {"cycles": df} for cid, df in zhu_cells.items()}
+        except Exception:
+            pass
+
+        calce_cell_dicts: dict[str, dict] = {}
+        try:
+            from batlab.datasets.calce import load_calce_cells, CalceDataNotFoundError
+            try:
+                calce_cells = load_calce_cells()
+                if calce_cells:
+                    calce_cell_dicts = {cid: {"cycles": df} for cid, df in calce_cells.items()}
+            except CalceDataNotFoundError:
+                pass  # manual download not performed on this deployment
+        except Exception:
+            pass
+
+        # Run the reference pipelines concurrently
         _prog.progress(10, text="Training models…")
         futures: dict[str, Any] = {}
-        with _cf.ThreadPoolExecutor(max_workers=3) as _pool:
+        with _cf.ThreadPoolExecutor(max_workers=5) as _pool:
             futures["synth"] = _pool.submit(_load_or_train_bg, "synth", battery_synth["cells"])
             if battery_nasa:
                 futures["nasa"] = _pool.submit(_load_or_train_bg, "nasa", battery_nasa["cells"])
             if sev_cell_dicts:
                 futures["severson"] = _pool.submit(_load_or_train_bg, "severson", sev_cell_dicts)
+            if zhu_cell_dicts:
+                futures["zhu2022"] = _pool.submit(_load_or_train_bg, "zhu2022", zhu_cell_dicts)
+            if calce_cell_dicts:
+                futures["calce"] = _pool.submit(_load_or_train_bg, "calce", calce_cell_dicts)
 
         _prog.progress(90, text="Merging results…")
 
         bundle_synth, sc_synth = futures["synth"].result()
-        bundle_nasa,  sc_nasa  = futures["nasa"].result()  if "nasa"     in futures else (None, {})
+        bundle_nasa,  sc_nasa  = futures["nasa"].result()    if "nasa"     in futures else (None, {})
         bundle_sev,   sc_sev   = futures["severson"].result() if "severson" in futures else (None, {})
+        bundle_zhu,   sc_zhu   = futures["zhu2022"].result() if "zhu2022" in futures else (None, {})
+        bundle_calce, sc_calce = futures["calce"].result()   if "calce"   in futures else (None, {})
 
         _prog.progress(100, text="Platform ready ✓")
         if _status is not None:
             _status.update(label="Platform ready ✓", state="complete", expanded=False)
 
     sev_ids = list(sev_cell_dicts.keys())
-    split_cycles = {**sc_synth, **sc_nasa, **sc_sev}
-    bundles = {"synth": bundle_synth, "nasa": bundle_nasa, "severson": bundle_sev}
-    featured_dfs = cell_store.LazyCellFrameMap(synth_ids + nasa_ids + sev_ids)
+    zhu_ids = list(zhu_cell_dicts.keys())
+    calce_ids = list(calce_cell_dicts.keys())
+    split_cycles = {**sc_synth, **sc_nasa, **sc_sev, **sc_zhu, **sc_calce}
+    bundles = {
+        "synth": bundle_synth, "nasa": bundle_nasa, "severson": bundle_sev,
+        "zhu2022": bundle_zhu, "calce": bundle_calce,
+    }
+    featured_dfs = cell_store.LazyCellFrameMap(
+        synth_ids + nasa_ids + sev_ids + zhu_ids + calce_ids
+    )
 
     # ── Honest disclosures not tied to a training call ──────────────────────
     # Both blocks below log registry rows WITHOUT a bundle-cache miss / retrain
@@ -368,6 +407,10 @@ def load_everything() -> tuple[Any, dict, dict]:
             _study_datasets["nasa"] = battery_nasa["cells"]
         if sev_cell_dicts:
             _study_datasets["severson"] = sev_cell_dicts
+        if zhu_cell_dicts:
+            _study_datasets["zhu2022"] = zhu_cell_dicts
+        if calce_cell_dicts:
+            _study_datasets["calce"] = calce_cell_dicts
 
         try:
             import experiment_registry as _reg_study
@@ -416,6 +459,14 @@ def load_everything() -> tuple[Any, dict, dict]:
             if sev_cell_dicts:
                 _pinn_datasets["severson"] = {
                     cid: c["cycles"] for cid, c in sev_cell_dicts.items()
+                }
+            if zhu_cell_dicts:
+                _pinn_datasets["zhu2022"] = {
+                    cid: c["cycles"] for cid, c in zhu_cell_dicts.items()
+                }
+            if calce_cell_dicts:
+                _pinn_datasets["calce"] = {
+                    cid: c["cycles"] for cid, c in calce_cell_dicts.items()
                 }
 
             _pinn_featured: dict = {}

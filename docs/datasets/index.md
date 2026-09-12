@@ -60,6 +60,13 @@ from batlab.datasets import load_zhu2022_cells
 cells = load_zhu2022_cells()
 ```
 
+## Which datasets feed the platform benchmark
+
+Of the five loaders, three are wired into the platform's trained-model pipeline (leave-cell-out + registry benchmark) and two are deliberately not:
+
+- **Wired in**: Severson (LFP), NASA (LiCoO2), **Zhu 2022 (NCM+NCA — the platform's third chemistry, and its first fleet where every cell reaches end-of-life in-window, so 100% of RUL labels are measured rather than formula-extrapolated)**, and **CALCE CS2 (a second real LiCoO2 source — when its files are placed locally; it participates in the same-chemistry cross-source transfer study, the honest "does the NASA result generalize beyond its own 4 cells?" test)**. Zhu and CALCE appear in the sidebar's Data Source switcher and train their own per-chemistry models when present.
+- **Scoped out**: Oxford (checkpoint-indexed schema has no cycle-level features — disclosed as a permanent "not evaluable" registry row rather than silently omitted) and CALCE on deployments without the manual download (graceful absence, no bundle).
+
 ## Adding a 6th loader
 
 See [`batlab/datasets/CONTRIBUTING.md`](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/blob/master/batlab/datasets/CONTRIBUTING.md) for the mechanical checklist: schema contract, citation/license, download policy, fixture-based tests.

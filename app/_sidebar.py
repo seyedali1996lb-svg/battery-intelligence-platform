@@ -64,7 +64,7 @@ def _upload_status_line(meta: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
-                         sev_n: int = 0) -> None:
+                         sev_n: int = 0, zhu_n: int = 0, calce_n: int = 0) -> None:
     """Persistent data-source selector rendered inside the sidebar."""
     current = st.session_state.get("data_mode", "nasa")
 
@@ -86,6 +86,18 @@ def render_mode_switcher(nasa_n: int, synth_n: int, up_meta: dict | None,
             "label":     "NASA PCoE",
             "status":    f"{nasa_n} cells · real measured · LiCoO2 chemistry",
             "available": nasa_n > 0,
+        },
+        {
+            "key":       "zhu2022",
+            "label":     "Zhu 2022 (NCM+NCA)",
+            "status":    f"{zhu_n} cells · real measured · Nature Comms 2022",
+            "available": zhu_n > 0,
+        },
+        {
+            "key":       "calce",
+            "label":     "CALCE CS2",
+            "status":    f"{calce_n} cells · real measured · LiCoO2 prismatic",
+            "available": calce_n > 0,
         },
         {
             "key":       "synthetic",
@@ -159,6 +171,8 @@ def render_sidebar(
     sev_n: int = 0,
     active_fdfs=None,
     traj_flag: int = 0,
+    zhu_n: int = 0,
+    calce_n: int = 0,
 ) -> str:
     """Render the full sidebar and return the selected cell ID."""
     with st.sidebar:
@@ -168,6 +182,10 @@ def render_sidebar(
             subtitle = f"{n_cells} Severson 2019 LFP cells · real measured"
         elif mode == "nasa":
             subtitle = f"{n_cells} NASA real cells · leave-cell-out model"
+        elif mode == "zhu2022":
+            subtitle = f"{n_cells} Zhu 2022 NCM+NCA cells · real measured"
+        elif mode == "calce":
+            subtitle = f"{n_cells} CALCE CS2 real cells · leave-cell-out model"
         elif mode == "synthetic":
             subtitle = f"{n_cells} synthetic cells · leave-cell-out model"
         elif mode == "uploaded":
@@ -228,7 +246,10 @@ def render_sidebar(
 
         # ── Data source (collapsed by default) ──
         with st.expander("Data source", expanded=False):
-            render_mode_switcher(nasa_n, synth_n, up_meta, sev_n=sev_n)
+            render_mode_switcher(
+                nasa_n, synth_n, up_meta, sev_n=sev_n,
+                zhu_n=zhu_n, calce_n=calce_n,
+            )
 
         # ── Role selector ──
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -295,6 +316,8 @@ def render_sidebar(
         _chem_label = {
             "severson":  "LFP (Severson 2019)",
             "nasa":      "LiCoO₂ (NASA PCoE)",
+            "zhu2022":   "NCM+NCA (Zhu 2022)",
+            "calce":     "LiCoO₂ (CALCE CS2)",
             "synthetic": "LiCoO₂ (synthetic)",
             "uploaded":  "User-defined",
         }.get(_mode_chem, "LiCoO₂")
@@ -399,6 +422,10 @@ def render_sidebar(
             _ann_color, _ann_text = "#48bb78", "NASA PCoE · real · T=24°C · 2A"
         elif mode == "severson":
             _ann_color, _ann_text = "#48bb78", "Severson 2019 · real · LFP"
+        elif mode == "zhu2022":
+            _ann_color, _ann_text = "#48bb78", "Zhu 2022 · real · NCM+NCA · 25°C"
+        elif mode == "calce":
+            _ann_color, _ann_text = "#48bb78", "CALCE CS2 · real · LiCoO₂ prismatic"
         else:
             p = CELL_STRESS_PROFILES.get(selected, {})
             sf = _stress_factor(p.get("temp_mean", 25), p.get("c_rate", 1), p.get("dod", 1))

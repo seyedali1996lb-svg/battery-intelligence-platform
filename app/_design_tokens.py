@@ -74,4 +74,7 @@ CARD_BORDER = "#2d3748"
 # Pack builder source-key mapping
 # ---------------------------------------------------------------------------
 
-PACK_BUNDLE_KEY = {"nasa": "nasa", "severson": "severson", "synthetic": "synth", "uploaded": "upload"}
+PACK_BUNDLE_KEY = {
+    "nasa": "nasa", "severson": "severson", "synthetic": "synth", "uploaded": "upload",
+    "zhu2022": "zhu2022", "calce": "calce",
+}

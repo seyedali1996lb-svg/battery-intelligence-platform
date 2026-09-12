@@ -919,6 +919,10 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         _ov_kind = ChemistryProfile.for_cell(cell_id).source_kind
         if _ov_kind == "severson":
             _ov_caption = "Capacity data: ● MEASURED (Severson 2019, Nature Energy). Projections: ◐ SIMULATED (linear extrapolation)."
+        elif _ov_kind == "zhu2022":
+            _ov_caption = "Capacity data: ● MEASURED (Zhu et al. 2022, Nature Comms — NCM+NCA). Projections: ◐ SIMULATED (linear extrapolation)."
+        elif _ov_kind == "calce":
+            _ov_caption = "Capacity data: ● MEASURED (CALCE CS2, Univ. of Maryland — LiCoO2 prismatic). Projections: ◐ SIMULATED (linear extrapolation)."
         elif _ov_kind == "oxford":
             _ov_caption = "Capacity data: ● MEASURED (Raj et al. 2020, Oxford dataset). Projections: ◐ SIMULATED (linear extrapolation)."
         elif _ov_prov == "measured":

@@ -125,7 +125,7 @@ def build_model_card(run: dict) -> dict:
             "soh_r2": run.get("soh_r2"),
             "baseline_soh_r2": run.get("baseline_soh_r2"),
             "model_advantage_over_baseline": (
-                (run.get("soh_r2") - run.get("baseline_soh_r2"))
+                (float(run["soh_r2"]) - float(run["baseline_soh_r2"]))
                 if (run.get("soh_r2") is not None and run.get("baseline_soh_r2") is not None)
                 else None
             ),
@@ -165,13 +165,15 @@ def _LIMITATIONS(run: dict) -> list:
     try:
         from experiment_registry import hyperparams_divergence, format_hyperparams_diff
         _diff = hyperparams_divergence(run)
+        _format = format_hyperparams_diff
     except Exception:
         _diff = {}
-    if _diff:
+        _format = None
+    if _diff and _format is not None:
         limitations.append(
             "This run is no longer faithfully reproducible: the GBRT "
             f"hyperparameters the platform currently trains with differ from the "
-            f"run's own recorded snapshot ({format_hyperparams_diff(_diff)}). Any "
+            f"run's own recorded snapshot ({_format(_diff)}). Any "
             "'regenerate' replay uses the CURRENT settings, so it does not "
             "reproduce this run's numbers."
         )

@@ -109,6 +109,8 @@ def _tour_data_mode_line(mode: str) -> str:
     return {
         "severson":  "real, measured <strong>Severson 2019 LFP</strong> cells — not synthetic curves",
         "nasa":      "real, measured <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 measurements, not synthetic curves",
+        "zhu2022":   "real, measured <strong>Zhu 2022 NCM+NCA</strong> cells — commercial 18650s, not synthetic curves",
+        "calce":     "real, measured <strong>CALCE CS2 LiCoO₂</strong> cells — prismatic format, not synthetic curves",
         "synthetic": "<strong>physics-informed synthetic</strong> cells — modelled degradation, not measured data",
         "uploaded":  "<strong>your own uploaded</strong> cell data",
     }.get(mode, "real, measured <strong>NASA PCoE</strong> cells — real LiCoO₂ 18650 measurements, not synthetic curves")

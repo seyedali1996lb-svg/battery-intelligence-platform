@@ -297,6 +297,7 @@ class ExperimentRun(Base):
     rul_label_coverage = Column(Float)                   # fraction of evaluated RUL rows with measured (observed-EOL) labels
     n_rul_observed_rows = Column(Integer)
     n_rul_extrapolated_rows = Column(Integer)
+    ci_intervals    = Column(Text)                       # JSON: fold-level bootstrap CIs (batlab.validation.bootstrap)
     fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
     baseline_per_cell = Column(Text)                     # JSON-encoded per-cell baseline R² breakdown
     git_commit      = Column(String)
@@ -503,6 +504,8 @@ def _ensure_experiment_run_baseline_columns() -> None:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN n_rul_observed_rows INTEGER"))
         if "n_rul_extrapolated_rows" not in cols:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN n_rul_extrapolated_rows INTEGER"))
+        if "ci_intervals" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN ci_intervals TEXT"))
 
 
 def _seed_demo_org_and_users() -> None:
@@ -1306,6 +1309,7 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             rul_label_coverage=entry.get("rul_label_coverage"),
             n_rul_observed_rows=entry.get("n_rul_observed_rows"),
             n_rul_extrapolated_rows=entry.get("n_rul_extrapolated_rows"),
+            ci_intervals=(json.dumps(entry["ci_intervals"]) if entry.get("ci_intervals") is not None else None),
             git_commit=entry.get("git_commit"),
             timestamp=entry.get("timestamp"),
             notes=entry.get("notes"),
@@ -1340,6 +1344,7 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "rul_label_coverage": r.rul_label_coverage,
         "n_rul_observed_rows": r.n_rul_observed_rows,
         "n_rul_extrapolated_rows": r.n_rul_extrapolated_rows,
+        "ci_intervals": (json.loads(r.ci_intervals) if r.ci_intervals else None),  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,

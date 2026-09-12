@@ -388,6 +388,8 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict, bundles: "
     SOURCE_STYLE  = {
         "NASA":      "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
         "Severson":  "background:rgba(104,211,145,0.12);color:#48bb78;border:1px solid rgba(104,211,145,0.25)",
+        "Zhu 2022":  "background:rgba(183,148,244,0.12);color:#b794f4;border:1px solid rgba(183,148,244,0.25)",
+        "CALCE":     "background:rgba(104,211,145,0.12);color:#68d391;border:1px solid rgba(104,211,145,0.25)",
         "Synthetic": "background:rgba(74,85,104,0.3);color:#8896a8;border:1px solid #2d3748",
         "Uploaded":  "background:rgba(99,179,237,0.12);color:#63b3ed;border:1px solid rgba(99,179,237,0.25)",
     }

@@ -38,7 +38,23 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # ── Data provenance declaration ──────────────────────────────────────────
     _cp = _cell_provenance(cell_id)
     _source_kind = ChemistryProfile.for_cell(cell_id).source_kind
-    if _source_kind == "severson":
+    if _source_kind == "zhu2022":
+        _prov_detail = (
+            f"Capacity data for <strong>{cell_id}</strong> are real measurements from the "
+            f"Zhu et al. 2022 voltage-relaxation dataset (Nature Communications, 2022) — "
+            f"commercial 18650 cells with a blended NCM+NCA cathode, cycled at 25 °C. "
+            f"The source publishes per-cycle capacity summaries only, so resistance, "
+            f"rate-capability and dQ/dV analyses are not applicable to this source."
+        )
+    elif _source_kind == "calce":
+        _prov_detail = (
+            f"Capacity and coulombic-efficiency data for <strong>{cell_id}</strong> are real "
+            f"measurements from the CALCE CS2 dataset (University of Maryland) — 1.1 Ah "
+            f"prismatic LiCoO2 cells. Derived physics-model analyses are labelled "
+            f"◐ SIMULATED individually; dQ/dV analysis is not shown (no dense voltage "
+            f"curves in the published per-cycle summaries)."
+        )
+    elif _source_kind == "severson":
         _prov_detail = (
             f"Capacity and resistance data for <strong>{cell_id}</strong> are real measurements "
             f"from the Severson 2019 LFP dataset (Nature Energy, 2019). "
@@ -73,6 +89,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _chem_label = {
         "severson":  "LFP · Lithium Iron Phosphate (Severson 2019)",
         "nasa":      "LiCoO₂ · Lithium Cobalt Oxide (NASA PCoE)",
+        "zhu2022":   "NCM+NCA · Blended Nickel-Rich Cathode (Zhu 2022)",
+        "calce":     "LiCoO₂ · Lithium Cobalt Oxide (CALCE CS2, prismatic)",
         "synthetic": "LiCoO₂ · Lithium Cobalt Oxide (synthetic)",
         "uploaded":  "User-defined chemistry",
     }.get(st.session_state.get("data_mode", "synthetic"), "LiCoO₂")

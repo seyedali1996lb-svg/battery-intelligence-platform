@@ -105,6 +105,8 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
           "n_rul_extrapolated_rows": int,
           "rul_extrapolated_r2": float|None,  # formula-recovery diagnostic, separate pool
           "rul_extrapolated_mae": float|None,
+          "confidence_intervals": dict|None,  # fold-level bootstrap CIs, see
+                                # batlab.validation.bootstrap — None on n<2 folds
           "per_cell":    dict,    # per-fold breakdown incl. per-cell label kinds
         }
     """
@@ -224,6 +226,18 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         and coverage >= MIN_RUL_LABEL_OBSERVED_FRACTION
     )
 
+    # Fold-level bootstrap CIs (Tier-1 #7): the aggregate is a MEAN over
+    # leave-cell-out folds, and on a 4-cell fleet that mean has a wide
+    # sampling distribution the point estimate hides. Computed on the same
+    # per-fold lists the means use, so the interval describes exactly the
+    # population the headline averages. n=1 fleets return None and the UI
+    # renders "—" rather than a fabricated bracket.
+    from batlab.validation.bootstrap import lco_confidence_intervals
+    confidence_intervals = lco_confidence_intervals(
+        soh_r2s=soh_r2s, soh_maes=soh_maes,
+        obs_r2s=obs_r2s, obs_maes=obs_maes,
+    )
+
     return {
         "soh_r2":       float(np.mean(soh_r2s)) if soh_r2s else float("nan"),
         "soh_mae":      float(np.mean(soh_maes)) if soh_maes else float("nan"),
@@ -235,5 +249,6 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         "n_rul_extrapolated_rows": n_ext_rows,
         "rul_extrapolated_r2": mean_ext_r2,
         "rul_extrapolated_mae": float(np.mean(ext_maes)) if ext_maes else None,
+        "confidence_intervals": confidence_intervals,
         "per_cell":     per_cell,
     }

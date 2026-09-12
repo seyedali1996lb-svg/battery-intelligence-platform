@@ -77,6 +77,12 @@ class ChemistryProfile:
             return LFPSeversonProfile()
         if cell_id in _NASA_CELL_IDS:
             return LiCoO2NASAProfile()
+        if cell_id.startswith("CS2_"):
+            return LiCoOCalceProfile()
+        if cell_id.startswith("CY"):
+            # Zhu et al. 2022 naming: CY{temperature}-{rate}_{condition}-#{replicate}
+            # (e.g. CY25-05_1-#1). No other loader's ids share the CY prefix.
+            return NCMNCAZhuProfile()
         if cell_id.startswith("OX-"):
             return NCAOxfordProfile()
         if cell_id.startswith(("Cell", "OxBat")):
@@ -253,6 +259,123 @@ class NCAOxfordProfile(ChemistryProfile):
         # No dense per-cycle data for this source (see module docstring) — only
         # the coarse capacity-fade curve shown in Explore's Reference Datasets view.
         return ["capacity_fade"]
+
+
+class NCMNCAZhuProfile(ChemistryProfile):
+    """
+    Zhu et al. 2022 voltage-relaxation dataset (NCM+NCA blend, 9 commercial
+    18650 cells) — the platform's first non-synthetic NCM+NCA source. Dense
+    per-cycle data, but the derived summaries carry cycle_number/
+    capacity_ah/soh_pct only (no voltage curves), so dQ/dV does not apply
+    and only capacity-fade sections are active — same conservative pattern
+    as the Oxford profile.
+    """
+    display_name    = "NCM+NCA (Zhu 2022)"
+    short_name      = "NCM+NCA"
+    dqdv_applicable = False   # per-cycle summaries only — no V(t) curves to integrate
+    provenance      = "measured"
+    dataset_citation = "Zhu et al., Nature Communications 2022 (CC BY 4.0)"
+
+    source_kind  = "zhu2022"
+    source_label = "Zhu 2022"
+
+    nominal_capacity_kwh_key = "zhu2022"
+    passport_chemistry       = "NCM+NCA (blended nickel-rich cathode), commercial 18650 cylindrical"
+    passport_capacity_note   = "~2.5 Ah nominal — derived from the dataset's measured first-cycle capacities"
+    passport_data_source     = "Zhu et al., Nature Communications 13:2261 (2022) — real measured data"
+    passport_usage           = "25 °C, 0.5C charge / ~1C discharge cycling (Zhu et al. 2022, Dataset 3)"
+
+    def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
+        # The dataset's commercial cells use a proprietary NCM+NCA blend whose
+        # exact composition is NOT disclosed with the data — reporting typical
+        # NMC/NCA wt% here would be invented precision. Honest default: mark
+        # the composition fields unavailable with the reason stated.
+        return [
+            {"label": "Cobalt (Co) content",
+             "value": "Not disclosed for this dataset", "state": "unavailable",
+             "note": "NCM+NCA blends are cobalt-bearing but the exact composition "
+                     "of these commercial cells is proprietary. EU Art. 13 due "
+                     "diligence would apply to this chemistry class."},
+            {"label": "Nickel (Ni) content",
+             "value": "Ni-dominant (exact wt% not disclosed)", "state": "unavailable",
+             "note": "Both NCM and NCA are nickel-rich; the blend ratio of these "
+                     "cells is not published with the dataset."},
+            {"label": "Manganese (Mn) content",
+             "value": "Present in the NCM fraction (wt% not disclosed)", "state": "unavailable",
+             "note": "NCM component carries Mn; NCA does not. Split unknown."},
+            {"label": "Lithium (Li) content",
+             "value": "Not disclosed for this dataset", "state": "unavailable",
+             "note": "Recycled Li targets (EU Annex X) would apply; composition "
+                     "must come from a manufacturing record, not this dataset."},
+            {"label": "Recycled Co content", "value": "Not specified -- no manufacturing record",
+             "state": "unavailable",
+             "note": "EU 2030 target: 12% recycled Co (Annex X). Dataset does not "
+                     "include supply-chain information."},
+            {"label": "Article 52 due diligence", "value": "Not assessed", "state": "unavailable",
+             "note": "Co/Ni-bearing chemistry: third-party audit required for EU market access."},
+        ]
+
+    def get_health_sections(self) -> list[str]:
+        # Capacity-only summaries: resistance/CE/rate sections would need
+        # columns the source does not provide.
+        return ["capacity_fade"]
+
+
+class LiCoOCalceProfile(ChemistryProfile):
+    """
+    CALCE CS2 cells (University of Maryland) — 1.1 Ah prismatic LiCoO2, the
+    same chemistry as NASA's 18650s but a different form factor, cycler and
+    aging protocol. Chemically the platform's second real LiCoO2 source; the
+    NASA-vs-CALCE comparison is therefore a *cross-source, same-chemistry*
+    generalization test, not a cross-chemistry one.
+    """
+    display_name    = "LiCoO2 (CALCE CS2)"
+    short_name      = "LiCoO2"
+    dqdv_applicable = False   # loader reduces sheets to one row per cycle — no dense V-curves
+    provenance      = "measured"
+    dataset_citation = "CALCE CS2, University of Maryland (web.calce.umd.edu/batteries)"
+
+    source_kind  = "calce"
+    source_label = "CALCE"
+
+    nominal_capacity_kwh_key = "calce"
+    passport_chemistry       = "LiCoO₂ (lithium cobalt oxide), 1.1 Ah prismatic"
+    passport_capacity_note   = "~1.1 Ah nominal cell rating (CALCE CS2 series)"
+    passport_data_source     = "CALCE Battery Research Group — real measured data (manual download)"
+    passport_usage           = "Constant-current cycling with periodic low-current reference tests; room temperature"
+
+    def get_crm_fields(self, settings: dict | None = None) -> list[dict]:
+        # Same cathode chemistry as the NASA profile — reuse its LiCoO2 CRM
+        # defaults (Co/Ni/Li wt% estimates), with prismatic-specific notes.
+        s  = settings or {}
+        co = s.get("crm_nca_co_pct", _CRM_DEFAULTS["lico2_co_pct"])
+        ni = s.get("crm_nca_ni_pct",           _CRM_DEFAULTS["lico2_ni_pct"])
+        li = s.get("crm_nca_li_pct",           _CRM_DEFAULTS["lico2_li_pct"])
+        return [
+            {"label": "Cobalt (Co) content",
+             "value": f"~{co:.1f} wt% (LiCoO2 cathode, est.)", "state": "estimated",
+             "note": "Same cathode chemistry as the NASA 18650s, prismatic format. "
+                     "Configurable in Settings -> CRM. EU Art. 13 due diligence "
+                     "required from 2026."},
+            {"label": "Nickel (Ni) content",
+             "value": f"~{ni:.1f} wt% (pure LiCoO2 baseline)", "state": "estimated",
+             "note": "NMC variants show 15-33 wt%. Configurable in Settings -> CRM."},
+            {"label": "Lithium (Li) content",
+             "value": f"~{li:.1f} wt% (cathode + anode, est.)", "state": "estimated",
+             "note": "Configurable in Settings -> CRM. "
+                     "Recycled Li target: 4% by 2027, 10% by 2031 (EU Annex X)."},
+            {"label": "Recycled Co content", "value": "Not specified -- enter in Settings -> CRM",
+             "state": "unavailable",
+             "note": "EU 2030 target: 12% recycled Co (Annex X). Enter in Settings -> CRM."},
+            {"label": "Recycled Ni content", "value": "Not specified -- enter in Settings -> CRM",
+             "state": "unavailable",
+             "note": "EU 2030 target: 4% recycled Ni (Annex X). Enter in Settings -> CRM."},
+            {"label": "Article 52 due diligence", "value": "Not assessed", "state": "unavailable",
+             "note": "Third-party audit of Co/Ni/Li supply chain required for EU market access."},
+        ]
+
+    def get_health_sections(self) -> list[str]:
+        return ["capacity_fade", "coulombic_efficiency"]
 
 
 class LiCoO2SyntheticProfile(ChemistryProfile):

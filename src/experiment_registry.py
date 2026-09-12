@@ -129,6 +129,9 @@ class RunRecord:
     rul_label_coverage: "float | None" = None
     n_rul_observed_rows: "int | None" = None
     n_rul_extrapolated_rows: "int | None" = None
+    # Tier-1: fold-level bootstrap CIs (batlab.validation.bootstrap) — the
+    # spread of the headline mean across leave-cell-out folds, stored JSON.
+    ci_intervals: "dict | None" = None
 
 
 _git_commit_cache: "str | None" = None
@@ -207,6 +210,7 @@ def log_run(
         rul_label_coverage=(lco_metrics.get("rul_label_coverage") if isinstance(lco_metrics, dict) else None),
         n_rul_observed_rows=(lco_metrics.get("n_rul_observed_rows") if isinstance(lco_metrics, dict) else None),
         n_rul_extrapolated_rows=(lco_metrics.get("n_rul_extrapolated_rows") if isinstance(lco_metrics, dict) else None),
+        ci_intervals=(lco_metrics.get("confidence_intervals") if isinstance(lco_metrics, dict) else None),
         git_commit=_git_commit_hash(),
         timestamp=timestamp,
         notes=notes,
@@ -237,6 +241,7 @@ def log_run(
         "rul_label_coverage": record.rul_label_coverage,
         "n_rul_observed_rows": record.n_rul_observed_rows,
         "n_rul_extrapolated_rows": record.n_rul_extrapolated_rows,
+        "ci_intervals": (json.dumps(record.ci_intervals) if record.ci_intervals is not None else None),
         "git_commit":      record.git_commit,
         "timestamp":       record.timestamp,
         "notes":           record.notes,
@@ -398,6 +403,7 @@ def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
             "rul_formula_baseline_r2": formula_baseline,
             "rul_label_coverage": coverage,
             "n_rul_observed_rows": r.get("n_rul_observed_rows"),
+            "ci_intervals":     r.get("ci_intervals"),
             "rul_reliable":     rul_ok,
         })
     rows.sort(key=lambda d: d["advantage"], reverse=True)
@@ -544,7 +550,7 @@ def replay_run(org_id: int, run_id: str, cell_data: dict) -> dict:
 # Reference-dataset reload — for replay_run() and the cross-chemistry study
 # ---------------------------------------------------------------------------
 
-REFERENCE_DATASETS = ("nasa", "synth", "severson")
+REFERENCE_DATASETS = ("nasa", "synth", "severson", "zhu2022", "calce")
 
 
 def reload_reference_cell_data(dataset: str, cell_ids: "list[str] | None" = None) -> dict:
@@ -592,6 +598,36 @@ def reload_reference_cell_data(dataset: str, cell_ids: "list[str] | None" = None
         missing = [c for c in cell_ids if c not in all_cells]
         if missing:
             raise ValueError(f"Severson cache is missing {len(missing)} requested cell(s): {missing}")
+        return {cid: all_cells[cid] for cid in cell_ids}
+
+    if dataset == "zhu2022":
+        from batlab.datasets.zhu2022 import load_zhu2022_cells
+        all_cells = load_zhu2022_cells(status_fn=lambda msg: None)
+        if not all_cells:
+            raise ValueError(
+                "Zhu 2022 data is not cached locally on this deployment — cannot reload for replay."
+            )
+        if cell_ids is None:
+            return all_cells
+        missing = [c for c in cell_ids if c not in all_cells]
+        if missing:
+            raise ValueError(f"Zhu 2022 cache is missing {len(missing)} requested cell(s): {missing}")
+        return {cid: all_cells[cid] for cid in cell_ids}
+
+    if dataset == "calce":
+        from batlab.datasets.calce import load_calce_cells, CalceDataNotFoundError
+        try:
+            all_cells = load_calce_cells()
+        except CalceDataNotFoundError as exc:
+            raise ValueError(
+                "CALCE data requires a manual download on this deployment — "
+                "cannot reload for replay."
+            ) from exc
+        if cell_ids is None:
+            return all_cells
+        missing = [c for c in cell_ids if c not in all_cells]
+        if missing:
+            raise ValueError(f"CALCE cache is missing {len(missing)} requested cell(s): {missing}")
         return {cid: all_cells[cid] for cid in cell_ids}
 
     raise ValueError(
@@ -743,12 +779,18 @@ def run_cross_chemistry_transfer(
     train_sample = next(iter(train_cell_data))
     eval_sample  = next(iter(eval_cell_data))
     dataset_key  = f"{train_dataset}_to_{eval_dataset}"
+    train_chem   = ChemistryProfile.for_cell(train_sample).short_name
+    eval_chem    = ChemistryProfile.for_cell(eval_sample).short_name
+    same_chem    = train_chem == eval_chem
+    study_kind   = (
+        "Same-chemistry cross-source generalization study"
+        if same_chem else "Cross-chemistry generalization study"
+    )
 
     run_id = log_run(
         org_id=org_id,
         dataset=dataset_key,
-        chemistry=f"{ChemistryProfile.for_cell(train_sample).short_name} -> "
-                  f"{ChemistryProfile.for_cell(eval_sample).short_name}",
+        chemistry=f"{train_chem} -> {eval_chem}",
         feature_set=common,
         feature_version=FEATURE_VERSION,
         hyperparams=dict(GBRT_PARAMS),
@@ -764,7 +806,7 @@ def run_cross_chemistry_transfer(
             "baseline_per_cell": None,
         },
         notes=(
-            f"Cross-chemistry generalization study: trained on {train_dataset} "
+            f"{study_kind}: trained on {train_dataset} "
             f"({len(train_cell_data)} cells), zero-shot evaluated on "
             f"{eval_dataset} ({len(eval_cell_data)} cells), using the "
             f"{len(common)} feature column(s) both domains have available "
@@ -805,10 +847,19 @@ def run_cross_chemistry_study(
     unavailable: "list[tuple[str, str, str]] | None" = None,
 ) -> dict:
     """
-    Run and log the zero-shot cross-chemistry transfer study for every
-    ordered pair of the supplied datasets whose chemistries DIFFER, so the
-    resulting counterexample is a permanent, visible part of the platform's
-    benchmark rather than a one-off script output.
+    Run and log the zero-shot transfer study for EVERY ordered pair of the
+    supplied datasets, so the resulting map is a permanent, visible part of
+    the platform's benchmark rather than a one-off script output.
+
+    Two kinds of pair, both informative:
+    - cross-chemistry (NASA LiCoO2 -> Severson LFP): tests whether a model
+      transfers across cathode chemistries. The historic result is a
+      catastrophic failure, and that failure is the point.
+    - same-chemistry cross-source (NASA -> CALCE, both LiCoO2 but different
+      form factor, cycler and aging protocol): tests whether a model
+      generalizes beyond its own dataset's cells even when the chemistry
+      matches. This is the honest "will it work on a cell I haven't seen?"
+      question WITHIN one chemistry.
 
     Parameters
     ----------
@@ -854,8 +905,14 @@ def run_cross_chemistry_study(
             if train_ds == eval_ds or not train_cells or not eval_cells:
                 continue
             try:
-                if dataset_chemistry(train_cells) == dataset_chemistry(eval_cells):
-                    continue  # same chemistry — a domain shift, not cross-chemistry
+                # Chemistry is still computed per pair — the transfer function
+                # uses it to label cross-chemistry vs same-chemistry runs —
+                # but same-chemistry pairs are no longer skipped: with more
+                # than one real source per chemistry (NASA + CALCE for
+                # LiCoO2), cross-SOURCE transfer within a chemistry is its
+                # own generalization test.
+                dataset_chemistry(train_cells)
+                dataset_chemistry(eval_cells)
             except Exception:
                 continue
 

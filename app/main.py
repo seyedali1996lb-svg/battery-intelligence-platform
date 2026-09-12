@@ -245,6 +245,12 @@ def main() -> None:
     parts = partition_cells(featured_dfs_all, split_cycles_all)
     nasa_fdfs, sev_fdfs, synth_fdfs = parts["nasa_fdfs"], parts["sev_fdfs"], parts["synth_fdfs"]
     nasa_sc, sev_sc, synth_sc = parts["nasa_sc"], parts["sev_sc"], parts["synth_sc"]
+    # Optional reference sources — present only when this deployment has their
+    # data (Zhu auto-caches from committed summaries; CALCE needs a manual
+    # download). Pages treat them like any other source; selection stays
+    # chemistry-keyed, so an absent source just means its cells don't exist.
+    zhu_fdfs, calce_fdfs = parts["zhu_fdfs"], parts["calce_fdfs"]
+    zhu_sc, calce_sc = parts["zhu_sc"], parts["calce_sc"]
 
     hydrate_persistence(st.session_state["auth_org_id"])
 
@@ -260,6 +266,8 @@ def main() -> None:
         nasa_fdfs=nasa_fdfs, sev_fdfs=sev_fdfs, synth_fdfs=synth_fdfs,
         nasa_sc=nasa_sc, sev_sc=sev_sc, synth_sc=synth_sc,
         bundles=bundles, up_fdfs=up_fdfs, up_bundle=up_bundle, up_sc=up_sc,
+        zhu_fdfs=zhu_fdfs, zhu_sc=zhu_sc,
+        calce_fdfs=calce_fdfs, calce_sc=calce_sc,
     )
     cell_ids = list(active_fdfs.keys())
 
@@ -285,6 +293,8 @@ def main() -> None:
         sev_n       = len(sev_fdfs),
         active_fdfs = active_fdfs,
         traj_flag   = _traj_flag,
+        zhu_n       = len(zhu_fdfs),
+        calce_n     = len(calce_fdfs),
     )
 
     df          = active_fdfs[selected]

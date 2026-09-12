@@ -34,6 +34,13 @@ _PARAM_MAP = {
     "nasa":      "NCA_Kim2011",
     "synthetic": "Marquis2019",
     "uploaded":  "Marquis2019",
+    # Zhu's NCM+NCA blend: no published PyBaMM parameter set matches it; the
+    # generic NCA set is the closest available and the SPM projection is a
+    # physics-based ESTIMATE, not a claim about these specific cells.
+    "zhu2022":   "NCA_Kim2011",
+    # CALCE CS2: 1.1 Ah prismatic LiCoO2 — same cathode as NASA's cells; the
+    # LiCoO2 parameter set is the chemically-matched choice.
+    "calce":     "Marquis2019",
 }
 
 _CHEM_LABEL = {

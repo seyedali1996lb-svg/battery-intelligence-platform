@@ -167,6 +167,8 @@ def page_settings(featured_dfs: dict, bundles: dict):
     _SOURCE_KEY_META = {
         "nasa":     ("NASA PCoE", "#48bb78"),
         "severson": ("Severson LFP", "#63b3ed"),
+        "zhu2022":  ("Zhu 2022 NCM+NCA", "#b794f4"),
+        "calce":    ("CALCE CS2 LiCoO2", "#68d391"),
         "synth":    ("Synthetic", "#fc8181"),
         "upload":   ("Uploaded", "#f6ad55"),
     }

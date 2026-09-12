@@ -24,6 +24,8 @@ CELL_NOMINAL_KWH = {
     "nasa":     2.00 * 3.6 / 1000,   # NASA PCoE 18650, ~2 Ah  — 0.00720 kWh
     "severson": 1.10 * 3.6 / 1000,   # A123 APR18650M1A LFP, 1.1 Ah (Severson et al. 2019) — 0.00396 kWh
     "oxford":   3.00 * 3.6 / 1000,   # NCR18650BD NCA, 3 Ah (Raj et al. 2020) — 0.01080 kWh
+    "zhu2022":  2.50 * 3.6 / 1000,   # Zhu 2022 commercial 18650 NCM+NCA, ~2.5 Ah — 0.00900 kWh
+    "calce":    1.10 * 3.6 / 1000,   # CALCE CS2 prismatic LiCoO2, ~1.1 Ah nominal — 0.00396 kWh
 }
 
 # ---------------------------------------------------------------------------

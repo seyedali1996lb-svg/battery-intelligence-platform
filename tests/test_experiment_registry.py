@@ -421,7 +421,23 @@ def test_run_cross_chemistry_transfer_logs_a_real_run(db):
     assert run["cell_ids"] == ["CellA", "CellB", "CellC"]
     assert run["rul_reliable"] is False  # never claimed reliable for an out-of-domain transfer
     assert run["fold_metrics"] == {}     # not leave-cell-out
+    # CellA/B/C are all synthetic-prefix (LiCoO2), so this is the
+    # same-chemistry cross-source flavor of the transfer study.
+    assert "Same-chemistry cross-source generalization study" in run["notes"]
+
+
+def test_run_cross_chemistry_transfer_labels_cross_chemistry_pairs(db):
+    """An LFP eval domain (S- prefix) against a LiCoO2 train domain must be
+    labelled a CROSS-chemistry study in the notes."""
+    train_data = {
+        "CellA": make_cycles_df(n_cycles=200, fade_per_cycle=0.0006),
+    }
+    eval_data = {"S-eval1": make_cycles_df(n_cycles=150, fade_per_cycle=0.0007)}
+
+    result = reg.run_cross_chemistry_transfer("fake_train", train_data, "fake_eval", eval_data)
+    run = reg.get_run(reg.PLATFORM_ORG_ID, result["run_id"])
     assert "Cross-chemistry generalization study" in run["notes"]
+    assert "LiCoO2 -> LFP" in (run.get("chemistry") or "")
 
 
 def test_run_cross_chemistry_transfer_raises_on_incompatible_schema(db, monkeypatch):
@@ -574,17 +590,25 @@ def test_run_cross_chemistry_study_only_runs_cross_chemistry_pairs(db, monkeypat
     assert len(result["evaluated"]) == 2
 
 
-def test_run_cross_chemistry_study_skips_same_chemistry_pair(db, monkeypatch):
-    """Two LiCoO2 sources are a domain shift, not a cross-chemistry transfer —
-    pairing them would inflate the table with a same-chemistry result."""
+def test_run_cross_chemistry_study_includes_same_chemistry_cross_source_pairs(db, monkeypatch):
+    """Two LiCoO2 sources (different dataset keys) ARE paired now: with more
+    than one real source per chemistry (NASA + CALCE), cross-SOURCE transfer
+    within a chemistry is its own generalization test — "does the model work
+    on cells from a different cycler/form factor even when the cathode
+    matches?" — and the notes must say which kind of study a row is."""
     _fake_clock(monkeypatch)
     datasets = {
         "synth": {"CellA": make_cycles_df(n_cycles=120)},
         "other": {"CellB": make_cycles_df(n_cycles=120)},
     }
     result = reg.run_cross_chemistry_study(datasets)
-    assert result["evaluated"] == []
-    assert reg.cross_chemistry_benchmark() == []
+    assert len(result["evaluated"]) == 2
+    bench = reg.cross_chemistry_benchmark()
+    assert {(b["train_dataset"], b["eval_dataset"]) for b in bench} == {
+        ("synth", "other"), ("other", "synth")
+    }
+    for row in bench:
+        assert "Same-chemistry cross-source generalization study" in (row.get("notes") or "")
 
 
 def test_run_cross_chemistry_study_is_idempotent_per_feature_version(db, monkeypatch):
