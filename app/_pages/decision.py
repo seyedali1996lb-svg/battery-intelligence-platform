@@ -395,9 +395,21 @@ def page_decision(
             )
             if _wr["confidence"] == "model" and _wr["model_scaled_q10"] is not None and _wr["model_scaled_q90"] is not None:
                 _wc2.metric("80% interval", f"{_wr['model_scaled_q10']:.0f} – {_wr['model_scaled_q90']:.0f} cy")
+            # The selected bundle for THIS cell (chemistry-keyed selection —
+            # same rule every other decision surface uses) carries the
+            # calibration measurement; fall back to the native bundle when
+            # selection finds nothing.
+            from model_selection import select_model_for_cell as _wr_select
+            _wr_bundle = (_wr_select(selected, bundles or {}).get("bundle")
+                          or bundles.get(source) or {})
+            _wr_cal = (_wr_bundle.get("metrics") or {}).get("rul_interval_coverage_calibrated")
+            if _wr_cal is not None:
+                _wr_cov_note = f"interval coverage measured at {_wr_cal * 100:.0f}% (nominal 80%, conformally calibrated on unseen cells)"
+            else:
+                _wr_cov_note = "interval coverage NOT measured on this fleet — 80% is nominal, not verified"
             st.caption(
                 f"{_warranty_floor:.0f}% is an illustrative default, not this cell's actual contractual warranty terms — "
-                f"estimate is a {_wr_conf_note}."
+                f"estimate is a {_wr_conf_note}; {_wr_cov_note}."
             )
 
         # ── 4. Application Fit ──────────────────────────────────────────────

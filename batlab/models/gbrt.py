@@ -343,9 +343,21 @@ def predict(model_bundle: dict, X: pd.DataFrame) -> dict:
 
     # Quantile interval (Q10/Q90) — only if quantile models are present
     # (older bundles loaded from disk may not have them; degrade gracefully).
+    # When the bundle carries a conformal correction (interval_e_star, set by
+    # app/_data.py from the leave-cell-out calibration study), the served
+    # interval is WIDENED by it: the raw quantile regressor's nominal 80% is
+    # a claim, the widened interval's coverage is a measurement (recorded on
+    # the bundle as rul_interval_coverage_calibrated). An interval whose
+    # measured coverage is unknown should not be served as an 80% interval.
+    interval_calibrated = False
     if "rul_q10_model" in model_bundle and "rul_q90_model" in model_bundle:
         rul_q10 = np.clip(model_bundle["rul_q10_model"].predict(X_scaled), 0, None)
         rul_q90 = np.clip(model_bundle["rul_q90_model"].predict(X_scaled), 0, None)
+        e_star = model_bundle.get("interval_e_star")
+        if e_star is not None and np.isfinite(float(e_star)) and float(e_star) > 0:
+            rul_q10 = np.clip(rul_q10 - float(e_star), 0, None)
+            rul_q90 = rul_q90 + float(e_star)
+            interval_calibrated = True
     else:
         rul_q10 = np.clip(rul_pred, 0, None)
         rul_q90 = np.clip(rul_pred, 0, None)
@@ -363,6 +375,7 @@ def predict(model_bundle: dict, X: pd.DataFrame) -> dict:
         "rul_pred":       np.clip(rul_pred, 0, None),
         "rul_q10":        rul_q10,
         "rul_q90":        rul_q90,
+        "interval_calibrated": interval_calibrated,
         "confidence_tag": confidence_tags,
     }
 

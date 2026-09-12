@@ -158,6 +158,58 @@ def train_and_predict(
     bndl["metrics"]["n_rul_observed_rows"] = lco.get("n_rul_observed_rows")
     bndl["metrics"]["n_rul_extrapolated_rows"] = lco.get("n_rul_extrapolated_rows")
 
+    # ── Calibrated uncertainty (Tier 3) ─────────────────────────────────
+    # The served Q10/Q90 interval's nominal 80% is a CLAIM; what ships here
+    # is a MEASUREMENT. run_lco_quantiles() evaluates the quantile models
+    # under the same leave-cell-out folds as the point models, computes the
+    # pooled cross-cell conformity scores (each row scored by a model that
+    # never trained on its cell — the honest calibration set for a
+    # production correction), and derives global_e_star: the conformal
+    # widening whose resulting coverage is reported as
+    # rul_interval_coverage_calibrated. predict() widens served intervals
+    # by this correction, so the "80% interval" a decision surface shows is
+    # the one whose real coverage was measured on cells the model never saw.
+    try:
+        from batlab.validation.calibration import run_lco_quantiles
+        _cal = run_lco_quantiles(cell_cycles, featured=raw_fdfs)
+        bndl["metrics"]["rul_interval_coverage"] = _cal["rul_interval_coverage"]
+        bndl["metrics"]["rul_interval_coverage_calibrated"] = _cal["recalibrated_coverage"]
+        bndl["metrics"]["rul_interval_width_mean"] = _cal["rul_interval_width_mean"]
+        bndl["metrics"]["rul_interval_width_calibrated"] = _cal["recalibrated_width_mean"]
+        bndl["metrics"]["rul_interval_n_calibration_rows"] = int(len(_cal.get("pooled_conformity_scores") or []))
+        bndl["interval_e_star"] = _cal["global_e_star"]
+        # Also merge into the dict handed to log_run() so the measured
+        # coverage reaches the registry (calibration_meta JSON column) and
+        # the Benchmark page's calibration section — not just the live bundle.
+        # NaN is sanitized to None here: the calibration module uses NaN as
+        # its in-memory not-evaluable convention, but NaN is not valid JSON
+        # and would render as "nan%" downstream instead of "—".
+        def _nn(v):
+            try:
+                return None if (v is None or v != v) else v
+            except TypeError:
+                return v
+        lco = {**lco, "calibration_meta": {
+            "rul_interval_coverage": _nn(_cal["rul_interval_coverage"]),
+            "rul_interval_coverage_calibrated": _nn(_cal["recalibrated_coverage"]),
+            "rul_interval_width_mean": _nn(_cal["rul_interval_width_mean"]),
+            "rul_interval_width_calibrated": _nn(_cal["recalibrated_width_mean"]),
+            "rul_interval_n_calibration_rows": int(len(_cal.get("pooled_conformity_scores") or [])),
+            "interval_e_star": _nn(_cal["global_e_star"]),
+            "nominal_coverage": 0.8,
+        }}
+    except Exception:
+        # No calibrated measurement available: leave the raw holdout number
+        # in place, serve un-widened intervals, and let the UI's
+        # "uncalibrated" flag state that plainly rather than pretending.
+        bndl["metrics"]["rul_interval_coverage_calibrated"] = None
+        bndl["interval_e_star"] = None
+        lco = {**lco, "calibration_meta": {
+            "rul_interval_coverage_calibrated": None,
+            "nominal_coverage": 0.8,
+            "calibration_attempted": True,
+        }}
+
     if dataset is not None and org_id is not None:
         import experiment_registry as _reg
         from batlab.features.engineering import FEATURE_VERSION as _FV
@@ -165,6 +217,20 @@ def train_and_predict(
         from chemistry_profiles import ChemistryProfile as _CP
 
         _sample_cell = next(iter(battery_dict))
+        _cal_note = ""
+        if bndl["metrics"].get("rul_interval_coverage_calibrated") is not None:
+            _cal_note = (
+                f" Calibrated interval: served Q10/Q90 widened by a cross-cell "
+                f"conformal correction E*={bndl.get('interval_e_star'):.2f} cycles, "
+                f"measured coverage "
+                f"{bndl['metrics']['rul_interval_coverage_calibrated'] * 100:.0f}% "
+                f"(raw {bndl['metrics']['rul_interval_coverage'] * 100:.0f}%) at "
+                f"nominal 80%, from "
+                f"{bndl['metrics']['rul_interval_n_calibration_rows']} "
+                "leave-cell-out calibration rows (observed-EOL only)."
+            )
+        else:
+            _cal_note = " Calibrated interval: NOT available on this fleet — served Q10/Q90 are the raw quantile regressor's nominal 80%, coverage unmeasured on unseen cells."
         bndl["metrics"]["experiment_run_id"] = _reg.log_run(
             org_id=org_id,
             dataset=dataset,
@@ -176,6 +242,7 @@ def train_and_predict(
             cell_ids=list(battery_dict.keys()),
             n_rows=len(X_all),
             lco_metrics=lco,
+            notes=_cal_note.strip(),
         )
 
     featured_dfs: dict[str, pd.DataFrame] = {}

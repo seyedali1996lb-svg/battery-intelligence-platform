@@ -65,7 +65,7 @@ def interval_width_mean(q10, q90) -> float:
     return float(np.mean(np.maximum(0.0, q90 - q10)))
 
 
-def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
+def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> dict:
     """
     Leave-cell-out evaluation that also trains the Q10/Q90 RUL quantile
     models, so the 80% prediction interval can be checked on cells never
@@ -85,6 +85,12 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
           "rul_mae":                 float,
           "rul_reliable":            bool,   # observed-row rul_r2 >= RUL_RELIABLE_FLOOR AND coverage >= floor
           "rul_label_coverage":      float,  # fraction of evaluated RUL rows with observed labels
+          "global_e_star":           float,  # pooled cross-cell conformal correction (cycles);
+                                             # clamped at 0 (deployment only widens); None when no
+                                             # observed rows — the correction the SERVE path applies
+          "recalibrated_coverage":   float,  # MEASURED coverage of the widened interval at nominal 80%
+          "recalibrated_width_mean": float,  # mean width after widening
+          "pooled_conformity_scores": np.ndarray,  # signed E_i per row (negative = covered), unclamped
           "per_cell": {
               cell_id: {
                   "rul_true":  np.ndarray,   # observed RUL on the held-out fold
@@ -99,24 +105,34 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
           },
         }
 
+    The pooled calibration set is honest by construction: every row's
+    conformity score comes from a model that never trained on its cell, so
+    global_e_star is a leakage-free correction for a production model that
+    likewise never sees the cells it serves. app/_data.py stamps it on the
+    bundle as interval_e_star; predict() widens the served Q10/Q90 by it.
+
     Like run_lco(), interval metrics are computed on OBSERVED-EOL rows only:
     an interval around a formula-generated target would measure how tightly
     the model reproduces the extrapolation formula, not calibrated
-    uncertainty around a measured quantity.
+    uncertainty around a measured quantity. A fleet with zero observed rows
+    returns global_e_star=None and NaN coverage — not evaluable, never a
+    number computed against formula-generated labels.
     """
     from batlab.validation.lco import (
         RUL_RELIABLE_FLOOR, MIN_RUL_LABEL_OBSERVED_FRACTION,
         _LABEL_OBSERVED,
     )  # avoid circular import
 
-    featured = {}
+    featured_cache = {}
     for cell_id, df in cell_data.items():
-        df_feat = build_features(df, cell_id=cell_id)
+        df_feat = (featured or {}).get(cell_id)
+        if df_feat is None or isinstance(df_feat, tuple) or "rul_label_kind" not in df_feat.columns:
+            df_feat = build_features(df, cell_id=cell_id)
         X, _y_soh, y_rul = get_model_matrix(df_feat)
         kinds = get_rul_label_kinds(df_feat)
-        featured[cell_id] = (X, y_rul, kinds)
+        featured_cache[cell_id] = (X, y_rul, kinds)
 
-    cell_ids = list(featured.keys())
+    cell_ids = list(featured_cache.keys())
     if len(cell_ids) < 2:
         return {
             "rul_interval_coverage": float("nan"), "rul_interval_width_mean": float("nan"),
@@ -133,9 +149,9 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
 
     for test_cell in cell_ids:
         train_cells = [c for c in cell_ids if c != test_cell]
-        X_train = pd.concat([featured[c][0] for c in train_cells])
-        y_train = pd.concat([featured[c][1] for c in train_cells])
-        X_test, y_test, _kinds = featured[test_cell]
+        X_train = pd.concat([featured_cache[c][0] for c in train_cells])
+        y_train = pd.concat([featured_cache[c][1] for c in train_cells])
+        X_test, y_test, _kinds = featured_cache[test_cell]
 
         scaler = StandardScaler()
         Xtr = scaler.fit_transform(X_train)
@@ -152,7 +168,7 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
         # Observed-EOL rows only for every reported metric (see run_lco()):
         # interval quality around a formula-generated target is formula
         # recovery, not calibrated uncertainty.
-        kinds = featured[test_cell][2]
+        kinds = featured_cache[test_cell][2]
         obs_mask = (
             (kinds.reindex(X_test.index) == _LABEL_OBSERVED).to_numpy()
             if kinds is not None else np.zeros(len(X_test), dtype=bool)
@@ -198,6 +214,42 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
     n_rows_total = int(sum(len(per_cell[c]["rul_label_observed"]) for c in per_cell))
     n_ext_total = n_rows_total - n_obs_total
     coverage = (n_obs_total / n_rows_total) if n_rows_total > 0 else 0.0
+
+    # ── Global conformal correction for the PRODUCTION model ────────────────
+    # Every fold's E_i = max(q10 - y, y - q90) is computed on rows whose cell
+    # was NOT in that fold's training set, so the pooled scores are an honest
+    # calibration set for a correction applied to a model that similarly
+    # never saw the cells it will serve. This is the number the bundle takes
+    # so the SERVED 80% interval is the one whose coverage was actually
+    # measured — not the raw quantile regressor's nominal claim.
+    alpha = 1.0 - NOMINAL_INTERVAL_COVERAGE
+    pooled_scores = np.concatenate([
+        np.maximum(np.asarray(q10, dtype=float) - np.asarray(y, dtype=float),
+                   np.asarray(y, dtype=float) - np.asarray(q90, dtype=float))
+        for y, q10, q90 in zip(all_true, all_q10, all_q90)
+        if len(y) > 0
+    ]) if any(len(t) > 0 for t in all_true) else np.array([])
+    if pooled_scores.size >= 2:
+        level = min(np.ceil((1.0 - alpha) * (pooled_scores.size + 1)) / pooled_scores.size, 1.0)
+        # Clamp at 0: the deployment only ever WIDENS (predict() applies the
+        # correction only when > 0), so the measured coverage reported here
+        # must be the coverage of exactly that clamped correction. When the
+        # raw interval already over-covers (signed quantile < 0) the served
+        # interval is the raw one and its measured coverage is reported as-is.
+        global_e_star = max(0.0, float(np.quantile(pooled_scores, level, method="higher")))
+        recal_cov = empirical_coverage(
+            y_all,
+            np.clip(q10_all - global_e_star, 0, None),
+            q90_all + global_e_star,
+        ) if len(y_all) >= 2 else float("nan")
+        recal_wid = interval_width_mean(
+            np.clip(q10_all - global_e_star, 0, None), q90_all + global_e_star,
+        ) if len(q10_all) else float("nan")
+    else:
+        global_e_star = None
+        recal_cov = float("nan")
+        recal_wid = float("nan")
+
     return {
         "rul_interval_coverage": (
             empirical_coverage(y_all, q10_all, q90_all)
@@ -206,6 +258,10 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42) -> dict:
         "rul_interval_width_mean": (
             interval_width_mean(q10_all, q90_all) if len(q10_all) else float("nan")
         ),
+        "pooled_conformity_scores": pooled_scores,
+        "global_e_star": global_e_star,
+        "recalibrated_coverage": recal_cov,
+        "recalibrated_width_mean": recal_wid,
         "rul_r2": mean_rul_r2,
         "rul_mae": float(np.mean(all_mae)) if all_mae else float("nan"),
         "rul_reliable": bool(

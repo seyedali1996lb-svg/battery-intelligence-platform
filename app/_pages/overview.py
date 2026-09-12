@@ -493,9 +493,27 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 f"Moderate uncertainty ({_band_width:.0f}-cycle band). "
                 f"Model is well-calibrated; remaining spread reflects natural cycle-to-cycle variation."
             )
+        # Measured vs nominal coverage (Tier 3): an interval's "80%" is only
+        # a claim until its real coverage was measured on cells the model
+        # never saw. The bundle carries that measurement when the conformal
+        # calibration study ran; state it here rather than letting a bare
+        # "80%" read as verified.
+        _cal_cov = (bundle.get("metrics") or {}).get("rul_interval_coverage_calibrated") if isinstance(bundle, dict) else None
+        if _cal_cov is not None:
+            _cov_html = (
+                f"&nbsp;·&nbsp;<span style='color:#a0aec0'>measured coverage "
+                f"{_cal_cov * 100:.0f}% at nominal 80% (conformally calibrated "
+                "on unseen cells)</span>"
+            )
+        else:
+            _cov_html = (
+                "&nbsp;·&nbsp;<span style='color:#a0aec0'>coverage not measured "
+                "on this fleet — treat the 80% as nominal, not verified</span>"
+            )
         interval_html = (
             f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
             f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
+            + _cov_html
             + (f"&nbsp;·&nbsp;<span style='color:#a0aec0'>{_unc_explanation}</span>" if _unc_explanation else "")
             + f"</div>"
         )

@@ -37,7 +37,7 @@ def db(tmp_path, monkeypatch):
 
 
 def _lco_metrics(soh_mae=1.0, soh_r2=0.8, rul_mae=20.0, rul_r2=0.5, rul_reliable=True, per_cell=None,
-                 baseline_soh_r2=None, baseline_per_cell=None):
+                 baseline_soh_r2=None, baseline_per_cell=None, calibration_meta=None):
     return {
         "soh_mae": soh_mae, "soh_r2": soh_r2,
         "rul_mae": rul_mae, "rul_r2": rul_r2,
@@ -46,6 +46,7 @@ def _lco_metrics(soh_mae=1.0, soh_r2=0.8, rul_mae=20.0, rul_r2=0.5, rul_reliable
                                             "rul_mae": rul_mae, "rul_r2": rul_r2}},
         "baseline_soh_r2": baseline_soh_r2,
         "baseline_per_cell": baseline_per_cell,
+        "calibration_meta": calibration_meta,
     }
 
 
@@ -115,6 +116,45 @@ def test_log_run_persists_trivial_baseline(db):
     got = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
     assert got["baseline_soh_r2"] == 0.603
     assert got["baseline_per_cell"] == {"CellA": {"baseline_soh_r2": 0.6}}
+
+
+def test_log_run_persists_calibration_meta(db):
+    """Tier 3: the interval-calibration measurement (coverage raw/calibrated,
+    width, E*, row count) must survive the DB round-trip in the
+    calibration_meta JSON column so the Benchmark page's calibration table
+    reads measurements, not memory."""
+    cal = {
+        "rul_interval_coverage": 0.61,
+        "rul_interval_coverage_calibrated": 0.79,
+        "rul_interval_width_mean": 41.2,
+        "rul_interval_width_calibrated": 88.4,
+        "rul_interval_n_calibration_rows": 940,
+        "interval_e_star": 23.6,
+        "nominal_coverage": 0.8,
+    }
+    run_id = reg.log_run(
+        org_id=reg.PLATFORM_ORG_ID,
+        dataset="nasa",
+        chemistry="LiCoO2",
+        feature_set=["cycle_number"],
+        feature_version=FEATURE_VERSION,
+        hyperparams={},
+        seed=42,
+        cell_ids=["CellA", "CellB"],
+        n_rows=300,
+        lco_metrics=_lco_metrics(calibration_meta=cal),
+    )
+    got = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert got["calibration_meta"] == cal
+
+
+def test_log_run_calibration_absent_is_null_not_fabricated(db):
+    """A run logged without calibration (older run, or a fleet where the
+    calibration study failed) stores NULL — the UI flags it uncalibrated
+    rather than inventing a coverage number."""
+    run_id = _log(db, dataset="nasa_to_severson")
+    got = reg.get_run(reg.PLATFORM_ORG_ID, run_id)
+    assert got["calibration_meta"] is None
 
 
 def test_log_run_baseline_absent_is_null_not_fabricated(db):

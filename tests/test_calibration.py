@@ -46,6 +46,57 @@ def test_run_lco_quantiles_structure():
     assert result["rul_label_coverage"] == 1.0
 
 
+def test_run_lco_quantiles_returns_global_conformal_correction():
+    """Tier 3: run_lco_quantiles must also return the pooled cross-cell
+    conformity machinery — global_e_star (the widening applied by the serve
+    path) and recalibrated_coverage (the MEASURED coverage the widened
+    interval achieves) — so the deployment can serve calibrated intervals
+    and disclose their measured coverage next to every display."""
+    cell_data = {
+        f"Cell{i}": make_cycles_df(n_cycles=300, fade_per_cycle=0.003 + i * 1e-4)
+        for i in range(4)
+    }
+    result = run_lco_quantiles(cell_data)
+
+    for key in ("global_e_star", "recalibrated_coverage",
+                "recalibrated_width_mean", "pooled_conformity_scores"):
+        assert key in result, f"missing {key}"
+
+    e_star = result["global_e_star"]
+    assert e_star is not None and np.isfinite(e_star) and e_star >= 0.0
+    # Signed conformity scores E_i = max(q10 - y, y - q90): negative means
+    # the true value sat INSIDE the interval. The pooled set is returned
+    # unclamped for transparency; the derived E* is clamped at 0 because the
+    # serve path only ever widens.
+    scores = result["pooled_conformity_scores"]
+    assert len(scores) > 0
+
+    # Widening an interval can only maintain or improve coverage.
+    raw = result["rul_interval_coverage"]
+    cal = result["recalibrated_coverage"]
+    assert cal >= raw - 1e-9
+    # And the widened interval is at least as wide as the raw one.
+    assert result["recalibrated_width_mean"] >= result["rul_interval_width_mean"] - 1e-9
+
+
+def test_run_lco_quantiles_no_observed_rows_yields_none_e_star():
+    """With zero observed-EOL rows there is no honest calibration set: the
+    correction must be None (serve path stays un-widened), never 0 or a
+    fabricated number."""
+    cell_data = {
+        f"Cell{i}": make_cycles_df(n_cycles=300, fade_per_cycle=0.0002 + i * 1e-5)
+        for i in range(3)
+    }
+    result = run_lco_quantiles(cell_data)
+    assert result["global_e_star"] is None
+    # NaN is this module's established not-evaluable convention for coverage
+    # metrics; the app boundary (app/_data.py) sanitizes NaN -> None before
+    # the values reach JSON/UI surfaces.
+    assert result["recalibrated_coverage"] != result["recalibrated_coverage"]
+    assert result["recalibrated_width_mean"] != result["recalibrated_width_mean"]
+    assert result["pooled_conformity_scores"].size == 0
+
+
 def test_run_lco_quantiles_without_observed_rows_is_not_reliable():
     """A fleet whose cells never reach EOL has 100% formula-extrapolated RUL
     labels: interval quality on those rows is formula recovery, so coverage

@@ -132,6 +132,7 @@ class RunRecord:
     # Tier-1: fold-level bootstrap CIs (batlab.validation.bootstrap) — the
     # spread of the headline mean across leave-cell-out folds, stored JSON.
     ci_intervals: "dict | None" = None
+    calibration_meta: "dict | None" = None
 
 
 _git_commit_cache: "str | None" = None
@@ -211,6 +212,7 @@ def log_run(
         n_rul_observed_rows=(lco_metrics.get("n_rul_observed_rows") if isinstance(lco_metrics, dict) else None),
         n_rul_extrapolated_rows=(lco_metrics.get("n_rul_extrapolated_rows") if isinstance(lco_metrics, dict) else None),
         ci_intervals=(lco_metrics.get("confidence_intervals") if isinstance(lco_metrics, dict) else None),
+        calibration_meta=(lco_metrics.get("calibration_meta") if isinstance(lco_metrics, dict) else None),
         git_commit=_git_commit_hash(),
         timestamp=timestamp,
         notes=notes,
@@ -242,6 +244,7 @@ def log_run(
         "n_rul_observed_rows": record.n_rul_observed_rows,
         "n_rul_extrapolated_rows": record.n_rul_extrapolated_rows,
         "ci_intervals": (json.dumps(record.ci_intervals) if record.ci_intervals is not None else None),
+        "calibration_meta": (json.dumps(record.calibration_meta) if record.calibration_meta is not None else None),
         "git_commit":      record.git_commit,
         "timestamp":       record.timestamp,
         "notes":           record.notes,

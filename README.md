@@ -236,6 +236,16 @@ This is public-data validation, not industrial validation — the 0.958 describe
 
 Denied the future, gradient-boosted trees — which interpolate within their training label range but cannot extrapolate beyond it — collapse below a per-cell straight line on two of three fleets, and the prospective RUL number loses to the closed-form fade formula on every fleet where RUL is evaluable. The gap between the LCO column and this one is the amount of interpolation that was riding along in every held-out-cell number. Both evaluations are reported side by side on the Benchmark page, because they answer different questions: LCO is new-cell generalization, the prospective split is same-cell forecasting, and a deployment needs both to be stated separately.
 
+**Calibrated uncertainty — the interval's coverage is measured, not claimed.** The served RUL Q10/Q90 interval claims 80%; Tier 3 makes the platform *measure* that claim on cells the model never saw and serve the corrected interval. The quantile models run under the same leave-cell-out folds as the point models (`batlab.validation.calibration`), every row's conformity score comes from a model that never trained on its cell, and the pooled cross-cell conformal correction E* is stamped onto the production bundle — `predict()` widens the served Q10/Q90 by it, and the measured coverage is disclosed next to every interval the product shows (API confidence text, Overview, Decision, and a dedicated Benchmark calibration table; `calibration_meta` column in the experiment registry). Real fleets, measured:
+
+| Fleet | Calibration rows | Raw coverage | E* (cycles) | Calibrated coverage |
+|---|---|---|---|---|
+| NASA (4 LiCoO₂) | 580 | 75.0% | 7.6 | **80.3%** |
+| Zhu 2022 (9 NCM+NCA) | 8,744 | 91.8% | 0 (clamped) | 91.8% — served as-is |
+| Severson (12 LFP) | 0 observed labels | — | — | **not evaluable** |
+
+E* is clamped at zero — the platform widens an interval, it never narrows one — so Zhu's already-conservative interval ships unmodified while NASA's mildly overconfident one gets corrected to nominal. A fleet whose RUL labels are formula-extrapolated (Severson) reports *not evaluable* rather than a coverage number computed against the formula that generated the labels, and an uncalibrated fleet is flagged as such instead of silently quoting its nominal level.
+
 ## Demo Application
 
 `app/` is a Streamlit application, built on `batlab` — an engineering prototype demonstrating what the platform's analytics look like assembled into an engineer-facing tool, not a production deployment:

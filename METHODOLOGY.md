@@ -394,6 +394,16 @@ the Q10/Q90 quantile GBRT models (see §6) claim an 80% prediction interval, but
 
 *empirical coverage is a deterministic statistic on measured/predicted values; recalibration is a distribution-free statistical correction with a marginal guarantee — still not a per-cell conditional guarantee, and with LCO's small fold populations the corrected coverage is an estimate, not a certificate.*
 
+**Tier 3 — the calibration is wired into production, not just measured.** `run_lco_quantiles()` additionally returns a **pooled cross-cell conformity correction**: every fold's $E_i$ is computed on rows whose cell was *not* in that fold's training set, so the pooled scores are an honest calibration set for a correction applied to a model that similarly never saw the cells it serves. $E^*$ is clamped at zero — the deployment only ever *widens* an interval, never narrows one — and is stamped on the trained bundle (`interval_e_star`). `predict()` applies the widening to the served Q10/Q90, so the interval a decision surface calls "80%" is the one whose real coverage was measured on unseen cells. The measured numbers (raw coverage → calibrated coverage at nominal 80%, from `rul_interval_coverage_calibrated` and the `calibration_meta` registry column) are disclosed next to every interval the product displays: the API confidence text, the Overview interval line, the Decision page's interval metric, and a dedicated Benchmark-page calibration table. Fleets where the RUL labels are formula-extrapolated (Severson) report **not evaluable** rather than a coverage number computed against the formula that generated the labels. Measured on the reference fleets:
+
+| Fleet | Calibration rows | Raw coverage | E* (cycles) | Calibrated coverage | Width raw → cal |
+|---|---|---|---|---|---|
+| NASA (4 LiCoO₂) | 580 | 75.0% | 7.6 | **80.3%** | 25.0 → 32.6 |
+| Zhu 2022 (9 NCM+NCA) | 8,744 | 91.8% | 0 (clamped) | 91.8% (served as-is) | unchanged |
+| Severson (12 LFP) | 0 observed | — | — | **not evaluable** | — |
+
+The two regimes are the honest story: NASA's raw quantile interval was mildly overconfident (75% real coverage behind an "80%" claim) and the conformal correction buys back nominal; Zhu's raw interval was already conservative (91.8%) and $E^*$ clamps to zero — the platform serves it unmodified rather than manufacturing a correction. An uncalibrated fleet is flagged as such in the UI instead of silently quoting its nominal level.
+
 ## 19. Per-prediction local attribution (occlusion-based, SHAP-style)
 
 `feature_importances_` (§6) answers "what drives this model in general" but not "why did THIS cell's RUL come out at 512 cycles?". `batlab.models.attribution::occlusion_attribution()` answers the local question: for one prediction $x$ and feature $j$, draw $n$ values of feature $j$ from a reference distribution, substitute each into $x$ one at a time, and record the mean absolute prediction change:

@@ -1672,10 +1672,19 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
     # string still learns which model answered and whether it was validated on
     # this cell's own source or only on the same chemistry.
     if rul_ok:
+        _m = bndl.get("metrics", {}) if isinstance(bndl, dict) else {}
+        _cal_cov = _m.get("rul_interval_coverage_calibrated")
+        if _cal_cov is not None:
+            _cal_text = (
+                f"interval conformally calibrated (measured coverage "
+                f"{_cal_cov * 100:.0f}% at nominal 80% on unseen cells)"
+            )
+        else:
+            _cal_text = "interval NOT calibrated on this fleet (nominal 80% unverified)"
         _rul_conf_text = (
             "LCO-validated quantile interval from the " + str(selection["model_label"])
             + " model (" + _RUL_MODEL_PHRASES[bool(selection["native"])]
-            + "), per-cell fold R² ≥ 0.3"
+            + "), per-cell fold R² ≥ 0.3; " + _cal_text
         )
     elif not selection["found"]:
         _rul_conf_text = "Withheld — " + str(selection["reason"])

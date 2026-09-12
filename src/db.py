@@ -298,6 +298,7 @@ class ExperimentRun(Base):
     n_rul_observed_rows = Column(Integer)
     n_rul_extrapolated_rows = Column(Integer)
     ci_intervals    = Column(Text)                       # JSON: fold-level bootstrap CIs (batlab.validation.bootstrap)
+    calibration_meta = Column(Text)                      # JSON: interval calibration (coverage raw/calibrated, width, E*, n rows)
     fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
     baseline_per_cell = Column(Text)                     # JSON-encoded per-cell baseline R² breakdown
     git_commit      = Column(String)
@@ -506,6 +507,8 @@ def _ensure_experiment_run_baseline_columns() -> None:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN n_rul_extrapolated_rows INTEGER"))
         if "ci_intervals" not in cols:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN ci_intervals TEXT"))
+        if "calibration_meta" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN calibration_meta TEXT"))
 
 
 def _seed_demo_org_and_users() -> None:
@@ -1309,12 +1312,55 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             rul_label_coverage=entry.get("rul_label_coverage"),
             n_rul_observed_rows=entry.get("n_rul_observed_rows"),
             n_rul_extrapolated_rows=entry.get("n_rul_extrapolated_rows"),
-            ci_intervals=(json.dumps(entry["ci_intervals"]) if entry.get("ci_intervals") is not None else None),
+            ci_intervals=_encode_json_field(entry.get("ci_intervals")),
+            calibration_meta=_encode_json_field(entry.get("calibration_meta")),
             git_commit=entry.get("git_commit"),
             timestamp=entry.get("timestamp"),
             notes=entry.get("notes"),
         ))
         s.commit()
+
+
+def _encode_json_field(value) -> "str | None":
+    """Canonical encoder for the registry's JSON-blob columns that callers
+    may hand over either as raw dicts/lists or (historically, and via
+    replay paths) as already-encoded strings. Returns the single-encoded
+    string to store; unwraps an accidental double-encode rather than
+    storing a JSON string of a JSON string."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, str):
+            try:
+                parsed = json.loads(parsed)
+            except (TypeError, ValueError):
+                return None
+        return json.dumps(parsed)
+    return json.dumps(value)
+
+
+def _json_or_none(raw) -> "dict | list | None":
+    """Decode one JSON-blob registry column. Tolerates the historical
+    double-encoded form (a JSON string whose content is itself a JSON
+    string) so old rows remain readable; returns None on any decode
+    failure rather than raising — a corrupt metrics blob must not take the
+    leaderboard down."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(val, str):
+        try:
+            val = json.loads(val)
+        except (TypeError, ValueError):
+            return None
+    return val
 
 
 def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
@@ -1344,7 +1390,8 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "rul_label_coverage": r.rul_label_coverage,
         "n_rul_observed_rows": r.n_rul_observed_rows,
         "n_rul_extrapolated_rows": r.n_rul_extrapolated_rows,
-        "ci_intervals": (json.loads(r.ci_intervals) if r.ci_intervals else None),  # pyright: ignore[reportArgumentType, reportGeneralTypeIssues]
+        "ci_intervals": _json_or_none(r.ci_intervals),  # pyright: ignore[reportArgumentType]
+        "calibration_meta": _json_or_none(r.calibration_meta),  # pyright: ignore[reportArgumentType]
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,

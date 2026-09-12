@@ -382,6 +382,76 @@ def page_benchmark(org_id: int) -> None:
             "the future — reported as-is, because that IS the forecasting skill."
         )
 
+    # ── Interval calibration — coverage that is measured, not claimed ────
+    # The served Q10/Q90 interval's nominal 80% is a claim; this section
+    # shows the MEASUREMENT: raw quantile coverage on unseen cells, the
+    # conformal correction E* derived from those unseen-cell residuals,
+    # and the recalibrated coverage the deployment actually gets. An
+    # uncalibrated interval is flagged as such rather than silently shown
+    # with its unverified nominal level.
+    st.markdown("#### Interval calibration — is the 80% interval really 80%?")
+    _cal_rows_by_ds: dict[str, dict] = {}
+    for r in all_runs:
+        if r.get("model_kind") not in (None, "gbrt"):
+            continue  # calibration machinery is GBRT-quantile specific
+        cm = r.get("calibration_meta")
+        if not isinstance(cm, dict):
+            continue
+        ds = r["dataset"]
+        if ds not in _cal_rows_by_ds or (r["timestamp"] or "") > (_cal_rows_by_ds[ds]["_ts"] or ""):
+            _cal_rows_by_ds[ds] = {**r, "_ts": r["timestamp"]}
+    cal_rows = sorted(_cal_rows_by_ds.values(), key=lambda r: r["dataset"])
+    if not cal_rows:
+        st.caption(
+            "No interval-calibration measurements logged yet — this table "
+            "fills in automatically as each reference fleet retrains with "
+            "the conformal calibration study."
+        )
+    else:
+        def _pct(v):
+            return f"{v * 100:.0f}%" if isinstance(v, (int, float)) else "—"
+        cal_table = pd.DataFrame([
+            {
+                "Dataset":   r["dataset"],
+                "Chemistry": r["chemistry"] or "—",
+                "Nominal":   _pct((r.get("calibration_meta") or {}).get("nominal_coverage")),
+                "Raw coverage":  _pct((r.get("calibration_meta") or {}).get("rul_interval_coverage")),
+                "Calibrated coverage": _pct((r.get("calibration_meta") or {}).get("rul_interval_coverage_calibrated")),
+                "Width raw→cal": (
+                    f"{_fmt(wr, 1)} → {_fmt(wc, 1)}"
+                    if (wr := (r.get("calibration_meta") or {}).get("rul_interval_width_mean")) is not None
+                    and (wc := (r.get("calibration_meta") or {}).get("rul_interval_width_calibrated")) is not None
+                    else "—"
+                ),
+                "E* (cycles)": _fmt((r.get("calibration_meta") or {}).get("interval_e_star"), 2),
+                "Calibration rows": (
+                    str(cm["rul_interval_n_calibration_rows"])
+                    if (cm := r.get("calibration_meta")) and cm.get("rul_interval_n_calibration_rows") is not None
+                    else "—"
+                ),
+                "Served interval": (
+                    "calibrated (widened by E*)"
+                    if (r.get("calibration_meta") or {}).get("rul_interval_coverage_calibrated") is not None
+                    else "raw — nominal 80% UNVERIFIED"
+                ),
+            }
+            for r in cal_rows
+        ])
+        st.dataframe(cal_table, use_container_width=True, hide_index=True)
+        st.caption(
+            "**Method:** the quantile models are evaluated under the same "
+            "leave-cell-out folds as the point models — every coverage row is "
+            "scored by a model that never trained on its cell, the honest "
+            "calibration set. **Raw coverage** is the quantile regressor's "
+            "out-of-the-box 80% interval measured there; **E*** is the pooled "
+            "cross-cell conformity correction; **Calibrated coverage** is what "
+            "the widened interval actually achieves. The deployment serves the "
+            "*calibrated* interval (predict() widens Q10/Q90 by E*), so the "
+            "number a decision surface calls an 80% interval is the one whose "
+            "real coverage is in this table. Rows where calibration was not "
+            "available say so plainly instead of quoting an unverified nominal."
+        )
+
     # ── Fold-level drill-down ─────────────────────────────────────────────
     st.markdown("#### Fold-level drill-down")
     run_labels = {f"{r['run_id']}  ·  {r['dataset']} ({r['chemistry'] or '—'})": r["run_id"] for r in runs}
