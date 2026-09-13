@@ -6,6 +6,12 @@
 #
 # Generated from the versions the project was benchmarked on
 # (fingerprint.environment_snapshot()); re-pin deliberately, never lazily.
+#
+# Python floor: numpy 2.5 and scipy 1.18 ship wheels for Python >= 3.12 only,
+# so every environment that installs with these pins must run 3.12+ -- CI
+# (.github/workflows/ci.yml), Dockerfile.api, and runtime.txt (Streamlit
+# Cloud) are all held at 3.12. Bump them together, never one at a time
+# (2026-09-13: CI was on 3.11 and pip failed to resolve for two commits).
 numpy==2.5.2
 pandas==3.0.5
 scikit-learn==1.9.0

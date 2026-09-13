@@ -29,10 +29,10 @@ import db  # noqa: E402
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: python scripts/seed_sqlite_for_migration.py <sqlite_path>", file=sys.stderr)
+    if len(_sys.argv) < 2:
+        print("usage: python scripts/seed_sqlite_for_migration.py <sqlite_path>", file=_sys.stderr)
         return 1
-    target = pathlib.Path(sys.argv[1])
+    target = pathlib.Path(_sys.argv[1])
     if target.exists():
         target.unlink()
 

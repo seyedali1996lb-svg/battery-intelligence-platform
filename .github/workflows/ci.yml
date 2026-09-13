@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         # constraints.txt pins the numeric stack (numpy/pandas/scikit-learn/
@@ -46,7 +46,7 @@ jobs:
       - name: Type check with pyright
         run: |
           pip install pyright
-          pyright --pythonversion 3.10 src/ app/
+          pyright --pythonversion 3.10 src/ app/ scripts/
 
       - name: Run test suite
         run: python -m pytest tests/ -v
@@ -81,7 +81,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install batlab with notebook extras
         run: pip install --upgrade pip && pip install -e ".[notebooks]"
@@ -105,7 +105,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install batlab with docs extras
         run: pip install --upgrade pip && pip install -e ".[docs]"

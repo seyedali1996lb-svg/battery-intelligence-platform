@@ -87,15 +87,15 @@ def main() -> int:
     import os
     pg_url = os.environ.get("DATABASE_URL")
     if not pg_url:
-        print("DATABASE_URL is not set — refusing to guess a target server.", file=sys.stderr)
+        print("DATABASE_URL is not set — refusing to guess a target server.", file=_sys.stderr)
         return 1
     if not pg_url.startswith(("postgresql", "postgres")):
-        print(f"DATABASE_URL must point at PostgreSQL, got: {pg_url[:20]}...", file=sys.stderr)
+        print(f"DATABASE_URL must point at PostgreSQL, got: {pg_url[:20]}...", file=_sys.stderr)
         return 1
 
     sqlite_path = pathlib.Path(args.sqlite)
     if not sqlite_path.exists():
-        print(f"SQLite DB not found: {sqlite_path}", file=sys.stderr)
+        print(f"SQLite DB not found: {sqlite_path}", file=_sys.stderr)
         return 1
 
     src = create_engine(f"sqlite:///{sqlite_path}")
@@ -192,6 +192,7 @@ def main() -> int:
         print("\nDone. Enable row-level security with (or re-run with --apply-rls):")
         print(_rls_ddl_comment())
         print("\n".join(_rls_ddl(org_scoped)))
+    return 0
 
 
 def _rls_ddl_comment() -> str:
