@@ -158,6 +158,31 @@ def train_and_predict(
     bndl["metrics"]["n_rul_observed_rows"] = lco.get("n_rul_observed_rows")
     bndl["metrics"]["n_rul_extrapolated_rows"] = lco.get("n_rul_extrapolated_rows")
 
+    # ── Domain of validity (Tier 5) ─────────────────────────────────
+    # The envelope the model's numbers were measured under, computed from
+    # the very data that trained and validated it — plus per-regime
+    # reliability (chemistry × temperature band × SOH stage), the layer
+    # between per-cell gating and fleet averages. Both ride on the bundle
+    # (surfaces check every cell against the envelope) and into the
+    # registry (validity_meta) so the envelope is inspectable, not folklore.
+    try:
+        from domain_validity import compute_envelope, regime_reliability
+        _envelope = compute_envelope(cell_cycles, cell_data=cell_cycles, featured=raw_fdfs)
+        _regimes = regime_reliability(
+            lco.get("per_cell") or {}, cell_data=cell_cycles, featured=raw_fdfs,
+        )
+        bndl["training_envelope"] = _envelope
+        bndl["metrics"]["regime_reliability"] = _regimes
+        lco = {**lco, "validity_meta": {
+            "envelope": _envelope,
+            "regime_reliability": _regimes,
+        }}
+    except Exception:
+        # No envelope recorded: surfaces must render "envelope unknown"
+        # (the absence is itself disclosed), never assume validity.
+        bndl["training_envelope"] = None
+        lco = {**lco, "validity_meta": {"envelope": None, "envelope_attempted": True}}
+
     # ── Calibrated uncertainty (Tier 3) ─────────────────────────────────
     # The served Q10/Q90 interval's nominal 80% is a CLAIM; what ships here
     # is a MEASUREMENT. run_lco_quantiles() evaluates the quantile models
@@ -300,12 +325,34 @@ def load_everything() -> tuple[Any, dict, dict]:
                 _PLATFORM_ORG_ID, cell_id, cell_store.build_summary(cell_id, df),
             )
 
+    def _backfill_validity(cached: tuple, cell_dict: dict) -> None:
+        """Stamp the Tier-5 training envelope onto a cache-hit bundle.
+
+        Bundles cached before validity tracking lack `training_envelope`;
+        computing it is pure data inspection (no model fitting), so it is
+        done lazily on every load rather than forcing a full retrain. The
+        per-regime reliability table is NOT backfilled here (it needs the
+        LCO per-cell folds from a fresh run) — the Benchmark section
+        renders "envelope without regime table" honestly in that case.
+        """
+        bundle = cached[0] if isinstance(cached, tuple) else None
+        if not isinstance(bundle, dict) or bundle.get("training_envelope") is not None:
+            return
+        try:
+            from domain_validity import compute_envelope
+            bundle["training_envelope"] = compute_envelope(
+                list(cell_dict.keys()), cell_data=cell_dict,
+            )
+        except Exception:
+            pass
+
     def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict]:
         """2-tier cache: full bundle → features-only → full pipeline."""
         import experiment_registry as _reg
 
         cached = load_cached(key, cell_dict)
         if cached is not None:
+            _backfill_validity(cached, cell_dict)
             return cached
         feat_cached = load_features_cached(key, cell_dict)
         if feat_cached is not None:
@@ -582,6 +629,36 @@ def load_everything() -> tuple[Any, dict, dict]:
                 # the (X, y) tuples the LCO study consumes.
                 featured=_df_featured,
                 org_id=_reg_prosp.PLATFORM_ORG_ID,
+            )
+        except Exception:
+            pass
+
+        # ── Tier-4 modeling candidates + robustness benchmark ─────────────
+        # Hierarchical partial-pooling and the GBRT+PINN ensemble through
+        # the SAME LCO harness (idempotent per dataset/model_kind/feature
+        # version), and the degraded-input robustness benchmark for the
+        # production model. Each independently guarded: one study's failure
+        # can never skip the others.
+        try:
+            import experiment_registry as _reg_model
+
+            _reg_model.run_modeling_benchmark_study(
+                _study_datasets,
+                featured=_df_featured,
+                baselines={
+                    k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
+                    for k, b in bundles.items() if b
+                },
+                org_id=_reg_model.PLATFORM_ORG_ID,
+            )
+        except Exception:
+            pass
+        try:
+            import experiment_registry as _reg_rob
+
+            _reg_rob.run_robustness_study(
+                _study_datasets,
+                org_id=_reg_rob.PLATFORM_ORG_ID,
             )
         except Exception:
             pass

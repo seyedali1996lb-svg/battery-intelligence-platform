@@ -299,6 +299,7 @@ class ExperimentRun(Base):
     n_rul_extrapolated_rows = Column(Integer)
     ci_intervals    = Column(Text)                       # JSON: fold-level bootstrap CIs (batlab.validation.bootstrap)
     calibration_meta = Column(Text)                      # JSON: interval calibration (coverage raw/calibrated, width, E*, n rows)
+    validity_meta   = Column(Text)                       # JSON: training envelope + per-regime reliability (Tier 5)
     fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
     baseline_per_cell = Column(Text)                     # JSON-encoded per-cell baseline R² breakdown
     git_commit      = Column(String)
@@ -509,6 +510,8 @@ def _ensure_experiment_run_baseline_columns() -> None:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN ci_intervals TEXT"))
         if "calibration_meta" not in cols:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN calibration_meta TEXT"))
+        if "validity_meta" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN validity_meta TEXT"))
 
 
 def _seed_demo_org_and_users() -> None:
@@ -1314,6 +1317,7 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             n_rul_extrapolated_rows=entry.get("n_rul_extrapolated_rows"),
             ci_intervals=_encode_json_field(entry.get("ci_intervals")),
             calibration_meta=_encode_json_field(entry.get("calibration_meta")),
+            validity_meta=_encode_json_field(entry.get("validity_meta")),
             git_commit=entry.get("git_commit"),
             timestamp=entry.get("timestamp"),
             notes=entry.get("notes"),
@@ -1392,6 +1396,7 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "n_rul_extrapolated_rows": r.n_rul_extrapolated_rows,
         "ci_intervals": _json_or_none(r.ci_intervals),  # pyright: ignore[reportArgumentType]
         "calibration_meta": _json_or_none(r.calibration_meta),  # pyright: ignore[reportArgumentType]
+        "validity_meta": _json_or_none(r.validity_meta),  # pyright: ignore[reportArgumentType]
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,

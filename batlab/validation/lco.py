@@ -74,6 +74,26 @@ def _safe_r2(y_true, y_pred) -> "float | None":
     return float(r2_score(y_true, y_pred))
 
 
+def unwrap_cell_data(cell_data: dict) -> dict:
+    """Normalize a cell-data dict to {cell_id: raw cycles DataFrame}.
+
+    Callers build this map in two wrapper shapes — `build_battery()` cells
+    ({"cell_id": ..., "cycles": df}) and the dataset loaders' dicts
+    ({"cycles": df}) — and any harness that calls build_features() on a
+    value directly would crash on (or worse, misread) a wrapper. Both
+    shapes are unwrapped here; plain DataFrames pass through untouched.
+    """
+    out: dict = {}
+    for cid, val in (cell_data or {}).items():
+        if isinstance(val, pd.DataFrame):
+            out[cid] = val
+        elif isinstance(val, dict) and isinstance(val.get("cycles"), pd.DataFrame):
+            out[cid] = val["cycles"]
+        # Anything else is not a cell record; drop it rather than crash
+        # the whole fleet's evaluation on one malformed entry.
+    return out
+
+
 def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> dict:
     """
     Run leave-cell-out cross-validation on a dict of cell DataFrames.
@@ -111,6 +131,7 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         }
     """
     params = {**GBRT_PARAMS, "random_state": seed}
+    cell_data = unwrap_cell_data(cell_data)
 
     # Build feature matrices per cell
     featured_in = {}

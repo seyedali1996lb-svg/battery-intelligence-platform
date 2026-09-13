@@ -151,7 +151,12 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
         # (fold count, fold R², and the model that actually answered), surfaced
         # in the ranking table next to the value instead of only as a page-level
         # "n=4 / n=12 / n=8" caption a reader can't tie to a specific row.
-        _prov = cell_model_provenance(bndl, cell_id, selection=_sel)
+        # The cell's featured frame is passed so the envelope check covers the
+        # temperature/C-rate/SOH axes, not just chemistry/format.
+        _prov = cell_model_provenance(
+            bndl, cell_id, selection=_sel,
+            featured_df=(featured_dfs or {}).get(cell_id),
+        )
 
         rows.append({
             "cell_id":      cell_id,
@@ -164,6 +169,7 @@ def page_fleet(featured_dfs: dict, bundles: dict, trajectory_memory: "Trajectory
             "rul_ok":       rul_ok,
             "prov":         _prov,
             "prov_label":   provenance_label(_prov),
+            "validity":     _prov.get("cell_verdict"),
             "eol_at":       eol_at,
             "cycles_to_eol": cycles_to_eol,
             "trend":        trend,

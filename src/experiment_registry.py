@@ -133,6 +133,7 @@ class RunRecord:
     # spread of the headline mean across leave-cell-out folds, stored JSON.
     ci_intervals: "dict | None" = None
     calibration_meta: "dict | None" = None
+    validity_meta: "dict | None" = None
 
 
 _git_commit_cache: "str | None" = None
@@ -213,6 +214,7 @@ def log_run(
         n_rul_extrapolated_rows=(lco_metrics.get("n_rul_extrapolated_rows") if isinstance(lco_metrics, dict) else None),
         ci_intervals=(lco_metrics.get("confidence_intervals") if isinstance(lco_metrics, dict) else None),
         calibration_meta=(lco_metrics.get("calibration_meta") if isinstance(lco_metrics, dict) else None),
+        validity_meta=(lco_metrics.get("validity_meta") if isinstance(lco_metrics, dict) else None),
         git_commit=_git_commit_hash(),
         timestamp=timestamp,
         notes=notes,
@@ -245,6 +247,7 @@ def log_run(
         "n_rul_extrapolated_rows": record.n_rul_extrapolated_rows,
         "ci_intervals": (json.dumps(record.ci_intervals) if record.ci_intervals is not None else None),
         "calibration_meta": (json.dumps(record.calibration_meta) if record.calibration_meta is not None else None),
+        "validity_meta": (json.dumps(record.validity_meta) if record.validity_meta is not None else None),
         "git_commit":      record.git_commit,
         "timestamp":       record.timestamp,
         "notes":           record.notes,
@@ -366,8 +369,13 @@ def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
         # Prospective-split runs evaluate a DIFFERENT population (each cell's
         # test window under a temporal holdout, not leave-cell-out folds) —
         # they are the per-chemistry table's complement, reported in their
-        # own section, and must never be averaged into these rows.
-        if (r.get("dataset") or "").endswith("_prospective"):
+        # own section, and must never be averaged into these rows. The same
+        # protection applies to robustness scenarios (degraded-input copies
+        # of a fleet) and cross-chemistry transfer runs.
+        ds_name = r.get("dataset") or ""
+        if ds_name.endswith("_prospective") or ds_name.endswith("_robustness"):
+            continue
+        if "_to_" in ds_name:
             continue
         # GBRT only: this table is the per-chemistry accuracy of the
         # production model. PINN runs are reported through
@@ -414,6 +422,11 @@ def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
             "n_rul_observed_rows": r.get("n_rul_observed_rows"),
             "ci_intervals":     r.get("ci_intervals"),
             "rul_reliable":     rul_ok,
+            # Tier-5 validity: the training envelope + per-regime reliability
+            # recorded with this run (None for runs logged before validity
+            # was tracked). The Benchmark page renders the per-regime table
+            # from this — the envelope travels with the numbers it bounds.
+            "validity_meta":    r.get("validity_meta"),
         })
     rows.sort(key=lambda d: d["advantage"], reverse=True)
     return rows
@@ -422,6 +435,8 @@ def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
 MODEL_KIND_LABELS = {
     "gbrt": "GBRT (production)",
     "pinn": "PINN (physics-regularized)",
+    "hierarchical": "Hierarchical (partial pooling)",
+    "ensemble": "GBRT+PINN ensemble",
 }
 
 
@@ -447,8 +462,11 @@ def model_kind_comparison(tenant_org_id: "int | None" = None) -> list[dict]:
         if r.get("soh_r2") is None:
             continue
         # Prospective-split rows compare against themselves (their own
-        # section) — a different population than LCO folds.
-        if (r.get("dataset") or "").endswith("_prospective"):
+        # section) — a different population than LCO folds. Robustness
+        # scenario rows are degraded-DATA copies, not model kinds, and
+        # must never appear beside a real model's number.
+        ds_name = r.get("dataset") or ""
+        if ds_name.endswith("_prospective") or ds_name.endswith("_robustness"):
             continue
         key = (r.get("dataset"), r.get("chemistry"), r.get("model_kind") or "gbrt")
         prev = latest.get(key)
@@ -1165,6 +1183,355 @@ def run_prospective_benchmark_study(
             "rul_formula_baseline_r2": rul_base.get("rul_formula_baseline_r2"),
         })
     return out
+
+
+def run_modeling_benchmark_study(
+    datasets: dict,
+    featured: "dict | None" = None,
+    baselines: "dict | None" = None,
+    org_id: int = PLATFORM_ORG_ID,
+    refresh: bool = False,
+) -> list[dict]:
+    """
+    Run and log the Tier-4 modeling candidates through the SAME
+    leave-cell-out harness as the GBRT, for every supplied reference
+    dataset, so all model kinds sit side by side in the leaderboard with
+    comparable numbers — including when a candidate loses, which is the
+    useful result:
+
+      - `hierarchical`: the partial-pooling fade model — a held-out cell
+        borrows fade-rate strength from its chemistry's fleet prior and
+        contributes only its own early window (the deployment-realistic
+        information set). With chemistry metadata (from
+        chemistry_profiles) the prior pools per chemistry ACROSS fleets,
+        which is the chemistry-conditional backbone item.
+      - `ensemble`: GBRT+PINN blend whose weight is chosen inside each
+        fold by an inner leave-one-cell-out pass over the training cells
+        (never the held-out cell).
+
+    Robustness (`batlab/validation/robustness.py`) is NOT a model kind and
+    is not logged here — it degrades DATA, not the model, and is surfaced
+    through its own reader (robustness_study()) on the Benchmark page.
+
+    Idempotent per (dataset, model_kind, FEATURE_VERSION) like the PINN
+    study. Rows are keyed by model_kind, so they never collide with the
+    GBRT's own rows, and accuracy_by_source() filters them out of the
+    per-chemistry GBRT accuracy table by the same rule that protects it
+    from PINN rows.
+    """
+    from batlab.features.engineering import FEATURE_VERSION
+    from batlab.validation.hierarchical_lco import run_hierarchical_lco, MODEL_KIND as HK
+    from batlab.validation.ensemble_lco import run_ensemble_lco, MODEL_KIND as EK
+    from batlab.validation.trivial_baseline import baseline_lco_r2
+    from chemistry_profiles import ChemistryProfile
+
+    all_runs = leaderboard(tenant_org_id=None)
+    logged = {
+        (r["dataset"], r.get("model_kind") or "gbrt", r["feature_version"])
+        for r in all_runs
+    }
+
+    out: list[dict] = []
+    for key, cell_cycles in (datasets or {}).items():
+        if not cell_cycles:
+            continue
+        # Chemistry-conditional prior: profiles resolve per cell.
+        chem_by_cell = {
+            cid: ChemistryProfile.for_cell(cid).short_name for cid in cell_cycles
+        }
+        baseline = (baselines or {}).get(key)
+
+        jobs = (
+            (
+                HK,
+                lambda cc, ch=chem_by_cell: run_hierarchical_lco(cc, chemistry_by_cell=ch),
+                (
+                    "Hierarchical partial-pooling model through the SAME "
+                    "leave-cell-out folds as the GBRT (see "
+                    "batlab/validation/hierarchical_lco.py). Prior over log "
+                    "fade rates estimated on the training cells; the held-out "
+                    "cell contributes only its early window and shrinks toward "
+                    "the fleet/chemistry prior. The linear fade law is the "
+                    "honest limitation — this is a forecasting baseline, and "
+                    "the number stands even when the GBRT wins."
+                ),
+            ),
+            (
+                EK,
+                lambda cc, ch=chem_by_cell: run_ensemble_lco(cc, chemistry_by_cell=ch),
+                (
+                    "GBRT+PINN ensemble through the SAME leave-cell-out folds "
+                    "(see batlab/validation/ensemble_lco.py). Blend weight "
+                    "chosen inside each fold by an inner leave-one-cell-out "
+                    "pass over the training cells — the held-out cell never "
+                    "influences its own weight. w=1.0 means the inner CV "
+                    "collapsed onto pure GBRT; that is an honest outcome."
+                ),
+            ),
+        )
+
+        for model_kind, runner, note in jobs:
+            if not refresh and (key, model_kind, FEATURE_VERSION) in logged:
+                continue
+            try:
+                metrics = runner(cell_cycles)
+            except Exception:
+                # A dataset the candidate genuinely cannot run on is
+                # skipped, not logged with a fabricated number.
+                continue
+
+            metrics = {
+                **metrics,
+                "baseline_soh_r2": baseline,
+                "baseline_per_cell": None,
+            }
+            # Fold-level diagnostics travel in hyperparams so the registry
+            # row stays self-describing: which chemistry leaned on the
+            # physics leg of the ensemble vs the data leg.
+            _hp = dict(metrics.get("hyperparams") or {})
+            if metrics.get("weights_by_chemistry"):
+                _hp["weights_by_chemistry"] = metrics["weights_by_chemistry"]
+            sample_cell = next(iter(cell_cycles))
+            n_rows = sum(len(df) for df in cell_cycles.values())
+            run_id = log_run(
+                org_id=org_id,
+                dataset=key,
+                chemistry=ChemistryProfile.for_cell(sample_cell).short_name,
+                feature_set=["cycle_number", "capacity_ah"],  # the fade model's actual inputs
+                feature_version=FEATURE_VERSION,
+                hyperparams=_hp,
+                seed=42,
+                cell_ids=list(cell_cycles.keys()),
+                n_rows=n_rows,
+                lco_metrics=metrics,
+                model_kind=model_kind,
+                notes=note,
+            )
+            out.append({
+                "dataset": key, "run_id": run_id, "model_kind": model_kind,
+                "soh_r2": metrics.get("soh_r2"), "soh_mae": metrics.get("soh_mae"),
+                "rul_r2": metrics.get("rul_r2"), "rul_mae": metrics.get("rul_mae"),
+                "baseline_soh_r2": baseline,
+            })
+            logged.add((key, model_kind, FEATURE_VERSION))
+    return out
+
+
+def run_robustness_study(
+    datasets: dict,
+    org_id: int = PLATFORM_ORG_ID,
+    refresh: bool = False,
+) -> list[dict]:
+    """
+    Run and log the degraded-input robustness benchmark (Tier-4 item 7)
+    for every supplied reference dataset: missing cycles, BMS resets,
+    and resistance-transient spikes at increasing severity, each re-run
+    through the identical leave-cell-out harness against a freshly
+    computed clean baseline (batlab/validation/robustness.py).
+
+    One registry row per (dataset, FEATURE_VERSION): the row's headline
+    soh_r2/rul_r2 are the CLEAN baseline's, and the per-scenario table is
+    serialized in fold_metrics (keyed by scenario label) — robustness is
+    a property OF the production model on that fleet, not a separate
+    model kind. Rows are excluded from every LCO accuracy aggregation by
+    the `_robustness` dataset-suffix filter (same mechanism that protects
+    the tables from prospective-split rows).
+    """
+    from batlab.features.engineering import FEATURE_VERSION
+    from batlab.validation.robustness import run_robustness_lco
+    from chemistry_profiles import ChemistryProfile
+
+    all_runs = leaderboard(tenant_org_id=None)
+    logged = {
+        (r["dataset"], r["feature_version"])
+        for r in all_runs
+        if (r.get("dataset") or "").endswith("_robustness")
+    }
+
+    out: list[dict] = []
+    for key, cell_cycles in (datasets or {}).items():
+        if not cell_cycles:
+            continue
+        ds_key = f"{key}_robustness"
+        if not refresh and (ds_key, FEATURE_VERSION) in logged:
+            continue
+        try:
+            report = run_robustness_lco(cell_cycles)
+        except Exception:
+            continue
+
+        base = report.get("baseline") or {}
+        scenarios = report.get("scenarios") or []
+        # fold_metrics carries the scenario table: {label: metrics}. This
+        # is the registry's per-fold JSON slot — a scenario IS the fold
+        # here (one degraded copy of the fleet evaluated LCO).
+        fold_metrics = {
+            s["severity_label"]: {
+                "mode": s["mode"],
+                "severity": s["severity"],
+                "soh_r2": s["soh_r2"],
+                "soh_r2_delta": s["soh_r2_delta"],
+                "rul_r2": s["rul_r2"],
+                "rul_r2_delta": s["rul_r2_delta"],
+                "rul_label_coverage": s["rul_label_coverage"],
+                "n_cells_evaluated": s["n_cells_evaluated"],
+            }
+            for s in scenarios
+        }
+        thresholds = report.get("failure_threshold") or {}
+        thr_text = ", ".join(f"{m}: first failure at {v}" for m, v in thresholds.items() if v)
+        sample_cell = next(iter(cell_cycles))
+        run_id = log_run(
+            org_id=org_id,
+            dataset=ds_key,
+            chemistry=ChemistryProfile.for_cell(sample_cell).short_name,
+            feature_set=["cycle_number", "capacity_ah"],
+            feature_version=FEATURE_VERSION,
+            hyperparams={"soh_r2_failure_floor": report.get("soh_r2_failure_floor")},
+            seed=42,
+            cell_ids=list(cell_cycles.keys()),
+            n_rows=sum(len(df) for df in cell_cycles.values()),
+            lco_metrics={
+                "soh_r2": base.get("soh_r2"),
+                "soh_mae": None,
+                "rul_r2": base.get("rul_r2"),
+                "rul_mae": None,
+                "rul_reliable": False,  # a robustness row is not an accuracy claim
+                "per_cell": fold_metrics,
+                "rul_label_coverage": base.get("rul_label_coverage"),
+            },
+            model_kind="gbrt",
+            notes=(
+                "ROBUSTNESS benchmark on degraded input — NOT an accuracy "
+                "claim and excluded from every LCO accuracy table (the "
+                "_robustness suffix filter). Clean-fleet leave-cell-out "
+                "baseline re-computed in the same run; each scenario degrades "
+                "a copy of the raw cycles (missing cycles / BMS counter "
+                "resets / resistance transients) and re-runs the identical "
+                "harness. Per-scenario deltas in the fold drill-down. "
+                + (f"Failure thresholds (SOH R² < floor): {thr_text}." if thr_text else "No scenario crossed the failure floor.")
+            ),
+        )
+        out.append({
+            "dataset": key, "run_id": run_id,
+            "baseline": base,
+            "scenarios": scenarios,
+            "failure_threshold": thresholds,
+        })
+        logged.add((ds_key, FEATURE_VERSION))
+    return out
+
+
+def robustness_study(tenant_org_id: "int | None" = None) -> list[dict]:
+    """Every logged robustness report, newest per base dataset, with the
+    scenario table rehydrated from fold_metrics."""
+    runs = leaderboard(tenant_org_id=tenant_org_id)
+    latest: dict = {}
+    for r in runs:
+        ds = r.get("dataset") or ""
+        if not ds.endswith("_robustness"):
+            continue
+        base_ds = ds.removesuffix("_robustness")
+        prev = latest.get(base_ds)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[base_ds] = r
+
+    rows = []
+    for base_ds, r in sorted(latest.items()):
+        scenarios = []
+        for label, m in (r.get("fold_metrics") or {}).items():
+            if isinstance(m, dict) and "mode" in m:
+                scenarios.append({"severity_label": label, **m})
+        scenarios.sort(key=lambda s: (s.get("mode", ""), s.get("severity", 0)))
+
+        # Re-derive the failure thresholds from the scenario rows + the
+        # floor recorded at log time — the same rule run_robustness_study
+        # applied when the row was written, so the reader stays honest
+        # even though the thresholds aren't a separate DB column.
+        hp = r.get("hyperparams") if isinstance(r.get("hyperparams"), dict) else {}
+        floor = (hp or {}).get("soh_r2_failure_floor")
+        modes = list(dict.fromkeys(s.get("mode") for s in scenarios))
+        if floor is not None:
+            thresholds = {
+                mode: next(
+                    (s["severity_label"] for s in scenarios
+                     if s.get("mode") == mode and s.get("soh_r2") is not None
+                     and float(s["soh_r2"]) < floor),
+                    None,
+                )
+                for mode in modes
+            }
+        else:
+            thresholds = {mode: None for mode in modes}
+
+        rows.append({
+            "dataset": base_ds,
+            "chemistry": r.get("chemistry") or "—",
+            "n_cells": r.get("n_cells"),
+            "baseline_soh_r2": r.get("soh_r2"),
+            "baseline_rul_r2": r.get("rul_r2"),
+            "scenarios": scenarios,
+            "notes": r.get("notes"),
+            "timestamp": r.get("timestamp"),
+            "soh_r2_failure_floor": floor,
+            "failure_threshold": thresholds,
+        })
+    return rows
+
+
+def modeling_benchmark(tenant_org_id: "int | None" = None) -> list[dict]:
+    """Every logged Tier-4 modeling-candidate result (hierarchical,
+    ensemble), newest per (dataset, model_kind), joined to the GBRT's and
+    the trivial baseline's numbers for the same dataset so the page can
+    show the full comparison per fleet."""
+    runs = leaderboard(tenant_org_id=tenant_org_id)
+
+    latest: dict = {}
+    for r in runs:
+        kind = r.get("model_kind") or "gbrt"
+        if kind not in ("hierarchical", "ensemble"):
+            continue
+        if r.get("soh_r2") is None:
+            continue
+        key = (r.get("dataset"), kind)
+        prev = latest.get(key)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            latest[key] = r
+
+    # GBRT + trivial baseline references per dataset.
+    gbrt_by_ds: dict = {}
+    for r in runs:
+        if (r.get("model_kind") or "gbrt") != "gbrt" or r.get("soh_r2") is None:
+            continue
+        if (r.get("dataset") or "").endswith("_prospective"):
+            continue
+        ds = r.get("dataset")
+        prev = gbrt_by_ds.get(ds)
+        if prev is None or (r.get("timestamp") or "") > (prev.get("timestamp") or ""):
+            gbrt_by_ds[ds] = r
+
+    rows = []
+    for (dataset, kind), r in sorted(latest.items()):
+        gbrt = gbrt_by_ds.get(dataset)
+        rows.append({
+            "dataset": dataset,
+            "chemistry": r.get("chemistry") or "—",
+            "model_kind": kind,
+            "model_label": MODEL_KIND_LABELS.get(kind, kind),
+            "n_cells": r.get("n_cells"),
+            "soh_r2": r.get("soh_r2"),
+            "soh_mae": r.get("soh_mae"),
+            "rul_r2": r.get("rul_r2"),
+            "rul_mae": r.get("rul_mae"),
+            "rul_label_coverage": r.get("rul_label_coverage"),
+            "gbrt_soh_r2": gbrt.get("soh_r2") if gbrt else None,
+            "baseline_soh_r2": (gbrt.get("baseline_soh_r2") if gbrt else None)
+            or r.get("baseline_soh_r2"),
+            "hyperparams": r.get("hyperparams"),
+            "notes": r.get("notes"),
+            "timestamp": r.get("timestamp"),
+        })
+    return rows
 
 
 def prospective_benchmark(tenant_org_id: "int | None" = None) -> list[dict]:

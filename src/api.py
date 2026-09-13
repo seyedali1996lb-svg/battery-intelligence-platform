@@ -1612,6 +1612,11 @@ class CellHealth(BaseModel):
     # (src/model_selection.py).
     model_selection: dict
     chemistry_accuracy: Optional[dict] = None
+    # Domain of validity (Tier 5): None when no envelope is recorded for
+    # the answering model; otherwise the cell's in/partial/outside verdict
+    # with the named axes. A client must not read rul_pred's accuracy
+    # claims as covering a cell whose verdict is "outside".
+    validity: Optional[dict] = None
 
 @app.get("/cells/{cell_id}/health", response_model=CellHealth, summary="Health-as-a-service: LCO-validated SOH/RUL/SoP + confidence + passport fragments")
 def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
@@ -1658,6 +1663,7 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
     # can't receive a bare RUL without being able to see which model produced
     # it and how that chemistry's accuracy compares to the rest of the platform.
     from model_selection import per_chemistry_accuracy
+    from domain_validity import validity_banner
     selection = _model_for_cell(cell_id, bundles)
     bndl = selection["bundle"]
     _chem_rows = per_chemistry_accuracy(chemistry=selection.get("chemistry"))
@@ -1690,6 +1696,25 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
         _rul_conf_text = "Withheld — " + str(selection["reason"])
     else:
         _rul_conf_text = "Withheld — per-cell LCO RUL R² below the 0.3 reliability floor"
+
+    # Domain-of-validity disclosure (Tier 5): is this cell inside the
+    # envelope the answering model's numbers were measured under? The
+    # machine-readable verdict lives in validity; the same sentence a UI
+    # shows rides in the rul confidence text so a plain-text consumer gets
+    # it too. The cell's featured frame supplies the temperature/C-rate/
+    # SOH axes; chemistry/format are checkable regardless.
+    from accuracy_provenance import cell_model_provenance as _cmp
+    _api_prov = _cmp(bndl, cell_id, featured_df=df)
+    _validity_banner = validity_banner(_api_prov)
+    _validity_record = {
+        "verdict": _api_prov.get("cell_verdict"),
+        "outside_axes": _api_prov.get("outside_axes") or [],
+        "partial_axes": _api_prov.get("partial_axes") or [],
+        "axes_checked": _api_prov.get("axes_checked") or ["chemistry", "cell format"],
+        "envelope": _api_prov.get("envelope"),
+    } if _api_prov.get("cell_verdict") else None
+    if _validity_banner and rul_ok:
+        _rul_conf_text += "; " + _validity_banner
 
     return CellHealth(
         cell_id=cell_id,
@@ -1728,6 +1753,7 @@ def cell_health(cell_id: str, current_user: dict = Depends(get_current_user)):
             } if selection["accuracy"] else None,
         },
         chemistry_accuracy=chemistry_accuracy,
+        validity=_validity_record,
         passport_fragments={
             "chemistry": profile.short_name if profile else "Unknown",
             "source_kind": profile.source_kind if profile else "upload",

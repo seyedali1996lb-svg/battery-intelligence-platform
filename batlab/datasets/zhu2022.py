@@ -167,6 +167,37 @@ def _finalize_cell(summary: pd.DataFrame, cell_stem: str) -> pd.DataFrame:
     return df
 
 
+def _inject_protocol_conditions(df: pd.DataFrame, cell_stem: str) -> pd.DataFrame:
+    """Write the protocol-known temperature and C-rate as per-cycle columns.
+
+    The cell-name convention CY{temperature}-{rate}_{condition}-#{replicate}
+    (CY25-05_1 → 25 °C, 0.5C charge) is the dataset's own documented
+    encoding of its test conditions, so the values are facts about the
+    protocol — but they are CONSTANTS per cell, not measurements per
+    cycle. They are written explicitly (rather than left absent) so the
+    stress_index feature computes on the documented protocol, with the
+    provenance recorded in df.attrs and a fleet-wide cross-cell spread of
+    exactly zero — condition_axis_audit() classifies such an axis as
+    "protocol-constant", i.e. carries no cross-cell signal, which is the
+    honest description of this data.
+    """
+    import re
+
+    m = re.match(r"CY(\d+)-(\d+)_", cell_stem)
+    temp_c = float(m.group(1)) if m else 25.0
+    # The rate group is the CHARGE rate in units of 0.1C ("05" → 0.5C);
+    # the discharge is ~1C per the dataset description.
+    c_rate = float(m.group(2)) / 10.0 if m else 1.0
+    out = df.copy()
+    out["temperature_c"] = temp_c
+    out["c_rate"] = c_rate
+    out.attrs["condition_provenance"] = (
+        "temperature_c/c_rate injected from the dataset's documented cell-naming "
+        "convention (protocol constants, not per-cycle measurements)"
+    )
+    return out
+
+
 def _download_and_extract(status_fn=None) -> None:
     """Download the ~356 MB zip (once), verify it, extract the 9 cell CSVs."""
     _RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -267,6 +298,7 @@ def load_zhu2022_cells(status_fn=None, raw_dir: pathlib.Path | None = None) -> d
         stem = fname.removesuffix(".csv")
         df = _load_cached(stem, raw_dir)
         if df is not None:
+            df = _inject_protocol_conditions(df, stem)
             cells[df.attrs["cell_id"]] = df
     return cells
 

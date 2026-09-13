@@ -116,6 +116,13 @@ def _download_and_cache(status_fn=None) -> None:
 
                 ir   = np.array(summ["IR"]).flatten().astype(float)[:n]   if "IR"   in summ else np.full(n, np.nan)
                 tavg = np.array(summ["Tavg"]).flatten().astype(float)[:n] if "Tavg" in summ else np.full(n, 30.0)
+                # Tavg absent in the source is stored by the raw export as
+                # 0.0 — a missing-value sentinel, not a measurement (no
+                # cycle runs at absolute zero). Left in place it silently
+                # dragged every rolling-temperature feature toward zero;
+                # convert to NaN so build_features()'s min_periods handling
+                # skips them honestly.
+                tavg = np.where(tavg <= 0.0, np.nan, tavg)
                 q0   = float(qd[0]) if float(qd[0]) > 0 else 1.0
 
                 pd.DataFrame({
@@ -137,6 +144,15 @@ def _load_cached(key: str) -> pd.DataFrame | None:
     df = pd.read_csv(path)
     if len(df) < 5:
         return None
+    # Sentinel cleanup at LOAD time, not just download time: the Tier-4
+    # fix in _download_and_cache only touches fresh exports, but CSVs
+    # cached before that fix keep their 0.0 sentinels on disk. No cycle
+    # runs at absolute zero — a 0.0 °C Tavg is a missing value, and left
+    # in place it poisons temp_rolling_30cy and (as the Tier-5 envelope
+    # showed) reads as a 0 °C fleet minimum. NaN lets min_periods skip it.
+    if "temperature_c" in df.columns:
+        t = pd.to_numeric(df["temperature_c"], errors="coerce")
+        df["temperature_c"] = t.mask(t <= 0.0)
     cell_id = f"S-{key}"
     df.attrs["cell_id"] = cell_id
     df.attrs["source"] = "severson2019"

@@ -408,9 +408,11 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # answered and flags a chemistry-matched stand-in rather than assuming the
     # cell's own source produced this number.
     from model_selection import describe_bundle_for_cell, per_chemistry_accuracy_line
+    from domain_validity import validity_banner
     _selection = describe_bundle_for_cell(bundle, cell_id)
-    _prov = cell_model_provenance(bundle, cell_id, selection=_selection)
+    _prov = cell_model_provenance(bundle, cell_id, selection=_selection, featured_df=df)
     _prov_label = provenance_label(_prov)
+    _validity_banner = validity_banner(_prov)
     _gbrt_rul_note = "Data-driven model — suppressed when the fold R² floor is not met"
     if _prov_label:
         _gbrt_rul_note += f" · {_prov_label}"
@@ -440,6 +442,8 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"Accuracy by chemistry (registry-derived, reported per chemistry "
             f"rather than platform-wide): {_chem_accuracy_line}"
         )
+    if _validity_banner:
+        st.warning(_validity_banner)
 
     _fig_e1_col, _fig_twin_col = st.columns(2)
     with _fig_e1_col:

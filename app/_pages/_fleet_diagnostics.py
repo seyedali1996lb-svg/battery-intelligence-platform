@@ -406,8 +406,23 @@ def render_health_ranking_and_export(rows: list, _traj_matches: dict, bundles: "
             f"<div style='font-size:10px;color:#a0aec0;margin-top:2px'>{_rul_prov}</div>"
             if _rul_prov else ""
         )
+        # Domain-of-validity verdict (Tier 5): a cell outside the model's
+        # training envelope gets a visible marker in the ranking — the RUL
+        # number under it was measured under different conditions.
+        _verdict = r.get("validity")
+        _verdict_html = ""
+        if _verdict == "outside":
+            _verdict_html = (
+                "<div style='font-size:10px;color:#fc8181;margin-top:2px'>"
+                "⚠ outside training envelope</div>"
+            )
+        elif _verdict == "partial":
+            _verdict_html = (
+                "<div style='font-size:10px;color:#f6e05e;margin-top:2px'>"
+                "edge of envelope</div>"
+            )
         rul_cell = (
-            f"{r['rul']:.0f} cy{_rul_prov_html}" if (r["rul"] is not None and r["rul_ok"])
+            f"{r['rul']:.0f} cy{_rul_prov_html}{_verdict_html}" if (r["rul"] is not None and r["rul_ok"])
             else "<span style='color:#a0aec0'>—</span>"
         )
         eol_cell = (

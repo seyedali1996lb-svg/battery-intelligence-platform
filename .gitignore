@@ -51,3 +51,6 @@ Thumbs.db
 
 # Project-local PostgreSQL dev instance (scripts/postgres_dev.py)
 .tools/
+
+# Freebuff agent workspace metadata
+.freebuff/

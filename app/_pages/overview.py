@@ -251,10 +251,12 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # page (src/model_selection.py), so the label names the model that actually
     # answered rather than the cell's source by assumption.
     from model_selection import describe_bundle_for_cell, per_chemistry_accuracy_line
+    from domain_validity import validity_banner
     _selection  = describe_bundle_for_cell(bundle, cell_id)
-    _prov       = cell_model_provenance(bundle, cell_id, selection=_selection)
+    _prov       = cell_model_provenance(bundle, cell_id, selection=_selection, featured_df=df)
     _prov_label = provenance_label(_prov)
     _prov_suffix = f" · {_prov_label}" if _prov_label else ""
+    _validity_banner = validity_banner(_prov)
     # Accuracy stated separately by CHEMISTRY, not one platform-wide number --
     # several models can share a chemistry (NASA and the synthetic fleet are
     # both LiCoO2), so the chemistry is the honest unit of comparison.
@@ -558,8 +560,10 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"Accuracy by chemistry (from the experiment registry, per-chemistry "
             f"not platform-wide): {_chem_accuracy_line}"
         )
+    if _validity_banner:
+        st.warning(_validity_banner)
 
-    # ── Plain-English summary sentence ───────────────────────────────────────
+    # ── Plain-English summary sentence ─────────────────────────────────────
     if rul_calibrating:
         _plain_sentence = (
             f"This cell has completed {current_cycle:,} cycles at {current_soh:.1f}% SOH — "

@@ -27,6 +27,8 @@ def cell_model_provenance(
     bundle: "dict | None",
     cell_id: str,
     selection: "dict | None" = None,
+    featured_df: "object | None" = None,
+    cell_data_df: "object | None" = None,
 ) -> dict:
     """
     Resolve every provenance fact about one cell's accuracy numbers.
@@ -116,6 +118,36 @@ def cell_model_provenance(
         "chemistry":        chemistry,
         "source":           source,
     }
+
+    # ── Domain of validity (Tier 5) ─────────────────────────────────────
+    # Is this cell inside the envelope the model's numbers were measured
+    # under? The envelope rides on the bundle (training_envelope); the
+    # cell's own frames arrive from the calling surface when it has them
+    # (its featured/raw df). Chemistry and cell format are always checkable
+    # from the cell id alone — they are the axes the transfer study showed
+    # matter most — so a surface without frames still gets the hard-axis
+    # check; temperature/C-rate/SOH are checked only when frames were
+    # supplied, and that scope is stated in axes_checked rather than
+    # implied.
+    envelope = bundle.get("training_envelope") if isinstance(bundle, dict) else None
+    if envelope:
+        try:
+            from domain_validity import check_cell_against_envelope
+            _chk = check_cell_against_envelope(
+                envelope, cell_id,
+                cell_data={cell_id: cell_data_df} if cell_data_df is not None else None,
+                featured={cell_id: featured_df} if featured_df is not None else None,
+            )
+            provenance["envelope"] = envelope
+            provenance["cell_verdict"] = _chk["verdict"]
+            provenance["outside_axes"] = _chk["outside_axes"]
+            provenance["partial_axes"] = _chk["partial_axes"]
+            _axes = ["chemistry", "cell format"]
+            if featured_df is not None or cell_data_df is not None:
+                _axes += ["temperature", "C-rate", "SOH range"]
+            provenance["axes_checked"] = _axes
+        except Exception:
+            pass
 
     if selection is not None:
         accuracy = selection.get("accuracy") or {}

@@ -87,9 +87,15 @@ def page_decision(
     # because an aggregate can hide a cell the model cannot predict; this
     # makes the population behind that gate visible at the point of decision.
     from model_selection import select_model_for_cell
+    from domain_validity import validity_banner
     _dec_selection = select_model_for_cell(selected, bundles or {})
-    _dec_prov       = cell_model_provenance(_dec_selection["bundle"], selected, selection=_dec_selection)
+    _dec_cell_df   = (featured_dfs or {}).get(selected)
+    _dec_prov       = cell_model_provenance(
+        _dec_selection["bundle"], selected, selection=_dec_selection,
+        featured_df=_dec_cell_df,
+    )
     _dec_prov_label = provenance_label(_dec_prov, include_baseline=True)
+    _dec_validity_banner = validity_banner(_dec_prov)
 
     st.markdown(f"# What should I do with {selected}?")
 
@@ -148,6 +154,11 @@ def page_decision(
             f"<span style='color:#a0aec0'>[{_dec_prov_label}]</span></div>",
             unsafe_allow_html=True,
         )
+    if _dec_validity_banner:
+        # A recommendation made OUTSIDE the training envelope sits on numbers
+        # measured under different conditions — this must be impossible to
+        # miss at the point of decision.
+        st.error(_dec_validity_banner)
 
     # Accuracy by chemistry, reported SEPARATELY: this decision's numbers belong
     # to a chemistry, and more than one model can cover a chemistry (NASA and
