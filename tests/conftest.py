@@ -15,6 +15,30 @@ import pandas as pd
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _warm_cache_hits_allowed(monkeypatch):
+    """Let AppTests take warm bundle-cache hits.
+
+    app/_data.py verifies every cache hit against the experiment registry
+    (a bundle whose run id has no row in THIS DB is discarded and
+    retrained — the 2026-09-13 registry-integrity fix). The suite's
+    isolated_db fixtures give each test a fresh, empty registry, so that
+    check would reject every warm hit and retrain every fleet in every
+    AppTest (and each retrain stamps the cache with a run id that exists
+    only in that test's temp DB, so the next test rejects it again). The
+    check is exercised directly in tests/test_cache_registry_consistency.py;
+    tests that want the app-level behaviour set
+    _data.VERIFY_CACHED_BUNDLES back to True themselves.
+    """
+    try:
+        import _data
+    except Exception:  # a test collecting without the app importable
+        yield
+        return
+    monkeypatch.setattr(_data, "VERIFY_CACHED_BUNDLES", False)
+    yield
+
+
 def make_cycles_df(
     n_cycles: int = 200,
     initial_capacity_ah: float = 2.0,

@@ -24,6 +24,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler
+from batlab._parallel import map_folds
 
 
 # ---------------------------------------------------------------------------
@@ -102,35 +103,46 @@ def train_models(
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # --- SOH model ---
-    soh_model = GradientBoostingRegressor(**GBRT_PARAMS)
-    soh_model.fit(X_train_scaled, y_soh_train)
-
-    soh_pred_test = soh_model.predict(X_test_scaled)
-    soh_mae = mean_absolute_error(y_soh_test, soh_pred_test)
-    soh_r2 = r2_score(y_soh_test, soh_pred_test)
-
-    # --- RUL model (point estimate) ---
-    rul_model = GradientBoostingRegressor(**GBRT_PARAMS)
-    rul_model.fit(X_train_scaled, y_rul_train)
-
-    rul_pred_test = rul_model.predict(X_test_scaled)
-    rul_mae = mean_absolute_error(y_rul_test, rul_pred_test)
-    rul_r2 = r2_score(y_rul_test, rul_pred_test)
-
-    # --- RUL quantile models: 80% prediction interval (Q10 / Q90) ---
+    # --- The four models ---
+    # SOH point, RUL point, and the RUL Q10/Q90 quantile pair are independent
+    # fits on the same scaled matrix. They run concurrently on threads
+    # (sklearn's tree builder releases the GIL; see
+    # batlab._parallel) — each estimator has its own fixed
+    # random_state, so the fitted models are identical to a serial loop.
+    #
     # Quantile loss trains the model to predict the α-th percentile rather
     # than the mean. Q10+Q90 form an 80% interval — wide enough to be honest
     # about uncertainty without being uselessly vague. These use fewer trees
     # because quantile loss converges faster than squared error.
+    soh_model = GradientBoostingRegressor(**GBRT_PARAMS)
+    rul_model = GradientBoostingRegressor(**GBRT_PARAMS)
     rul_q10_model = GradientBoostingRegressor(
         loss="quantile", alpha=0.10, **GBRT_QUANTILE_PARAMS
     )
     rul_q90_model = GradientBoostingRegressor(
         loss="quantile", alpha=0.90, **GBRT_QUANTILE_PARAMS
     )
-    rul_q10_model.fit(X_train_scaled, y_rul_train)
-    rul_q90_model.fit(X_train_scaled, y_rul_train)
+    map_folds(
+        lambda job: job[0].fit(X_train_scaled, job[1]),
+        [
+            (soh_model, y_soh_train),
+            (rul_model, y_rul_train),
+            (rul_q10_model, y_rul_train),
+            (rul_q90_model, y_rul_train),
+        ],
+    )
+
+    # --- SOH model ---
+    soh_pred_test = soh_model.predict(X_test_scaled)
+    soh_mae = mean_absolute_error(y_soh_test, soh_pred_test)
+    soh_r2 = r2_score(y_soh_test, soh_pred_test)
+
+    # --- RUL model (point estimate) ---
+    rul_pred_test = rul_model.predict(X_test_scaled)
+    rul_mae = mean_absolute_error(y_rul_test, rul_pred_test)
+    rul_r2 = r2_score(y_rul_test, rul_pred_test)
+
+    # --- RUL quantile models: 80% prediction interval (Q10 / Q90) ---
     rul_q10_test = rul_q10_model.predict(X_test_scaled)
     rul_q90_test = rul_q90_model.predict(X_test_scaled)
     # Coverage: fraction of true values inside the interval

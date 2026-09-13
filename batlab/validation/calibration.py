@@ -41,6 +41,7 @@ from sklearn.preprocessing import StandardScaler
 
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
 from batlab.models.gbrt import GBRT_PARAMS, GBRT_QUANTILE_PARAMS
+from batlab._parallel import map_folds
 
 # The Q10/Q90 pair nominally brackets an 80% interval.
 NOMINAL_INTERVAL_COVERAGE = 0.80
@@ -144,10 +145,9 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
     point_params = {**GBRT_PARAMS, "random_state": seed}
     quantile_params = {**GBRT_QUANTILE_PARAMS, "random_state": seed}
 
-    all_true, all_q10, all_q90, all_mae, all_r2 = [], [], [], [], []
-    per_cell = {}
-
-    for test_cell in cell_ids:
+    def _run_fold(test_cell: str) -> dict:
+        """One fold: point + Q10/Q90 models fit on the other cells, scored
+        on this one. Pure, so folds run concurrently (batlab._parallel)."""
         train_cells = [c for c in cell_ids if c != test_cell]
         X_train = pd.concat([featured_cache[c][0] for c in train_cells])
         y_train = pd.concat([featured_cache[c][1] for c in train_cells])
@@ -165,9 +165,6 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
         q10 = np.clip(q10_m.predict(Xte), 0, None)
         q90 = np.clip(q90_m.predict(Xte), 0, None)
 
-        # Observed-EOL rows only for every reported metric (see run_lco()):
-        # interval quality around a formula-generated target is formula
-        # recovery, not calibrated uncertainty.
         kinds = featured_cache[test_cell][2]
         obs_mask = (
             (kinds.reindex(X_test.index) == _LABEL_OBSERVED).to_numpy()
@@ -179,20 +176,43 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
             rul_true[obs_mask], q10[obs_mask], q90[obs_mask]
         ) if n_obs >= 2 else ([], [], [])
 
-        all_true.append(np.asarray(fold_true, dtype=float))
-        all_q10.append(np.asarray(fold_q10, dtype=float))
-        all_q90.append(np.asarray(fold_q90, dtype=float))
+        fold_mae = fold_r2 = None
         if n_obs >= 2:
-            all_mae.append(mean_absolute_error(fold_true, rul_m.predict(Xte)[obs_mask]))
-            fold_r2 = r2_score(fold_true, rul_m.predict(Xte)[obs_mask])
-            if not np.isnan(fold_r2):
-                all_r2.append(fold_r2)
+            rul_pred_obs = rul_m.predict(Xte)[obs_mask]
+            fold_mae = mean_absolute_error(fold_true, rul_pred_obs)
+            fold_r2 = r2_score(fold_true, rul_pred_obs)
+
+        return dict(
+            rul_true=rul_true, q10=q10, q90=q90, obs_mask=obs_mask, n_obs=n_obs,
+            fold_true=np.asarray(fold_true, dtype=float),
+            fold_q10=np.asarray(fold_q10, dtype=float),
+            fold_q90=np.asarray(fold_q90, dtype=float),
+            fold_mae=fold_mae, fold_r2=fold_r2,
+        )
+
+    # Independent folds, run concurrently, re-assembled in cell order so
+    # the pooled arrays and per-fold lists match the serial loop exactly.
+    fold_results = map_folds(_run_fold, cell_ids)
+
+    all_true, all_q10, all_q90, all_mae, all_r2 = [], [], [], [], []
+    per_cell = {}
+
+    for test_cell, fr in zip(cell_ids, fold_results):
+        n_obs = fr["n_obs"]
+        fold_true, fold_q10, fold_q90 = fr["fold_true"], fr["fold_q10"], fr["fold_q90"]
+        all_true.append(fold_true)
+        all_q10.append(fold_q10)
+        all_q90.append(fold_q90)
+        if n_obs >= 2:
+            all_mae.append(fr["fold_mae"])
+            if not np.isnan(fr["fold_r2"]):
+                all_r2.append(fr["fold_r2"])
 
         per_cell[test_cell] = {
-            "rul_true": rul_true,
-            "rul_q10": q10,
-            "rul_q90": q90,
-            "rul_label_observed": obs_mask,
+            "rul_true": fr["rul_true"],
+            "rul_q10": fr["q10"],
+            "rul_q90": fr["q90"],
+            "rul_label_observed": fr["obs_mask"],
             "rul_interval_coverage": (
                 empirical_coverage(fold_true, fold_q10, fold_q90) if n_obs >= 2 else None
             ),

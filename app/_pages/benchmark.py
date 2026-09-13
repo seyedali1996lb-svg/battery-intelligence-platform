@@ -39,6 +39,49 @@ def _fmt(v, decimals=3):
     return f"{v:.{decimals}f}"
 
 
+_STUDY_LABELS = {
+    "cross_chemistry": "cross-chemistry transfer",
+    "pinn": "PINN leave-cell-out",
+    "prospective": "prospective split",
+    "modeling": "modeling candidates",
+    "robustness": "robustness",
+}
+
+
+def _render_background_studies_banner() -> None:
+    """The five benchmark studies run on a background thread after the
+    reference fleets train (app/_data.py: _launch_benchmark_studies), so on
+    a cold deployment their sections are empty for a while. Say so — an
+    empty table must read as "not computed yet", never as "no result"."""
+    try:
+        from _data import benchmark_studies_status
+        status = benchmark_studies_status()
+    except Exception:
+        return
+    if status.get("state") != "running":
+        return
+    done = [_STUDY_LABELS.get(str(n), str(n)) for n in status.get("completed", [])]
+    current_key = status.get("current")
+    current = _STUDY_LABELS.get(str(current_key), str(current_key)) if current_key else None
+    started = status.get("started_at")
+    since = ""
+    if started:
+        import time as _time
+        mins = max(0, int((_time.time() - started) // 60))
+        since = f" (started {mins} min ago)"
+    parts = [
+        "**Benchmark studies are still computing in the background**" + since + ". "
+        "The GBRT leaderboard above is complete; the transfer, PINN, prospective, "
+        "modeling-candidate and robustness sections fill in as each study "
+        "finishes — reload this page to pick up new rows."
+    ]
+    if done:
+        parts.append("Done: " + ", ".join(done) + ".")
+    if current:
+        parts.append(f"Now running: {current}.")
+    st.info(" ".join(parts))
+
+
 def page_benchmark(org_id: int) -> None:
     import experiment_registry as reg
 
@@ -58,6 +101,8 @@ def page_benchmark(org_id: int) -> None:
             "until that first fit happens.",
         )
         return
+
+    _render_background_studies_banner()
 
     datasets    = sorted({r["dataset"] for r in all_runs})
     chemistries = sorted({r["chemistry"] for r in all_runs if r["chemistry"]})

@@ -97,6 +97,17 @@ def _score_count(scores) -> int:
         return 0
 
 
+# Whether _load_or_train_bg() runs cached_bundle_run_missing() on a cache
+# hit. On for the app. tests/conftest.py turns it OFF for the whole suite:
+# every AppTest uses an isolated_db fixture whose registry is empty by
+# construction, so under the real check no test could ever take a warm
+# cache hit — each would retrain every fleet from scratch (minutes per
+# test) and then write a bundle stamped with a run id that only exists in
+# that test's temp DB, poisoning the cache for the next test too. The
+# check itself is covered directly in tests/test_cache_registry_consistency.py.
+VERIFY_CACHED_BUNDLES = True
+
+
 def cached_bundle_run_missing(cached) -> bool:
     """True when a cache-hit bundle's experiment_run_id has no row in THIS
     deployment's registry — the signature of a bundle trained while its
@@ -242,23 +253,30 @@ def train_and_predict(
     try:
         from batlab.validation.calibration import run_lco_quantiles
         _cal = run_lco_quantiles(cell_cycles, featured=raw_fdfs)
-        bndl["metrics"]["rul_interval_coverage"] = _cal["rul_interval_coverage"]
-        bndl["metrics"]["rul_interval_coverage_calibrated"] = _cal["recalibrated_coverage"]
-        bndl["metrics"]["rul_interval_width_mean"] = _cal["rul_interval_width_mean"]
-        bndl["metrics"]["rul_interval_width_calibrated"] = _cal["recalibrated_width_mean"]
-        bndl["metrics"]["rul_interval_n_calibration_rows"] = _score_count(_cal.get("pooled_conformity_scores"))
-        bndl["interval_e_star"] = _cal["global_e_star"]
-        # Also merge into the dict handed to log_run() so the measured
-        # coverage reaches the registry (calibration_meta JSON column) and
-        # the Benchmark page's calibration section — not just the live bundle.
-        # NaN is sanitized to None here: the calibration module uses NaN as
-        # its in-memory not-evaluable convention, but NaN is not valid JSON
-        # and would render as "nan%" downstream instead of "—".
+
+        # NaN is sanitized to None on BOTH copies below: the calibration
+        # module uses NaN as its in-memory not-evaluable convention, but
+        # NaN is not valid JSON (it would render as "nan%" downstream
+        # instead of "—"), and — the 2026-09-13 cold-boot crash — NaN
+        # passes every `is not None` check, so a fleet with zero
+        # observed-EOL rows (Severson) reached the calibrated-note branch
+        # below with coverage=NaN and E*=None and formatted None with
+        # `:.2f`, taking the whole training thread down. "Not evaluable"
+        # is None everywhere, or it is not "not evaluable".
         def _nn(v):
             try:
                 return None if (v is None or v != v) else v
             except TypeError:
                 return v
+        bndl["metrics"]["rul_interval_coverage"] = _nn(_cal["rul_interval_coverage"])
+        bndl["metrics"]["rul_interval_coverage_calibrated"] = _nn(_cal["recalibrated_coverage"])
+        bndl["metrics"]["rul_interval_width_mean"] = _nn(_cal["rul_interval_width_mean"])
+        bndl["metrics"]["rul_interval_width_calibrated"] = _nn(_cal["recalibrated_width_mean"])
+        bndl["metrics"]["rul_interval_n_calibration_rows"] = _score_count(_cal.get("pooled_conformity_scores"))
+        bndl["interval_e_star"] = _nn(_cal["global_e_star"])
+        # Also merge into the dict handed to log_run() so the measured
+        # coverage reaches the registry (calibration_meta JSON column) and
+        # the Benchmark page's calibration section — not just the live bundle.
         lco["calibration_meta"] = {
             "rul_interval_coverage": _nn(_cal["rul_interval_coverage"]),
             "rul_interval_coverage_calibrated": _nn(_cal["recalibrated_coverage"]),
@@ -288,7 +306,11 @@ def train_and_predict(
 
         _sample_cell = next(iter(battery_dict))
         _cal_note = ""
-        if bndl["metrics"].get("rul_interval_coverage_calibrated") is not None:
+        if (
+            bndl["metrics"].get("rul_interval_coverage_calibrated") is not None
+            and bndl["metrics"].get("rul_interval_coverage") is not None
+            and bndl.get("interval_e_star") is not None
+        ):
             _cal_note = (
                 f" Calibrated interval: served Q10/Q90 widened by a cross-cell "
                 f"conformal correction E*={bndl.get('interval_e_star'):.2f} cycles, "
@@ -410,7 +432,7 @@ def load_everything() -> tuple[Any, dict, dict]:
 
         cached = load_cached(key, cell_dict)
         if cached is not None:
-            if cached_bundle_run_missing(cached):
+            if VERIFY_CACHED_BUNDLES and cached_bundle_run_missing(cached):
                 clear_cache(key)
             else:
                 _backfill_validity(cached, cell_dict)
@@ -587,144 +609,229 @@ def load_everything() -> tuple[Any, dict, dict]:
         if calce_cell_dicts:
             _study_datasets["calce"] = calce_cell_dicts
 
-        # df-shaped featured map shared by the PINN and prospective studies
-        # (both consume full featured frames, unlike the LCO study's (X, y)
-        # tuples). Computed once here, outside every study's try/except, so
-        # a failure in one study can never leave a later one with an
-        # undefined name — each study independently degrades to a skip.
-        _df_featured: dict = {}
-        for _pkey in _study_datasets:
-            try:
-                _pfc = load_features_cached(_pkey, _study_datasets.get(_pkey, {}))
-                if _pfc is not None:
-                    _df_featured[_pkey] = _pfc[0]  # {cid: df_feat}
-            except Exception:
-                pass
 
-        try:
-            import experiment_registry as _reg_study
-
-            _study_featured: dict = {}
-            for _skey, _scells in _study_datasets.items():
-                _fc = load_features_cached(_skey, _scells)
-                if _fc is not None:
-                    _study_featured[_skey] = _fc[1]  # {cid: (X, y_soh, y_rul)}
-
-            _reg_study.run_cross_chemistry_study(
-                _study_datasets,
-                featured=_study_featured,
-                org_id=_reg_study.PLATFORM_ORG_ID,
-                # Oxford can never be the eval side of a transfer study — its
-                # checkpoint-indexed schema has no cycle_number/
-                # resistance_ohm/temperature_c, so build_features() produces no
-                # vector to evaluate against. Disclosed as honest "not
-                # evaluated" rows rather than omitted.
-                unavailable=[
-                    ("nasa", "oxford", _OXFORD_NOT_EVALUABLE_REASON),
-                    ("severson", "oxford", _OXFORD_NOT_EVALUABLE_REASON),
-                ],
-            )
-        except Exception:
-            pass
-
-        # ── PINN through the same LCO harness as the GBRT ───────────────────
-        # The GBRT had an honest published number; the physics-regularized
-        # estimator did not, so "which model should we use?" was answered by
-        # assertion. Running the PINN through the identical leave-cell-out
-        # folds makes the comparison measurable — and reports the result even
-        # when the PINN loses, which is itself the useful finding.
-        #
-        # The trivial-baseline denominator is model-independent (cycle_number
-        # -> SOH under the same folds), so the GBRT's already-computed value is
-        # reused unchanged: the two rows differ only in the model.
-        try:
-            import experiment_registry as _reg_pinn
-
-            _pinn_datasets: dict = {
-                "synth": {cid: c["cycles"] for cid, c in battery_synth["cells"].items()}
-            }
-            if battery_nasa:
-                _pinn_datasets["nasa"] = {cid: c["cycles"] for cid, c in battery_nasa["cells"].items()}
-            if sev_cell_dicts:
-                _pinn_datasets["severson"] = {
-                    cid: c["cycles"] for cid, c in sev_cell_dicts.items()
-                }
-            if zhu_cell_dicts:
-                _pinn_datasets["zhu2022"] = {
-                    cid: c["cycles"] for cid, c in zhu_cell_dicts.items()
-                }
-            if calce_cell_dicts:
-                _pinn_datasets["calce"] = {
-                    cid: c["cycles"] for cid, c in calce_cell_dicts.items()
-                }
-
-            _pinn_featured = _df_featured
-
-            _pinn_baselines = {
-                k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
-                for k, b in bundles.items() if b
-            }
-
-            _reg_pinn.run_pinn_benchmark_study(
-                _pinn_datasets,
-                featured=_pinn_featured,
-                baselines=_pinn_baselines,
-                org_id=_reg_pinn.PLATFORM_ORG_ID,
-            )
-        except Exception:
-            pass
-
-        # ── Prospective (temporal-holdout) benchmark ───────────────────────
-        # The only evaluation that separates forecasting from curve-fitting:
-        # train on the first half of each cell's cycles, score the remainder.
-        # Leave-cell-out still lets the model see the held-out cell's future;
-        # this split withholds it. Idempotent per (dataset, FEATURE_VERSION,
-        # train_fraction) — a warm start is a registry read, not a retrain.
-        try:
-            import experiment_registry as _reg_prosp
-
-            _reg_prosp.run_prospective_benchmark_study(
-                _study_datasets,
-                # The df-featured map (same cache the PINN study reuses) —
-                # the prospective harness needs full featured frames, not
-                # the (X, y) tuples the LCO study consumes.
-                featured=_df_featured,
-                org_id=_reg_prosp.PLATFORM_ORG_ID,
-            )
-        except Exception:
-            pass
-
-        # ── Tier-4 modeling candidates + robustness benchmark ─────────────
-        # Hierarchical partial-pooling and the GBRT+PINN ensemble through
-        # the SAME LCO harness (idempotent per dataset/model_kind/feature
-        # version), and the degraded-input robustness benchmark for the
-        # production model. Each independently guarded: one study's failure
-        # can never skip the others.
-        try:
-            import experiment_registry as _reg_model
-
-            _reg_model.run_modeling_benchmark_study(
-                _study_datasets,
-                featured=_df_featured,
-                baselines={
-                    k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
-                    for k, b in bundles.items() if b
-                },
-                org_id=_reg_model.PLATFORM_ORG_ID,
-            )
-        except Exception:
-            pass
-        try:
-            import experiment_registry as _reg_rob
-
-            _reg_rob.run_robustness_study(
-                _study_datasets,
-                org_id=_reg_rob.PLATFORM_ORG_ID,
-            )
-        except Exception:
-            pass
+        # The five benchmark studies below (cross-chemistry transfer, PINN,
+        # prospective split, modeling candidates, robustness) are Benchmark-
+        # page content, not something any other page needs to render. They
+        # are multi-minute jobs on a cold registry — every fleet re-fit under
+        # several alternative evaluations — so they run AFTER this function
+        # returns, on a background thread, instead of blocking first render
+        # (before 2026-09-13 they ran inline here and a cold Streamlit Cloud
+        # deploy sat on the spinner for the better part of an hour). See
+        # _launch_benchmark_studies() for the eager/off overrides.
+        _launch_benchmark_studies(_study_datasets, bundles)
 
     return featured_dfs, bundles, split_cycles
+
+
+# ── Background benchmark studies ────────────────────────────────────────────
+# State of the post-boot study run, readable by the Benchmark page so it can
+# say "still computing" instead of showing an empty section as if the study
+# had been skipped. Module-level (not session_state): the thread is
+# process-wide, exactly like the @st.cache_resource result it follows.
+BENCHMARK_STUDIES = {
+    "state": "idle",        # idle | running | done | off
+    "started_at": None,     # time.time()
+    "finished_at": None,
+    "completed": [],        # study names that returned
+    "current": None,        # study name in progress
+}
+_STUDY_NAMES = ("cross_chemistry", "pinn", "prospective", "modeling", "robustness")
+
+
+def benchmark_studies_status() -> dict:
+    """Snapshot of BENCHMARK_STUDIES for the UI (copy, not the live dict)."""
+    return {**BENCHMARK_STUDIES, "completed": list(BENCHMARK_STUDIES["completed"])}
+
+
+def _launch_benchmark_studies(study_datasets: dict, bundles: dict) -> None:
+    """Run _run_benchmark_studies() according to BATLAB_BOOT_STUDIES:
+
+      background (default) — daemon thread; load_everything() returns at once
+                             and the Benchmark page fills in as studies land.
+      eager                — inline, the pre-2026-09-13 behaviour; for scripts
+                             that need a complete registry when this returns.
+      off                  — skip entirely (scripts/run_tier4_studies.py and
+                             friends can still log them on demand).
+
+    Every study is idempotent per FEATURE_VERSION (skips datasets already
+    logged), so a restart part-way through only fills the gaps.
+    """
+    import threading
+    import time as _time
+
+    mode = (os.environ.get("BATLAB_BOOT_STUDIES") or "background").strip().lower()
+    if mode == "off":
+        BENCHMARK_STUDIES["state"] = "off"
+        return
+    if BENCHMARK_STUDIES["state"] == "running":
+        return  # a previous load_everything() already started one
+
+    BENCHMARK_STUDIES.update(
+        state="running", started_at=_time.time(), finished_at=None, completed=[], current=None,
+    )
+
+    def _run() -> None:
+        try:
+            _run_benchmark_studies(study_datasets, bundles)
+        finally:
+            BENCHMARK_STUDIES.update(state="done", finished_at=_time.time(), current=None)
+
+    if mode == "eager":
+        _run()
+        return
+    threading.Thread(target=_run, name="benchmark-studies", daemon=True).start()
+
+
+def _run_benchmark_studies(study_datasets: dict, bundles: dict) -> None:
+    """The five post-boot benchmark studies, in the order they were added.
+    Each is wrapped in its own try/except so one failing study never blocks
+    the next; BENCHMARK_STUDIES records which ones actually returned.
+    Must not touch `st.*` — this runs on a plain thread with no script
+    context."""
+
+    def _mark(name: str) -> None:
+        BENCHMARK_STUDIES["current"] = name
+
+    def _done(name: str) -> None:
+        BENCHMARK_STUDIES["completed"].append(name)
+
+    # df-shaped featured map shared by the PINN and prospective studies
+    # (both consume full featured frames, unlike the LCO study's (X, y)
+    # tuples). Computed once here, outside every study's try/except, so
+    # a failure in one study can never leave a later one with an
+    # undefined name — each study independently degrades to a skip.
+    _df_featured: dict = {}
+    for _pkey in study_datasets:
+        try:
+            _pfc = load_features_cached(_pkey, study_datasets.get(_pkey, {}))
+            if _pfc is not None:
+                _df_featured[_pkey] = _pfc[0]  # {cid: df_feat}
+        except Exception:
+            pass
+
+    try:
+        import experiment_registry as _reg_study
+
+        _study_featured: dict = {}
+        for _skey, _scells in study_datasets.items():
+            _fc = load_features_cached(_skey, _scells)
+            if _fc is not None:
+                _study_featured[_skey] = _fc[1]  # {cid: (X, y_soh, y_rul)}
+
+        _mark("cross_chemistry")
+        _reg_study.run_cross_chemistry_study(
+            study_datasets,
+            featured=_study_featured,
+            org_id=_reg_study.PLATFORM_ORG_ID,
+            # Oxford can never be the eval side of a transfer study — its
+            # checkpoint-indexed schema has no cycle_number/
+            # resistance_ohm/temperature_c, so build_features() produces no
+            # vector to evaluate against. Disclosed as honest "not
+            # evaluated" rows rather than omitted.
+            unavailable=[
+                ("nasa", "oxford", _OXFORD_NOT_EVALUABLE_REASON),
+                ("severson", "oxford", _OXFORD_NOT_EVALUABLE_REASON),
+            ],
+        )
+        _done("cross_chemistry")
+    except Exception:
+        pass
+
+    # ── PINN through the same LCO harness as the GBRT ───────────────────
+    # The GBRT had an honest published number; the physics-regularized
+    # estimator did not, so "which model should we use?" was answered by
+    # assertion. Running the PINN through the identical leave-cell-out
+    # folds makes the comparison measurable — and reports the result even
+    # when the PINN loses, which is itself the useful finding.
+    #
+    # The trivial-baseline denominator is model-independent (cycle_number
+    # -> SOH under the same folds), so the GBRT's already-computed value is
+    # reused unchanged: the two rows differ only in the model.
+    try:
+        import experiment_registry as _reg_pinn
+
+        # The PINN harness takes {cid: raw cycles df}, not the {cid: {"cycles": df}}
+        # wrappers the other studies unwrap themselves.
+        _pinn_datasets: dict = {
+            key: {cid: c["cycles"] for cid, c in cells.items()}
+            for key, cells in study_datasets.items()
+        }
+
+        _pinn_featured = _df_featured
+
+        _pinn_baselines = {
+            k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
+            for k, b in bundles.items() if b
+        }
+
+        _mark("pinn")
+        _reg_pinn.run_pinn_benchmark_study(
+            _pinn_datasets,
+            featured=_pinn_featured,
+            baselines=_pinn_baselines,
+            org_id=_reg_pinn.PLATFORM_ORG_ID,
+        )
+        _done("pinn")
+    except Exception:
+        pass
+
+    # ── Prospective (temporal-holdout) benchmark ───────────────────────
+    # The only evaluation that separates forecasting from curve-fitting:
+    # train on the first half of each cell's cycles, score the remainder.
+    # Leave-cell-out still lets the model see the held-out cell's future;
+    # this split withholds it. Idempotent per (dataset, FEATURE_VERSION,
+    # train_fraction) — a warm start is a registry read, not a retrain.
+    try:
+        import experiment_registry as _reg_prosp
+
+        _mark("prospective")
+        _reg_prosp.run_prospective_benchmark_study(
+            study_datasets,
+            # The df-featured map (same cache the PINN study reuses) —
+            # the prospective harness needs full featured frames, not
+            # the (X, y) tuples the LCO study consumes.
+            featured=_df_featured,
+            org_id=_reg_prosp.PLATFORM_ORG_ID,
+        )
+        _done("prospective")
+    except Exception:
+        pass
+
+    # ── Tier-4 modeling candidates + robustness benchmark ─────────────
+    # Hierarchical partial-pooling and the GBRT+PINN ensemble through
+    # the SAME LCO harness (idempotent per dataset/model_kind/feature
+    # version), and the degraded-input robustness benchmark for the
+    # production model. Each independently guarded: one study's failure
+    # can never skip the others.
+    try:
+        import experiment_registry as _reg_model
+
+        _mark("modeling")
+        _reg_model.run_modeling_benchmark_study(
+            study_datasets,
+            featured=_df_featured,
+            baselines={
+                k: (b or {}).get("metrics", {}).get("baseline_soh_r2")
+                for k, b in bundles.items() if b
+            },
+            org_id=_reg_model.PLATFORM_ORG_ID,
+        )
+        _done("modeling")
+    except Exception:
+        pass
+    try:
+        import experiment_registry as _reg_rob
+
+        _mark("robustness")
+        _reg_rob.run_robustness_study(
+            study_datasets,
+            org_id=_reg_rob.PLATFORM_ORG_ID,
+        )
+        _done("robustness")
+    except Exception:
+        pass
+
 
 
 # ---------------------------------------------------------------------------

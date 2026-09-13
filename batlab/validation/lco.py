@@ -51,6 +51,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
 from batlab.models.gbrt import GBRT_PARAMS
+from batlab._parallel import map_folds
 
 RUL_RELIABLE_FLOOR = 0.3   # LCO R2 below this -> show "Not calibrated" in UI
 
@@ -159,14 +160,10 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
     if len(cell_ids) < 2:
         return empty
 
-    soh_maes, soh_r2s = [], []
-    per_cell = {}
-    n_obs_rows = 0
-    n_ext_rows = 0
-    obs_r2s, obs_maes = [], []
-    ext_r2s, ext_maes = [], []
-
-    for test_cell in cell_ids:
+    def _run_fold(test_cell: str) -> dict:
+        """One leave-cell-out fold: fit on every other cell, score this one.
+        Pure (no shared state written), so folds can run concurrently --
+        see batlab._parallel."""
         X, y_soh, y_rul, kinds = featured_in[test_cell]
         train_cells = [c for c in cell_ids if c != test_cell]
 
@@ -189,9 +186,6 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
 
         soh_mae = mean_absolute_error(y_soh_test, soh_pred)
         soh_r2  = _safe_r2(y_soh_test, soh_pred)
-        soh_maes.append(soh_mae)
-        if soh_r2 is not None:
-            soh_r2s.append(soh_r2)
 
         # ── Split this fold's RUL rows by label provenance ──
         kinds = kinds.reindex(X.index) if kinds is not None else None
@@ -201,8 +195,6 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         n_obs = int(obs_mask.sum())
         n_ext = int(ext_mask.sum())
         n_unk = len(X) - n_obs - n_ext
-        n_obs_rows += n_obs
-        n_ext_rows += n_ext
 
         rul_true = np.asarray(y_rul_test, dtype=float)
 
@@ -211,27 +203,54 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         if n_obs >= 2:
             fold_obs_r2 = _safe_r2(rul_true[obs_mask], rul_pred[obs_mask])
             fold_obs_mae = float(mean_absolute_error(rul_true[obs_mask], rul_pred[obs_mask]))
-            if fold_obs_r2 is not None:
-                obs_r2s.append(fold_obs_r2)
-                obs_maes.append(fold_obs_mae)
         if n_ext >= 2:
             fold_ext_r2 = _safe_r2(rul_true[ext_mask], rul_pred[ext_mask])
             fold_ext_mae = float(mean_absolute_error(rul_true[ext_mask], rul_pred[ext_mask]))
-            if fold_ext_r2 is not None:
-                ext_r2s.append(fold_ext_r2)
-                ext_maes.append(fold_ext_mae)
+
+        return dict(
+            soh_mae=soh_mae, soh_r2=soh_r2,
+            n_obs=n_obs, n_ext=n_ext, n_unk=n_unk,
+            fold_obs_r2=fold_obs_r2, fold_obs_mae=fold_obs_mae,
+            fold_ext_r2=fold_ext_r2, fold_ext_mae=fold_ext_mae,
+        )
+
+    # Folds are independent; run them concurrently and re-assemble in the
+    # original cell order so every list below is identical to the serial
+    # loop's (means, per_cell insertion order, and the bootstrap CIs all
+    # depend on that order).
+    fold_results = map_folds(_run_fold, cell_ids)
+
+    soh_maes, soh_r2s = [], []
+    per_cell = {}
+    n_obs_rows = 0
+    n_ext_rows = 0
+    obs_r2s, obs_maes = [], []
+    ext_r2s, ext_maes = [], []
+
+    for test_cell, fr in zip(cell_ids, fold_results):
+        soh_maes.append(fr["soh_mae"])
+        if fr["soh_r2"] is not None:
+            soh_r2s.append(fr["soh_r2"])
+        n_obs_rows += fr["n_obs"]
+        n_ext_rows += fr["n_ext"]
+        if fr["fold_obs_r2"] is not None:
+            obs_r2s.append(fr["fold_obs_r2"])
+            obs_maes.append(fr["fold_obs_mae"])
+        if fr["fold_ext_r2"] is not None:
+            ext_r2s.append(fr["fold_ext_r2"])
+            ext_maes.append(fr["fold_ext_mae"])
 
         per_cell[test_cell] = dict(
-            soh_mae=soh_mae, soh_r2=soh_r2,
+            soh_mae=fr["soh_mae"], soh_r2=fr["soh_r2"],
             # Headline per-cell RUL metrics: observed rows only. None when
             # this fold has no observed-EOL rows — the fold's RUL cannot be
             # validated, which is a fact to surface, not a zero to hide.
-            rul_mae=fold_obs_mae, rul_r2=fold_obs_r2,
-            rul_mae_extrapolated=fold_ext_mae, rul_r2_extrapolated=fold_ext_r2,
+            rul_mae=fr["fold_obs_mae"], rul_r2=fr["fold_obs_r2"],
+            rul_mae_extrapolated=fr["fold_ext_mae"], rul_r2_extrapolated=fr["fold_ext_r2"],
             rul_label_kinds={
-                _LABEL_OBSERVED: n_obs,
-                _LABEL_EXTRAPOLATED: n_ext,
-                "unknown": n_unk,
+                _LABEL_OBSERVED: fr["n_obs"],
+                _LABEL_EXTRAPOLATED: fr["n_ext"],
+                "unknown": fr["n_unk"],
             },
         )
 

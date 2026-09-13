@@ -43,6 +43,22 @@ cache misses -- took longer than the 120s default AppTest script-run
 timeout every other AppTest test in this suite uses (safe there only
 because those tests hit a warm bundle_cache and never actually retrain).
 default_timeout=300 below reflects that real cost, not a fixed bug.
+
+Zhu2022 (9 cells, ~8,700 rows, committed summaries so it IS on the real
+cold-boot path) is forced off for the same reason as Severson: its
+9-fold LCO + quantile-calibration folds are pure data volume on top of
+the identical code path NASA already exercises, and on a 4-vCPU CI
+runner they push the boot past the budget without testing anything new.
+
+2026-09-13: the five post-boot benchmark studies (cross-chemistry, PINN,
+prospective, modeling candidates, robustness) used to run INLINE here
+once the registry held its first real run -- on a genuinely cold DB
+that was the better part of an hour, and this test was the only one
+that ever paid for it (every other AppTest hits a warm bundle cache and
+never logs a run). They now run on a background thread after
+load_everything() returns (app/_data.py: _launch_benchmark_studies);
+tests/test_benchmark_studies_offload.py guards that, and this test
+forces them off so the boot it times is the boot a user waits for.
 """
 
 import pathlib
@@ -62,6 +78,7 @@ import bundle_cache
 import cell_store
 import db as db_module
 from batlab.datasets import severson as severson_module
+from batlab.datasets import zhu2022 as zhu2022_module
 
 _MAIN_PY = str(pathlib.Path(__file__).parent.parent / "app" / "main.py")
 
@@ -91,6 +108,8 @@ def cold_start_env(tmp_path, monkeypatch):
     # See module docstring: Severson's real-cell training cost is not what
     # this test guards against, so keep load_everything() to synth + NASA.
     monkeypatch.setattr(severson_module, "any_cached", lambda: False)
+    monkeypatch.setattr(zhu2022_module, "load_zhu2022_cells", lambda *a, **k: {})
+    monkeypatch.setenv("BATLAB_BOOT_STUDIES", "off")
 
     # cell_store's in-process LRU and Streamlit's own @st.cache_resource
     # results (load_everything() etc.) are BOTH process-global -- they

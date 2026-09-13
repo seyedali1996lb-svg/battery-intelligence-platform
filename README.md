@@ -496,6 +496,8 @@ To host the interactive dashboard for free on Streamlit Cloud:
 
 The configured entry point must remain `app/main.py`. The file bootstraps the repository root before importing `_paths.py`, so it works with Streamlit Cloud's script execution model (where only `app/` is initially on `sys.path`) as well as local launches from any working directory. The shared UI helpers load widget re-exports only after their helper definitions, preventing a circular import during Cloud startup. If an older deployment reports `ModuleNotFoundError: No module named '_paths'` or an import traceback ending in `_ui_helpers.py`/`_pack_builder.py`, redeploy the latest revision and verify that the main file path is exactly `app/main.py`. Streamlit Cloud may keep an old process alive briefly; use **Manage app → Reboot app** after confirming the deployment points to the latest `master` revision.
 
+**What a cold deploy costs.** Streamlit Cloud's filesystem is ephemeral, so every redeploy starts with no trained-model cache and an empty experiment registry. The reference fleets (synthetic, NASA, Severson, Zhu 2022) retrain on first load — every fleet's GBRT plus its leave-cell-out and quantile-calibration folds, run on a shared thread budget (`BATLAB_FOLD_WORKERS`) — which is a few minutes on a small instance, and the first visitor sees the training progress bar for that long. The five Benchmark-page studies then run on a background thread (`BATLAB_BOOT_STUDIES=background`, the default) rather than on the boot path: the app is usable as soon as the reference models exist, and the Benchmark page states which studies are still computing until they land. Before 2026-09-13 those studies ran inline and a cold deploy could sit on the spinner for the better part of an hour.
+
 ---
 
 ### Option 2: Docker Container (REST API Backend)
@@ -584,6 +586,8 @@ To deploy as a resilient background service with automatic restarts:
 | `ANTHROPIC_API_KEY` | Optional | *None* | Enables Claude Sonnet 5 tool-calling agent in the Copilot tab. |
 | `JWT_SECRET` | Optional | *Demo secret* | Secret key used to sign and verify multi-tenant JWT authentication tokens. |
 | `PORT` | Optional | `8000` / `8501` | Service binding port for FastAPI or Streamlit. |
+| `BATLAB_BOOT_STUDIES` | Optional | `background` | Where the five Benchmark-page studies (cross-chemistry transfer, PINN, prospective split, modeling candidates, robustness) run after the reference fleets train on a cold registry: `background` (a daemon thread — the app renders as soon as the reference models are ready and the Benchmark page says which studies are still computing), `eager` (inline, the pre-2026-09-13 behaviour, for scripts that need a complete registry when `load_everything()` returns), or `off`. |
+| `BATLAB_FOLD_WORKERS` | Optional | `min(cpu_count, 8)` | Process-wide cap on concurrent model fits (leave-cell-out folds and `train_models()`'s four estimators run on a shared thread budget; fits are seeded per fold so results are identical at any setting). Set `1` to force serial fits. |
 
 ## Citation
 
