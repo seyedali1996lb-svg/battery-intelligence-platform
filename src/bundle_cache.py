@@ -48,7 +48,7 @@ CACHE_DIR = pathlib.Path(__file__).parent.parent / ".cache" / "bundles"
 # before the shape change would still match on cell IDs/cycle counts and
 # get treated as a hit, and the caller's tuple-unpacking would crash on the
 # old shape instead of cleanly missing and rebuilding.
-MODEL_VERSION = "v4-rul-label-provenance"
+MODEL_VERSION = "v5-registry-verified-bundles"
 # v3-baseline-metrics: cached reference-fleet bundles now also carry the
 # trivial-baseline R² (batlab.validation.trivial_baseline.baseline_lco_r2)
 # in bundle["metrics"]["baseline_soh_r2"] / ["baseline_lco_per_cell"]. A
@@ -60,6 +60,17 @@ MODEL_VERSION = "v4-rul-label-provenance"
 # and the rul_formula_baseline (the closed form that generated extrapolated
 # labels, under the same folds) — and rul_r2/rul_reliable now mean OBSERVED-EOL
 # rows only. A pre-v4 cached bundle would silently serve a mixed-pool RUL R².
+# v5-registry-verified-bundles: 2026-09-13 incident. Bundles trained by app
+# sessions on 2026-09-12 carry experiment_run_ids whose registry rows never
+# landed in data/app.db (the writes went to an ephemeral DB), and because
+# load_cached() checks only cell IDs + cycle counts, every subsequent app
+# load was a cache hit that never retrained — so the plain-GBRT rows for
+# zhu2022 were NEVER logged and nasa/severson/synth served pre-v12 bundles
+# (Severson's headline stayed the v11 formula-recovery RUL R²=0.9994 that
+# v12 redefined as not-evaluable). The v5 bump forces a one-time retrain;
+# the durable guard is _data.py's registry-verification on every cache hit
+# (registry_run_exists()), which makes this class of failure self-healing
+# instead of dependent on a human remembering to bump this constant.
 
 CACHE_VERSION = f"{FEATURE_VERSION}+{MODEL_VERSION}"
 

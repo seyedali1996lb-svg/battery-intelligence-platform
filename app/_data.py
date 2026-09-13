@@ -35,6 +35,7 @@ _OXFORD_NOT_EVALUABLE_REASON = (
 from bundle_cache import (
     load_cached, save_cached,
     load_features_cached, save_features_cached,
+    clear_cache,
 )
 import cell_store
 from chemistry_profiles import ChemistryProfile
@@ -77,6 +78,50 @@ def compute_features_only(battery_dict: dict) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 # Model training + prediction
 # ---------------------------------------------------------------------------
+
+def _score_count(scores) -> int:
+    """Length of the pooled conformity-scores array, or 0 when absent.
+
+    Deliberately NOT `len(x or [])`: the scores are a NUMPY array, and a
+    multi-element array in a boolean context raises ValueError — the exact
+    bug that silently discarded every calibrated-coverage measurement on
+    2026-09-13 (run_lco_quantiles succeeded, the very next line threw, and
+    the bare except recorded 'calibration_attempted: true' instead of the
+    measured numbers for all four reference fleets).
+    """
+    if scores is None:
+        return 0
+    try:
+        return int(len(scores))
+    except TypeError:
+        return 0
+
+
+def cached_bundle_run_missing(cached) -> bool:
+    """True when a cache-hit bundle's experiment_run_id has no row in THIS
+    deployment's registry — the signature of a bundle trained while its
+    log_run() writes went to a different/ephemeral DB.
+
+    Such a hit must NOT be served: cache hits never re-log, so the
+    plain-GBRT row would stay missing and the Benchmark headline would
+    silently fall back to a stale older run (the 2026-09-13 incident:
+    zhu2022 had no gbrt row at all; nasa/severson/synth served pre-v12
+    rows). Fail-open on registry errors — refusing to start the app over
+    a registry blip is worse than serving a bundle whose divergence the
+    fingerprint column makes visible anyway.
+    """
+    if not isinstance(cached, tuple) or not cached:
+        return False  # shape mismatch: let the normal path handle it
+    bundle = cached[0] if isinstance(cached[0], dict) else None
+    rid = (bundle or {}).get("metrics", {}).get("experiment_run_id")
+    if not rid:
+        return False  # trained outside the registry (e.g. import path)
+    try:
+        import experiment_registry as _reg
+        return not _reg.run_exists_in_db(_reg.PLATFORM_ORG_ID, rid)
+    except Exception:
+        return False
+
 
 def train_and_predict(
     battery_dict: dict,
@@ -201,7 +246,7 @@ def train_and_predict(
         bndl["metrics"]["rul_interval_coverage_calibrated"] = _cal["recalibrated_coverage"]
         bndl["metrics"]["rul_interval_width_mean"] = _cal["rul_interval_width_mean"]
         bndl["metrics"]["rul_interval_width_calibrated"] = _cal["recalibrated_width_mean"]
-        bndl["metrics"]["rul_interval_n_calibration_rows"] = int(len(_cal.get("pooled_conformity_scores") or []))
+        bndl["metrics"]["rul_interval_n_calibration_rows"] = _score_count(_cal.get("pooled_conformity_scores"))
         bndl["interval_e_star"] = _cal["global_e_star"]
         # Also merge into the dict handed to log_run() so the measured
         # coverage reaches the registry (calibration_meta JSON column) and
@@ -214,15 +259,15 @@ def train_and_predict(
                 return None if (v is None or v != v) else v
             except TypeError:
                 return v
-        lco = {**lco, "calibration_meta": {
+        lco["calibration_meta"] = {
             "rul_interval_coverage": _nn(_cal["rul_interval_coverage"]),
             "rul_interval_coverage_calibrated": _nn(_cal["recalibrated_coverage"]),
             "rul_interval_width_mean": _nn(_cal["rul_interval_width_mean"]),
             "rul_interval_width_calibrated": _nn(_cal["recalibrated_width_mean"]),
-            "rul_interval_n_calibration_rows": int(len(_cal.get("pooled_conformity_scores") or [])),
+            "rul_interval_n_calibration_rows": _score_count(_cal.get("pooled_conformity_scores")),
             "interval_e_star": _nn(_cal["global_e_star"]),
             "nominal_coverage": 0.8,
-        }}
+        }
     except Exception:
         # No calibrated measurement available: leave the raw holdout number
         # in place, serve un-widened intervals, and let the UI's
@@ -341,19 +386,35 @@ def load_everything() -> tuple[Any, dict, dict]:
         try:
             from domain_validity import compute_envelope
             bundle["training_envelope"] = compute_envelope(
-                list(cell_dict.keys()), cell_data=cell_dict,
+                cell_dict, cell_data=cell_dict,
             )
         except Exception:
             pass
 
     def _load_or_train_bg(key: str, cell_dict: dict) -> tuple[dict, dict]:
-        """2-tier cache: full bundle → features-only → full pipeline."""
+        """2-tier cache: full bundle → features-only → full pipeline.
+
+        Registry-verified cache hits (Tier-6 honesty): a cached bundle
+        carries the experiment_run_id of the log_run() call that trained
+        it, and the hit is only served if that row EXISTS in this
+        deployment's database. A bundle trained while its registry writes
+        went to a different/ephemeral DB would otherwise be served on
+        every subsequent load — cache hits never re-log — so the
+        plain-GBRT row would stay missing and the Benchmark headline
+        would silently fall back to a stale older run (the 2026-09-13
+        incident: zhu2022 had no gbrt row at all; nasa/severson/synth
+        served pre-v12 rows). Detected here, the stale cache is discarded
+        and the fleet retrains through the normal path, which re-logs.
+        """
         import experiment_registry as _reg
 
         cached = load_cached(key, cell_dict)
         if cached is not None:
-            _backfill_validity(cached, cell_dict)
-            return cached
+            if cached_bundle_run_missing(cached):
+                clear_cache(key)
+            else:
+                _backfill_validity(cached, cell_dict)
+                return cached
         feat_cached = load_features_cached(key, cell_dict)
         if feat_cached is not None:
             raw_fdfs, model_inputs = feat_cached

@@ -351,6 +351,19 @@ def _load_bundle_from_disk_cache() -> dict:
         if cached is None:
             continue
         bundle, split_cycles = cached
+        # Registry-verified hits (same guard as app/_data.py's loader): a
+        # cached bundle whose experiment_run_id has no row in THIS DB was
+        # trained while its registry writes went elsewhere — serving it
+        # would present an accuracy number the registry cannot back. The
+        # health API must never be more trusting than the app itself.
+        _rid = (bundle.get("metrics") or {}).get("experiment_run_id") if isinstance(bundle, dict) else None
+        if _rid:
+            try:
+                import experiment_registry as _reg
+                if not _reg.run_exists_in_db(_reg.PLATFORM_ORG_ID, _rid):
+                    continue
+            except Exception:
+                pass  # fail-open on registry blips, same policy as the app
         bundles[key] = bundle
         cell_ids.extend(split_cycles.keys())
 

@@ -338,6 +338,24 @@ def leaderboard(
     return runs
 
 
+def run_exists_in_db(org_id: int, run_id: str) -> bool:
+    """Cheap existence check for one logged run — does the row with this
+    run_id actually sit in THIS deployment's database?
+
+    Why this exists: cached model bundles carry the experiment_run_id of
+    the log_run() call that trained them, but a cache hit on its own
+    proves nothing about the REGISTRY — a bundle trained while its
+    writes went to a different/ephemeral DB still has a run_id, and as
+    long as the signature matches, the platform would serve that bundle
+    forever without ever re-logging its plain-GBRT row (the 2026-09-13
+    incident: zhu2022 had NO gbrt row at all, and nasa/severson/synth
+    headlines stayed on pre-v12 rows because the cache never missed).
+    Callers that serve cached bundles use this to detect exactly that
+    state and retrain instead."""
+    import db
+    return db.get_experiment_run(org_id, run_id) is not None
+
+
 def accuracy_by_source(tenant_org_id: "int | None" = None) -> list[dict]:
     """
     Per-source accuracy summary for the Benchmark page: one row per

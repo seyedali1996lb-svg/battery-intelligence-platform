@@ -1321,6 +1321,7 @@ def save_experiment_run(org_id: int, entry: dict) -> None:
             ci_intervals=_encode_json_field(entry.get("ci_intervals")),
             calibration_meta=_encode_json_field(entry.get("calibration_meta")),
             validity_meta=_encode_json_field(entry.get("validity_meta")),
+            fingerprint=_encode_json_field(entry.get("fingerprint")),
             git_commit=entry.get("git_commit"),
             timestamp=entry.get("timestamp"),
             notes=entry.get("notes"),

@@ -83,7 +83,7 @@ The health assessment packages everything above into outputs for the decisions t
 
 ### Why the validation methodology matters for testing
 
-A battery testing lab's core deliverable is a number someone else will make a high-stakes decision with. The [Validation](#validation) section of this README reproduces a concrete demonstration of why the *method* used to produce that number matters: the same GBRT model on the same 4 NASA cells reports **R² ≈ 1.00** with a naive random row-split and **R² = 0.958** with leave-cell-out. The ≈ 1.00 is real, not a computation error, but it answers the wrong question. It measures how well the model interpolates between cycles of cells it has already partly seen, not how well it generalizes to a cell it has never seen before. The latter is what matters when the model gets applied to a new cell coming off a test stand.
+A battery testing lab's core deliverable is a number someone else will make a high-stakes decision with. The [Validation](#validation) section of this README reproduces a concrete demonstration of why the *method* used to produce that number matters: the same GBRT model on the same 4 NASA cells reports **R² ≈ 1.00** with a naive random row-split and **R² = 0.745** with leave-cell-out on the production data path. The ≈ 1.00 is real, not a computation error, but it answers the wrong question. It measures how well the model interpolates between cycles of cells it has already partly seen, not how well it generalizes to a cell it has never seen before. The latter is what matters when the model gets applied to a new cell coming off a test stand.
 
 The same discipline applies to *labels*, not just splits. A row whose cell never reaches end-of-life in the data carries an **extrapolated** RUL label — a closed-form projection, not a measurement. Training a model on such labels and scoring it against them measures formula recovery, not forecasting skill. An earlier evaluation setup did exactly that on the Severson fleet and reported RUL R² = 0.999; the fix (per-row label provenance, observed-only scoring, and a formula baseline the model must beat) is now part of the default evaluation described below.
 
@@ -103,7 +103,7 @@ Leave-cell-out (LCO) validation holds out entire cells, never seen in training, 
 
 Reproducibility also matters. A claimed R² is worthless if it can't be checked. Every number this platform reports traces back to a runnable notebook or a benchmark manifest. `batlab.validation.manifest.export_benchmark_results()` exports a machine-readable benchmark bundle (split manifest + reported metrics, `schema: "batlab-lco-benchmark"`) so other software can consume a result together with the conditions it was produced under. Since a leave-cell-out aggregate is a *mean over per-cell folds*, every headline R² on the Benchmark page also carries a fold-level bootstrap confidence interval (`batlab.validation.bootstrap`, cell-level resampling — the cell, not the correlated row, is the sampling unit) — on a 4-cell fleet the width of that bracket is part of the claim, not a footnote.
 
-Four of the five datasets feed the trained-model benchmark: Severson (LFP), NASA (LiCoO₂), **Zhu 2022 (NCM+NCA — the platform's third chemistry, and its first fleet where every cell reaches end-of-life in-window, so all ~8,700 RUL rows carry measured labels; leave-cell-out on those 9 real cells gives SOH R² = 0.999 against a 0.985 trivial baseline and RUL R² = 0.996)**, and **CALCE CS2 (a second real LiCoO₂ source, different form factor and cycler — it participates in the same-chemistry cross-source transfer study whenever its files are placed locally)**. Oxford is disclosed as a permanent "not evaluable" registry row (checkpoint-indexed schema) rather than silently omitted.
+Four of the five datasets feed the trained-model benchmark: Severson (LFP), NASA (LiCoO₂), **Zhu 2022 (NCM+NCA — the platform's third chemistry, and its first fleet where every cell reaches end-of-life in-window, so all ~8,700 RUL rows carry measured labels; leave-cell-out on those 9 real cells gives SOH R² = 1.000 against a 0.985 trivial baseline and RUL R² = 0.997)**, and **CALCE CS2 (a second real LiCoO₂ source, different form factor and cycler — it participates in the same-chemistry cross-source transfer study whenever its files are placed locally)**. Oxford is disclosed as a permanent "not evaluable" registry row (checkpoint-indexed schema) rather than silently omitted.
 
 ## Platform capabilities
 
@@ -215,24 +215,24 @@ Every result this platform produces falls into exactly one of five categories, a
 | Validation method | SOH R² | What it actually measures |
 |---|---|---|
 | Naive random row-level split | **≈ 1.00** | How well the model interpolates within cells it has already partly seen |
-| Leave-cell-out (this platform's default) | **0.958** | How well the model generalizes to a cell it has never seen |
-| Trivial baseline (cycle number → SOH, no engineered features), same LCO folds | 0.603 | The floor — how much of the 0.958 is the smooth shape of aging curves, not the model |
+| Leave-cell-out (the notebook's loader) | **0.958** | How well the model generalizes to a cell it has never seen |
+| Trivial baseline (cycle number → SOH, no engineered features), same LCO folds | 0.603 | The floor — how much of the leave-cell-out R² is the smooth shape of aging curves, not the model |
 
-Numbers are from the current feature set (v12). The notebook's stored outputs predate it slightly (0.998 / 0.806 with the pre-v12 features) — re-running it reproduces the numbers above, and the story is identical either way.
+The notebook's numbers come from its own loader — its preprocessing differs from the production app path (same data, different bytes; the Tier-4 comparability incident in `docs/history.md`). Through the production app path under the current v12 feature set, leave-cell-out on the same 4 cells reports **0.745 [0.56, 0.93]** against the same **0.603** baseline — a n=4 bracket that wide is part of the claim. The story is identical in both loaders either way.
 
-The ≈ 1.00 is real and reproducible — and it's also the wrong number to report, because it doesn't answer the question that matters for a deployed model. The honest 0.958 is what `batlab.validation.run_lco` reports by default. Comparing it against the 0.603 trivial-baseline floor under the identical fold structure shows the engineered features are worth a real **+0.355** — not the full 0.958.
+The ≈ 1.00 is real and reproducible — and it's also the wrong number to report, because it doesn't answer the question that matters for a deployed model. The honest leave-cell-out number is what `batlab.validation.run_lco` reports by default: 0.745 on the production app path (0.958 in the notebook's loader), against the 0.603 trivial-baseline floor under the identical fold structure — the engineered features are worth **+0.142** over that baseline on the production path, not the full R².
 
-The same honesty rule is applied to RUL. RUL can only be *measured* for a cell whose data actually reaches the 80% end-of-life threshold; rows from cells that don't carry a closed-form **extrapolated** label instead. `run_lco` scores RUL only on the observed-label population and discloses its size — on NASA all 620 RUL rows here carry observed labels; on the 12 Severson cells **zero** rows qualify, so Severson RUL is reported as **not evaluable** rather than quoted from extrapolated labels. The earlier evaluation setup quoted Severson RUL R² = 0.999 from exactly that extrapolated pool, and `rul_formula_baseline_lco()` — the closed form that generates the labels, run under the identical folds — scores R² ≈ 1.0 on it, which is the proof. On the honest NASA pool the GBRT reaches **0.761** against a **0.731** formula baseline: a real but thin margin, published side by side rather than hidden. `rul_reliable` additionally requires ≥50% observed coverage, and a fold with no observed rows shows "not evaluable" instead of a number.
+The same honesty rule is applied to RUL. RUL can only be *measured* for a cell whose data actually reaches the 80% end-of-life threshold; rows from cells that don't carry a closed-form **extrapolated** label instead. `run_lco` scores RUL only on the observed-label population and discloses its size — on NASA all 580 RUL rows carry observed labels; on the 12 Severson cells **zero** rows qualify, so Severson RUL is reported as **not evaluable** rather than quoted from extrapolated labels. The earlier evaluation setup quoted Severson RUL R² = 0.999 from exactly that extrapolated pool, and `rul_formula_baseline_lco()` — the closed form that generates the labels, run under the identical folds — scores R² ≈ 1.0 on it, which is the proof. On the honest NASA pool the current pipeline reaches **0.412** against the formula's **0.677** — on this 4-cell fleet the GBRT does *not* beat the closed form, a real negative result published as-is (the same comparison on Zhu's 9-cell fully-observed fleet is **0.997 vs 0.510**, where data is abundant). `rul_reliable` additionally requires ≥50% observed coverage, and a fold with no observed rows shows "not evaluable" instead of a number.
 
-This is public-data validation, not industrial validation — the 0.958 describes generalization across 4 NASA cells, not across a manufacturer's fleet. Treat it as evidence the methodology is sound, not as a number that transfers directly to a different chemistry or duty cycle.
+This is public-data validation, not industrial validation — the leave-cell-out number describes generalization across 4 NASA cells, not across a manufacturer's fleet. Treat it as evidence the methodology is sound, not as a number that transfers directly to a different chemistry or duty cycle.
 
 **The prospective split — forecasting, not curve-fitting.** Leave-cell-out holds out whole cells but still shows the model the held-out cell's *future*: its full recorded curve is in the evaluation pool. The deployment question is the opposite one — *this cell has produced 200 cycles, what happens next?* `batlab.validation.prospective` answers it by training only on the first half of each cell's cycles and scoring only the remainder, under the same RUL-honesty rules and with the trend/formula baselines under the identical split. The result is the most deflating table on the Benchmark page, and the most important one:
 
 | Fleet | LCO SOH R² | Prospective SOH R² | Per-cell trend baseline |
 |---|---|---|---|
-| NASA (4 LiCoO₂) | 0.958 | 0.492 [−1.23, 0.57] | −0.241 |
-| Zhu 2022 (9 NCM+NCA) | 0.999 | −3.176 [−3.58, −2.84] | 0.141 |
-| Severson (12 LFP) | 0.981 | −0.774 [−1.53, −1.10] | −0.422 |
+| NASA (4 LiCoO₂) | 0.745 | 0.492 [−1.23, 0.57] | −0.241 |
+| Zhu 2022 (9 NCM+NCA) | 1.000 | −3.176 [−3.58, −2.84] | 0.141 |
+| Severson (12 LFP) | 0.986 | −0.774 [−1.53, −1.10] | −0.422 |
 
 Denied the future, gradient-boosted trees — which interpolate within their training label range but cannot extrapolate beyond it — collapse below a per-cell straight line on two of three fleets, and the prospective RUL number loses to the closed-form fade formula on every fleet where RUL is evaluable. The gap between the LCO column and this one is the amount of interpolation that was riding along in every held-out-cell number. Both evaluations are reported side by side on the Benchmark page, because they answer different questions: LCO is new-cell generalization, the prospective split is same-cell forecasting, and a deployment needs both to be stated separately.
 
@@ -240,8 +240,8 @@ Denied the future, gradient-boosted trees — which interpolate within their tra
 
 | Fleet | Calibration rows | Raw coverage | E* (cycles) | Calibrated coverage |
 |---|---|---|---|---|
-| NASA (4 LiCoO₂) | 580 | 75.0% | 7.6 | **80.3%** |
-| Zhu 2022 (9 NCM+NCA) | 8,744 | 91.8% | 0 (clamped) | 91.8% — served as-is |
+| NASA (4 LiCoO₂) | 580 | 72.9% | 6.3 | **80.3%** |
+| Zhu 2022 (9 NCM+NCA) | 8,726 | 90.5% | 0 (clamped) | 90.5% — served as-is |
 | Severson (12 LFP) | 0 observed labels | — | — | **not evaluable** |
 
 E* is clamped at zero — the platform widens an interval, it never narrows one — so Zhu's already-conservative interval ships unmodified while NASA's mildly overconfident one gets corrected to nominal. A fleet whose RUL labels are formula-extrapolated (Severson) reports *not evaluable* rather than a coverage number computed against the formula that generated the labels, and an uncalibrated fleet is flagged as such instead of silently quoting its nominal level.
@@ -250,8 +250,8 @@ E* is clamped at zero — the platform widens an interval, it never narrows one 
 
 | Fleet | GBRT SOH R² | Hierarchical | GBRT+PINN ensemble | Reads |
 |---|---|---|---|---|
-| NASA (4 LiCoO₂) | 0.759 | 0.695 | 0.745 | tie within fold noise — the inner CV keeps w<1 on 2 of 4 folds but the physics leg does not earn back the gap |
-| Zhu 2022 (9 NCM+NCA) | 0.999 | 0.917 | 1.000 | inner CV collapses to pure GBRT where data is abundant — an honest tie |
+| NASA (4 LiCoO₂) | 0.745 | 0.695 | 0.745 | tie within fold noise — the inner CV keeps w<1 on 2 of 4 folds but the physics leg does not earn back the gap |
+| Zhu 2022 (9 NCM+NCA) | 1.000 | 0.917 | 1.000 | inner CV collapses to pure GBRT where data is abundant — an honest tie |
 | Severson (12 LFP) | 0.986 | 0.318 | 0.986 | the hierarchical linear-fade law cannot follow LFP knees, and says so |
 | synth (8 LiCoO₂) | 0.998 | 0.982 | 0.998 | ties across the board |
 
@@ -287,6 +287,7 @@ The second half of the item is **per-regime reliability**: `regime_reliability()
 - **Continuous metric tracking with drift alerts.** `src/metric_history.py` reads the registry's history as a time series: movement beyond tolerance between consecutive runs of the same population and feature version is a **[DRIFT]** alert; movement across a feature-version boundary is reported separately as the expected consequence of the feature change. The Benchmark page renders the report; `scripts/check_metric_gate.py --drift` exits nonzero when alerts exist. Study populations (`_robustness`, `_prospective`, `_transfer`, and the `_to_` transfer naming) are excluded — they are stress results, not accuracy claims.
 - **Dataset hashing + environment pinning.** Every `run_lco()` result now carries a **fingerprint**: a SHA-256 content digest per cell (holdout's normalization) plus a set-level hash, and an environment snapshot (python/platform/numpy/pandas/scikit-learn/scipy/pybamm versions), persisted in the registry (`fingerprint` column). "Same dataset" is now a string comparison — the mechanical retirement of the Tier-4 lesson that same dataset *name* is not same *data*. CI pins the numeric stack via `constraints.txt`, so an unpinned library bump can't masquerade as unexplained metric drift.
 - **Independent replication.** `scripts/publish_replication_bundle.py` exports a **sealed bundle** for one dataset's LCO number: fold structure + reported metrics (benchmark.json), per-cell digests, environment, and the SHA-256 of every file in the bundle itself (the seal). A third party runs `python -m batlab.validation.replication <bundle-dir> --loader batlab.datasets.<mod>:<fn> --recompute` against their own copy of the public data and gets pass/fail per check: **seal** (files unmodified), **data-identity** (their copy digests byte-identically), **environment** (differences listed, warn-level), **recompute** (the number re-derives from the bundle's own seed/feature-version/folds within 1e-6). Verified end to end on the synthetic fleet: publish → seal → verify → recompute reproduces `soh_r2=0.9959` exactly.
+- **Registry-verified cache hits.** A cached model bundle carries the `experiment_run_id` of the `log_run()` call that trained it — and the loader now verifies that row EXISTS in the deployment's database before serving the bundle. A cache hit whose registry row is missing (training ran while its writes went to an ephemeral DB, the 2026-09-13 incident that left zhu2022 with no GBRT row and every headline on pre-v12 rows) is discarded and retrained, so the benchmark can never silently present numbers the registry cannot back. The same guard covers the health API's disk-cache fallback.
 
 ## Demo Application
 
