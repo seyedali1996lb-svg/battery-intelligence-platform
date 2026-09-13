@@ -134,6 +134,11 @@ class RunRecord:
     ci_intervals: "dict | None" = None
     calibration_meta: "dict | None" = None
     validity_meta: "dict | None" = None
+    # Tier-6 verification: WHAT DATA (per-cell content digests + set hash)
+    # and WHAT ENVIRONMENT (python/platform/library versions) produced the
+    # metrics. Two runs are only comparable when both match — the mechanical
+    # retirement of the "same dataset name is not same data" trap.
+    fingerprint: "dict | None" = None
 
 
 _git_commit_cache: "str | None" = None
@@ -215,6 +220,7 @@ def log_run(
         ci_intervals=(lco_metrics.get("confidence_intervals") if isinstance(lco_metrics, dict) else None),
         calibration_meta=(lco_metrics.get("calibration_meta") if isinstance(lco_metrics, dict) else None),
         validity_meta=(lco_metrics.get("validity_meta") if isinstance(lco_metrics, dict) else None),
+        fingerprint=(lco_metrics.get("fingerprint") if isinstance(lco_metrics, dict) else None),
         git_commit=_git_commit_hash(),
         timestamp=timestamp,
         notes=notes,
@@ -248,6 +254,7 @@ def log_run(
         "ci_intervals": (json.dumps(record.ci_intervals) if record.ci_intervals is not None else None),
         "calibration_meta": (json.dumps(record.calibration_meta) if record.calibration_meta is not None else None),
         "validity_meta": (json.dumps(record.validity_meta) if record.validity_meta is not None else None),
+        "fingerprint": (json.dumps(record.fingerprint) if record.fingerprint is not None else None),
         "git_commit":      record.git_commit,
         "timestamp":       record.timestamp,
         "notes":           record.notes,

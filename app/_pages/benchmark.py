@@ -270,6 +270,38 @@ def page_benchmark(org_id: int) -> None:
     # Both are now fitted and evaluated by the same leave-cell-out harness and
     # the same trivial baseline, so the only difference is the model itself —
     # and the table reports the result even when the PINN loses.
+    # ── Metric history & drift (Tier 6) ──────────────────────────────
+    # The registry already keeps every run; this section reads that history
+    # as a time series and surfaces unexplained movement between consecutive
+    # runs of the same population — the continuous-tracking counterpart to
+    # the CI gate (which checks a fixture fleet and the latest runs).
+    try:
+        from metric_history import drift_report, format_drift_report
+
+        st.markdown("#### Metric history — drift between logged runs")
+        report = drift_report(all_runs)
+        if report["n_alerts"]:
+            st.error(
+                f"**{report['n_alerts']} drift alert(s)** — a headline number "
+                "moved beyond tolerance between consecutive runs of the same "
+                "population. Check the run's fingerprint (data digests + "
+                "environment) and git commit before trusting the newer number."
+            )
+        st.text(format_drift_report(report))
+        st.caption(
+            "Consecutive-run movement within the same feature version is "
+            "drift; movement across a feature-version boundary is reported "
+            "separately as an expected consequence of the feature change, "
+            "not drift. Study populations (`_robustness`, `_prospective`, "
+            "`_transfer`) are excluded — they are stress results, not "
+            "accuracy claims. CI enforces the same discipline mechanically: "
+            "the fixture-fleet gate (tests/test_ci_metric_gate.py) fails on "
+            "an unexplained headline move, and "
+            "scripts/check_metric_gate.py gates the real logged runs."
+        )
+    except Exception:
+        pass
+
     st.markdown("#### Model comparison — production GBRT vs physics-regularized PINN")
     mk_rows = reg.model_kind_comparison(tenant_org_id=org_id)
     if not mk_rows:

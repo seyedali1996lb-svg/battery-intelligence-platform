@@ -81,3 +81,6 @@ reportPossiblyUnboundVariable = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "metric_gate: the CI accuracy regression gate (fixture-fleet LCO vs declared floors/baselines)",
+]

@@ -1,0 +1,17 @@
+# Tier-6 verification: pins the numeric stack CI installs so the metric
+# gate's fixture-fleet numbers are comparable across runs — a numpy or
+# scikit-learn minor bump CAN change GBRT fits (documented in
+# batlab/validation/manifest.py), and an unpinned bump would surface as an
+# unexplained headline-number drift instead of a legible environment change.
+#
+# Generated from the versions the project was benchmarked on
+# (fingerprint.environment_snapshot()); re-pin deliberately, never lazily.
+numpy==2.5.2
+pandas==3.0.5
+scikit-learn==1.9.0
+scipy==1.18.1
+pybamm==26.8.0.0
+streamlit==1.62.0
+plotly==7.0.0
+pyarrow==25.0.1
+sqlalchemy==2.0.52

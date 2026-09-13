@@ -300,6 +300,7 @@ class ExperimentRun(Base):
     ci_intervals    = Column(Text)                       # JSON: fold-level bootstrap CIs (batlab.validation.bootstrap)
     calibration_meta = Column(Text)                      # JSON: interval calibration (coverage raw/calibrated, width, E*, n rows)
     validity_meta   = Column(Text)                       # JSON: training envelope + per-regime reliability (Tier 5)
+    fingerprint     = Column(Text)                       # JSON: dataset digests + environment snapshot (Tier 6)
     fold_metrics    = Column(Text)                       # JSON-encoded per-cell LCO breakdown
     baseline_per_cell = Column(Text)                     # JSON-encoded per-cell baseline R² breakdown
     git_commit      = Column(String)
@@ -512,6 +513,8 @@ def _ensure_experiment_run_baseline_columns() -> None:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN calibration_meta TEXT"))
         if "validity_meta" not in cols:
             conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN validity_meta TEXT"))
+        if "fingerprint" not in cols:
+            conn.execute(text("ALTER TABLE experiment_runs ADD COLUMN fingerprint TEXT"))
 
 
 def _seed_demo_org_and_users() -> None:
@@ -1397,6 +1400,7 @@ def _experiment_run_row_to_dict(r: "ExperimentRun") -> dict:
         "ci_intervals": _json_or_none(r.ci_intervals),  # pyright: ignore[reportArgumentType]
         "calibration_meta": _json_or_none(r.calibration_meta),  # pyright: ignore[reportArgumentType]
         "validity_meta": _json_or_none(r.validity_meta),  # pyright: ignore[reportArgumentType]
+        "fingerprint": _json_or_none(r.fingerprint),  # pyright: ignore[reportArgumentType]
         "git_commit":      r.git_commit,
         "timestamp":       r.timestamp,
         "notes":           r.notes,

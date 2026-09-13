@@ -19,7 +19,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install --upgrade pip && pip install -r requirements.txt && pip install -e .
+        # constraints.txt pins the numeric stack (numpy/pandas/scikit-learn/
+        # scipy/pybamm): the metric gate's fixture-fleet numbers must be
+        # comparable across runs, and an unpinned library bump can change
+        # GBRT fits (see batlab/validation/manifest.py). Re-pin deliberately.
+        run: pip install --upgrade pip && pip install -r requirements.txt -c constraints.txt && pip install -e . -c constraints.txt
         continue-on-error: false
 
       - name: Syntax check all Python files
@@ -57,6 +61,16 @@ jobs:
         # what it's meant to catch.
         run: python scripts/check_model_version_bump.py
         continue-on-error: true   # warning only, not blocking
+
+      - name: Metric gate (accuracy regression)
+        # The fixture-fleet gate runs as a marked test inside the suite; this
+        # dedicated step also gates the REAL logged runs against
+        # config/metric_gate_expectations.json when that file exists. A
+        # failing gate means a headline number moved without an explained,
+        # recorded reason -- run scripts/update_metric_baselines.py to
+        # record it, never edit baselines silently.
+        run: python scripts/check_metric_gate.py
+        continue-on-error: false
 
   notebooks:
     runs-on: ubuntu-latest

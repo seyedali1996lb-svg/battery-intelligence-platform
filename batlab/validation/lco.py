@@ -259,7 +259,20 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         obs_r2s=obs_r2s, obs_maes=obs_maes,
     )
 
+    # Tier-6 fingerprints: WHAT DATA and WHAT ENVIRONMENT produced these
+    # numbers, hashed per cell (holdout's digest normalization) so two runs
+    # claiming the same dataset are byte-comparable. Logged with every run
+    # via the registry; the Tier-4 NASA loader incident is the failure mode
+    # this retires (same name, different bytes, silently incomparable rows).
+    from batlab.validation import fingerprints as _fp
+    raw_frames = unwrap_cell_data(cell_data)
+    fingerprint = {
+        "dataset": _fp.dataset_fingerprint(raw_frames),
+        "environment": _fp.environment_snapshot(),
+    }
+
     return {
+        "fingerprint": fingerprint,
         "soh_r2":       float(np.mean(soh_r2s)) if soh_r2s else float("nan"),
         "soh_mae":      float(np.mean(soh_maes)) if soh_maes else float("nan"),
         "rul_r2":       mean_obs_r2,

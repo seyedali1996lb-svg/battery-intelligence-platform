@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "description": "Metric gate expectations for the CI fixture fleet (tests/metric_gate_fleet.py). Floors/ceilings are promises; baselines pin the measured number so an unexplained move fails CI until scripts/update_metric_baselines.py records the reason. Measured on the platform's own stress-profile cells through the unmodified run_lco() harness.",
+  "measured_at": "2026-09-13",
+  "measured_environment": {
+    "python": "3.14.6",
+    "numpy": "2.5.2",
+    "pandas": "3.0.5",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.18.1",
+    "pybamm": "26.8.0.0"
+  },
+  "tolerance": 0.05,
+  "metrics": {
+    "soh_r2": {
+      "floor": 0.95,
+      "baseline": 0.9958726251642858,
+      "note": "Leave-cell-out SOH R^2 on the five gate-fleet cells. Floor is 4+ points below the measured value: tight enough that any real model/feature regression trips it, loose enough to absorb library-version float jitter."
+    },
+    "rul_r2": {
+      "floor": 0.0,
+      "baseline": 0.1415351315175002,
+      "tolerance": 0.5,
+      "note": "Observed-EOL RUL R^2 on synthetic cells (coverage 0.68, extrapolated labels mixed in pre-v12 style). Floor 0.0: the model must at least not invert RUL ordering. Wide 50% tolerance because this metric is genuinely noisier across library versions on a 5-cell fleet."
+    }
+  }
+}
