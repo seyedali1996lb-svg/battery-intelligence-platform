@@ -9,7 +9,12 @@ on:
 jobs:
   lint-and-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The full suite is ~20 min on a 12-core dev machine with a warm
+    # bundle cache; a 4-vCPU runner starts with no cache, so the first
+    # AppTest per fleet retrains it. 15 min was killing the job mid-suite
+    # (GitHub reports that as "cancelled", not "failure" — the 2026-09-12
+    # runs at e36db4f/2c0fd51 and the first run of 4322f58 all died here).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
