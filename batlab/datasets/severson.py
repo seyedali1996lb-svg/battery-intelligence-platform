@@ -65,6 +65,19 @@ def any_cached() -> bool:
     return any(_csv_path(k).exists() for k in _CELL_KEYS)
 
 
+def fully_cached_cell_ids() -> list[str]:
+    """Every cell ID, but ONLY when the whole fleet is cached; [] otherwise.
+
+    Deliberately not the same question as any_cached(): a PARTIAL cache still
+    makes load_severson_cells() try to download the remaining ~2.9 GB batch,
+    which is a reasonable decision for a training script to make and a bad one
+    to trigger on a UI click. A caller that wants to offer Severson as an
+    option, or to promise an offline run, needs this stronger guarantee —
+    any_cached() cannot provide it.
+    """
+    return list(SEVERSON_CELL_IDS) if _all_cached() else []
+
+
 def _download_and_cache(status_fn=None) -> None:
     try:
         import h5py

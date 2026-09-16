@@ -33,6 +33,7 @@ def _import_pages():
     from _pages.workbench import page_cell_workbench
     from _pages.compliance import page_compliance
     from _pages.benchmark import page_benchmark
+    from _pages.model_validation import page_model_validation
     from _pages.grading import page_grading
     from _pages.live_monitor import page_live_monitor
     from _pages.explore import page_compare
@@ -48,6 +49,7 @@ def _import_pages():
         "page_cell_workbench": page_cell_workbench,
         "page_compliance":    page_compliance,
         "page_benchmark":     page_benchmark,
+        "page_model_validation": page_model_validation,
         "page_grading":       page_grading,
         "page_live_monitor":  page_live_monitor,
         "page_compare":       page_compare,
@@ -248,6 +250,11 @@ def route(
         pages["page_compare"](cell_ids, active_fdfs, bundles, graph=graph)
     elif page == "benchmark":
         pages["page_benchmark"](st.session_state["auth_org_id"])
+    elif page == "model_validation":
+        # Fleet-wide, not cell-specific: it grades a model against a reference
+        # fleet it reloads itself, so it needs no cell or bundle from the
+        # router (same shape as the Benchmark page).
+        pages["page_model_validation"]()
     elif page in ("copilot", "insights"):
         pages["page_copilot"](cell_ids, active_fdfs, bundles, selected, graph=graph)
     elif page in ("decision", "consequences", "recommendations"):

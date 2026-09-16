@@ -289,6 +289,43 @@ The second half of the item is **per-regime reliability**: `regime_reliability()
 - **Independent replication.** `scripts/publish_replication_bundle.py` exports a **sealed bundle** for one dataset's LCO number: fold structure + reported metrics (benchmark.json), per-cell digests, environment, and the SHA-256 of every file in the bundle itself (the seal). A third party runs `python -m batlab.validation.replication <bundle-dir> --loader batlab.datasets.<mod>:<fn> --recompute` against their own copy of the public data and gets pass/fail per check: **seal** (files unmodified), **data-identity** (their copy digests byte-identically), **environment** (differences listed, warn-level), **recompute** (the number re-derives from the bundle's own seed/feature-version/folds within 1e-6). Verified end to end on the synthetic fleet: publish → seal → verify → recompute reproduces `soh_r2=0.9959` exactly.
 - **Registry-verified cache hits.** A cached model bundle carries the `experiment_run_id` of the `log_run()` call that trained it — and the loader now verifies that row EXISTS in the deployment's database before serving the bundle. A cache hit whose registry row is missing (training ran while its writes went to an ephemeral DB, the 2026-09-13 incident that left zhu2022 with no GBRT row and every headline on pre-v12 rows) is discarded and retrained, so the benchmark can never silently present numbers the registry cannot back. The same guard covers the health API's disk-cache fallback.
 
+## Bringing your own model — the validation harness
+
+Everything in [Validation](#validation) above is a statement about a *method*, not about the GBRT that happened to be welded to it. `batlab.harness` removes that weld: point it at any forecaster — a scikit-learn estimator, a PyTorch net, your own numerical fit — and it runs the same checks, in the same order, on your model.
+
+```python
+from batlab.harness import validate_forecaster
+
+report = validate_forecaster(cells, model=my_model)   # model=None -> this platform's own GBRT
+print(report["verdict"]["summary"])
+for claim in report["verdict"]["claims"]:
+    print("  supported:", claim)
+for gap in report["verdict"]["withheld"]:
+    print("  withheld: ", gap)
+```
+
+Six checks, each one a way for "is this number honest?" to come back *no*:
+
+- **Leakage lint** — no quantity read by the RUL label's generating expression may also be a model feature (the defect behind this platform's former RUL R² = 0.9994, now mechanical rather than audited by hand).
+- **Label provenance** — how many RUL rows carry a measured end-of-life label, and how many carry a closed-form extrapolation. Extrapolated rows are reported separately and can never set the headline.
+- **Leave-cell-out** — new-cell generalization, beside the trivial per-cell trend baseline so "how much of this R² is the shape of aging curves?" is answerable. A tie is reported as a tie, not as a marginal win.
+- **Interval calibration** — nominal vs *measured* coverage of an 80% interval, conformally recalibrated per fold on the other folds only. A point-only model still gets an interval: a distribution-free one built from its own out-of-fold residuals, and the report says which path produced the number.
+- **Prospective split** — train on each cell's first half, score the second. The only check that separates forecasting from interpolating a curve whose end the model has already seen.
+- **Metric gate** — declared floors/ceilings and baselines, enforced. Supplying none reports NOT CHECKED rather than passing.
+
+Two contracts make it safe to point at someone else's model. The factory is called **once per fold and once per target**, so a fold can never be fitted on another fold's state; and a **pre-fitted estimator is refused** rather than deep-copied, because a model that already saw the held-out cell produces a beautiful, meaningless R².
+
+Nothing is reported that could not be measured: on a fleet whose cells never reach end-of-life in-window, RUL is withheld entirely rather than quoted from formula-generated labels, and an interval whose measured coverage is 62% is shown at 62%. A result can be sealed into a bundle a third party re-derives from their own copy of the data:
+
+```bash
+python -m batlab.harness --loader batlab.datasets.nasa:load_nasa_cells --gate floors.json --seal out/bundle
+python -m batlab.validation.replication out/bundle --loader batlab.datasets.nasa:load_nasa_cells --recompute
+```
+
+`model=None` (the default) reproduces this platform's own published numbers exactly — the point metrics *and* the conformal interval calibration — because the seam moved the model, not the methodology. See [the validation harness guide](docs/harness.md) for the adapters (sklearn, PyTorch, callables), the gate file format, and the honest limits behind each number.
+
+The same harness is a page in the app: **Analyse → Bring your own model** grades the platform's GBRT, a scaled Ridge, a random forest, a training-mean floor, or a `.py` model module you upload, against a reference fleet this deployment can reload — and renders the verdict as two columns, the claims the run supports and the claims it *withholds*. Uploads are `.py` only (a serialized model executes on load, so it cannot be read first) and are shown in full before anything runs; the module is not sandboxed, and the page says so above the checkbox that gates it.
+
 ## Demo Application
 
 `app/` is a Streamlit application, built on `batlab` — an engineering prototype demonstrating what the platform's analytics look like assembled into an engineer-facing tool, not a production deployment:
@@ -297,6 +334,7 @@ The second half of the item is **per-regime reliability**: `regime_reliability()
 - A **fleet monitoring** concept view across multiple cells at once, plus a simulated live-telemetry Monitor page
 - An **EU Battery Passport** generator, with a "regenerate this report" action that replays the exact recorded pipeline (dataset, feature set, hyperparameters, seed) behind any displayed result
 - A **Benchmark** leaderboard across every logged training run — filterable by dataset/chemistry, sortable by any metric, with fold-level drill-down — including an honest transfer study over **every dataset pair**: cross-chemistry pairs (train on NASA, zero-shot evaluate on Severson) report the real failure, and same-chemistry cross-source pairs (NASA ↔ CALCE, both LiCoO₂ but different cyclers and form factors) test whether a model generalizes beyond its own dataset's cells
+- A **Bring your own model page** — the validation harness above with a UI in front of it: grade the platform's GBRT, a scaled Ridge, a random forest, a training-mean floor, or a **model module you upload** against any reference fleet this deployment can reload, and read the result as two columns — the claims the run supports and the claims it *withholds* (no measured end-of-life rows means no RUL number at all, not a caveated one). Every section renders underneath: fold-level leave-cell-out beside its trivial baselines, conformal calibration raw→measured, the prospective split, label provenance, and the declared-floors gate with its UNTRACKED metrics. Uploads are `.py` only — a serialized model executes as part of loading, so it cannot be read first — and the source is shown in full before anything runs, above an explicit "there is no sandbox" disclosure and a checkbox that gates the run. A result downloads as a sealed bundle (per-cell digests, model identity, environment) plus the one-line verify command a reviewer re-derives it with
 - A **second-life / Solar + Storage Sizing calculator** — a real hour-by-hour (8760 hours/year) dispatch simulation against PVGIS solar data, with temperature-aware battery derating cited to real cell documentation (BU-410), not a monthly approximation
 - A **Copilot** with two honestly-distinct modes: topic-button questions always use a fixed template narrating values already computed by the pipeline; typed free-text questions, when a personal Anthropic API key is configured, use real Claude tool-calling (`src/copilot_agent.py`, Claude Sonnet 5) — the model decides which of a handful of read-only data-fetching tools to call, chaining calls across cells for compositional questions ("which of my degrading cells has the worst fade rate, and why") that no fixed keyword router could match, while every tool still returns only values the pipeline already computed, never a number the model invents itself
 - **Multi-tenant accounts** (bcrypt-hashed passwords, per-org data isolation, `src/db.py`) with a session logout control, a per-username login lockout (5 failed attempts locks the account for 15 minutes), and real server-side role-based access control — admin-tier actions (org settings, integration credentials, teammate/site/fleet management) are refused in `src/db.py` itself for any caller without the admin role, not just hidden in the UI — see [Production Readiness Roadmap](docs/history.md#production-readiness-roadmap) for what's still demo-grade versus production-ready in the auth layer

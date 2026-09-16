@@ -41,17 +41,40 @@ labels — a population where only 1 of 12 folds can be validated must not
 present a mean over that one fold as a dataset-level claim.
 
 SOH is unaffected: the SOH target is always measured.
+
+Grading a model that is not this platform's GBRT
+-----------------------------------------------
+The methodology above is model-agnostic; only the model was not. Pass
+`forecaster=` to swap it without touching a single rule: None keeps the
+platform's own GBRT (the default, and the configuration every published
+number here was measured under), while anything
+batlab.harness.as_factory() understands is graded identically — an unfitted
+sklearn estimator, a zero-argument factory returning a fresh model, or a
+CallableForecaster wrapping your own fit/predict (PyTorch, an ODE fit, a
+subprocess call to MATLAB).
+
+The factory is called once per fold AND once per target, so a fold can
+never be fitted on another fold's state — and a pre-fitted estimator is
+rejected at the seam rather than deep-copied, because a model that already
+saw the held-out cell would produce a meaningless, beautiful R².
 """
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, r2_score
 
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
+# GBRT_PARAMS stays importable from here as well as from batlab.models.gbrt:
+# src/experiment_registry.py reads it from this module to pin the
+# hyperparameters each logged run was trained with.
 from batlab.models.gbrt import GBRT_PARAMS
 from batlab._parallel import map_folds
+from batlab.harness.forecaster import (
+    ForecasterLike,
+    as_factory,
+    default_forecaster,
+    fit_forecaster,
+)
 
 RUL_RELIABLE_FLOOR = 0.3   # LCO R2 below this -> show "Not calibrated" in UI
 
@@ -95,7 +118,13 @@ def unwrap_cell_data(cell_data: dict) -> dict:
     return out
 
 
-def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> dict:
+def run_lco(
+    cell_data: dict,
+    seed: int = 42,
+    featured: "dict | None" = None,
+    forecaster: "ForecasterLike | None" = None,
+    include_predictions: bool = False,
+) -> dict:
     """
     Run leave-cell-out cross-validation on a dict of cell DataFrames.
 
@@ -113,6 +142,15 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
                    (expensive) feature pipeline, including the PyBaMM-backed
                    physics calibration, is not re-run per cell. Frames missing
                    rul_label_kind (pre-v12) are rebuilt from cell_data.
+        forecaster: the model to grade. None = the platform's own GBRT (the
+                   configuration the published numbers used). Anything
+                   batlab.harness.as_factory() accepts is graded by the same
+                   folds, metrics, and label-provenance rules.
+        include_predictions: also return each fold's out-of-fold rows
+                   (y_true / y_pred / observed-label mask) under the fold's
+                   'predictions' key. Off by default: the arrays are
+                   fold-sized and only the harness's conformal interval
+                   calibration consumes them.
 
     Returns:
         {
@@ -129,9 +167,15 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
           "confidence_intervals": dict|None,  # fold-level bootstrap CIs, see
                                 # batlab.validation.bootstrap — None on n<2 folds
           "per_cell":    dict,    # per-fold breakdown incl. per-cell label kinds
+                                # (+ a 'predictions' key when include_predictions)
         }
     """
-    params = {**GBRT_PARAMS, "random_state": seed}
+    factory = as_factory(forecaster, default=default_forecaster(seed))
+    if factory is None:  # pragma: no cover - default_forecaster() never returns None
+        raise ValueError(
+            "run_lco needs either a forecaster or the platform default; both "
+            "were None, which means as_factory() was called with neither."
+        )
     cell_data = unwrap_cell_data(cell_data)
 
     # Build feature matrices per cell
@@ -174,15 +218,16 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         y_soh_test  = y_soh
         y_rul_test  = y_rul
 
-        scaler = StandardScaler()
-        Xtr_sc = scaler.fit_transform(X_train)
-        Xte_sc = scaler.transform(X_test)
-
-        soh_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_soh_train)
-        rul_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_rul_train)
-
-        soh_pred = soh_m.predict(Xte_sc)
-        rul_pred = rul_m.predict(Xte_sc)
+        # One fresh model per (fold, target), straight from the factory —
+        # see the module docstring's "Grading a model that is not this
+        # platform's GBRT". The default factory is the scaled-GBRT
+        # configuration every published number here was measured under.
+        soh_pred = np.asarray(
+            fit_forecaster(factory(), X_train, y_soh_train).predict(X_test), dtype=float
+        )
+        rul_pred = np.asarray(
+            fit_forecaster(factory(), X_train, y_rul_train).predict(X_test), dtype=float
+        )
 
         soh_mae = mean_absolute_error(y_soh_test, soh_pred)
         soh_r2  = _safe_r2(y_soh_test, soh_pred)
@@ -195,6 +240,16 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
         n_obs = int(obs_mask.sum())
         n_ext = int(ext_mask.sum())
         n_unk = len(X) - n_obs - n_ext
+
+        predictions = None
+        if include_predictions:
+            predictions = {
+                "soh_true": np.asarray(y_soh_test, dtype=float),
+                "soh_pred": soh_pred,
+                "rul_true": np.asarray(y_rul_test, dtype=float),
+                "rul_pred": rul_pred,
+                "rul_label_observed": obs_mask,
+            }
 
         rul_true = np.asarray(y_rul_test, dtype=float)
 
@@ -212,6 +267,7 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
             n_obs=n_obs, n_ext=n_ext, n_unk=n_unk,
             fold_obs_r2=fold_obs_r2, fold_obs_mae=fold_obs_mae,
             fold_ext_r2=fold_ext_r2, fold_ext_mae=fold_ext_mae,
+            predictions=predictions,
         )
 
     # Folds are independent; run them concurrently and re-assemble in the
@@ -253,6 +309,8 @@ def run_lco(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> 
                 "unknown": fr["n_unk"],
             },
         )
+        if include_predictions:
+            per_cell[test_cell]["predictions"] = fr["predictions"]
 
     n_rul_rows = n_obs_rows + n_ext_rows
     coverage = (n_obs_rows / n_rul_rows) if n_rul_rows > 0 else 0.0

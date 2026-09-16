@@ -6,6 +6,7 @@ A citable, honest research library for battery degradation analysis.
 - Literature-cited feature engineering (fade rate, dQ/dV, knee detection, Coulombic Efficiency, stress index) with mechanical leakage-lint guardrail over the label-generating expressions.
 - Gradient-boosted SOH/RUL models validated with **leave-cell-out** cross-validation, not a row-level split that quietly leaks near-neighbor cycles into the test set. RUL is scored only on rows whose end-of-life was actually observed (per-row label provenance), and a formula baseline reproducing the label-generating closed form is reported alongside the model — a model must beat it to claim skill.
 - A reproducible benchmark manifest format that records the exact seed, fold assignments, and feature-engineering version behind a reported number, plus a sealed, content-hashed holdout manifest that verifies holdout cells were never touched by training.
+- A **model-agnostic validation harness** (`batlab.harness`): point it at your own sklearn or PyTorch forecaster and it runs the same mechanical leakage lint, per-row label-provenance rule, leave-cell-out evaluation, conformal interval calibration, prospective (forecasting) split, and enforced metric gate this library applies to its own model — returning an explicit list of the claims the run supports and the claims it withholds. See the [validation harness](harness.md) page.
 
 ## Install
 
@@ -48,6 +49,7 @@ The same honesty applies to *what the model is asked to predict*. A RUL label is
 
 ## Where to go next
 
+- [Validation harness](harness.md) — grade *any* forecaster by this library's rules (leave-cell-out, label provenance, conformal intervals, metric gate, sealed bundles) and read the claims it withholds; also a page in the demo app (**Analyse → Bring your own model**).
 - [Datasets](datasets/index.md) — schema, citations, licenses, and how to add a fifth loader.
 - [API reference](api/datasets.md) — every public function, generated from docstrings.
 - [Notebooks](notebooks/01_quickstart.ipynb) — the four worked examples, rendered.

@@ -35,13 +35,17 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.preprocessing import StandardScaler
 
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
-from batlab.models.gbrt import GBRT_PARAMS, GBRT_QUANTILE_PARAMS
 from batlab._parallel import map_folds
+from batlab.harness.forecaster import (
+    ForecasterLike,
+    as_factory,
+    default_interval_forecaster,
+    fit_forecaster,
+    has_predict_interval,
+)
 
 # The Q10/Q90 pair nominally brackets an 80% interval.
 NOMINAL_INTERVAL_COVERAGE = 0.80
@@ -66,7 +70,12 @@ def interval_width_mean(q10, q90) -> float:
     return float(np.mean(np.maximum(0.0, q90 - q10)))
 
 
-def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" = None) -> dict:
+def run_lco_quantiles(
+    cell_data: dict,
+    seed: int = 42,
+    featured: "dict | None" = None,
+    forecaster: "ForecasterLike | None" = None,
+) -> dict:
     """
     Leave-cell-out evaluation that also trains the Q10/Q90 RUL quantile
     models, so the 80% prediction interval can be checked on cells never
@@ -77,6 +86,12 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
         cell_data: {cell_id: DataFrame} of raw cycle-level DataFrames
                    (batlab.datasets.schema kind="cycle").
         seed: random seed for every fold's GradientBoostingRegressor.
+        forecaster: the interval model to calibrate. None = the platform's
+                   own point + Q10/Q90 GBRT triple (the configuration every
+                   published interval here used). Whatever is passed must
+                   expose predict_interval(X) -> (q10, q90) after fit();
+                   batlab.harness.SklearnIntervalForecaster and
+                   CallableForecaster(interval_fn=...) both do.
 
     Returns:
         {
@@ -142,8 +157,12 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
             "rul_label_coverage": 0.0,
         }
 
-    point_params = {**GBRT_PARAMS, "random_state": seed}
-    quantile_params = {**GBRT_QUANTILE_PARAMS, "random_state": seed}
+    factory = as_factory(forecaster, default=default_interval_forecaster(seed))
+    if factory is None:  # pragma: no cover - default_interval_forecaster() is never None
+        raise ValueError(
+            "run_lco_quantiles needs an interval-capable forecaster or the "
+            "platform default; both were None."
+        )
 
     def _run_fold(test_cell: str) -> dict:
         """One fold: point + Q10/Q90 models fit on the other cells, scored
@@ -153,17 +172,24 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
         y_train = pd.concat([featured_cache[c][1] for c in train_cells])
         X_test, y_test, _kinds = featured_cache[test_cell]
 
-        scaler = StandardScaler()
-        Xtr = scaler.fit_transform(X_train)
-        Xte = scaler.transform(X_test)
-
-        rul_m = GradientBoostingRegressor(**point_params).fit(Xtr, y_train)
-        q10_m = GradientBoostingRegressor(loss="quantile", alpha=0.10, **quantile_params).fit(Xtr, y_train)
-        q90_m = GradientBoostingRegressor(loss="quantile", alpha=0.90, **quantile_params).fit(Xtr, y_train)
+        # One fresh interval model per fold, straight from the factory. The
+        # default factory is the point + Q10/Q90 GBRT triple sharing one
+        # scaler — the configuration every published interval number here
+        # was measured under.
+        model = fit_forecaster(factory(), X_train, y_train)
+        if not has_predict_interval(model):
+            raise ValueError(
+                "run_lco_quantiles() needs an interval-capable model: "
+                "predict_interval(X) -> (q10, q90) after fit(). For a "
+                "point-only model, batlab.harness.validate_forecaster(...) "
+                "builds a distribution-free interval from out-of-fold "
+                "residuals instead, under the same folds."
+            )
 
         rul_true = y_test.to_numpy(dtype=float)
-        q10 = np.clip(q10_m.predict(Xte), 0, None)
-        q90 = np.clip(q90_m.predict(Xte), 0, None)
+        q10, q90 = model.predict_interval(X_test)
+        q10 = np.asarray(q10, dtype=float)
+        q90 = np.asarray(q90, dtype=float)
 
         kinds = featured_cache[test_cell][2]
         obs_mask = (
@@ -178,7 +204,7 @@ def run_lco_quantiles(cell_data: dict, seed: int = 42, featured: "dict | None" =
 
         fold_mae = fold_r2 = None
         if n_obs >= 2:
-            rul_pred_obs = rul_m.predict(Xte)[obs_mask]
+            rul_pred_obs = np.asarray(model.predict(X_test), dtype=float)[obs_mask]
             fold_mae = mean_absolute_error(fold_true, rul_pred_obs)
             fold_r2 = r2_score(fold_true, rul_pred_obs)
 

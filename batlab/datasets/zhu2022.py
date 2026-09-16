@@ -100,6 +100,19 @@ def any_cached(raw_dir: pathlib.Path | None = None) -> bool:
     return any(_summary_path(f.removesuffix(".csv"), raw_dir).exists() for f in _CELL_FILES)
 
 
+def fully_cached_cell_stems(raw_dir: pathlib.Path | None = None) -> list[str]:
+    """Every cell stem, but ONLY when all nine summaries are cached.
+
+    Same distinction as any_cached(): a PARTIAL cache still makes
+    load_zhu2022_cells() download and extract the dataset, so a caller deciding
+    whether to offer this fleet as an option needs the stronger guarantee, not
+    "at least one file is here".
+    """
+    if not _all_summaries_present(raw_dir):
+        return []
+    return [f.removesuffix(".csv") for f in _CELL_FILES]
+
+
 def derive_cell_summary(csv_path: str | pathlib.Path) -> pd.DataFrame | None:
     """
     Derive the standardized per-cycle summary from one raw Zhu 2022 CSV.

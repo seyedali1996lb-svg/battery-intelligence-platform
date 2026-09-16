@@ -55,9 +55,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error
-from sklearn.preprocessing import StandardScaler
 
 from batlab.features.engineering import (
     FEATURE_COLUMNS,
@@ -65,9 +63,14 @@ from batlab.features.engineering import (
     get_model_matrix,
     get_rul_label_kinds,
 )
-from batlab.models.gbrt import GBRT_PARAMS
 from batlab.validation.bootstrap import lco_confidence_intervals
 from batlab.validation.lco import RUL_RELIABLE_FLOOR
+from batlab.harness.forecaster import (
+    ForecasterLike,
+    as_factory,
+    default_forecaster,
+    fit_forecaster,
+)
 
 DEFAULT_TRAIN_FRACTION = 0.5
 
@@ -154,6 +157,7 @@ def run_prospective(
     featured: "dict | None" = None,
     train_fraction: float = DEFAULT_TRAIN_FRACTION,
     seed: int = 42,
+    forecaster: "ForecasterLike | None" = None,
 ) -> dict:
     """Prospective evaluation over a fleet.
 
@@ -168,21 +172,26 @@ def run_prospective(
         window (default 0.5 — the model sees the first half of life and
         must forecast the second half).
     seed : GBRT random_state; also the bootstrap seed via the CI module.
+    forecaster : the model to grade — None keeps the platform's own GBRT
+        (the configuration the published prospective numbers used).
+        Anything batlab.harness.as_factory() accepts is graded under this
+        identical split, so the LCO-vs-prospective gap is measured for
+        your model, not just for the platform's.
 
     Returns
     -------
-    {
-      "train_fraction", "n_cells_evaluated", "n_cells_skipped",
-      "soh_r2", "soh_mae",
-      "rul_r2", "rul_mae",            # observed-EOL rows only (nan when none)
-      "rul_reliable",
-      "rul_label_coverage", "n_rul_observed_rows", "n_rul_extrapolated_rows",
-      "rul_extrapolated_r2",
-      "confidence_intervals",
-      "per_cell",                      # per-cell test-window metrics
-      "n_train_rows", "n_test_rows",
-      "train_fraction_note",
-    }
+        {
+          "train_fraction", "n_cells_evaluated", "n_cells_skipped",
+          "soh_r2", "soh_mae",
+          "rul_r2", "rul_mae",          # observed-EOL rows only (nan when none)
+          "rul_reliable",
+          "rul_label_coverage", "n_rul_observed_rows", "n_rul_extrapolated_rows",
+          "rul_extrapolated_r2",
+          "confidence_intervals",
+          "per_cell",                    # per-cell test-window metrics
+          "n_train_rows", "n_test_rows",
+          "train_fraction_note",
+        }
     """
     featured_in = _build_featured(cell_data, featured)
 
@@ -226,18 +235,24 @@ def run_prospective(
         return empty
     Xtr, Xte = X_train[common], X_test[common]
 
-    scaler = StandardScaler()
-    Xtr_sc = scaler.fit_transform(Xtr)
-    Xte_sc = scaler.transform(Xte)
+    # One fresh model per target, from the factory — a fold's fit can never
+    # carry the other target's state (see the harness's forecaster module).
+    factory = as_factory(forecaster, default=default_forecaster(seed))
+    if factory is None:  # pragma: no cover - default_forecaster() is never None
+        raise ValueError(
+            "run_prospective needs a forecaster or the platform default; "
+            "both were None."
+        )
 
-    params = {**GBRT_PARAMS, "random_state": seed}
-    soh_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_soh_train)
-    rul_m = GradientBoostingRegressor(**params).fit(Xtr_sc, y_rul_train)
+    soh_pred = np.asarray(
+        fit_forecaster(factory(), Xtr, y_soh_train).predict(Xte), dtype=float
+    )
+    rul_pred = np.asarray(
+        fit_forecaster(factory(), Xtr, y_rul_train).predict(Xte), dtype=float
+    )
 
     y_soh = np.asarray(y_soh_test, dtype=float)
     y_rul = np.asarray(y_rul_test, dtype=float)
-    soh_pred = np.asarray(soh_m.predict(Xte_sc), dtype=float)
-    rul_pred = np.asarray(rul_m.predict(Xte_sc), dtype=float)
 
     soh_r2 = _safe_r2(y_soh, soh_pred)
     soh_mae = float(mean_absolute_error(y_soh, soh_pred))
@@ -352,6 +367,16 @@ def trivial_soh_baseline_prospective(
         soh_tr = tr["soh_pct"].to_numpy(dtype=float)
         cy_te = te["cycle_number"].to_numpy(dtype=float).reshape(-1, 1)
         soh_te = te["soh_pct"].to_numpy(dtype=float)
+        # Drop rows whose SOH or cycle is non-finite (e.g. the loader's
+        # glitch guard NaNs impossible capacity readings) — the same rows
+        # the GBRT path drops before fitting. Without this, one cycler
+        # glitch in a 46-cell fleet kills the sklearn fit, the runner's
+        # silent except skips the whole dataset, and the baseline quietly
+        # disappears from the benchmark instead of being scored.
+        good_tr = np.isfinite(cy_tr).ravel() & np.isfinite(soh_tr)
+        good_te = np.isfinite(cy_te).ravel() & np.isfinite(soh_te)
+        cy_tr, soh_tr = cy_tr[good_tr], soh_tr[good_tr]
+        cy_te, soh_te = cy_te[good_te], soh_te[good_te]
         if len(cy_tr) < 3 or float(np.var(soh_te)) <= 0.0:
             continue
         lin = LinearRegression().fit(cy_tr, soh_tr)

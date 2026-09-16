@@ -26,6 +26,7 @@ NAV_GROUPS = [
         ("Overview",   "overview"),
         ("Explore",    "compare"),
         ("Benchmark",  "benchmark"),
+        ("Bring your own model", "model_validation"),
     ]),
     ("EU Passport", [
         ("Compliance", "compliance"),
@@ -210,6 +211,7 @@ def render_sidebar(
             "decision":   ["decision", "replace", "repurpose", "second life", "what should", "copilot", "ask", "cost", "budget", "risk"],
             "health":     ["health", "degrading", "mechanism", "lli", "lam", "fade", "resistance"],
             "compare":    ["compare", "cluster", "cohort", "side by side", "explore"],
+            "model_validation": ["bring your own", "byom", "my model", "validate a model", "harness", "gate", "withheld"],
             "configure":  ["import", "settings", "upload", "configure", "data source", "threshold"],
             "live_monitor": ["live", "mqtt", "streaming", "bms", "anomaly"],
         }

@@ -29,6 +29,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Validation harness: harness.md
   - Product direction:
       - Decision: product_direction.md
       - Overclaiming audit: overclaiming_audit.md

@@ -73,13 +73,72 @@ def load_bundle(bundle_dir: "str | Path") -> dict:
     return replication
 
 
+def _declares_default_model(model_record: "dict | None") -> bool:
+    """Does this bundle say it was published for the platform's own model?
+
+    A bundle with no `model` record predates model identity being recorded,
+    and every bundle that existed then was the default GBRT — so absent
+    means default, not unknown-and-therefore-unrecomputable.
+    """
+    if not model_record:
+        return True
+    identity = " ".join(
+        str(model_record.get(key) or "") for key in ("source", "factory", "class")
+    ).lower()
+    if not identity.strip():
+        return True
+    return "default" in identity and "gbrt" in identity
+
+
+def _metric_mismatches(bundle: dict, result: dict) -> list:
+    """Compare a freshly recomputed result's headline metrics to the bundle's.
+
+    Not-evaluable equivalence: run_lco reports None for a metric it declined
+    to score; a fresh fold run can produce float('nan') for the same
+    underlying fact (no observed-EOL rows). Both mean "not evaluable" —
+    treat them as matching rather than failing the seal.
+    """
+    mismatches: list = []
+    for metric in _HEADLINE_METRICS:
+        reported = (bundle.get("reported") or {}).get(metric)
+        fresh = result.get(metric)
+        reported_val: "float | None" = (
+            None
+            if reported is None or (isinstance(reported, float) and reported != reported)
+            else float(reported)  # pyright: ignore[reportArgumentType]
+        )
+        fresh_val: "float | None" = (
+            None
+            if fresh is None or (isinstance(fresh, float) and fresh != fresh)
+            else float(fresh)  # pyright: ignore[reportArgumentType]
+        )
+        if (reported_val is None) != (fresh_val is None):
+            mismatches.append(f"{metric}: reported {reported} vs recomputed {fresh}")
+            continue
+        if reported_val is not None and fresh_val is not None:
+            if abs(reported_val - fresh_val) > RECOMPUTE_TOLERANCE:
+                mismatches.append(
+                    f"{metric}: reported {reported_val:.6g} vs recomputed {fresh_val:.6g}")
+    return mismatches
+
+
 def verify_bundle(
     bundle: dict,
     bundle_dir: "str | Path | None" = None,
     cell_data: "dict | None" = None,
     recompute: bool = False,
+    forecaster: "object | None" = None,
 ) -> dict:
     """Run the four checks. Pure over its inputs (recompute runs run_lco).
+
+    `forecaster` is the model to recompute WITH. Leave it None for a bundle
+    published for the platform's own GBRT; supply the same model the bundle
+    was published for (anything batlab.harness.as_factory() accepts) to
+    recompute a bundle published for a different model — a bundle that
+    declares a non-default model and is re-run against the default one is
+    reported as a specific recompute failure rather than as an unexplained
+    number mismatch, because "different model, same bundle" is this file's
+    own Tier-4 trap (same name, different bytes) in model form.
 
     Returns {verdict, checks: [{name, status, detail}]} — status is
     pass / warn / fail; verdict is pass only with zero fails.
@@ -162,40 +221,32 @@ def verify_bundle(
             else:
                 cell_ids = bundle.get("cell_ids") or []
                 restricted = {cid: cell_data[cid] for cid in cell_ids if cid in cell_data}
-                result = run_lco(restricted, seed=int(bundle.get("seed", 42)))
-                mismatches = []
-                for metric in _HEADLINE_METRICS:
-                    reported = (bundle.get("reported") or {}).get(metric)
-                    fresh = result.get(metric)
-                    # Not-evaluable equivalence: run_lco reports None for a
-                    # metric it declined to score; a fresh fold run can
-                    # produce float('nan') for the same underlying fact
-                    # (no observed-EOL rows). Both mean "not evaluable" —
-                    # treat them as matching rather than failing the seal.
-                    reported_val: "float | None" = (
-                        None
-                        if reported is None or (isinstance(reported, float) and reported != reported)
-                        else float(reported)  # pyright: ignore[reportArgumentType]
-                    )
-                    fresh_val: "float | None" = (
-                        None
-                        if fresh is None or (isinstance(fresh, float) and fresh != fresh)
-                        else float(fresh)  # pyright: ignore[reportArgumentType]
-                    )
-                    if (reported_val is None) != (fresh_val is None):
-                        mismatches.append(f"{metric}: reported {reported} vs recomputed {fresh}")
-                        continue
-                    if reported_val is not None and fresh_val is not None:
-                        if abs(reported_val - fresh_val) > RECOMPUTE_TOLERANCE:
-                            mismatches.append(
-                                f"{metric}: reported {reported_val:.6g} vs recomputed {fresh_val:.6g}")
-                if mismatches:
-                    checks.append({"name": "recompute", "status": "fail",
-                                   "detail": "; ".join(mismatches)})
+                if not _declares_default_model(bundle.get("model")) and forecaster is None:
+                    # Same trap this file exists to catch, one layer up: a
+                    # bundle published for model A and re-run against model B
+                    # yields a number mismatch that says nothing about either
+                    # model. Name the real cause instead.
+                    checks.append({
+                        "name": "recompute",
+                        "status": "fail",
+                        "detail": (
+                            "this bundle was published for a non-default model "
+                            f"({(bundle.get('model') or {}).get('class', 'unrecorded')}) — "
+                            "pass the same model (--model / forecaster=) to recompute it"
+                        ),
+                    })
                 else:
-                    checks.append({"name": "recompute", "status": "pass",
-                                   "detail": "headline metrics reproduce within "
-                                             f"{RECOMPUTE_TOLERANCE:g}"})
+                    result = run_lco(
+                        restricted, seed=int(bundle.get("seed", 42)), forecaster=forecaster
+                    )
+                    mismatches = _metric_mismatches(bundle, result)
+                    if mismatches:
+                        checks.append({"name": "recompute", "status": "fail",
+                                       "detail": "; ".join(mismatches)})
+                    else:
+                        checks.append({"name": "recompute", "status": "pass",
+                                       "detail": "headline metrics reproduce within "
+                                                 f"{RECOMPUTE_TOLERANCE:g}"})
     else:
         checks.append({"name": "recompute", "status": "warn",
                        "detail": "not requested (pass --recompute to re-run the evaluation)"})
@@ -212,6 +263,24 @@ def format_verification(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _recorded_loader_kwargs(bundle: dict) -> dict:
+    """The kwargs a bundle recorded for its loader.
+
+    Both writers that seal a bundle (harness.seal_bundle and
+    scripts/publish_replication_bundle.py) nest them under bundle["loader"].
+    The verifier used to read only a top-level "loader_kwargs" key, which
+    nothing writes: a loader whose signature REQUIRES an argument (e.g.
+    experiment_registry:reload_reference_cell_data(dataset)) was then called
+    with none and raised TypeError, reporting a correct bundle as
+    unverifiable. The top-level spelling is still honoured for bundles written
+    by hand.
+    """
+    recorded = (bundle.get("loader") or {}).get("kwargs")
+    if recorded is None:
+        recorded = bundle.get("loader_kwargs")
+    return dict(recorded or {})
+
+
 def _load_cell_data(loader_spec: str, loader_kwargs: "dict | None") -> dict:
     """Import 'module:function' and call it — the third party's data path."""
     module_name, _, func_name = loader_spec.partition(":")
@@ -219,6 +288,23 @@ def _load_cell_data(loader_spec: str, loader_kwargs: "dict | None") -> dict:
         raise ValueError("--loader must be 'module.path:function' (e.g. batlab.datasets.nasa:load_nasa_cells)")
     loader = getattr(importlib.import_module(module_name), func_name)
     return loader(**(loader_kwargs or {}))
+
+
+def _load_model(model_spec: str):
+    """Import 'module:function' and return whatever it gives back.
+
+    The callable may be a factory (zero-argument, returning a fresh model), an
+    unfitted estimator, or a batlab.harness adapter — every shape
+    as_factory() accepts. It is NOT called here: run_lco calls a factory per
+    fold, and calling it once for a probe would be harmless but misleading.
+    """
+    module_name, _, func_name = model_spec.partition(":")
+    if not module_name or not func_name:
+        raise ValueError(
+            "--model must be 'module.path:function' — a factory returning a "
+            "fresh model (e.g. my_pkg.models:make_forecaster)"
+        )
+    return getattr(importlib.import_module(module_name), func_name)
 
 
 def main() -> int:
@@ -234,14 +320,20 @@ def main() -> int:
                              "(e.g. batlab.datasets.nasa:load_nasa_cells)")
     parser.add_argument("--recompute", action="store_true",
                         help="re-run the LCO evaluation and compare headline metrics")
+    parser.add_argument("--model", default=None,
+                        help="'module:function' yielding the model this bundle was "
+                             "published for (a factory returning a fresh model, or an "
+                             "unfitted estimator). Omit for bundles published with "
+                             "batlab's own default GBRT.")
     args = parser.parse_args()
 
     bundle = load_bundle(args.bundle_dir)
     cell_data = None
     if args.loader:
-        cell_data = _load_cell_data(args.loader, bundle.get("loader_kwargs"))
+        cell_data = _load_cell_data(args.loader, _recorded_loader_kwargs(bundle))
+    forecaster = _load_model(args.model) if args.model else None
     result = verify_bundle(bundle, bundle_dir=args.bundle_dir, cell_data=cell_data,
-                           recompute=args.recompute)
+                           recompute=args.recompute, forecaster=forecaster)
     print(format_verification(result))
     return 0 if result["verdict"] == "pass" else 1
 
