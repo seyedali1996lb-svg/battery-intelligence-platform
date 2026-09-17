@@ -385,11 +385,6 @@ def page_import():
         st.markdown(section_header_html(title), unsafe_allow_html=True)
 
     st.markdown("# Import Your Battery Data")
-                # The raw-cycle store's key for this upload, or None with the
-                # reason — read by _show_upload_summary() below and by the
-                # Bring-your-own-model page's fleet picker.
-                "raw_cycles_key":           None if _raw_cycles_error else _upload_key,
-                "raw_cycles_error":         _raw_cycles_error,
     st.warning("Uploaded data is processed in a shared session environment — do not upload proprietary or personal data in this demonstration.")
     st.markdown("#### Upload cycle data from your own cells to run the full analysis pipeline on your batteries")
 
@@ -420,26 +415,6 @@ def page_import():
     if st.session_state.get("import_guide_open", False):
         guide_path = os.path.join(
             os.path.dirname(__file__), "..", "..", "docs", "import_format_guide.md"
-    # Only spoken about when the running code actually recorded it: a session
-    # that predates the raw-cycle store has neither key, and inventing a
-    # warning for it would be a claim about work that was never attempted.
-    _raw_note_html = ""
-    if "raw_cycles_key" in meta:
-        if meta.get("raw_cycles_key"):
-            _raw_note_html = (
-                f'<div style="font-size:12px;color:#8896a8;margin-top:10px">'
-                f'Raw cycles persisted as <code>{meta["raw_cycles_key"]}</code> — this fleet can be '
-                f'graded on the <strong>Bring your own model</strong> page, and sealed there into a '
-                f'bundle a third party can re-derive.</div>'
-            )
-        else:
-            _raw_note_html = (
-                f'<div style="font-size:12px;color:#f6ad55;margin-top:10px">'
-                f'⚠ Raw cycles were NOT persisted ({meta.get("raw_cycles_error")}), so this upload '
-                f'cannot be graded on the Bring your own model page and cannot be sealed into a '
-                f'verifiable bundle. Training and every result above are unaffected.</div>'
-            )
-
         )
         try:
             with open(guide_path, "r", encoding="utf-8") as f:
@@ -463,7 +438,6 @@ def page_import():
             "manual upload isn't needed."
         )
         st.link_button("Download Severson Dataset (data.matr.io)", "https://data.matr.io/1/")
-        f"{_raw_note_html}"
         st.markdown("**CALCE Battery Research Group**")
         st.markdown(
             "Download CSV or XLSX files from the CALCE battery data portal. "
