@@ -69,6 +69,7 @@ matching every other batlab loader's convention.
 from __future__ import annotations
 
 import pathlib
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -142,7 +143,12 @@ def _cycle_summary_from_raw(df: pd.DataFrame) -> pd.DataFrame:
     # own max-Amphr-swing extraction rule, for the same underlying reason.
     grouped = df.groupby("Cycle_Index")
     dc = grouped["Discharge_Capacity(Ah)"]
-    capacity_ah = dc.max() - dc.min()
+    # The operand casts are for the type checker, not the runtime: the groupby
+    # is over one Series, so max()/min() are Series and the subtraction is
+    # elementwise by index (one row per cycle, indexed by Cycle_Index) — but
+    # pandas' stubs type a SeriesGroupBy reduction as a scalar/Series/DataFrame
+    # union, on which `-` is undefined.
+    capacity_ah = cast(pd.Series, dc.max()) - cast(pd.Series, dc.min())
 
     out = pd.DataFrame({
         "cycle_number": capacity_ah.index,
@@ -151,7 +157,7 @@ def _cycle_summary_from_raw(df: pd.DataFrame) -> pd.DataFrame:
 
     if "Charge_Capacity(Ah)" in df.columns:
         cc = grouped["Charge_Capacity(Ah)"]
-        charge_ah = (cc.max() - cc.min()).to_numpy()
+        charge_ah = (cast(pd.Series, cc.max()) - cast(pd.Series, cc.min())).to_numpy()
         with np.errstate(divide="ignore", invalid="ignore"):
             ce = capacity_ah.to_numpy() / np.where(charge_ah == 0, np.nan, charge_ah)
         out["coulombic_efficiency"] = ce

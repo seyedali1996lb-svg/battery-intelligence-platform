@@ -15,7 +15,7 @@ for major battery testing equipment:
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, cast
 import numpy as np
 import pandas as pd
 
@@ -195,9 +195,13 @@ def ingest_cycler_data(
         
         cycle_rows = []
         for cyc_num, group in df.groupby(cyc_col):
-            if cyc_num <= 0:
+            # The group key is this column's own value, and the format detector
+            # has already established cycle_number is numeric. pandas types a
+            # group key as Hashable, which neither `<=` nor int() accepts.
+            cycle_number = int(cast("int | float", cyc_num))
+            if cycle_number <= 0:
                 continue
-            row = {"cycle_number": int(cyc_num)}
+            row: dict[str, Any] = {"cycle_number": cycle_number}
             
             # Discharge capacity
             if q_col and q_col in group.columns:

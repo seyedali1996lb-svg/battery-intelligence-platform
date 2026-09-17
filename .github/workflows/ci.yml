@@ -49,9 +49,15 @@ jobs:
           "
 
       - name: Type check with pyright
+        # Bare `pyright`: the checked paths and the Python version live in
+        # pyproject.toml's [tool.pyright], the single source of truth. A path
+        # list inline here is how `batlab/` (the installable library, the
+        # batlab.harness package the app plugs into) came to be type-checked by
+        # nobody for its whole life. Pinned to match the `dev` extra — the
+        # config below is tuned against this pyright's numpy/pandas diagnostics.
         run: |
-          pip install pyright
-          pyright --pythonversion 3.10 src/ app/ scripts/
+          pip install pyright==1.1.414
+          pyright
 
       - name: Run test suite
         run: python -m pytest tests/ -v

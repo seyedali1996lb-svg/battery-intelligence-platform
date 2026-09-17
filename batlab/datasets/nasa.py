@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import requests
 import scipy.io
+from typing import Any, cast
 
 from batlab.datasets._integrity import verify_sha256
 from batlab.datasets.schema import compute_soh_pct
@@ -258,7 +259,12 @@ def parse_mat_file(mat_path: str, cell_id: str) -> pd.DataFrame:
         raise ValueError(f"No discharge cycles found in {mat_path}")
 
     discharge_df  = pd.DataFrame(discharge_records)
-    impedance_df  = pd.DataFrame(impedance_records) if impedance_records else None
+    # Annotated so both branches below keep the checker's view honest: without
+    # it, pandas' stubs widen a reassigned name to a scalar/Series/DataFrame
+    # union after groupby().mean(), and every later use inherits the union.
+    impedance_df: pd.DataFrame | None = (
+        pd.DataFrame(impedance_records) if impedance_records else None
+    )
 
     # Align resistance measurements to discharge cycles.
     # Impedance tests are run every ~5 discharge cycles; forward-fill to cover all.
@@ -271,12 +277,14 @@ def parse_mat_file(mat_path: str, cell_id: str) -> pd.DataFrame:
         # EIS is taken roughly every n_dis/n_imp discharge cycles
         spacing = max(1, n_dis // n_imp)
         imp_cycles = np.clip(
-            (impedance_df["impedance_idx"].values - 1) * spacing + 1,
+            (np.asarray(impedance_df["impedance_idx"], dtype=float) - 1) * spacing + 1,
             1, n_dis
         ).astype(int)
         impedance_df["cycle_number"] = imp_cycles
         impedance_df = impedance_df.drop(columns=["impedance_idx"])
-        impedance_df = impedance_df.groupby("cycle_number", as_index=False).mean()
+        impedance_df = cast(
+            pd.DataFrame, impedance_df.groupby("cycle_number", as_index=False).mean()
+        )
 
         discharge_df = discharge_df.merge(impedance_df, on="cycle_number", how="left")
         discharge_df["resistance_ohm"] = discharge_df["resistance_ohm"].ffill().bfill()
@@ -286,8 +294,17 @@ def parse_mat_file(mat_path: str, cell_id: str) -> pd.DataFrame:
         discharge_df["resistance_ohm"] = 0.150 + 0.0002 * discharge_df["cycle_number"]
 
     discharge_df = discharge_df.drop(columns=["discharge_idx"])
-    discharge_df = discharge_df[["cycle_number", "capacity_ah", "resistance_ohm", "temperature_c"]]
-    discharge_df = discharge_df.round({"capacity_ah": 5, "resistance_ohm": 5, "temperature_c": 2})
+    # A list of column names selects a DataFrame; the stubs widen it to
+    # Series|Unknown, so the cast states what the round() below relies on.
+    discharge_df = cast(
+        pd.DataFrame,
+        discharge_df[["cycle_number", "capacity_ah", "resistance_ohm", "temperature_c"]],
+    )
+    # A per-column dict is what pandas documents here; its stub declares
+    # `decimals: int` only, hence the cast (runtime behaviour unchanged).
+    discharge_df = discharge_df.round(
+        cast(Any, {"capacity_ah": 5, "resistance_ohm": 5, "temperature_c": 2})
+    )
 
     # ── Protocol-known C-rate ────────────────────────────────────────────
     # B0005–B0018: discharged at 2A CC to cutoff voltage. Nominal capacity is

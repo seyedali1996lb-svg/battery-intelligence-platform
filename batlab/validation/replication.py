@@ -60,6 +60,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 REPLICATION_SCHEMA = "batlab-replication-bundle"
 REPLICATION_SCHEMA_VERSION = 1
@@ -324,7 +325,7 @@ def _recorded_loader_kwargs(bundle: dict) -> dict:
     return dict(recorded or {})
 
 
-def _declared_parameters(func: object) -> dict:
+def _declared_parameters(func: Callable[..., Any]) -> dict:
     """The parameters a callable declares, or {} when it cannot be introspected."""
     try:
         return dict(inspect.signature(func).parameters)
@@ -333,7 +334,7 @@ def _declared_parameters(func: object) -> dict:
 
 
 def _supplied_arguments(
-    func: object,
+    func: Callable[..., Any],
     recorded: "dict | None",
     bundle_dir: "str | Path | None",
 ) -> dict:

@@ -37,7 +37,11 @@ oxford = ["mat-io"]
 calce = ["openpyxl"]
 notebooks = ["jupyter", "matplotlib", "papermill", "nbconvert", "ipykernel"]
 docs = ["mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
-dev = ["pytest", "pyright", "batlab[severson,oxford,calce,notebooks,docs]"]
+# pyright is pinned: its diagnostics move between releases (the numpy/pandas
+# stub interactions this config is tuned against are version-specific), so an
+# unpinned checker turns someone else's release into a red CI run. Bump this
+# and the `pip install` in .github/workflows/ci.yml together, deliberately.
+dev = ["pytest", "pyright==1.1.414", "batlab[severson,oxford,calce,notebooks,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
@@ -50,7 +54,11 @@ include = ["batlab*"]
 
 [tool.pyright]
 pythonVersion = "3.10"
-include = ["batlab", "src", "app"]
+# THE list of type-checked paths, and the only one: CI runs bare `pyright` so
+# this cannot drift from what actually gets checked. It did drift — an inline
+# path list in the workflow omitted `batlab` entirely, so the installable
+# library, including everything under batlab/harness, was never type-checked.
+include = ["batlab", "src", "app", "scripts"]
 exclude = ["**/node_modules", "**/__pycache__"]
 typeCheckingMode = "standard"
 # --- Suppressed categories (false positives at scale) ---

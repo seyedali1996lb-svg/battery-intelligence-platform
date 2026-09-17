@@ -71,7 +71,7 @@ import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import numpy as np
 
@@ -303,8 +303,9 @@ def validate_forecaster(
     # The out-of-fold predictions were an INPUT to the calibration section,
     # not part of the report: they are fold-sized arrays that would bloat a
     # sealed bundle and every JSON round trip. Dropped now that they are used.
-    if isinstance(report.get("lco"), dict):
-        for fold in (report["lco"].get("per_cell") or {}).values():
+    lco_section = report.get("lco")
+    if isinstance(lco_section, dict):
+        for fold in (lco_section.get("per_cell") or {}).values():
             if isinstance(fold, dict):
                 fold.pop("predictions", None)
     report["calibration"] = calibration
@@ -1137,7 +1138,14 @@ def _compare(metric: "float | None", baseline: "float | None", tolerance: float 
     return "beats" if delta > 0 else "LOSES to"
 
 
-def _is_pair(value: Any) -> bool:
+def _is_pair(value: Any) -> TypeGuard[tuple[float, float]]:
+    """True when `value` is a two-number sequence — an interval's bounds.
+
+    Declared as a TypeGuard so callers can index the value they just checked;
+    that is what tells the checker `ci[0]` is safe rather than `ci` possibly
+    being None (the confidence-interval field of a report is absent on a fleet
+    whose interval could not be computed).
+    """
     return isinstance(value, (list, tuple)) and len(value) == 2 and all(
         isinstance(v, (int, float)) for v in value
     )

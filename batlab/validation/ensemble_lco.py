@@ -92,7 +92,7 @@ def ensemble_hyperparams(lambda_physics: float = 0.25) -> dict:
     }
 
 
-def _blend_r2(w: float, soh_true: np.ndarray, preds_a: list, preds_b: list) -> float:
+def _blend_r2(w: float, soh_true: list[np.ndarray], preds_a: list, preds_b: list) -> float:
     """Mean R² of the w-blend across inner folds. NaN-safe: folds with
     degenerate targets are skipped by _safe_r2 returning None."""
     r2s = []
@@ -242,7 +242,7 @@ def run_ensemble_lco(
         rng_inner = np.random.default_rng(seed + 1)
         inner_preds_a: list = []
         inner_preds_b: list = []
-        inner_true: list = []
+        inner_true: list[np.ndarray] = []
         for ic in inner_cells:
             itrain = [c for c in train_cells if c != ic]
             if len(itrain) < 1:

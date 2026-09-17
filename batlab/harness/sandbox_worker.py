@@ -176,12 +176,24 @@ def _writes(mode: Any, flags: Any) -> bool:
     return bool(isinstance(flags, int) and flags & _WRITE_FLAGS)
 
 
-def _path_args(event: str, args: tuple) -> tuple:
+def _path_args(event: str, args: tuple[Any, ...]) -> tuple[Any, ...]:
+    """The path arguments an audited event carries — at most two.
+
+    Slices rather than indexes on purpose: for a variadic tuple, a
+    `len(args) > 1` test narrows the false branch to the empty tuple, so an
+    `args[0]` there reads as provably out of range to the checker even though
+    it cannot be. An event with no argument at all is refused (fail closed)
+    rather than silently treated as having nothing to police.
+    """
+    if not args:
+        raise SandboxPolicyError(
+            f"the sandbox cannot police {event}: the audited event carried no path."
+        )
     if event == "open":
-        return (args[0],)
+        return args[:1]
     if event in ("os.rename", "os.link", "os.symlink"):
-        return (args[0], args[1]) if len(args) > 1 else (args[0],)
-    return (args[0],) if args else ()
+        return args[:2]
+    return args[:1]
 
 
 # Imported before the policy exists, so the model inherits a loaded stack

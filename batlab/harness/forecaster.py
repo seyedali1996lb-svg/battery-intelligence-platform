@@ -54,7 +54,7 @@ not trusted.
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -90,6 +90,7 @@ class Forecaster(Protocol):
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
         """Predict a point estimate per row of X."""
+        ...
 
 
 @runtime_checkable
@@ -102,6 +103,7 @@ class IntervalForecaster(Protocol):
 
     def predict_interval(self, X: pd.DataFrame) -> "tuple[np.ndarray, np.ndarray]":
         """Return (lower, upper) — nominally the Q10/Q90 pair."""
+        ...
 
 
 # A factory returns a FRESH, UNFITTED forecaster every time it is called.
@@ -120,12 +122,21 @@ def has_predict_interval(model: Any) -> bool:
     return callable(getattr(model, "predict_interval", None))
 
 
-def fit_forecaster(model: Any, X: pd.DataFrame, y: pd.Series) -> Any:
+def fit_forecaster(
+    model: Any,
+    X: pd.DataFrame,
+    y: "pd.Series | pd.DataFrame",
+) -> Any:
     """Fit `model`, returning the fitted object.
 
     sklearn estimators return self from fit(); other implementations return
     None. Both are honoured, so a user's model is never silently unfitted
     because its fit() followed the mutating convention.
+
+    `y` is a Series for a caller that has one target per row and a DataFrame
+    for a caller that pooled per-cell labels with `pd.concat` (which
+    `run_lco` and its calibration pass do). Both are handed to the model's own
+    fit() unchanged — this helper forwards, it does not reshape.
     """
     out = model.fit(X, y)
     return model if out is None else out
@@ -544,7 +555,11 @@ def as_factory(model: ForecasterLike, *, default: "ForecasterFactory | None" = N
         return lambda: copy.deepcopy(model)
 
     if callable(model):
-        return model
+        # A zero-argument callable IS the factory contract; the return type is
+        # the caller's promise about what it returns, which the harness
+        # re-checks on the first call (a factory returning a fitted model or a
+        # non-model raises there rather than producing a number).
+        return cast(ForecasterFactory, model)
 
     raise TypeError(
         "model must be None (platform default), an estimator exposing "

@@ -51,11 +51,13 @@ def _axis_presence(df: pd.DataFrame, col: str) -> "tuple[bool, float]":
     """(present, fraction of rows with a usable non-sentinel value)."""
     if col not in df.columns:
         return False, 0.0
-    vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float)
+    # "float64" rather than float: pandas' stub narrows `dtype` to
+    # `np.dtype[Any] | str | None`, which `type[float]` does not satisfy.
+    vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype="float64")
     # 0.0 is a sentinel for temperature (no cycle runs at absolute zero)
     # and for C-rate (no cycle runs at zero current in these protocols).
     usable = np.isfinite(vals) & (vals != 0.0)
-    return bool(usable.any()), float(usable.mean()) if len(vals) else 0.0
+    return bool(usable.any()), float(usable.mean()) if usable.size else 0.0
 
 
 def _axis_verdict(dfs: list, col: str) -> dict:
@@ -68,14 +70,14 @@ def _axis_verdict(dfs: list, col: str) -> dict:
         present_flags.append(present)
         usable_fracs.append(frac)
         if present:
-            vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float)
+            vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype="float64")
             vals = vals[np.isfinite(vals) & (vals != 0.0)]
             if len(vals):
                 per_cell_means.append(float(np.mean(vals)))
                 per_cell_stds.append(float(np.std(vals)))
             # Sentinel contamination: raw column contains exact zeros the
             # usable-filter had to exclude.
-            raw = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype=float)
+            raw = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype="float64")
             if np.isfinite(raw).any() and float(((raw == 0.0).sum())) > 0:
                 sentinel_cells += 1
 

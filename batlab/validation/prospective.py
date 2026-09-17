@@ -53,6 +53,8 @@ trend?", which is exactly the null hypothesis this evaluation exists to beat.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error
@@ -233,7 +235,10 @@ def run_prospective(
     common = [c for c in FEATURE_COLUMNS if c in X_train.columns and c in X_test.columns]
     if not common:
         return empty
-    Xtr, Xte = X_train[common], X_test[common]
+    # Selecting with a list of names is a DataFrame selection; the stubs widen
+    # it to Series|Unknown, so the cast states what the next line relies on.
+    Xtr = cast(pd.DataFrame, X_train[common])
+    Xte = cast(pd.DataFrame, X_test[common])
 
     # One fresh model per target, from the factory — a fold's fit can never
     # carry the other target's state (see the harness's forecaster module).

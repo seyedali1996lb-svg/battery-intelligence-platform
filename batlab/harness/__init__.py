@@ -36,7 +36,52 @@ forecaster protocol from this package: importing it eagerly here would make
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Type checkers cannot follow __getattr__ (see the docstring above), so the
+    # public names are declared for them here. This block is never executed:
+    # at runtime every one of these still resolves lazily, which is the whole
+    # point — and it means `from batlab.harness import validate_forecaster` is
+    # typed as the function it is, not as Any.
+    from batlab.harness.forecaster import (
+        CallableForecaster,
+        Forecaster,
+        ForecasterFactory,
+        ForecasterLike,
+        IntervalForecaster,
+        SklearnForecaster,
+        SklearnIntervalForecaster,
+        as_factory,
+        default_forecaster,
+        default_interval_forecaster,
+        fit_forecaster,
+        forecaster_identity,
+        has_predict_interval,
+        torch_forecaster,
+    )
+    from batlab.harness.harness import (
+        DEFAULT_SPLITS,
+        HARNESS_SCHEMA,
+        HARNESS_SCHEMA_VERSION,
+        format_report,
+        seal_bundle,
+        validate_forecaster,
+    )
+    from batlab.harness.model_source import (
+        BUNDLE_MODEL_LOADER,
+        ModuleSourceError,
+        import_module_source,
+        load_bundle_model,
+        write_bundle_model,
+    )
+    from batlab.harness.sandbox import (
+        SandboxError,
+        SandboxLimits,
+        SandboxedModelFactory,
+        describe_enforcement,
+        sandbox_forecaster,
+    )
 
 __all__ = [
     "BUNDLE_MODEL_LOADER",

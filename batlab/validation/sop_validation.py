@@ -92,8 +92,11 @@ def sop_proxy_validation(cell_data: dict) -> dict:
     for cell_id, df in (cell_data or {}).items():
         if df is None or "sop_pct" not in df.columns or "resistance_ohm" not in df.columns:
             continue
-        r = pd.to_numeric(df["resistance_ohm"], errors="coerce").to_numpy(dtype=float)
-        sop = pd.to_numeric(df["sop_pct"], errors="coerce").to_numpy(dtype=float)
+        # np.ravel states what to_numpy() does not: these are one value per
+        # cycle (1-D), which is the shape numpy's boolean-mask __getitem__
+        # overload needs to resolve.
+        r = np.ravel(pd.to_numeric(df["resistance_ohm"], errors="coerce").to_numpy(dtype="float64"))
+        sop = np.ravel(pd.to_numeric(df["sop_pct"], errors="coerce").to_numpy(dtype="float64"))
         r_pos = r[np.isfinite(r) & (r > 0)]
         if len(r_pos) == 0:
             continue

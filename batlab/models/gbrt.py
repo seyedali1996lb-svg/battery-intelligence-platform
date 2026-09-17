@@ -17,6 +17,7 @@ Explainability:
 """
 
 import copy
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -35,7 +36,10 @@ from batlab._parallel import map_folds
 # for a ~1000-cycle dataset. n_estimators=200 is enough trees to converge;
 # max_depth=4 prevents overfitting on small data; learning_rate=0.05 is
 # conservative (slower but more stable than the default 0.1).
-GBRT_PARAMS = dict(
+# Typed as dict[str, Any] because these are passed straight to sklearn as
+# **kwargs and hold mixed types (int, float); the inferred dict[str, float]
+# is both wrong and unassignable to GradientBoostingRegressor's parameters.
+GBRT_PARAMS: dict[str, Any] = dict(
     n_estimators=200,
     max_depth=4,
     learning_rate=0.05,
@@ -45,7 +49,7 @@ GBRT_PARAMS = dict(
 
 # Fewer trees for quantile models — they're trained twice (Q10 + Q90) and
 # quantile loss converges faster than squared loss.
-GBRT_QUANTILE_PARAMS = dict(
+GBRT_QUANTILE_PARAMS: dict[str, Any] = dict(
     n_estimators=150,
     max_depth=4,
     learning_rate=0.05,
@@ -147,7 +151,8 @@ def train_models(
     rul_q90_test = rul_q90_model.predict(X_test_scaled)
     # Coverage: fraction of true values inside the interval
     interval_coverage = float(np.mean(
-        (y_rul_test.values >= rul_q10_test) & (y_rul_test.values <= rul_q90_test)
+        (np.asarray(y_rul_test, dtype=float) >= rul_q10_test)
+        & (np.asarray(y_rul_test, dtype=float) <= rul_q90_test)
     ))
 
     feature_names = list(X.columns)

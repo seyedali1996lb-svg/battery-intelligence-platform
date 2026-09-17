@@ -57,6 +57,7 @@ know about — the full reasoning is in the sandbox module's docstring.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import _paths  # noqa: F401
 import streamlit as st
@@ -146,9 +147,11 @@ def _seed_now() -> int:
         return 42
 
 
-def _render_config_panel(fleets: list[dict], org_id: int) -> dict:
+def _render_config_panel(fleets: "list[dict[str, Any]]", org_id: int) -> dict:
     """Draw the setup widgets and return the chosen configuration."""
-    usable = [f for f in fleets if f["available"]]
+    # Typed dicts, not bare dict: with unknown value types the checker resolves
+    # the selectbox options to Sequence[Never] and reads the return as None.
+    usable: "list[dict[str, Any]]" = [f for f in fleets if f["available"]]
     unavailable = [f for f in fleets if not f["available"]]
     fab: dict = {}
 
@@ -164,9 +167,14 @@ def _render_config_panel(fleets: list[dict], org_id: int) -> dict:
                 "you have run an upload through the Import page.",
             )
             return {}
+        # The keys are strings by construction (a reference dataset's name, an
+        # upload's content hash). Stating that to the checker matters: with
+        # unknown key types it resolves the options to Sequence[Never] and
+        # types this widget's return as None, which poisons every use of it.
+        fleet_keys = [str(f["key"]) for f in usable]
         fleet_key = st.selectbox(
             "Fleet",
-            options=[f["key"] for f in usable],
+            options=fleet_keys,
             format_func=lambda k: next(
                 f["label"] + (f" — {f['n_cells']} cells" if f["n_cells"] else "")
                 for f in usable if f["key"] == k
@@ -987,8 +995,9 @@ def page_model_validation() -> None:
         # that changes.
         "embed_data": bool(cfg.get("embed_data")),
         "include_model_source": bool(cfg.get("include_model_source")),
-        "upload_name": (st.session_state.get("byom_upload").name
-                        if st.session_state.get("byom_upload") is not None else None),
+        # getattr, not .name: session_state.get() is typed as Any|None, and a
+        # repeated call in a guard does not narrow the expression it guards.
+        "upload_name": getattr(st.session_state.get("byom_upload"), "name", None),
     }
 
     st.markdown("##### 4 · Run")
