@@ -144,7 +144,10 @@ def _prior_from_fleet(fleet_stats: list) -> "tuple[float, float]":
     return mu, max(tau2, TAU2_FLOOR)
 
 
-def _shrunk_log_rate(local: "tuple[float, float, float]", prior: "tuple[float, float]") -> float:
+def _shrunk_log_rate(
+    local: "tuple[float, float, float, float]",
+    prior: "tuple[float, float]",
+) -> float:
     """Precision-weighted shrinkage of the cell's local log fade rate
     toward the fleet prior."""
     th_loc, v_loc = local[0], local[1]
@@ -228,6 +231,9 @@ def run_hierarchical_lco(
 
     soh_maes, soh_r2s = [], []
     per_cell, per_theta = {}, {}
+    # Set inside the loop below; without this a fleet whose cells list is empty
+    # reaches the return dict with the name unbound (NameError, not "none").
+    prior_scope = "none"
     n_obs_rows = 0
     n_ext_rows = 0
     obs_r2s, obs_maes = [], []

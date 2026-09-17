@@ -20,6 +20,7 @@ Cell selection spans 4 cycle-life bands:
 
 from __future__ import annotations
 import pathlib
+from typing import cast
 import numpy as np
 import pandas as pd
 import requests
@@ -106,12 +107,15 @@ def _download_and_cache(status_fn=None) -> None:
         status_fn("Parsing Severson cell summaries…")
 
     with h5py.File(mat_path, "r") as f:
-        batch   = f["batch"]
-        summ_ds = batch["summary"]   # (N_cells, 1) array of HDF5 object refs
+        # h5py types a group/dataset lookup as Group | Dataset | Datatype, on
+        # which indexing and `in` are not defined; these are the declared
+        # shapes (a group, its object-ref dataset, each cell's group).
+        batch   = cast(h5py.Group, f["batch"])
+        summ_ds = cast(h5py.Dataset, batch["summary"])  # (N_cells, 1) object refs
 
         for key, idx in _CELL_INDICES.items():
             try:
-                summ = f[summ_ds[idx, 0]]   # per-cell summary Group
+                summ = cast(h5py.Group, f[summ_ds[idx, 0]])   # per-cell summary Group
 
                 qd = np.array(summ["QDischarge"]).flatten().astype(float)
                 # Remove cycle-0 pre-charge row if present
@@ -164,7 +168,7 @@ def _load_cached(key: str) -> pd.DataFrame | None:
     # in place it poisons temp_rolling_30cy and (as the Tier-5 envelope
     # showed) reads as a 0 °C fleet minimum. NaN lets min_periods skip it.
     if "temperature_c" in df.columns:
-        t = pd.to_numeric(df["temperature_c"], errors="coerce")
+        t = cast(pd.Series, pd.to_numeric(df["temperature_c"], errors="coerce"))
         df["temperature_c"] = t.mask(t <= 0.0)
     cell_id = f"S-{key}"
     df.attrs["cell_id"] = cell_id

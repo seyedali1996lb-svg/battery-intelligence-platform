@@ -18,6 +18,14 @@ import sys
 import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 import streamlit as st
 import pandas as pd
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Each figure helper imports plotly inside its own body (it is not needed
+    # until a figure is drawn), so the return annotations need a type-only
+    # import to resolve. Annotating them `object` made every st.plotly_chart()
+    # call a type error in a file the type checker had never looked at.
+    from plotly.graph_objects import Figure
 
 from utils import _action_bar, _md_html, render_card, metric_tile_html
 from chemistry_profiles import ChemistryProfile
@@ -252,7 +260,7 @@ def page_operations(cell_ids: list, active_fdfs: dict) -> None:
 # Figures
 # ---------------------------------------------------------------------------
 
-def _schedule_figure(sched: pd.DataFrame, band: dict) -> object:
+def _schedule_figure(sched: pd.DataFrame, band: dict) -> "Figure":
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -273,7 +281,7 @@ def _schedule_figure(sched: pd.DataFrame, band: dict) -> object:
     return fig
 
 
-def _charge_figure(plan_df: pd.DataFrame, unmanaged_cost: float) -> object:
+def _charge_figure(plan_df: pd.DataFrame, unmanaged_cost: float) -> "Figure":
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -288,7 +296,7 @@ def _charge_figure(plan_df: pd.DataFrame, unmanaged_cost: float) -> object:
     return fig
 
 
-def _anomaly_figure(per_cycle: pd.DataFrame, flagged: list) -> object:
+def _anomaly_figure(per_cycle: pd.DataFrame, flagged: list) -> "Figure":
     import plotly.graph_objects as go
 
     fig = go.Figure()

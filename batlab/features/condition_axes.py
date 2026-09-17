@@ -70,7 +70,11 @@ def _axis_verdict(dfs: list, col: str) -> dict:
         present_flags.append(present)
         usable_fracs.append(frac)
         if present:
-            vals = pd.to_numeric(df[col], errors="coerce").to_numpy(dtype="float64")
+            # np.ravel states the 1-D shape that to_numpy() leaves open, which
+            # is what numpy's boolean-mask __getitem__ overload needs.
+            vals = np.ravel(
+                pd.to_numeric(df[col], errors="coerce").to_numpy(dtype="float64")
+            )
             vals = vals[np.isfinite(vals) & (vals != 0.0)]
             if len(vals):
                 per_cell_means.append(float(np.mean(vals)))
