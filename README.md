@@ -195,6 +195,7 @@ The `src/` layer provides:
 - **Shared API contracts** (`src/contracts.py`) — `TypedDict` definitions for every REST response shape (`CellSummary`, `HealthResponse`, `FleetSummary`, `DecisionRecord`, `TwinResponse`, `DispatchSchedule`, `PassportData`) consumed by both the Streamlit dashboard and React frontend
 - **Domain groupings** (`src/__init__.py` + `src/_domain/`) — lazy re-exports via `__getattr__` so `from src import db` works alongside bare `import db`; the 69 `src/` modules organized into 8 named domains for IDE navigation
 - **pyright CI gate** — type checking runs on every push/PR via `.github/workflows/ci.yml`, over `batlab/` (the installable library), `src/`, `app/` and `scripts/` (blocking: 0 errors enforced). CI runs bare `pyright`, so the checked paths come from `[tool.pyright]` in `pyproject.toml` rather than a second, drifting list in the workflow.
+- **CI failures are machine-readable** — the test step writes JUnit XML and `scripts/annotate_pytest_failures.py` re-emits each failure as a check-run annotation, with every failing test named in a summary notice. A job **log** needs a signed-in browser even on a public repo (the REST logs endpoint answers `403`); annotations are in the public API, which is what lets tooling — and agents — triage a red build without one. pytest's exit code still decides the step, so the reporter cannot turn a red run green or the reverse.
 
 ## Methodology
 

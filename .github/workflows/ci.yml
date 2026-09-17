@@ -60,7 +60,21 @@ jobs:
           pyright
 
       - name: Run test suite
-        run: python -m pytest tests/ -v
+        # pytest's exit code decides this step. The annotator that follows only
+        # makes the failures READABLE: a job log needs a signed-in browser (the
+        # REST logs endpoint answers 403 even for a public repo), while
+        # check-run annotations are in the public API -- so a suite that fails
+        # only in the log is a suite nothing can triage. `set +e` because the
+        # runner's shell is `bash -e`, which would otherwise abort before a
+        # single failure could be annotated; writing the report to $RUNNER_TEMP
+        # keeps it out of the checkout.
+        run: |
+          set +e
+          python -m pytest tests/ -v --junitxml="$RUNNER_TEMP/pytest-junit.xml"
+          pytest_code=$?
+          python scripts/annotate_pytest_failures.py "$RUNNER_TEMP/pytest-junit.xml" \
+            || echo "::warning::could not annotate the failures — see the log above"
+          exit "$pytest_code"
 
       - name: Audit knowledge graph provenance
         run: python scripts/audit_knowledge_graph_provenance.py
