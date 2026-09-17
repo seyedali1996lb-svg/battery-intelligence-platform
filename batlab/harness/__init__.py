@@ -22,6 +22,7 @@ Public surface
     as_factory(model)                                 normalize any of the above
     import_module_source(source, ...)                 a .py module -> a gradable factory
     load_bundle_model(...) / write_bundle_model(...)  a model carried inside a bundle
+    sandbox_forecaster(source, ...)                   a .py module graded in another process
 
 Command line
 ------------
@@ -48,6 +49,9 @@ __all__ = [
     "HARNESS_SCHEMA_VERSION",
     "IntervalForecaster",
     "ModuleSourceError",
+    "SandboxError",
+    "SandboxLimits",
+    "SandboxedModelFactory",
     "SklearnForecaster",
     "SklearnIntervalForecaster",
     "as_factory",
@@ -59,6 +63,7 @@ __all__ = [
     "has_predict_interval",
     "import_module_source",
     "load_bundle_model",
+    "sandbox_forecaster",
     "seal_bundle",
     "torch_forecaster",
     "validate_forecaster",
@@ -99,6 +104,14 @@ _FROM_MODEL_SOURCE = (
     "write_bundle_model",
 )
 
+_FROM_SANDBOX = (
+    "SandboxError",
+    "SandboxLimits",
+    "SandboxedModelFactory",
+    "describe_enforcement",
+    "sandbox_forecaster",
+)
+
 
 def __getattr__(name: str) -> Any:
     """Resolve a public name on first access (see the module docstring)."""
@@ -114,6 +127,10 @@ def __getattr__(name: str) -> Any:
         from batlab.harness import model_source
 
         return getattr(model_source, name)
+    if name in _FROM_SANDBOX:
+        from batlab.harness import sandbox
+
+        return getattr(sandbox, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

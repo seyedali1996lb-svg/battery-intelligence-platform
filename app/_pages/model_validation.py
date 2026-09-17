@@ -43,9 +43,15 @@ The uploader accepts exactly one thing: a .py module defining make_model().
 Its source is shown to you and nothing executes until you tick an
 acknowledgement. Serialized models (.pkl/.pt/.joblib/...) are REFUSED, with
 the reason printed on the page: loading one runs code from the file as part of
-loading it, so there is no moment at which it can be inspected first. An
-uploaded module is also NOT sandboxed — it runs with this process's
-privileges, which is stated on the page rather than glossed over.
+loading it, so there is no moment at which it can be inspected first.
+
+An uploaded module is also kept out of this process entirely. It is imported
+and fitted in a sandbox child (batlab.harness.sandbox): a policy on imports and
+on audited operations (no network, no subprocesses, no ctypes, writes confined
+to its own scratch directory) plus wall-clock, memory and CPU caps. The page
+prints which of those controls this deployment actually enforces, because the
+half that cannot be enforced on a given platform is the half a reader needs to
+know about — the full reasoning is in the sandbox module's docstring.
 """
 
 from __future__ import annotations
@@ -66,8 +72,10 @@ from harness_models import (
     builtin_model,
     example_gate_expectations,
     fleet_plan,
+    describe_module,
     load_model_module,
     model_bundle_source,
+    describe_enforcement,
     seal_zip_bytes,
     summarise_report,
     verify_command,
@@ -219,6 +227,10 @@ def _render_config_panel(fleets: list[dict], org_id: int) -> dict:
     fab["model_key"] = model_key
 
     if model_key == "uploaded_module":
+        # What the sandbox enforces here, BEFORE a file is chosen: it is a
+        # property of this deployment, not of the module about to be uploaded,
+        # and someone deciding whether to upload at all needs it first.
+        _render_enforcement()
         # Deliberately NOT its own numbered step: an upload only exists in one
         # branch of step 2, and numbering it would leave steps 2 → 4 looking
         # like a missing section on every other model choice.
@@ -241,15 +253,16 @@ def _render_config_panel(fleets: list[dict], org_id: int) -> dict:
                     with st.expander("Read the file before it runs (source)", expanded=True):
                         st.code(source, language="python")
                         st.caption(
-                            "This is the exact text that will be executed inside "
-                            "this app's process. **There is no sandbox** — an "
-                            "uploaded module can read files, open sockets, and use "
-                            "everything this app can reach. It is not limited to "
-                            "model code, and nothing here inspects what it imports."
+                            "This is the exact text that will be run — in a "
+                            "**separate sandbox process**, not in this app's "
+                            "process. Read it anyway: the code still runs, and "
+                            "inside the sandbox it can still read what this "
+                            "deployment can read."
                         )
+                        _render_enforcement()
                     fab["upload_ack"] = st.checkbox(
-                        "I have read this file and accept that it runs in this "
-                        "app's process",
+                        "I have read this file and accept that it runs in the "
+                        "model sandbox",
                         key="byom_upload_ack",
                     )
         st.download_button(
@@ -368,14 +381,20 @@ def _run(cfg: dict) -> dict:
             )
 
     model = None
+    uploaded_probe = None
+    close_sandbox = None
     if cfg["model_key"] == "uploaded_module":
+        # Starts the sandbox child and loads the module in it. Everything the
+        # model does from here on happens there; this object is a proxy.
         module = load_model_module(cfg["upload_source"])
         model = module["factory"]
-        uploaded_probe = module
+        close_sandbox = module.get("close")
+        # What the result carries: never the live sandbox (it would be kept
+        # alive by a dictionary sitting in the session).
+        uploaded_probe = describe_module(module)
     else:
         entry = builtin_model(cfg["model_key"], seed=cfg["seed"])
         model = entry["model"]
-        uploaded_probe = None
 
     cell_data = plan["reload"]()
     if len(cell_data) < 2:
@@ -384,15 +403,20 @@ def _run(cfg: dict) -> dict:
             f"{fleet_key!r}. A leave-cell-out structure needs at least 2."
         )
 
-    report = validate_forecaster(
-        cell_data,
-        model=model,
-        seed=cfg["seed"],
-        splits=splits,
-        intervals=cfg["intervals"],
-        gate=gate,
-        dataset=plan["dataset"],
-    )
+    try:
+        report = validate_forecaster(
+            cell_data,
+            model=model,
+            seed=cfg["seed"],
+            splits=splits,
+            intervals=cfg["intervals"],
+            gate=gate,
+            dataset=plan["dataset"],
+        )
+    finally:
+        # A sandbox that outlived its run would be a child process per rerun.
+        if callable(close_sandbox):
+            close_sandbox()
 
     # What travels with the number. The platform's own model needs nothing
     # carried; a catalogue baseline carries itself; an uploaded module carries
@@ -825,10 +849,85 @@ def _render_downloads(result: dict) -> None:
         st.code(result["report_text"], language="text")
 
 
+# The sandbox's own report, in the page's words. Order matters: what runs where
+# first, then the caps, then the two things a reader most needs to know are NOT
+# guaranteed. Rendering this by NAME (not by pasting the sandbox's dict) means an
+# enforcement key that disappears fails visibly here instead of silently
+# shrinking the disclosure.
+_ENFORCEMENT_ROWS = (
+    ("Where the model runs", "process"),
+    ("Wall clock", "wall_clock"),
+    ("Memory", "memory"),
+    ("CPU", "cpu"),
+    ("Imports it is refused", "imports"),
+    ("Operations it is refused", "operations"),
+    ("File writes", "file_writes"),
+    ("**Not enforced**", "not_enforced"),
+)
+
+
+def _enforcement_table(enforced: dict) -> None:
+    rows = [
+        {"Control": label, "What happens": str(enforced.get(key) or "unreported")}
+        for label, key in _ENFORCEMENT_ROWS
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_enforcement() -> None:
+    """What this deployment actually enforces, BEFORE anything is uploaded.
+
+    The summary sentence is not decoration and not a duplicate: it states the
+    one thing a reader must not have to infer from a table — that the boundary
+    is containment, not a container — and it is what the page's tests can
+    assert on, which keeps the disclosure from silently shrinking when a
+    platform changes.
+    """
+    enforced = describe_enforcement()
+    st.markdown("###### The sandbox this deployment runs your module in")
+    _enforcement_table(enforced)
+    st.caption(
+        "Your module runs in a separate process under the caps above — it does "
+        "not get this app's privileges. What is NOT enforced: "
+        f"{enforced['not_enforced']} The module's source is therefore still "
+        "shown, and read, before it runs."
+    )
+    st.caption(
+        "**This costs time, and here is the measured amount.** The sandbox answers "
+        "one fit or predict at a time (that is what keeps answers matched to "
+        "questions), so an uploaded model's folds are fitted one after another "
+        "instead of in parallel, and the child loads the platform's own library "
+        "stack before your model runs: on the NASA fleet's default configuration "
+        "that was ≈4 s sandboxed versus ≈2.5 s in-process (linear model, "
+        "2026-09-17). A heavier model pays more."
+    )
+
+
+def _render_sandbox(result: dict) -> None:
+    """The same report, as sealed with the run — after the fact, not promised."""
+    module = result.get("uploaded_module") or {}
+    enforced = module.get("sandbox")
+    if not enforced:
+        return
+    st.markdown("#### The sandbox this model ran in")
+    st.caption(
+        f"The module was copied to a scratch file (`{module.get('path')}`), "
+        f"imported and fitted there in a separate process (class "
+        f"`{module.get('probe_class')}`) — never in this app's process — and "
+        "the scratch file was removed when the run ended. The controls below "
+        "are what this deployment enforced while it ran."
+    )
+    _enforcement_table(enforced)
+    if module.get("output"):
+        with st.expander("What the module itself printed (captured in the sandbox)"):
+            st.code(str(module["output"]), language="text")
+
+
 def _render_result(result: dict) -> None:
     summary = result["summary"]
     _render_verdict(summary)
     _render_claims(summary)
+    _render_sandbox(result)
     _render_lco(summary)
     _render_baselines(summary)
     _render_calibration(summary)

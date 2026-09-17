@@ -63,8 +63,11 @@ methodology and easy to run, both of which are already true.
   and the claims it withholds. A run seals into a bundle that carries the
   model *and*, when the data is not public, the raw cycles, so a reviewer
   holding only the artifact re-derives the number instead of trusting it.
-  See [the harness guide](harness.md); it is the most distributable thing in
-  this repository and is currently reachable only by cloning it.
+  A model you did not write can be graded the same way without being trusted:
+  `sandbox_forecaster` runs it in a separate process under an audit-hook policy
+  and resource caps, and reports which of those controls the machine actually
+  enforces. See [the harness guide](harness.md); it is the most distributable
+  thing in this repository and is currently reachable only by cloning it.
 - Every model is leave-cell-out validated by default, and the gap between
   that and a naive row-level split is reproduced live in
   [`notebooks/02_data_leakage.ipynb`](notebooks/02_data_leakage.ipynb) —

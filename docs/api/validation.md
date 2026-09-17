@@ -104,3 +104,13 @@ honest limits of each number it reports.
         - import_module_source
         - BUNDLE_MODEL_LOADER
         - ModuleSourceError
+
+::: batlab.harness.sandbox
+    options:
+      show_root_heading: true
+      members:
+        - sandbox_forecaster
+        - SandboxedModelFactory
+        - SandboxLimits
+        - SandboxError
+        - describe_enforcement

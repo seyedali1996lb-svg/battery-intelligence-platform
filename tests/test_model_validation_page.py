@@ -159,6 +159,49 @@ def test_upload_mode_blocks_the_run_until_a_module_is_read_and_acknowledged(isol
     assert "byom_result" not in at.session_state
 
 
+def test_upload_mode_states_what_the_sandbox_enforces(isolated_db):
+    """The disclosure is on screen BEFORE a file is chosen.
+
+    It is a property of this deployment, not of the module about to be uploaded:
+    someone deciding whether to upload at all needs it first. The two sentences
+    that must not disappear are the one about what is NOT enforced (the half a
+    reader is most likely to assume away) and the measured cost of serialized
+    folding, which is a real change from the in-process path.
+    """
+    at = _logged_in_app(byom_model="uploaded_module")
+    at.run()
+    assert not at.exception, at.exception
+
+    text = _all_text(at)
+    assert "The sandbox this deployment runs your module in" in text
+    assert "What is NOT enforced" in text
+    assert "not a container" in text  # the honest half, verbatim
+    assert "The sandbox answers one fit or predict at a time" in text
+    assert "≈4 s sandboxed versus ≈2.5 s in-process" in text
+
+    # The table is the detail behind those sentences, and every row the sandbox
+    # can report is rendered — a row that vanished would silently shrink the
+    # disclosure, which is the failure mode this table exists to avoid.
+    table = at.dataframe[0].value
+    controls = list(table["Control"])
+    assert controls == [
+        "Where the model runs", "Wall clock", "Memory", "CPU",
+        "Imports it is refused", "Operations it is refused", "File writes",
+        "**Not enforced**",
+    ]
+    rendered = " | ".join(table["What happens"])
+    assert "audit hook" in rendered and "scratch directory" in rendered
+    assert "separate child process" in rendered
+    assert "OS-level boundary" in rendered
+
+    # And the same page must NOT claim a sandbox where the model is the
+    # platform's own: the disclosure belongs to the upload path.
+    other = _logged_in_app(byom_model="ridge")
+    other.run()
+    assert not other.exception, other.exception
+    assert "The sandbox this deployment runs your module in" not in _all_text(other)
+
+
 def test_no_floors_declared_means_not_checked_not_a_pass(isolated_db):
     """Turning the gate off must say NOT CHECKED — never imply a pass."""
     at = _logged_in_app(
@@ -219,6 +262,128 @@ def test_run_renders_verdict_supported_claims_and_withheld_claims(isolated_db):
     assert result["seal_error"] is None, result["seal_error"]
     assert result["zip_bytes"]
     assert any(b.key == "byom_download_zip" for b in at.download_button)
+
+
+def test_an_uploaded_module_is_graded_in_a_sandbox_end_to_end(isolated_db):
+    """The upload path, driven for real: page logic -> sandbox -> harness -> seal.
+
+    AppTest cannot put a file into Streamlit's uploader, so this calls the page's
+    own `_run` with an upload source — the same function the Run button calls —
+    and checks the things the page has to get right: the module is imported in
+    another process, the result is JSON-safe (no live sandbox left in the
+    session), the child is stopped when the run ends, and the sealed bundle
+    still carries the model's source so a reviewer can recompute it.
+    """
+    import json as _json
+    import pathlib
+
+    from _pages.model_validation import _run
+
+    source = (
+        "from sklearn.linear_model import Ridge\n"
+        "from batlab.harness import SklearnForecaster\n"
+        "\n"
+        "print('module imported in the sandbox')\n"
+        "\n"
+        "def make_model():\n"
+        "    return SklearnForecaster(Ridge(alpha=1.0), scale=True)\n"
+    )
+
+    fleet = next(f for f in __import__("harness_models").available_fleets() if f["key"] == "synth")
+    cfg = {
+        "fleet_key": "synth",
+        "fleet": fleet,
+        "org_id": 1,
+        "seed": 42,
+        "model_key": "uploaded_module",
+        "upload_source": source,
+        "upload_name": "my_model.py",
+        "splits_lco": True,
+        "splits_prospective": False,
+        "intervals": False,
+        "enforce_gate": False,
+        "gate_text": "{}",
+        "embed_data": False,
+        "include_model_source": True,
+    }
+    result = _run(cfg)
+
+    probe = result["uploaded_module"]
+    assert probe["sandboxed"] is True
+    assert probe["probe_class"] == "SklearnForecaster"
+    assert "separate child process" in probe["sandbox"]["process"]
+    # JSON-safe: a live sandbox in the result would be kept alive by the session
+    # state that stores it, one process per re-run.
+    assert "factory" not in probe and "close" not in probe
+    assert _json.loads(_json.dumps(probe))["sandbox"]["not_enforced"]
+    assert "module imported in the sandbox" in probe["output"]
+
+    # What was graded is what the child held, and the report says so.
+    assert result["report"]["model"]["identity"]["sandboxed"] is True
+    assert result["report"]["model"]["identity"]["class"] == "SklearnForecaster"
+
+    # The child is gone by the time the result exists (its scratch directory is
+    # removed with it; test_sandbox.py asserts the process tree itself).
+    assert not pathlib.Path(probe["path"]).parent.exists()
+
+    # ... and the sealed bundle still carries the model, so the printed command
+    # can re-derive the number somewhere else.
+    import io
+    import zipfile
+
+    assert result["seal_error"] is None, result["seal_error"]
+    with zipfile.ZipFile(io.BytesIO(result["zip_bytes"])) as archive:
+        assert "model/module.py" in archive.namelist()
+        assert archive.read("model/module.py").decode("utf-8") == source
+
+
+def _render_sandbox_only(result: dict) -> None:
+    """Module-level so AppTest.from_function can read the function's source."""
+    from _pages.model_validation import _render_sandbox
+
+    _render_sandbox(result)
+
+
+def test_the_post_run_sandbox_section_renders_what_was_enforced():
+    """The section that shows, AFTER the run, where the model actually ran.
+
+    Driven directly rather than through a full page run: Streamlit's file
+    uploader cannot be filled by AppTest, so the only other way to reach this
+    code path would be to fake the whole configuration key. Two cases matter —
+    a sandboxed result renders the enforcement table and the captured output,
+    and a run that graded no upload renders nothing at all (the section belongs
+    to the upload path, not to every result).
+    """
+    from batlab.harness.sandbox import describe_enforcement
+
+    result = {
+        "uploaded_module": {
+            "path": "C:/tmp/batlab_sandbox_abc/uploaded_model.py",
+            "probe_class": "SklearnForecaster",
+            "sandbox": describe_enforcement(),
+            "output": "[stdout] module imported in the sandbox",
+        }
+    }
+    at = AppTest.from_function(_render_sandbox_only, kwargs={"result": result}).run()
+    assert not at.exception, at.exception
+    assert [m.value for m in at.markdown] == ["#### The sandbox this model ran in"]
+    caption = " ".join(c.value for c in at.caption)
+    assert "scratch file" in caption and "never in this app's process" in caption
+    assert "removed when the run ended" in caption
+    assert "SklearnForecaster" in caption
+    assert list(at.dataframe[0].value["Control"]) == [
+        "Where the model runs", "Wall clock", "Memory", "CPU",
+        "Imports it is refused", "Operations it is refused", "File writes",
+        "**Not enforced**",
+    ]
+    assert [e.label for e in at.expander] == [
+        "What the module itself printed (captured in the sandbox)"
+    ]
+
+    for empty in ({"uploaded_module": None}, {}, {"uploaded_module": {}}):
+        quiet = AppTest.from_function(_render_sandbox_only, kwargs={"result": empty}).run()
+        assert not quiet.exception, quiet.exception
+        assert not quiet.markdown and not quiet.dataframe
 
 
 def test_changing_the_configuration_does_not_relabel_a_stale_result(isolated_db):

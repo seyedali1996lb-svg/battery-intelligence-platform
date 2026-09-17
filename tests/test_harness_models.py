@@ -564,13 +564,22 @@ def test_generated_catalogue_source_grades_the_same_model():
     y = pd.Series(X["a"] * 1.5 - X["b"])
 
     for key, seed in (("ridge", 42), ("random_forest", 7), ("mean_baseline", 42)):
-        from_bundle = load_model_module(catalogue_module_source(key, seed))["factory"]()
-        from_catalogue = builtin_model(key, seed=seed)["model"]()
+        module = load_model_module(catalogue_module_source(key, seed))
+        try:
+            from_bundle = module["factory"]()
+            from_catalogue = builtin_model(key, seed=seed)["model"]()
 
-        assert forecaster_identity(from_bundle) == forecaster_identity(from_catalogue), key
-        from_bundle.fit(X, y)
-        from_catalogue.fit(X, y)
-        assert np.array_equal(from_bundle.predict(X), from_catalogue.predict(X)), key
+            # The sandboxed model reports the class the CHILD holds (plus that it
+            # was sandboxed, and its limits) — not the proxy's own class name.
+            sandboxed = forecaster_identity(from_bundle)
+            assert sandboxed["class"] == forecaster_identity(from_catalogue)["class"], key
+            assert sandboxed["sandboxed"] is True, key
+
+            from_bundle.fit(X, y)
+            from_catalogue.fit(X, y)
+            assert np.array_equal(from_bundle.predict(X), from_catalogue.predict(X)), key
+        finally:
+            module["close"]()
 
 
 def test_catalogue_source_refuses_keys_it_has_no_template_for():

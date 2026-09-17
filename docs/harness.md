@@ -130,6 +130,58 @@ fit, a Keras model, a subprocess call to MATLAB. Supplying
 `interval_fn(state, X)` additionally makes it interval-capable, at which point
 check 4 calibrates its own intervals instead of building one for it.
 
+## Running a model you did not write
+
+Grading someone else's model means running someone else's code, and importing a
+Python module executes it. `sandbox_forecaster` runs it in a separate process
+instead:
+
+```python
+from batlab.harness import sandbox_forecaster
+
+with sandbox_forecaster(open("their_model.py").read()) as factory:
+    report = validate_forecaster(cells, model=factory)
+```
+
+What it does, in two halves — because they are enforced differently and only
+one of them is a kernel guarantee:
+
+| Half | Enforced by | What it means |
+|---|---|---|
+| **Containment** | an audit hook inside the child, installed before the module is imported | imports of `socket`/`ssl`/`http`/`urllib`/`subprocess`/`multiprocessing`/`ctypes`/`signal`/`resource`/`asyncio` are refused; so are `socket.connect`, `subprocess.Popen`, `os.system`/`exec`/`fork`/`posix_spawn`, `ctypes.dlopen`; file writes are confined to the child's own scratch directory. Reads are untouched (sklearn and numpy read their own data and libraries) |
+| **Limits** | the parent | wall clock per call and for the whole run (hard kill); CPU seconds and address space as POSIX rlimits where the platform has them; and a watchdog over the child *tree* that kills on virtual size/RSS or CPU where it does not |
+
+Three consequences worth knowing before you use it:
+
+- **The numbers do not move.** Arrays cross as raw float64 buffers, so a
+  sandboxed fit sees the same bits an in-process fit would and the metrics agree
+  exactly. `tests/test_sandbox.py` pins that equality, for a single fit and for
+  a whole harness run — a sandbox that changed the number it measured would be
+  a worse instrument than no sandbox.
+- **It is serialized, and that costs time.** One pipe means one command in
+  flight, so folds are fitted one after another instead of in parallel (the
+  harness's own fold parallelism would otherwise interleave answers with
+  questions). The child also loads the platform's own library stack before your
+  model runs: on the NASA fleet's default configuration that measured ≈4 s
+  sandboxed versus ≈2.5 s in-process.
+- **What it does NOT enforce is printed, not implied.**
+  `describe_enforcement()` returns the report — the app renders it as a table
+  before a file is even chosen — including the line that matters most, that the
+  child is *not* an OS-level boundary. `SandboxedModelFactory.enforced` is the
+  same report for a run.
+
+A refusal names what was attempted (`the sandbox refuses to import 'socket':`…,
+`the sandbox refuses open on '/etc/passwd':`…), and the failure `kind` is the
+same vocabulary `import_module_source` uses (`syntax`, `missing_entry_point`,
+`entry_raised`, `returned_none`, `not_gradable`) plus the sandbox's own
+(`policy`, `timeout`, `memory`, `cpu`, `child_gone`). That shared vocabulary is
+why the app has exactly one set of sentences for every way a module can fail.
+
+`--model` on the verification CLI still imports the module it is given
+directly: a verifier who names a file has chosen to run it. That asymmetry is
+deliberate — the sandbox exists for the path where a *stranger's* model arrives
+over an upload form, not to stop a reviewer from running what they asked for.
+
 ## Reading the report
 
 ```text
@@ -348,9 +400,10 @@ rather than left for you to infer:
 - **`.py` modules only, and you read it first.** A serialized model (`.pkl`,
   `.pt`, `.joblib`) executes as part of loading, so there is no moment at which
   it can be inspected — it is refused, with that reason on screen. An uploaded
-  module is **not sandboxed**: it runs with the app process's privileges, and
-  the page says so directly above the acknowledgement checkbox that gates the
-  run. Nothing runs until you tick it.
+  module then runs in the [model sandbox](#running-a-model-you-did-not-write),
+  never in the app's process, and the page lists which controls this deployment
+  actually enforces — including the one it does not. Nothing runs until you
+  tick the acknowledgement.
 - **The recorded loader is the platform's own reloader, not a raw dataset
   loader.** The two return different tables — the reloader's frames carry the
   enrichment step's derived columns — and `cell_digest` hashes every column,
@@ -393,9 +446,14 @@ several minutes. Nothing runs on page load.
 - **Garbage in, disclosed garbage out.** The lint catches label-formula
   leakage mechanically; it cannot prove your features are causal, your cells
   are representative, or your lab data is clean.
-- **It does not sandbox model code.** An uploaded `.py` module — or any code
-  you hand the in-app uploader — runs in the host process. That is disclosed on
-  the page and is the reason the uploader accepts readable text only.
+- **The sandbox is containment, not a container.** An uploaded `.py` module
+  runs in its own process under an audit-hook policy and resource caps
+  (see [Running a model you did not write](#running-a-model-you-did-not-write)),
+  but it is the same OS user in the same filesystem namespace: it can *read*
+  what that user can read, and a compiled extension can bypass a Python-level
+  control. It stops the ordinary cases — a model that opens a socket, shells
+  out, imports `ctypes`, writes where it should not, hangs, or eats the box —
+  and it says which of those it actually enforces on the machine that ran it.
 - **A bundle carrying your data is only as private as where you send it.** The
   seal proves the numbers came from the tables inside the artifact; it does not
   encrypt them. Share one and you have shared the cycles.

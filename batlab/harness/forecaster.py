@@ -603,11 +603,26 @@ def forecaster_identity(model_or_factory: Any) -> dict:
     exposes them, and the factory's own name when one was supplied, so a
     harness report says which model produced its numbers instead of "the
     default".
+
+    A sandboxed model is described by the child that holds it (see
+    batlab.harness.sandbox), with `sandboxed: true` and the limits it ran
+    under — so the report, and the bundle sealed from it, say where the model's
+    code actually ran.
     """
     identity: dict = {}
     target = model_or_factory
     if target is None:
         return {"source": "platform default (GBRT, scaled)", "class": "GradientBoostingRegressor"}
+
+    # A model that runs in another process (batlab.harness.sandbox) reports what
+    # that process actually holds. Reading the proxy's own class name here would
+    # put "<type '_RemoteModel'>" in every report and every sealed bundle: true
+    # about the transport, useless as a description of the model that was
+    # graded — and the model identity is what a reviewer checks the number
+    # against.
+    proxy_identity = getattr(target, "sandboxed_identity", None)
+    if isinstance(proxy_identity, dict):
+        return dict(proxy_identity)
 
     if callable(target) and not hasattr(target, "fit"):
         identity["factory"] = getattr(target, "__name__", None) or repr(target)

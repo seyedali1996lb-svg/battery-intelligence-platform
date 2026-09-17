@@ -34,8 +34,8 @@ sealing is refused rather than executed.
 The source→factory mechanism lives here once
 --------------------------------------------
 `import_module_source()` is the compile-import-probe path both callers use: the
-app's uploader (`src/harness_models.load_model_module`) and this module's bundle
-loader. They disagree about wording — "your upload" versus "the module this
+app's uploader — inside its sandbox child, via
+`src/harness_models.load_model_module` — and this module's bundle loader. They disagree about wording — "your upload" versus "the module this
 bundle carries" — but never about what counts as a gradable model, which is the
 part that has to match. Two implementations of that would eventually disagree,
 and the disagreement would show up as a bundle that the page could grade and

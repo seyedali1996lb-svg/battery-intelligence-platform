@@ -51,9 +51,15 @@ import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
-from batlab.harness import import_module_source, seal_bundle
+from batlab.harness import seal_bundle
 from batlab.harness.forecaster import SklearnForecaster
 from batlab.harness.model_source import BUNDLE_MODEL_LOADER, ModuleSourceError
+from batlab.harness.sandbox import (
+    SandboxError,
+    SandboxLimits,
+    SandboxedModelFactory,
+    describe_enforcement,
+)
 from batlab.validation.bundle_data import BUNDLE_CELLS_LOADER
 
 __all__ = [
@@ -67,6 +73,8 @@ __all__ = [
     "available_fleets",
     "builtin_model",
     "catalogue_module_source",
+    "describe_enforcement",
+    "describe_module",
     "example_gate_expectations",
     "fleet_loader_record",
     "fleet_plan",
@@ -756,31 +764,126 @@ def load_model_module(
     *,
     module_name: str = "batlab_uploaded_model",
     entry_point: str = "make_model",
+    limits: Any = None,
+    process_limits: Any = None,
 ) -> dict:
-    """Turn uploaded module source into a gradable factory.
+    """Turn uploaded module source into a gradable factory, IN A SANDBOX.
 
-    Delegates the compile-import-probe path to batlab.harness (the same code
-    that loads the model a sealed bundle carries) and translates its failures
-    into ModelModuleError, which is what the page displays. The shared
-    mechanism is the point: "the page accepted it" and "the harness can grade
-    it" are one decision, made once.
+    The module is imported and fitted in a child process
+    (batlab.harness.sandbox) with a policy against reaching outside it and
+    with wall-clock/memory/CPU caps, and the factory returned here is the
+    proxy the harness grades through. Nothing in this process ever imports the
+    uploaded code: an upload can no longer read this app's files, open a
+    socket, spawn a process, or take the page down with it.
 
-    Raises ModelModuleError with a specific message for every failure mode:
-    syntax error (with line), import-time exception, missing entry point,
-    entry point that raises, or a returned object the harness refuses (most
-    importantly a PRE-FITTED estimator — see as_factory's docstring for why
-    that is a refusal and not a convenience).
+    The compile-import-probe mechanism is still batlab's single implementation
+    of "what counts as a gradable model" (batlab.harness.model_source, run
+    inside the child), so "the page accepted it" and "the harness can grade
+    it" remain one decision made once. What changed is where it is made.
+
+    Raises ModelModuleError with a specific, user-actionable message for every
+    failure mode: syntax error (with line), import-time exception, a module the
+    policy refused, a missing entry point, an entry point that raises, a
+    returned object the harness refuses (most importantly a PRE-FITTED
+    estimator — see as_factory's docstring), and the caps themselves (a module
+    that hangs, or asks for more memory/CPU than the sandbox allows).
 
     Returns {factory, module_name, path, entry_point, interval_capable,
-    probe_class, callables}. `factory` is what the page passes to
-    validate_forecaster().
+    probe_class, callables, sandboxed, sandbox, close}. `factory` is what the
+    page passes to validate_forecaster(); `close()` stops the child and should
+    be called when the run is over; `sandbox` is what the deployment actually
+    enforced (see sandbox.describe_enforcement), stated so the page can show it
+    rather than promise it.
     """
+    factory = None
     try:
-        return import_module_source(
-            source, module_name=module_name, entry_point=entry_point
+        factory = SandboxedModelFactory(
+            source, entry_point=entry_point, limits=limits or process_limits
         )
-    except ModuleSourceError as exc:
-        raise _model_module_error(exc) from exc
+        factory.start()
+    except SandboxError as exc:
+        # Includes the constructor's own refusals (empty source), so every way
+        # this can fail reaches the page as a ModelModuleError.
+        if factory is not None:
+            factory.close()
+        raise _sandbox_error(exc) from exc
+    return {
+        "factory": factory,
+        "module_name": module_name,
+        "path": factory.module_path,
+        "entry_point": entry_point,
+        "interval_capable": factory.interval_capable,
+        "probe_class": factory.probe_class,
+        "callables": factory.callables,
+        "sandboxed": True,
+        "sandbox": factory.enforced,
+        "limits": (limits or SandboxLimits()).to_dict(),
+        "output": factory.output,
+        "close": factory.close,
+    }
+
+
+def describe_module(module: dict) -> dict:
+    """The JSON-safe part of load_model_module's answer.
+
+    A run's result is kept in the page's session state so it survives Streamlit
+    re-runs; a live sandbox process (and its factory) must not be kept alive by
+    a dictionary sitting in a session, so the result carries this instead of
+    the module itself.
+    """
+    return {
+        key: module.get(key)
+        for key in (
+            "module_name", "path", "entry_point", "interval_capable",
+            "probe_class", "callables", "sandboxed", "sandbox", "limits", "output",
+        )
+    }
+
+
+def _sandbox_error(exc: "SandboxError") -> ModelModuleError:
+    """The message the page shows when the SANDBOX refused to grade a module.
+
+    Two families, because they need different sentences: a policy refusal (the
+    module tried to reach outside the process, and the sandbox says what) and a
+    limit (it hung, or asked for more resources than the sandbox grants). Both
+    name the specific thing rather than blaming "your model".
+    """
+    if exc.kind == "policy":
+        detail = str(exc).rstrip(".")
+        return ModelModuleError(
+            f"The sandbox refused to run this module — {detail}. Nothing outside "
+            "the sandbox was touched, and the run was stopped before the model ran."
+        )
+    if exc.kind in _LIMIT_MESSAGES:
+        return ModelModuleError(
+            f"{_LIMIT_MESSAGES[exc.kind]} ({exc}) The model was stopped by the "
+            "sandbox's caps, not by an error in the harness."
+        )
+    # Everything else is the module's own failure, in the wording this page has
+    # always used for it (one place, two entry points: here and the verifier).
+    # The child reports the structured fields it knows (which line, which entry
+    # point), so the message keeps the detail the earlier in-process version had
+    # instead of degrading to "it does not compile".
+    return _model_module_error(
+        ModuleSourceError(
+            exc.kind,
+            str(exc),
+            entry_point=str(exc.extra.get("entry_point") or "make_model"),
+            lineno=exc.extra.get("lineno"),
+            exc=exc,
+        )
+    )
+
+
+_LIMIT_MESSAGES = {
+    "timeout": "The module did not finish inside the sandbox's wall-clock limit.",
+    "memory": "The module exceeded the sandbox's memory limit.",
+    "cpu": "The module exceeded the sandbox's CPU limit.",
+    "too_large": "The module's inputs grew past the sandbox's message limit.",
+    "spawn": "The sandbox process could not be started on this deployment.",
+    "child_gone": "The sandbox process died while the module was running",
+    "protocol": "The sandbox and the module stopped making sense to each other:",
+}
 
 
 STARTER_MODULE_SOURCE = '''\
@@ -823,7 +926,13 @@ Three shapes are accepted — use whichever fits your model:
 
   3. A zero-argument factory returning any of the above.
 
-Everything here runs inside the app's own process. There is no sandbox.
+This module is run in a SANDBOX: a separate process with an audit-hook policy
+(no network, no subprocesses, no ctypes, writes confined to its own scratch
+directory) and wall-clock/memory/CPU caps. The process it runs in cannot read
+this app's files or take the page down, and the page lists exactly which of
+those controls are in force on the deployment you are using. Read the file
+first anyway: the code still runs, and it can still read what is inside the
+sandbox.
 """
 
 from batlab.harness import SklearnForecaster
