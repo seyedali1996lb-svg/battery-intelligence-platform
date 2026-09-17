@@ -795,6 +795,11 @@ def seal_bundle(
     loader: Any = None,
     loader_kwargs: "dict | None" = None,
     dataset: "str | None" = None,
+    embed_data: bool = False,
+    cells_dir: str = "cells",
+    model_source: "str | None" = None,
+    model_entry_point: str = "make_model",
+    model_dir: str = "model",
 ) -> dict:
     """Write a sealed, verifiable bundle for a harness report.
 
@@ -814,6 +819,22 @@ def seal_bundle(
     For a bundle published with the platform's default model, `--model` is
     omitted. `loader` may be a 'module:function' spec string or a callable,
     recorded in the bundle so the verifier knows your data path.
+
+    `embed_data=True` writes the raw cycle tables into `cells_dir` and (unless
+    a loader is recorded) points the bundle at the bundle-relative loader, so
+    the number can be re-derived by someone who has ONLY the bundle. Correct
+    for data a third party could not obtain — a tenant's own upload — and
+    wrong for a public reference fleet, which verifies better against its own
+    dataset loader. The trade is explicit: the DATA is then inside the
+    artifact you share. See batlab/validation/bundle_data.py.
+
+    `model_source` does the same for the model: the module's text is written to
+    `model_dir`, sealed, and recorded with the bundle-relative model loader, so
+    a run graded with a model nobody else has — an uploaded module, or one of
+    the app's catalogue baselines — can still be recomputed from the artifact
+    alone. It is never loaded implicitly: importing a module executes it, and
+    the verifier has to ask for it by name (`--model`) after reading the file.
+    See batlab/harness/model_source.py.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -829,6 +850,27 @@ def seal_bundle(
     cells = unwrap_cell_data(cell_data)
     seed = int((report.get("config") or {}).get("seed", 42))
     cell_ids = sorted(cells)
+
+    embedded_index = None
+    if embed_data:
+        from batlab.validation.bundle_data import BUNDLE_CELLS_LOADER, write_bundle_cells
+
+        embedded_index = write_bundle_cells(cells, out / cells_dir)
+        if loader is None:
+            loader = BUNDLE_CELLS_LOADER
+            loader_kwargs = loader_kwargs if loader_kwargs is not None else {"cells_dir": cells_dir}
+
+    model_index = None
+    if model_source is not None:
+        from batlab.harness.model_source import write_bundle_model
+
+        identity = (report.get("model") or {}).get("identity") or {}
+        model_index = write_bundle_model(
+            model_source,
+            out / model_dir,
+            entry_point=model_entry_point,
+            label=identity.get("source") or identity.get("factory") or identity.get("class"),
+        )
 
     benchmark = export_benchmark_results(
         {k: v for k, v in lco.items() if k != "predictions"},
@@ -889,6 +931,52 @@ def seal_bundle(
         ),
     }
 
+    if model_index is not None:
+        from batlab.harness.model_source import BUNDLE_MODEL_LOADER
+
+        module_name, _, func_name = BUNDLE_MODEL_LOADER.partition(":")
+        recorded_model_file = f"{model_dir}/{model_index['file']}"
+        replication["model_source"] = {
+            "directory": model_dir,
+            "file": recorded_model_file,
+            "entry_point": model_index["entry_point"],
+            "sha256": model_index["sha256"],
+            "n_lines": model_index["n_lines"],
+            "label": model_index.get("label"),
+            "loader": {
+                "module": module_name,
+                "function": func_name,
+                "kwargs": {
+                    "source_file": recorded_model_file,
+                    "entry_point": model_index["entry_point"],
+                },
+            },
+            "note": (
+                "The model module this bundle was published for, as source at "
+                f"{recorded_model_file}. It is not loaded automatically — "
+                "importing a module executes it, so read that file first, then "
+                f"pass --model {BUNDLE_MODEL_LOADER}. The seal covers it, and "
+                "its bytes are checked against the digest above before import."
+            ),
+        }
+
+    if embedded_index is not None:
+        replication["embedded_cells"] = {
+            "directory": cells_dir,
+            "schema": embedded_index["schema"],
+            "schema_version": embedded_index["schema_version"],
+            "n_cells": embedded_index["n_cells"],
+            "note": (
+                "The raw cycle tables are inside this bundle: cells/<cell>.csv "
+                "at full float precision, so reloading them reproduces the "
+                "reported metrics rather than approximating them. "
+                "cells/index.json records each file's own sha256 AND the "
+                "cell_digest it reloads to (the same value as the cell_digests "
+                "above), and the seal covers those files too. "
+                f"Verify with --loader {loader}."
+            ),
+        }
+
     # Seal LAST: every other file is digested into the root of trust, which
     # cannot contain its own hash.
     (out / "replication.json").write_text(
@@ -896,10 +984,23 @@ def seal_bundle(
     )
     import hashlib
 
-    files = {
-        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(out.iterdir())
+    sealed_paths = [
+        p for p in sorted(out.iterdir())
         if p.is_file() and p.name != "replication.json"
+    ]
+    # Anything carried inside the bundle is sealed too — the cycles and the
+    # model are the actual evidence, and a seal that covers the report but not
+    # what it was measured with would certify the wrong thing. Recorded with
+    # their relative path so the verifier's `bundle_dir / name` join resolves
+    # them.
+    for carried in ((cells_dir, embedded_index), (model_dir, model_index)):
+        directory, index = carried
+        if index is not None:
+            sealed_paths += [p for p in sorted((out / directory).iterdir()) if p.is_file()]
+
+    files = {
+        p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sealed_paths
     }
     replication["files"] = files
     (out / "replication.json").write_text(

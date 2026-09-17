@@ -38,6 +38,32 @@ import pandas as pd
 _TRACKED_PACKAGES = ("numpy", "pandas", "scikit-learn", "scipy", "pybamm")
 
 
+def cell_csv_text(cycles_df) -> str:
+    """The exact bytes a cell's digest is computed over.
+
+    One place defines the normalization — sorted by cycle_number,
+    column-ordered, CSV at fixed float precision, LF line endings — so the
+    digest and any artifact that stores a cell's content (a replication
+    bundle's embedded cycle table, a tenant's persisted upload) cannot drift
+    apart. They used to be two independent `to_csv(...)` calls with the same
+    arguments, which is one edit away from a fingerprint that no longer
+    describes the file it names.
+
+    Accepts the wrapper shapes callers actually pass (build_battery cells:
+    {"cell_id", "cycles"}; loader dicts: {"cycles"}) — the same
+    normalization rule as lco.unwrap_cell_data, so a digest never silently
+    depends on which shape a caller happened to hold.
+    """
+    if isinstance(cycles_df, dict):
+        cycles_df = cycles_df.get("cycles")
+    if not isinstance(cycles_df, pd.DataFrame):
+        raise TypeError("cell_csv_text expects a cycles DataFrame (or a {'cycles': df} wrapper)")
+    df = cycles_df.copy()
+    if "cycle_number" in df.columns:
+        df = df.sort_values("cycle_number")
+    return df.to_csv(index=False, float_format="%.10g", lineterminator="\n")
+
+
 def cell_digest(cycles_df) -> str:
     """Content hash of one cell's cycle table.
 
@@ -52,15 +78,7 @@ def cell_digest(cycles_df) -> str:
     normalization rule as lco.unwrap_cell_data, so a digest never silently
     depends on which shape a caller happened to hold.
     """
-    if isinstance(cycles_df, dict):
-        cycles_df = cycles_df.get("cycles")
-    if not isinstance(cycles_df, pd.DataFrame):
-        raise TypeError("cell_digest expects a cycles DataFrame (or a {'cycles': df} wrapper)")
-    df = cycles_df.copy()
-    if "cycle_number" in df.columns:
-        df = df.sort_values("cycle_number")
-    text = df.to_csv(index=False, float_format="%.10g", lineterminator="\n")
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(cell_csv_text(cycles_df).encode("utf-8")).hexdigest()
 
 
 def environment_snapshot() -> dict:

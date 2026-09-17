@@ -98,6 +98,29 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 pd.util.hash_pandas_object(df_raw, index=True).values.tobytes()
             ).hexdigest()[:20]
 
+            # Persist the RAW cycles for this upload, content-addressed by the
+            # same key the caches above use. Until this existed an upload left
+            # only engineered frames behind, so the validation harness could not
+            # fingerprint it and no bundle over it could be re-derived — see
+            # src/uploaded_store.py. Idempotent (re-uploading the same file
+            # rewrites the same directory) and deliberately NOT fatal: a store
+            # failure must not discard a finished 90-second analysis, so it is
+            # reported on the summary card and recorded in the upload meta.
+            _raw_cycles_error = None
+            try:
+                from uploaded_store import save_uploaded_cell_data
+                save_uploaded_cell_data(
+                    st.session_state["auth_org_id"], _upload_key,
+                    {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
+                    meta={
+                        "n_cells": n_up,
+                        "cell_ids": list(battery["cells"].keys()),
+                        "temperature_assumed_cells": battery["temperature_assumed_cells"],
+                    },
+                )
+            except Exception as _raw_exc:
+                _raw_cycles_error = f"{type(_raw_exc).__name__}: {_raw_exc}"
+
             # Bundle-level cache: if this exact upload (by content hash) was
             # already fully analysed before — this session or a prior one,
             # since this is the same disk cache the main NASA/Severson/synth

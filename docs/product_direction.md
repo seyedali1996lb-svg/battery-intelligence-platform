@@ -55,6 +55,16 @@ methodology and easy to run, both of which are already true.
 - Five public datasets (NASA PCoE, Severson 2019, Oxford Path-Dependent,
   CALCE) load through one standardized schema, with checksum-verified
   downloads and a `SchemaError` on any malformed input.
+- **The validation methodology is separable from the model it was welded
+  to.** `batlab.harness` grades *your* forecaster by the same six checks the
+  platform grades its own — leakage lint, label provenance, leave-cell-out,
+  conformal interval calibration, the prospective split, and the enforced
+  metric gate — and returns an explicit list of the claims the run supports
+  and the claims it withholds. A run seals into a bundle that carries the
+  model *and*, when the data is not public, the raw cycles, so a reviewer
+  holding only the artifact re-derives the number instead of trusting it.
+  See [the harness guide](harness.md); it is the most distributable thing in
+  this repository and is currently reachable only by cloning it.
 - Every model is leave-cell-out validated by default, and the gap between
   that and a naive row-level split is reproduced live in
   [`notebooks/02_data_leakage.ipynb`](notebooks/02_data_leakage.ipynb) —

@@ -5,12 +5,24 @@ Model Validation page (app/_pages/model_validation.py).
 Why this is a src/ module and not page code
 -------------------------------------------
 Everything here is pure logic with no Streamlit import: which candidate
-models the page can grade, whether an uploaded .py file is a usable model
-module, how a sealed bundle is packaged for download, and how a harness
-report is flattened for rendering. Keeping it out of the page means the
-repo's own unit tests can exercise the parts that can actually be wrong —
-the upload validation and the candidate registry — instead of only
-smoke-testing rendered HTML.
+models the page can grade, which fleets it can grade them on — the deployment's
+reloadable reference datasets AND this org's own persisted uploads — whether an
+uploaded .py file is a usable model module, how a sealed bundle is packaged for
+download, and how a harness report is flattened for rendering. Keeping it out
+of the page means the repo's own unit tests can exercise the parts that can
+actually be wrong — upload validation, the candidate registry, and the two
+sealing modes — instead of only smoke-testing rendered HTML.
+
+Two kinds of fleet, two kinds of seal
+-------------------------------------
+A reference fleet is public and reproducibly reloadable, so its sealed bundle
+records the dataset's own loader and stays small. A tenant's upload is neither:
+since 2026-09-17 the raw cycles are persisted at import time
+(src/uploaded_store.py), which makes the fleet gradable, and a bundle over it
+can either EMBED the cycles (verifiable by anyone holding the artifact — the
+data travels) or point at this deployment's store (the data stays home, and the
+verifier needs the store). fleet_plan() is the single place that decides which,
+so the page cannot show one command and seal the other.
 
 The page itself only picks options and draws. That split is the same one the
 rest of this app follows (src/ holds the logic, app/_pages/ renders it).
@@ -33,31 +45,57 @@ glossed over: an uploaded module runs with this process's privileges.
 
 from __future__ import annotations
 
-import importlib.util
 import io
-import sys
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
-from batlab.harness import as_factory, has_predict_interval, seal_bundle
+from batlab.harness import import_module_source, seal_bundle
 from batlab.harness.forecaster import SklearnForecaster
+from batlab.harness.model_source import BUNDLE_MODEL_LOADER, ModuleSourceError
+from batlab.validation.bundle_data import BUNDLE_CELLS_LOADER
 
 __all__ = [
+    "BUNDLE_LOADER_SPEC",
+    "BUNDLE_MODEL_LOADER",
     "BUILTIN_MODELS",
     "FLEET_LOADER_SPEC",
     "ModelModuleError",
     "STARTER_MODULE_SOURCE",
+    "UPLOADED_LOADER_SPEC",
     "available_fleets",
     "builtin_model",
+    "catalogue_module_source",
     "example_gate_expectations",
     "fleet_loader_record",
+    "fleet_plan",
     "load_model_module",
+    "model_bundle_source",
     "seal_zip_bytes",
     "summarise_report",
+    "verify_command",
     "unsupported_upload_reason",
+    "uploaded_fleet_entries",
 ]
+
+# The loader a sealed bundle records when it CARRIES the raw cycles (see
+# batlab/validation/bundle_data.py). Verifiable anywhere, by anyone holding the
+# artifact — the only honest option for data that is not public.
+BUNDLE_LOADER_SPEC = BUNDLE_CELLS_LOADER
+
+# The loader a sealed bundle records for a tenant upload when the cycles are
+# deliberately NOT embedded: it reads this deployment's own store
+# (data/uploaded_fleets), so verification needs access to that store — and the
+# seal then certifies the number against data the verifier must obtain from the
+# publisher separately.
+UPLOADED_LOADER_SPEC = "src.uploaded_store:load_uploaded_cell_data"
+
+# The loader a sealed bundle records when it CARRIES the model it was published
+# for, as source (see batlab/harness/model_source.py). Like the data path it is
+# a separate module so a verifier needs only this repo; unlike the data path it
+# is never applied implicitly, because importing a module runs it.
+BUNDLE_MODEL_LOADER_SPEC = BUNDLE_MODEL_LOADER
 
 # Filename suffixes refused by the uploader, with the reason shown to the user.
 REFUSED_UPLOAD_SUFFIXES = (".pkl", ".pickle", ".joblib", ".pt", ".pth", ".h5", ".onnx", ".zip")
@@ -76,6 +114,14 @@ class ModelModuleError(ValueError):
 # Candidate models the page can grade without any upload
 # ---------------------------------------------------------------------------
 
+# The catalogue models' configuration, as constants the factories AND the
+# bundle-embedded source templates below both read. A number written twice is a
+# number that eventually disagrees with itself — and here it would disagree
+# between the model that was graded and the model the verifier re-runs.
+RIDGE_ALPHA = 1.0
+FOREST_ESTIMATORS = 200
+
+
 def _ridge_factory(seed: int) -> Callable[[], Any]:
     def _make():
         from sklearn.linear_model import Ridge
@@ -84,7 +130,7 @@ def _ridge_factory(seed: int) -> Callable[[], Any]:
         # hundreds next to ohms) is a strawman, not a baseline. The harness's
         # scaler keeps this candidate honest without pretending the platform
         # preprocesses models it does not own.
-        return SklearnForecaster(Ridge(alpha=1.0, random_state=None), scale=True)
+        return SklearnForecaster(Ridge(alpha=RIDGE_ALPHA, random_state=None), scale=True)
 
     return _make
 
@@ -94,7 +140,7 @@ def _forest_factory(seed: int) -> Callable[[], Any]:
         from sklearn.ensemble import RandomForestRegressor
 
         return SklearnForecaster(
-            RandomForestRegressor(n_estimators=200, random_state=seed, n_jobs=1),
+            RandomForestRegressor(n_estimators=FOREST_ESTIMATORS, random_state=seed, n_jobs=1),
             scale=False,
         )
 
@@ -161,6 +207,10 @@ BUILTIN_MODELS: dict[str, dict[str, Any]] = {
     },
     "uploaded_module": {
         "label": "Upload a model module (.py)",
+        # (kind="upload") The one catalogue entry whose model is not the
+        # platform's own code and not reproducible from the repo — so it is the
+        # only one whose embedding is optional: the source may be proprietary,
+        # and "share the bundle" then means "share your model".
         "detail": (
             "A single Python file defining make_model(), returning a fresh "
             "unfitted model. Read the file before you run it — an uploaded "
@@ -194,6 +244,147 @@ def builtin_model(key: str, seed: int = 42) -> dict:
         "model": None if entry["kind"] == "platform" else factory,
         "factory": factory,
         "interval_capable": entry.get("interval_capable"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The model a bundle can carry, as source
+# ---------------------------------------------------------------------------
+
+def catalogue_module_source(key: str, seed: int = 42) -> str:
+    """The source of a catalogue model, as a module a verifier can run.
+
+    Written for the two candidates that are neither the platform's own GBRT
+    (reproducible from `batlab.harness.default_forecaster`) nor somebody's
+    upload: a bundle published for a Ridge, a random forest or the mean
+    baseline would otherwise record an identity the verifier cannot obtain,
+    and its recompute check could never run.
+
+    Every configuration number here comes from the same constant the factory
+    reads (RIDGE_ALPHA, FOREST_ESTIMATORS) — a value written twice is a value
+    that eventually disagrees — and tests/test_harness_models.py fits both
+    models on identical data and requires identical predictions, so a template
+    that drifts from the catalogue fails loudly instead of silently grading a
+    different model.
+    """
+    entry = BUILTIN_MODELS.get(key) or {}
+    if key == "ridge":
+        body = (
+            "from sklearn.linear_model import Ridge\n\n"
+            "from batlab.harness import SklearnForecaster\n\n\n"
+            "def make_model():\n"
+            f"    return SklearnForecaster(Ridge(alpha={RIDGE_ALPHA!r}, random_state=None), scale=True)\n"
+        )
+    elif key == "random_forest":
+        body = (
+            "from sklearn.ensemble import RandomForestRegressor\n\n"
+            "from batlab.harness import SklearnForecaster\n\n\n"
+            "def make_model():\n"
+            f"    return SklearnForecaster(RandomForestRegressor(n_estimators={FOREST_ESTIMATORS},\n"
+            f"                                             random_state={int(seed)}, n_jobs=1),\n"
+            "                             scale=False)\n"
+        )
+    elif key == "mean_baseline":
+        body = (
+            "from sklearn.dummy import DummyRegressor\n\n"
+            "from batlab.harness import SklearnForecaster\n\n\n"
+            "def make_model():\n"
+            '    return SklearnForecaster(DummyRegressor(strategy="mean"), scale=False)\n'
+        )
+    else:
+        raise KeyError(
+            f"{key!r} has no bundle source template — only the catalogue models that are "
+            "neither the platform default nor an upload need one"
+        )
+
+    header = (
+        '"""The model this bundle was published for, as runnable source.\n\n'
+        f'Written by this platform so a sealed result can be re-derived by whoever\n'
+        f'receives the bundle. Importing this module EXECUTES it — read the file\n'
+        f'first.\n\n'
+        f'Catalogue entry: {key}\n'
+        f'Label: {entry.get("label", key)}\n'
+        f'Seed: {int(seed)}\n'
+        '"""\n'
+    )
+    return header + body
+
+
+def model_bundle_source(
+    model_key: str,
+    *,
+    seed: int = 42,
+    upload_source: "str | None" = None,
+    include_upload: bool = True,
+) -> dict:
+    """What model source (if any) should travel inside a bundle for this run.
+
+    Returns {source, entry_point, label, is_user_code, note, optional}:
+
+    - the platform's own model → no source at all. It is reproducible from the
+      repo (`batlab.harness.default_forecaster`), so embedding it would add
+      bytes and no new capability;
+    - a catalogue baseline (ridge / random forest / mean) → generated source,
+      always embedded: the numbers are the platform's own and a 20-line module
+      is what makes those bundles self-verifying;
+    - an uploaded module → the user's text, embedded unless they turned it off.
+      This is the only entry where the source may be someone's property, and
+      the only one where the page offers a choice.
+
+    `optional` is True only for the uploaded case: the page shows a checkbox
+    for it and a statement for every kind.
+    """
+    entry = BUILTIN_MODELS.get(model_key)
+    if entry is None:
+        raise KeyError(f"unknown model key {model_key!r}")
+    label = entry["label"]
+
+    if model_key == "platform_default":
+        return {
+            "source": None,
+            "entry_point": "make_model",
+            "label": label,
+            "is_user_code": False,
+            "optional": False,
+            "note": (
+                "This is the platform's own configuration, so it does not need to "
+                "travel: a verifier re-creates it from the repo "
+                "(batlab.harness.default_forecaster, same GBRT_PARAMS)."
+            ),
+        }
+
+    if model_key == "uploaded_module":
+        wanted = bool(include_upload) and bool(upload_source)
+        return {
+            "source": upload_source if wanted else None,
+            "entry_point": "make_model",
+            "label": label,
+            "is_user_code": True,
+            "optional": True,
+            "note": (
+                "The bundle will contain your model's source, so the number can be "
+                "re-derived by whoever you hand it to — and they will have your "
+                "model code. Verifying it imports that file, which executes it; "
+                "the bundle says so and the checker refuses a file whose bytes "
+                "changed after sealing."
+                if wanted else
+                "The bundle will record what model was graded (its class and "
+                "identity) but not its code, so it cannot be recomputed without "
+                "the module — the seal and the data identity still hold."
+            ),
+        }
+
+    return {
+        "source": catalogue_module_source(model_key, seed),
+        "entry_point": "make_model",
+        "label": label,
+        "is_user_code": False,
+        "optional": False,
+        "note": (
+            "The bundle carries this baseline's source, so the recompute check can "
+            "re-run the exact configuration that was graded instead of trusting "
+            "the recorded class name."
+        ),
     }
 
 
@@ -234,13 +425,134 @@ FLEET_LOADER_SPEC = "experiment_registry:reload_reference_cell_data"
 
 
 def fleet_loader_record(fleet_key: str) -> dict:
-    """{loader, loader_kwargs} for sealing a run on this fleet.
+    """{loader, loader_kwargs} for sealing a run on a REFERENCE fleet.
 
     Passed straight to seal_bundle(), which records it in replication.json so
     the download can be re-derived by someone who has neither the app nor the
     report — only the repo and the public dataset.
     """
     return {"loader": FLEET_LOADER_SPEC, "loader_kwargs": {"dataset": fleet_key}}
+
+
+def uploaded_fleet_entries(org_id: int) -> list[dict]:
+    """This org's own uploaded fleets, in the same shape as available_fleets().
+
+    new-cell generalization and closing-form baselines were the only questions
+    this page could ask. A tenant's own cells are the fleet most relevant to
+    their decision, and from 2026-09-17 the raw cycles are persisted at import
+    time (src/uploaded_store.py), so they can be graded and sealed like any
+    other fleet.
+
+    Every entry carries kind="uploaded", the upload_key, and the manifest's
+    fingerprint summary. Unreadable or foreign-store entries never appear —
+    uploaded_store.list_uploaded_fleets() already filters by org.
+    """
+    from uploaded_store import list_uploaded_fleets
+
+    entries: list[dict] = []
+    for manifest in list_uploaded_fleets(org_id):
+        key = str(manifest.get("upload_key"))
+        created = str(manifest.get("created_utc") or "")
+        entries.append({
+            "key": key,
+            "kind": "uploaded",
+            # No cell count in here: the picker's format_func appends it, and
+            # "…3 cells — 3 cells" is exactly the kind of unread label that
+            # makes a list look machine-generated.
+            "label": (
+                "Your uploaded fleet"
+                + (f" ({created[:10]})" if created else "")
+            ),
+            "detail": (
+                "The cells you uploaded to the Import page, reloaded from the "
+                "raw cycles this deployment persisted for that upload "
+                f"(key {key}). Nothing here is extrapolated from a reference "
+                "fleet: these are your cells, your chemistry, your labels."
+            ),
+            "n_cells": manifest.get("n_cells"),
+            "available": True,
+            "unavailable_reason": None,
+            "created_utc": created,
+            "cell_ids": list(manifest.get("cell_ids") or []),
+            "n_rows": manifest.get("n_rows"),
+        })
+    return entries
+
+
+def fleet_plan(entry: dict, *, org_id: int, embed_data: "bool | None" = None) -> dict:
+    """How to reload a fleet and how to seal a run on it.
+
+    `entry` is one row from uploaded_fleet_entries() or available_fleets() —
+    the page's picker already holds it, so this does not re-probe.
+
+    Returns {key, kind, label, dataset, reload, loader, loader_kwargs,
+    embed_data, embedded, privacy_note}. `reload()` returns
+    {cell_id: cycles DataFrame}; `dataset` is the label the report and the
+    bundle carry (and the downloaded file names are built from).
+
+    `embed_data` only has a meaning for an uploaded fleet: True puts the raw
+    cycles inside the sealed bundle (verifiable by anyone holding it, and the
+    data travels with it), False records this deployment's own store loader
+    instead (the data stays home, and verifying needs the store). It defaults
+    to True — an artifact nobody else can check is the weaker claim, and the
+    page states the trade before the run rather than after the download.
+    """
+    kind = entry.get("kind", "reference")
+    key = str(entry["key"])
+
+    if kind == "uploaded":
+        from uploaded_store import load_uploaded_cell_data
+
+        embedded = True if embed_data is None else bool(embed_data)
+
+        def _reload() -> dict:
+            return load_uploaded_cell_data(key, expected_org_id=org_id)
+
+        if embedded:
+            loader, loader_kwargs = BUNDLE_LOADER_SPEC, {"cells_dir": "cells"}
+            privacy_note = (
+                "The sealed bundle will contain your raw cycle tables, so your "
+                "own model's numbers can be re-derived by whoever you hand the "
+                "bundle to. Sharing the bundle shares the data in it."
+            )
+        else:
+            loader = UPLOADED_LOADER_SPEC
+            loader_kwargs = {"upload_key": key}
+            privacy_note = (
+                "The sealed bundle will NOT contain your data. It records this "
+                "deployment's store as the data path, so verifying it needs "
+                "access to that store — the seal still proves the numbers came "
+                "from the digests recorded in it, and the digests travel."
+            )
+        return {
+            "key": key,
+            "kind": kind,
+            "label": entry["label"],
+            "dataset": f"uploaded-{key.rsplit('-', 1)[-1][:8]}",
+            "reload": _reload,
+            "loader": loader,
+            "loader_kwargs": loader_kwargs,
+            "embed_data": embedded,
+            "privacy_note": privacy_note,
+        }
+
+    from experiment_registry import reload_reference_cell_data
+
+    record = fleet_loader_record(key)
+    return {
+        "key": key,
+        "kind": kind,
+        "label": entry["label"],
+        "dataset": key,
+        "reload": lambda: reload_reference_cell_data(key),
+        "loader": record["loader"],
+        "loader_kwargs": record["loader_kwargs"],
+        "embed_data": False,
+        "privacy_note": (
+            "The bundle records the public dataset's own loader, not your data: "
+            "these are published reference cells."
+        ),
+    }
 
 
 def _probe(name: str, probe_fn: Callable[[], Any]) -> tuple[Any, "str | None"]:
@@ -401,6 +713,44 @@ def unsupported_upload_reason(filename: str) -> "str | None":
     return None
 
 
+def _model_module_error(exc: ModuleSourceError) -> ModelModuleError:
+    """The message the page shows for each way a module can fail to load.
+
+    The mechanism lives in batlab (batlab.harness.model_source) so this page
+    and the replication verifier can never disagree about what counts as a
+    gradable model; the WORDING lives here, because the audiences differ —
+    "your upload" at a web form, "the module this bundle carries" at a
+    command line.
+    """
+    entry = exc.entry_point
+    if exc.kind == "empty":
+        return ModelModuleError("The uploaded file is empty.")
+    if exc.kind == "syntax":
+        detail = getattr(exc.exc, "msg", None) or "it does not compile"
+        return ModelModuleError(
+            f"The uploaded file is not valid Python — line {exc.lineno}: {detail}"
+        )
+    if exc.kind == "import":
+        return ModelModuleError(
+            f"Importing the uploaded module raised {type(exc.exc).__name__}: {exc.exc}"
+        )
+    if exc.kind == "missing_entry_point":
+        return ModelModuleError(
+            f"The uploaded module does not define {entry}(). Expected a "
+            f"function {entry}() that returns a fresh, unfitted model — "
+            "for example `def make_model(): return Ridge()`."
+        )
+    if exc.kind == "entry_raised":
+        return ModelModuleError(f"{entry}() raised {type(exc.exc).__name__}: {exc.exc}")
+    if exc.kind == "returned_none":
+        return ModelModuleError(
+            f"{entry}() returned None — it must return a model (an unfitted "
+            "sklearn-style estimator, a batlab.harness adapter, or a factory "
+            "returning one)."
+        )
+    return ModelModuleError(f"{entry}() returned a model the harness refuses: {exc.exc}")
+
+
 def load_model_module(
     source: str,
     *,
@@ -409,11 +759,11 @@ def load_model_module(
 ) -> dict:
     """Turn uploaded module source into a gradable factory.
 
-    Writes the source to a temporary file, imports it under `module_name`, and
-    validates the entry point by CALLING it once and running the result
-    through batlab.harness.as_factory() — the same normalization the harness
-    uses, so "the page accepted it" and "the harness can grade it" cannot
-    disagree.
+    Delegates the compile-import-probe path to batlab.harness (the same code
+    that loads the model a sealed bundle carries) and translates its failures
+    into ModelModuleError, which is what the page displays. The shared
+    mechanism is the point: "the page accepted it" and "the harness can grade
+    it" are one decision, made once.
 
     Raises ModelModuleError with a specific message for every failure mode:
     syntax error (with line), import-time exception, missing entry point,
@@ -425,80 +775,12 @@ def load_model_module(
     probe_class, callables}. `factory` is what the page passes to
     validate_forecaster().
     """
-    if not isinstance(source, str) or not source.strip():
-        raise ModelModuleError("The uploaded file is empty.")
-
     try:
-        compile(source, f"<{module_name}>", "exec")
-    except SyntaxError as exc:
-        raise ModelModuleError(
-            f"The uploaded file is not valid Python — line {exc.lineno}: {exc.msg}"
-        ) from exc
-
-    tmpdir = Path(tempfile.mkdtemp(prefix="batlab_model_"))
-    path = tmpdir / f"{module_name}.py"
-    path.write_text(source, encoding="utf-8")
-
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:  # pragma: no cover - defensive
-        raise ModelModuleError("Could not load the uploaded file as a Python module.")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module  # dataclasses/nested classes need this
-    try:
-        spec.loader.exec_module(module)
-    except KeyboardInterrupt:  # a user interrupting the app is not a model error
-        raise
-    except BaseException as exc:
-        # BaseException, not Exception: a module that calls sys.exit() would
-        # otherwise take down the whole Streamlit script with SystemExit, and
-        # the user would see a dead app instead of "your module exited".
-        raise ModelModuleError(
-            f"Importing the uploaded module raised {type(exc).__name__}: {exc}"
-        ) from exc
-
-    entry = getattr(module, entry_point, None)
-    if not callable(entry):
-        raise ModelModuleError(
-            f"The uploaded module does not define {entry_point}(). Expected a "
-            f"function {entry_point}() that returns a fresh, unfitted model — "
-            "for example `def make_model(): return Ridge()`."
+        return import_module_source(
+            source, module_name=module_name, entry_point=entry_point
         )
-
-    try:
-        probe = entry()
-    except KeyboardInterrupt:
-        raise
-    except BaseException as exc:  # incl. SystemExit — see the exec_module note
-        raise ModelModuleError(
-            f"{entry_point}() raised {type(exc).__name__}: {exc}"
-        ) from exc
-
-    if probe is None:
-        raise ModelModuleError(
-            f"{entry_point}() returned None — it must return a model (an unfitted "
-            "sklearn-style estimator, a batlab.harness adapter, or a factory "
-            "returning one)."
-        )
-
-    try:
-        factory = as_factory(probe)
-    except Exception as exc:
-        raise ModelModuleError(f"{entry_point}() returned a model the harness refuses: {exc}") from exc
-    if factory is None:  # pragma: no cover - as_factory only returns None for None
-        raise ModelModuleError(f"{entry_point}() returned nothing gradable.")
-
-    return {
-        "factory": factory,
-        "module_name": module_name,
-        "path": str(path),
-        "entry_point": entry_point,
-        "interval_capable": has_predict_interval(probe),
-        "probe_class": type(probe).__name__,
-        "callables": sorted(
-            name for name in vars(module)
-            if callable(getattr(module, name, None)) and not name.startswith("_")
-        ),
-    }
+    except ModuleSourceError as exc:
+        raise _model_module_error(exc) from exc
 
 
 STARTER_MODULE_SOURCE = '''\
@@ -615,6 +897,67 @@ def summarise_report(report: dict) -> dict:
     }
 
 
+def verify_command(result: dict, *, bundle_file_name: str = "sealed_bundle.zip") -> dict:
+    """The shell command that verifies this run's sealed bundle, and whether it
+    can re-derive the number.
+
+    Pure, because the rule has three branches and getting one wrong is a lie in
+    the form of a command:
+
+    - the platform's own model → no `--model`, `--recompute` is valid (the
+      verifier re-creates it from the repo);
+    - a model the bundle CARRIES (a catalogue baseline, or an upload the user
+      chose to include) → `--model <bundle model loader> --recompute`;
+    - a non-default model the bundle does NOT carry → no `--model` and NO
+      `--recompute`, because the check would fail on the number it was printed
+      next to.
+
+    Returns {command, carries_model, recomputes, unzips, reason}: `reason` is
+    None when the command is complete, and the sentence to show beside it when
+    the recompute step is deliberately left out.
+    """
+    record = result.get("loader") or {}
+    loader_spec = record.get("loader") or "<module:function>"
+    carries_model = bool(result.get("model_source_embedded"))
+    recomputes = bool(result.get("default_model")) or carries_model
+    model_flag = f" \\\n    --model {BUNDLE_MODEL_LOADER}" if carries_model else ""
+    recompute_flag = " --recompute" if recomputes else ""
+
+    if result.get("embed_data"):
+        command = (
+            f"unzip {bundle_file_name} -d bundle\n"
+            f"python -m batlab.validation.replication bundle \\\n"
+            f"    --loader {loader_spec}{model_flag}{recompute_flag}"
+        )
+    else:
+        command = (
+            f"python -m batlab.validation.replication <unzipped-bundle> \\\n"
+            f"    --loader {loader_spec}{model_flag}{recompute_flag}"
+        )
+
+    reason = None
+    if not recomputes:
+        reason = (
+            "**Re-deriving the number needs the model, so this command does "
+            "not re-derive it.** The bundle records the model it was published "
+            "for ("
+            f"`{(result.get('summary') or {}).get('model_label')}`) but not its "
+            "code; pass `--model module:factory` (a zero-argument factory "
+            "returning a fresh, unfitted copy of it) to add the recompute "
+            "check. Without the model you still get the checks that do not "
+            "depend on its code — the seal, the data identity, and the "
+            "environment — and the bundle records that identity, so a reader "
+            "can see exactly what was claimed."
+        )
+    return {
+        "command": command,
+        "carries_model": carries_model,
+        "recomputes": recomputes,
+        "unzips": bool(result.get("embed_data")),
+        "reason": reason,
+    }
+
+
 def seal_zip_bytes(
     report: dict,
     cell_data: dict,
@@ -622,22 +965,33 @@ def seal_zip_bytes(
     dataset: "str | None" = None,
     loader: Any = None,
     loader_kwargs: "dict | None" = None,
+    embed_data: bool = False,
+    cells_dir: str = "cells",
+    model_source: "str | None" = None,
+    model_entry_point: str = "make_model",
 ) -> bytes:
     """Seal a report into an in-memory zip a third party can verify.
 
     Zips exactly what seal_bundle() writes (benchmark.json, harness_report.json,
-    and the sealed replication.json), so the downloaded artifact is the same
-    one the CLI produces — the page does not have a second, weaker export path.
+    and the sealed replication.json — plus `cells/` when the raw cycles are
+    embedded and `model/` when the model's source is), so the downloaded
+    artifact is the same one the CLI produces: the page does not have a second,
+    weaker export path.
     Raises ValueError when the report has no LCO section, which is the same
     condition seal_bundle refuses for (its recompute check re-derives the LCO
     number).
     """
     with tempfile.TemporaryDirectory(prefix="batlab_seal_") as tmp:
         seal_bundle(report, cell_data, tmp, loader=loader, loader_kwargs=loader_kwargs,
-                    dataset=dataset)
+                    dataset=dataset, embed_data=embed_data, cells_dir=cells_dir,
+                    model_source=model_source, model_entry_point=model_entry_point)
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(Path(tmp).iterdir()):
+            # rglob, not iterdir: an embedded-cells bundle carries a `cells/`
+            # subdirectory, and a zip that silently dropped the evidence and
+            # kept the report would export a bundle that cannot verify at all.
+            root = Path(tmp)
+            for path in sorted(root.rglob("*")):
                 if path.is_file():
-                    archive.write(path, path.name)
+                    archive.write(path, path.relative_to(root).as_posix())
     return buffer.getvalue()

@@ -218,8 +218,7 @@ python -m batlab.validation.replication out/nasa-bundle \
 
 and gets pass/fail per check: **seal** (files unmodified), **data-identity**
 (their copy of the data digests byte-identically), **environment** (differences
-listed), **recompute** (the number re-derives). Add
-`--model my_pkg.models:make_forecaster` when the bundle was published for a
+listed), **recompute** (the number re-derives). Add  `--model my_pkg.models:make_forecaster` when the bundle was published for a
 model other than this platform's default — a non-default bundle re-run against
 the default one is reported as a missing input, not as a failed number.
 
@@ -227,25 +226,125 @@ The bundle also records the loader's *arguments*, and the verifier supplies
 them, so a loader whose signature requires one (for example
 `experiment_registry:reload_reference_cell_data(dataset)`) verifies without
 the reviewer re-typing anything — the command in the bundle's `notes` is the
-whole command.
+whole command. A loader that declares a `bundle_dir` parameter is handed the
+*verifier's* path to the unpacked bundle, so a bundle verifies wherever it was
+unzipped rather than only from the publisher's working directory.
+
+### A bundle that carries its own data
+
+`loader=` is the right design for a public reference fleet: the data is
+downloadable, so the bundle stays small and the verifier supplies the dataset.
+It is the wrong design for data a third party cannot obtain — a tenant's own
+upload, an internal fleet — where it degrades the seal into "checkable if you
+have the publisher's filesystem".
+
+```python
+seal_bundle(report, cells, "out/my-bundle", embed_data=True, dataset="uploaded")
+```
+
+```bash
+unzip out/my-bundle.zip -d bundle
+python -m batlab.validation.replication bundle \
+    --loader batlab.validation.bundle_data:load_bundle_cells --recompute
+```
+
+`embed_data=True` writes each cell's cycle table into `cells/` and points the
+bundle at the bundle-relative loader, so the number is re-derived with no data
+path, no deployment and no network — and the seal covers the data files as
+well as the report, because a seal that certifies the report but not the
+evidence inside it would certify the wrong thing.
+
+The trade is explicit: **the data is then inside the artifact you share.**
+That is the correct default for data nobody else can get and the wrong one for
+a public fleet, which is why it is a parameter rather than a policy.
+
+Two serializations exist in `bundle_data.py`, deliberately:
+`cell_digest()`'s fingerprint form (`%.10g`, short and diffable, and lossy as
+storage) and the stored table (`%.17g`, where every double survives
+write-then-read). Storing the fingerprint form would leave a recompute ~1e-5
+from the published number — forty times the replication tolerance, on a bundle
+that is byte-identical — and the reader pins
+`float_precision="round_trip"` for the same reason (pandas' default converter
+moves values by 1 ULP). `cells/index.json` records both digests per file, so a
+reviewer can walk from the file's bytes to the sealed fingerprint with
+`sha256sum` and no tooling in between.
+
+When the cycles are deliberately *not* embedded, the bundle keeps the digests
+and the numbers and records the deployment's own store as the data path. If a
+verifier cannot load that path, **data-identity FAILS** — it is not degraded to
+"unchecked". A named failure the reviewer can act on is worth far more than an
+artifact nobody can check reporting PASS.
+
+### A bundle that carries its own model
+
+The recompute check is the one that re-derives the headline number, and it
+needs the model. For a bundle published for anything but this platform's own
+GBRT that model used to be unobtainable: the bundle recorded only what the
+model *was*, so the check could not run and the artifact certified less than it
+appeared to. The model now travels the same way the data does.
+
+```python
+seal_bundle(report, cells, "out/ridge-bundle",
+            loader="experiment_registry:reload_reference_cell_data",
+            loader_kwargs={"dataset": "synth"},
+            model_source=open("my_model.py").read(),
+            model_entry_point="make_model")
+```
+
+```bash
+unzip out/ridge-bundle.zip -d bundle
+python -m batlab.validation.replication bundle \
+    --loader experiment_registry:reload_reference_cell_data \
+    --model batlab.harness.model_source:load_bundle_model --recompute
+```
+
+`model_source` writes the module's text to `model/module.py`, seals it with the
+rest of the bundle, and records the *bundle-relative* model loader with its
+arguments — so `--model <that loader>` alone is the whole command, and the
+number re-derives from the archive plus the public data.
+
+Two properties are not negotiable here, because both are about executing
+someone else's code at verification time:
+
+- **Digest first, import second.** `load_bundle_model()` checks the file
+  against the digest its own index records and refuses a mismatch *before*
+  importing it, so a model edited after sealing is never executed. The index
+  sits beside the file, so a reviewer can confirm the bytes with `sha256sum`
+  and no tooling in between.
+- **Never loaded implicitly.** Importing a Python module runs it. The verifier
+  has to name `load_bundle_model` on the command line — a deliberate act —
+  and the file is plain, readable source precisely so it can be read first.
+  (A `.pkl` could not be: loading it *is* executing it.)
+
+When a non-default model is deliberately **not** carried — the app offers that
+choice only for an uploaded module, whose source may be someone's property —
+the recompute check fails with a message naming the file it would have loaded
+and the exact flag that would let it, rather than silently re-running the
+default model and reporting a number mismatch.
 
 ## In the app
 
 `Analyse → Bring your own model` is this harness with a UI in front of it. Pick
-one of the reference fleets this deployment can reload, pick a model — the
-platform's own GBRT, a scaled Ridge, a random forest, the training-mean floor,
-or a `.py` module you upload — and read the verdict: the claims the run
-supports and the claims it withholds, in two columns, with every section
-(fold-level leave-cell-out, baselines, calibration, prospective, provenance,
-gate) rendered underneath.
+a fleet, pick a model — the platform's own GBRT, a scaled Ridge, a random
+forest, the training-mean floor, or a `.py` module you upload — and read the
+verdict: the claims the run supports and the claims it withholds, in two
+columns, with every section (fold-level leave-cell-out, baselines, calibration,
+prospective, provenance, gate) rendered underneath.
 
-Three things about that page are deliberate, and each is stated on the page
+Four things about that page are deliberate, and each is stated on the page
 rather than left for you to infer:
 
-- **Reference fleets only.** Grading a model means re-deriving features from
-  raw cycles, and the app's uploaded-data path retains only the engineered
-  frames (`src/bundle_cache.py`) — so an uploaded fleet cannot be fingerprinted
-  the way a sealed bundle requires. Upload a *model* instead of a fleet.
+- **Your own uploads are on the same list.** The raw cycles are persisted at
+  import time (`src/uploaded_store.py`, content-addressed by the upload's own
+  hash), which is what makes an uploaded fleet fingerprintable — so it is
+  offered as a fleet, first in the picker when you have one, with its cell
+  count and upload date. Selecting it grades your model on *your* cells, and
+  the sealed bundle covers your data rather than a reference fleet's.
+- **You choose whether your data travels in the bundle.** The checkbox (default
+  ON for an upload) decides between embedding your raw cycles — verifiable by
+  anyone you hand the bundle to, and they receive the data — and recording this
+  deployment's store as the data path, which keeps the cycles home and requires
+  that store to verify. The page states whichever is currently selected.
 - **`.py` modules only, and you read it first.** A serialized model (`.pkl`,
   `.pt`, `.joblib`) executes as part of loading, so there is no moment at which
   it can be inspected — it is refused, with that reason on screen. An uploaded
@@ -256,6 +355,21 @@ rather than left for you to infer:
   loader.** The two return different tables — the reloader's frames carry the
   enrichment step's derived columns — and `cell_digest` hashes every column,
   so recording the raw loader would fail a bundle that is in fact correct.
+
+You also choose — for an upload — whether **your model travels inside the
+bundle**. With it, `--model batlab.harness.model_source:load_bundle_model`
+re-runs the exact configuration that was graded; without it, the bundle records
+what the model *was* and the recompute check says so. The catalogue baselines
+carry themselves (a 20-line ridge is not a secret), and the platform's own GBRT
+needs nothing carried because a verifier re-creates it from the repo.
+
+The verification command printed under a result is the command that can
+actually run, decided in one pure function (`harness_models.verify_command`)
+and printed with a reason when it cannot: `--recompute` appears when the model
+is obtainable (from the repo, or from the bundle) and is left out — with the
+sentence explaining what the remaining three checks still hold — when it is
+not. On the page's copy the model source also carries its own disclosure: read
+`model/module.py` before running the command, because importing it executes it.
 
 Runtime is disclosed per fleet and measured, not estimated: the four-cell NASA
 fleet runs in about 15 s under the page's default configuration, the synthetic
@@ -279,6 +393,12 @@ several minutes. Nothing runs on page load.
 - **Garbage in, disclosed garbage out.** The lint catches label-formula
   leakage mechanically; it cannot prove your features are causal, your cells
   are representative, or your lab data is clean.
+- **It does not sandbox model code.** An uploaded `.py` module — or any code
+  you hand the in-app uploader — runs in the host process. That is disclosed on
+  the page and is the reason the uploader accepts readable text only.
+- **A bundle carrying your data is only as private as where you send it.** The
+  seal proves the numbers came from the tables inside the artifact; it does not
+  encrypt them. Share one and you have shared the cycles.
 
 ## See also
 

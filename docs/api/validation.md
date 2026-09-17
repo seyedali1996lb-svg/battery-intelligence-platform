@@ -54,6 +54,16 @@
         - load_bundle
         - format_verification
 
+::: batlab.validation.bundle_data
+    options:
+      show_root_heading: true
+      members:
+        - write_bundle_cells
+        - load_bundle_cells
+        - read_bundle_cell_file
+        - table_csv_text
+        - cell_file_name
+
 # batlab.harness
 
 The model-agnostic validation harness — see the
@@ -84,3 +94,13 @@ honest limits of each number it reports.
         - validate_forecaster
         - seal_bundle
         - format_report
+
+::: batlab.harness.model_source
+    options:
+      show_root_heading: true
+      members:
+        - write_bundle_model
+        - load_bundle_model
+        - import_module_source
+        - BUNDLE_MODEL_LOADER
+        - ModuleSourceError

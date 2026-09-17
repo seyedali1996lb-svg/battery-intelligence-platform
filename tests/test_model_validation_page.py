@@ -43,6 +43,33 @@ def isolated_db(tmp_path, monkeypatch):
     return db_module
 
 
+@pytest.fixture(autouse=True)
+def isolated_upload_store(tmp_path, monkeypatch):
+    """Point the raw-cycle store at a temp dir for EVERY test in this file.
+
+    The page's fleet picker lists the org's persisted uploads, so without this
+    a developer who has analysed an upload in the app would change what these
+    tests see (and their real store would be read by the suite).
+    """
+    import uploaded_store as us
+
+    monkeypatch.setattr(us, "UPLOADED_STORE_DIR", tmp_path / "uploaded_fleets")
+    return us
+
+
+def _tenant_fleet(n_cells: int = 3) -> dict:
+    from conftest import make_cycles_df
+
+    return {
+        f"UP{i + 1}": make_cycles_df(
+            n_cycles=120,
+            fade_per_cycle=0.004 * (1.0 + 0.1 * i),
+            initial_resistance_ohm=0.05 + 0.004 * i,
+        )
+        for i in range(n_cells)
+    }
+
+
 def _logged_in_app(page: str = "model_validation", **session) -> AppTest:
     at = AppTest.from_file(_MAIN_PY, default_timeout=180)
     at.session_state["authenticated"] = True
@@ -248,6 +275,196 @@ def test_a_binary_file_renamed_to_py_is_refused_before_it_runs():
 
     source, error = _read_upload_source(_TextUpload())
     assert error is None and "make_model" in source
+
+
+def test_the_orgs_own_upload_is_offered_first_and_can_be_graded(isolated_db, isolated_upload_store):
+    """The end state of persisting raw cycles: your own fleet, on this page.
+
+    Cheapest honest configuration (3 cells, training-mean floor, leave-cell-out
+    only, no intervals) — the point is that a tenant's OWN cells reach the
+    verdict, the claims, and a sealed bundle that carries them.
+    """
+    import io
+    import zipfile
+
+    key = "upload-0f0f0f0f0f0f0f0f0f0f"
+    isolated_upload_store.save_uploaded_cell_data(
+        1, key, _tenant_fleet(3), meta={"n_cells": 3}
+    )
+
+    at = _logged_in_app(
+        byom_model="mean_baseline",
+        byom_splits_lco=True,
+        byom_splits_prospective=False,
+        byom_intervals=False,
+    )
+    at.run()
+    assert not at.exception, at.exception
+
+    fleet_box = [s for s in at.selectbox if s.key == "byom_fleet"][0]
+    # Offering it is the feature; offering it FIRST is the courtesy — if you
+    # have just uploaded your own cells, that is the fleet you came for.
+    assert fleet_box.value == key
+    assert "Your uploaded fleet" in str(fleet_box.options[0])
+    assert "3 cells" in str(fleet_box.options[0])
+    assert "cells — 3 cells" not in str(fleet_box.options[0])  # count stated once
+
+    # The privacy trade is stated BEFORE the run, not after the download.
+    assert any(c.key == "byom_embed_data" for c in at.checkbox)
+    assert "sharing the bundle shares the data" in _all_text(at).lower()
+
+    at.button(key="byom_run").click().run()
+    assert not at.exception, at.exception
+
+    result = at.session_state["byom_result"]
+    assert result["summary"]["dataset_name"].startswith("uploaded-")
+    assert result["summary"]["n_cells"] == 3
+    assert result["embed_data"] is True
+    assert result["seal_error"] is None, result["seal_error"]
+
+    with zipfile.ZipFile(io.BytesIO(result["zip_bytes"])) as archive:
+        names = archive.namelist()
+    assert any(n.startswith("cells/") and n.endswith(".csv") for n in names)
+    # ... and the panel says which loader verifies it, matching what was sealed.
+    assert result["loader"]["loader"] == "batlab.validation.bundle_data:load_bundle_cells"
+    assert "load_bundle_cells" in _all_text(at)
+
+    # The model travelled too: this run was graded with the training-mean
+    # baseline, whose code used to be unobtainable — so the sealed bundle now
+    # carries it and the printed command is the complete, runnable one.
+    assert result["default_model"] is False
+    assert result["model_source_embedded"] is True
+    assert any(n == "model/module.py" for n in names)
+    command = "\n".join(c.value for c in at.code)
+    assert "load_bundle_cells" in command
+    assert "--model batlab.harness.model_source:load_bundle_model" in command
+    assert "--recompute" in command
+    assert "Re-deriving the number needs the model" not in _all_text(at)
+
+    # The whole promise, end to end: extract the zip into an empty directory
+    # and verify with NOTHING else — the data comes from `cells/`, the model
+    # from `model/module.py`, and the store this deployment keeps is never
+    # consulted. This is what a recipient of the bundle can do.
+    import importlib
+    import tempfile
+
+    from batlab.validation.replication import (
+        _load_cell_data, _load_model, _recorded_loader_kwargs, _recorded_model_kwargs,
+        load_bundle, verify_bundle,
+    )
+
+    extracted = tempfile.mkdtemp(prefix="byom_zip_only_")
+    with zipfile.ZipFile(io.BytesIO(result["zip_bytes"])) as archive:
+        archive.extractall(extracted)
+    loaded = load_bundle(extracted)
+
+    # Delete the tenant's cycles before verifying, so a bundle that secretly
+    # leaned on this deployment fails instead of passing by accident.
+    isolated_upload_store.clear_uploaded_cell_data(key)
+
+    data_loader = loaded["loader"]
+    cell_data = _load_cell_data(f"{data_loader['module']}:{data_loader['function']}",
+                                _recorded_loader_kwargs(loaded), bundle_dir=extracted)
+    model_loader = loaded["model_source"]["loader"]
+    factory = _load_model(f"{model_loader['module']}:{model_loader['function']}",
+                          bundle_dir=extracted,
+                          recorded_kwargs=_recorded_model_kwargs(loaded))
+    verification = verify_bundle(loaded, bundle_dir=extracted, cell_data=cell_data,
+                                recompute=True, forecaster=factory)
+    assert verification["verdict"] == "pass", verification["checks"]
+    # The carried model is the one that was graded, not merely a source file:
+    # run_lco fits it per fold, so the recomputed number has to match exactly.
+    assert any(c["name"] == "recompute" and c["status"] == "pass"
+               for c in verification["checks"]), verification["checks"]
+    assert importlib.import_module("batlab.validation.bundle_data") is not None
+
+
+def test_keeping_the_raw_cycles_home_seals_a_bundle_without_them(isolated_db, isolated_upload_store):
+    """The other side of the trade, and it must be the other side.
+
+    Unchecking the box has to change BOTH what is sealed and what the page tells
+    you to run — a page that printed one command and sealed the other would be
+    worse than no option at all.
+    """
+    import io
+    import zipfile
+
+    key = "upload-1e1e1e1e1e1e1e1e1e1e"
+    isolated_upload_store.save_uploaded_cell_data(1, key, _tenant_fleet(3))
+
+    at = _logged_in_app(
+        byom_fleet=key,
+        byom_model="mean_baseline",
+        byom_splits_lco=True,
+        byom_splits_prospective=False,
+        byom_intervals=False,
+        byom_embed_data=False,
+    )
+    at.run()
+    assert not at.exception, at.exception
+    at.button(key="byom_run").click().run()
+    assert not at.exception, at.exception
+
+    result = at.session_state["byom_result"]
+    assert result["embed_data"] is False
+    assert result["loader"]["loader"] == "src.uploaded_store:load_uploaded_cell_data"
+    assert result["loader"]["loader_kwargs"] == {"upload_key": key}
+    assert result["seal_error"] is None, result["seal_error"]
+
+    with zipfile.ZipFile(io.BytesIO(result["zip_bytes"])) as archive:
+        names = archive.namelist()
+    assert not any(n.startswith("cells/") for n in names)
+    assert "does not carry your data" in _all_text(at)
+
+
+def test_the_verify_command_recomputes_when_it_can(isolated_db):
+    """The platform's own model IS reproducible from the repo — so that command
+    carries --recompute, and the bundle with the tenant's cycles verifies
+    end to end from the printed lines alone."""
+    import io
+    import zipfile
+
+    at = _logged_in_app(
+        byom_fleet="synth",
+        byom_model="platform_default",
+        byom_splits_lco=True,
+        byom_splits_prospective=False,
+        byom_intervals=False,
+        byom_enforce_gate=False,
+    )
+    at.run()
+    assert not at.exception, at.exception
+    at.button(key="byom_run").click().run()
+    assert not at.exception, at.exception
+
+    result = at.session_state["byom_result"]
+    assert result["default_model"] is True
+    command = "\n".join(c.value for c in at.code)
+    assert "--recompute" in command
+    assert "Re-deriving the number needs the model" not in _all_text(at)
+
+    # Run the printed loader against the sealed bundle, in-process, exactly as
+    # the CLI would: it is the same call the verifier makes.
+    import importlib
+    import tempfile
+
+    from batlab.validation.replication import _load_cell_data, _recorded_loader_kwargs
+
+    bundle = result["report"]
+    with zipfile.ZipFile(io.BytesIO(result["zip_bytes"])) as archive:
+        extracted = tempfile.mkdtemp(prefix="byom_verify_")
+        archive.extractall(extracted)
+    from batlab.validation.replication import load_bundle, verify_bundle
+
+    loaded = load_bundle(extracted)
+    loader = getattr(importlib.import_module(loaded["loader"]["module"]),
+                     loaded["loader"]["function"])
+    cell_data = _load_cell_data(f"{loaded['loader']['module']}:{loaded['loader']['function']}",
+                                _recorded_loader_kwargs(loaded), bundle_dir=extracted)
+    verification = verify_bundle(loaded, bundle_dir=extracted, cell_data=cell_data,
+                                recompute=True)
+    assert verification["verdict"] == "pass", verification["checks"]
+    assert loader is not None and bundle["lco"] is not None
 
 
 def test_nav_wiring(isolated_db):

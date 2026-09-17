@@ -31,14 +31,34 @@ Usage (third party):
     python -m batlab.validation.replication <bundle-dir> \
         --loader batlab.datasets.nasa:load_nasa_cells [--recompute]
 
-Publishing side: scripts/publish_replication_bundle.py.
+A bundle that carries its own cycle tables (sealed with embed_data=True --
+the path for data that is not public, e.g. a tenant's own upload) records the
+bundle-relative loader below, so it verifies with nothing else in hand:
+
+    python -m batlab.validation.replication <bundle-dir> \\
+        --loader batlab.validation.bundle_data:load_bundle_cells --recompute
+
+A bundle sealed for a model other than batlab's own default carries that model
+as source under `model/`, so it verifies the same way — the number is
+re-derived instead of taken on trust:
+
+    python -m batlab.validation.replication <bundle-dir> \\
+        --loader batlab.validation.bundle_data:load_bundle_cells \\
+        --model batlab.harness.model_source:load_bundle_model --recompute
+
+Run from a checkout, the CLI resolves this repo's own loader modules (`src/`)
+before importing anything a bundle names — see _ensure_checkout_importable.
+
+Publishing side: scripts/publish_replication_bundle.py, batlab.harness.
 """
 
 from __future__ import annotations
 
 import hashlib
 import importlib
+import inspect
 import json
+import sys
 from pathlib import Path
 
 REPLICATION_SCHEMA = "batlab-replication-bundle"
@@ -128,6 +148,7 @@ def verify_bundle(
     cell_data: "dict | None" = None,
     recompute: bool = False,
     forecaster: "object | None" = None,
+    data_error: "str | None" = None,
 ) -> dict:
     """Run the four checks. Pure over its inputs (recompute runs run_lco).
 
@@ -167,8 +188,20 @@ def verify_bundle(
                        "detail": "no files/digests to verify (bundle passed by value?)"})
 
     # 2. IDENTITY — third party's data digests to the publisher's.
+    #
+    # Three distinct situations, deliberately not collapsed into one: data
+    # supplied and compared; no data attempted (the verifier did not pass
+    # --loader) — a WARN, because nothing was claimed; and data ATTEMPTED but
+    # the path failed to load. That last one is a FAIL. A bundle whose recorded
+    # data path is a store that no longer exists used to raise a traceback, and
+    # anything that quietly degraded it to "unchecked" would let an artifact
+    # nobody can verify report a PASS.
     digests = bundle.get("cell_digests") or {}
-    if cell_data is not None and digests:
+    if data_error is not None:
+        checks.append({"name": "data-identity", "status": "fail",
+                       "detail": ("the data path this bundle records could not be loaded — "
+                                  f"{data_error}")})
+    elif cell_data is not None and digests:
         from batlab.validation.fingerprints import cell_digest
 
         changed, missing, extra = [], [], []
@@ -225,14 +258,24 @@ def verify_bundle(
                     # Same trap this file exists to catch, one layer up: a
                     # bundle published for model A and re-run against model B
                     # yields a number mismatch that says nothing about either
-                    # model. Name the real cause instead.
+                    # model. Name the real cause instead — and, when the bundle
+                    # CARRIES the model, name the exact flag that completes the
+                    # check rather than leaving the reviewer to work it out.
+                    carried = bundle.get("model_source") or {}
+                    remedy = (
+                        f"; this bundle carries that model's source at {carried.get('file')} — "
+                        f"pass --model {_recorded_model_loader_spec(carried)} to recompute it, "
+                        "after reading that file: importing a module executes it"
+                        if carried else
+                        "; pass the same model (--model / forecaster=) to recompute it"
+                    )
                     checks.append({
                         "name": "recompute",
                         "status": "fail",
                         "detail": (
                             "this bundle was published for a non-default model "
-                            f"({(bundle.get('model') or {}).get('class', 'unrecorded')}) — "
-                            "pass the same model (--model / forecaster=) to recompute it"
+                            f"({(bundle.get('model') or {}).get('class', 'unrecorded')})"
+                            + remedy
                         ),
                     })
                 else:
@@ -281,22 +324,114 @@ def _recorded_loader_kwargs(bundle: dict) -> dict:
     return dict(recorded or {})
 
 
-def _load_cell_data(loader_spec: str, loader_kwargs: "dict | None") -> dict:
+def _declared_parameters(func: object) -> dict:
+    """The parameters a callable declares, or {} when it cannot be introspected."""
+    try:
+        return dict(inspect.signature(func).parameters)
+    except (TypeError, ValueError):  # pragma: no cover - exotic callables
+        return {}
+
+
+def _supplied_arguments(
+    func: object,
+    recorded: "dict | None",
+    bundle_dir: "str | Path | None",
+) -> dict:
+    """The arguments a recorded path gets: its own plus the verifier's bundle.
+
+    Only names the callable actually DECLARES are supplied, so a plain
+    `module:function` model factory is returned untouched (still uncalled —
+    run_lco calls a factory once per fold), while a bundle-relative loader such
+    as batlab.harness.model_source:load_bundle_model is called with the file
+    and entry point the bundle recorded, plus THIS verifier's path to the
+    unpacked bundle. That is what lets a self-contained artifact verify from
+    wherever it happens to be unzipped rather than only from the publisher's
+    working directory.
+    """
+    declared = _declared_parameters(func)
+    supplied: dict = {k: v for k, v in (recorded or {}).items() if k in declared}
+    if bundle_dir is not None and "bundle_dir" in declared and "bundle_dir" not in supplied:
+        supplied["bundle_dir"] = str(Path(bundle_dir).resolve())
+    return supplied
+
+
+def _ensure_checkout_importable() -> list:
+    """Make THIS checkout's own loader modules importable, when they exist.
+
+    A bundle records the data path it was published against, and this
+    platform's deployable loaders live under `src/` — the reference reloader as
+    the top-level `experiment_registry`, a tenant's store as
+    `src.uploaded_store`. Run from an installed wheel that directory is not
+    there and this is a no-op; run from a checkout, the printed command
+    otherwise fails its data-identity check with ModuleNotFoundError on a
+    loader the bundle was entitled to name.
+
+    Deliberately narrow: only the two directories of the checkout this file
+    itself lives in, only when it is a checkout (a pyproject.toml sits beside
+    it), appended rather than prepended so nothing here shadows an installed
+    package, and never anything the bundle names. It adds import RESOLUTION,
+    not trust — `--loader` is the verifier's own choice either way.
+
+    Returns the paths added, for the caller to report.
+    """
+    root = Path(__file__).resolve().parents[2]
+    if not (root / "pyproject.toml").is_file():
+        return []
+    added = []
+    for candidate in (root / "src", root):
+        if candidate.is_dir() and str(candidate) not in sys.path:
+            sys.path.append(str(candidate))
+            added.append(str(candidate))
+    return added
+
+
+def _load_cell_data(
+    loader_spec: str,
+    loader_kwargs: "dict | None",
+    bundle_dir: "str | Path | None" = None,
+) -> dict:
     """Import 'module:function' and call it — the third party's data path."""
     module_name, _, func_name = loader_spec.partition(":")
     if not module_name or not func_name:
         raise ValueError("--loader must be 'module.path:function' (e.g. batlab.datasets.nasa:load_nasa_cells)")
     loader = getattr(importlib.import_module(module_name), func_name)
-    return loader(**(loader_kwargs or {}))
+    return loader(**_supplied_arguments(loader, loader_kwargs, bundle_dir))
 
 
-def _load_model(model_spec: str):
-    """Import 'module:function' and return whatever it gives back.
+def _recorded_model_kwargs(bundle: dict) -> dict:
+    """The model kwargs a bundle recorded for its own model loader.
 
-    The callable may be a factory (zero-argument, returning a fresh model), an
-    unfitted estimator, or a batlab.harness adapter — every shape
-    as_factory() accepts. It is NOT called here: run_lco calls a factory per
-    fold, and calling it once for a probe would be harmless but misleading.
+    Mirrors _recorded_loader_kwargs for the data path: a bundle that carries
+    its model records how to load it, so the reviewer types the loader's name
+    and nothing else. A bundle with no embedded model returns {} — and then a
+    plain --model factory is called with nothing at all.
+    """
+    return dict(((bundle.get("model_source") or {}).get("loader") or {}).get("kwargs") or {})
+
+
+def _recorded_model_loader_spec(model_source: dict) -> str:
+    """The 'module:function' spec that loads a bundle's carried model."""
+    loader = (model_source or {}).get("loader") or {}
+    module_name, func_name = loader.get("module"), loader.get("function")
+    if not module_name or not func_name:
+        return "batlab.harness.model_source:load_bundle_model"
+    return f"{module_name}:{func_name}"
+
+
+def _load_model(
+    model_spec: str,
+    *,
+    bundle_dir: "str | Path | None" = None,
+    recorded_kwargs: "dict | None" = None,
+):
+    """Import 'module:function' and return what it gives back.
+
+    For a plain factory (an unfitted estimator, a zero-argument factory, a
+    batlab.harness adapter) this is returned UNCALLED — run_lco calls a factory
+    once per fold, and calling it here as a probe would be harmless but
+    misleading. A callable that declares the recorded/bundle arguments is the
+    bundle-relative model path, and is called with them (see
+    _supplied_arguments).
     """
     module_name, _, func_name = model_spec.partition(":")
     if not module_name or not func_name:
@@ -304,7 +439,9 @@ def _load_model(model_spec: str):
             "--model must be 'module.path:function' — a factory returning a "
             "fresh model (e.g. my_pkg.models:make_forecaster)"
         )
-    return getattr(importlib.import_module(module_name), func_name)
+    target = getattr(importlib.import_module(module_name), func_name)
+    supplied = _supplied_arguments(target, recorded_kwargs, bundle_dir)
+    return target(**supplied) if supplied else target
 
 
 def main() -> int:
@@ -324,16 +461,39 @@ def main() -> int:
                         help="'module:function' yielding the model this bundle was "
                              "published for (a factory returning a fresh model, or an "
                              "unfitted estimator). Omit for bundles published with "
-                             "batlab's own default GBRT.")
+                             "batlab's own default GBRT. For a bundle that carries its "
+                             "model's source, pass "
+                             "batlab.harness.model_source:load_bundle_model (which "
+                             "IMPORTS that file — read it first).")
     args = parser.parse_args()
+    # A bundle may record one of this repo's OWN loaders (the reference reloader
+    # is a top-level module under src/, a tenant's store is src.uploaded_store),
+    # so those have to resolve before anything the bundle names is imported.
+    # Said out loud rather than left as a silent path append.
+    for path in _ensure_checkout_importable():
+        print(f"  (checkout loader path added to sys.path: {path})")
 
     bundle = load_bundle(args.bundle_dir)
     cell_data = None
+    data_error = None
     if args.loader:
-        cell_data = _load_cell_data(args.loader, _recorded_loader_kwargs(bundle))
-    forecaster = _load_model(args.model) if args.model else None
+        try:
+            cell_data = _load_cell_data(
+                args.loader, _recorded_loader_kwargs(bundle), bundle_dir=args.bundle_dir
+            )
+        except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+            # A named failure the reviewer can act on ("the store this bundle
+            # names is not here") rather than a traceback that reads as a bug
+            # in the verifier.
+            data_error = f"{type(exc).__name__}: {exc}"
+    forecaster = (
+        _load_model(args.model, bundle_dir=args.bundle_dir,
+                    recorded_kwargs=_recorded_model_kwargs(bundle))
+        if args.model else None
+    )
     result = verify_bundle(bundle, bundle_dir=args.bundle_dir, cell_data=cell_data,
-                           recompute=args.recompute, forecaster=forecaster)
+                           recompute=args.recompute, forecaster=forecaster,
+                           data_error=data_error)
     print(format_verification(result))
     return 0 if result["verdict"] == "pass" else 1
 
