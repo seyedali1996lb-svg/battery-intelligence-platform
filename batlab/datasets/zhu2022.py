@@ -43,6 +43,7 @@ import pandas as pd
 import requests
 
 from batlab.datasets._integrity import verify_sha256
+from batlab.datasets._paths import raw_data_dir
 from batlab.datasets.schema import compute_soh_pct
 
 # Zenodo record 6405084, Dataset_3 (NCM+NCA blend) — the smallest of the
@@ -65,8 +66,9 @@ _CELL_FILES = [
 ]
 _ZIP_MEMBER_PREFIX = "Dataset_3_NCM_NCA_battery/"
 
-# batlab/datasets/zhu2022.py -> repo root is three levels up.
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "zhu2022"
+# Resolved through batlab.datasets._paths (see its docstring): never
+# site-packages, which is where a repo-relative path points once installed.
+_RAW_DIR = raw_data_dir("zhu2022")
 _EXTRACT_DIR = _RAW_DIR / "Dataset_3_NCM_NCA_battery"
 
 CHEMISTRY = "NCM+NCA"

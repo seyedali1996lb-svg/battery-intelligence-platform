@@ -33,6 +33,8 @@ estimate, not a certificate.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -151,7 +153,7 @@ def run_lco_quantiles(
     seed: int = 42,
     featured: "dict | None" = None,
     forecaster: "ForecasterLike | None" = None,
-) -> dict:
+) -> dict[str, Any]:
     """
     Leave-cell-out evaluation that also trains the Q10/Q90 RUL quantile
     models, so the 80% prediction interval can be checked on cells never
@@ -409,7 +411,7 @@ def run_lco_quantiles(
     }
 
 
-def recalibrate_lco_intervals(quantile_result: dict) -> dict:
+def recalibrate_lco_intervals(quantile_result: dict) -> dict[str, Any]:
     """
     Conformal quantile recalibration of each fold's Q10/Q90 interval.
 

@@ -47,6 +47,7 @@ import pandas as pd
 import requests
 
 from batlab.datasets._integrity import verify_sha256
+from batlab.datasets._paths import raw_data_dir
 
 _GROUP_URLS: dict[int, str] = {
     1: "https://ora.ox.ac.uk/objects/uuid:de62b5d2-6154-426d-bcbb-30253ddb7d1e/files/dwh246s15b",
@@ -65,8 +66,9 @@ _EXPECTED_SHA256: dict[int, str] = {
     4: "57b2ebeb6775525aa2275905c8e1406c2be8c63f49ba0c5ef28019f18e8cf736",
 }
 
-# batlab/datasets/oxford.py -> repo root is three levels up.
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "oxford"
+# Resolved through batlab.datasets._paths (see its docstring): never
+# site-packages, which is where a repo-relative path points once installed.
+_RAW_DIR = raw_data_dir("oxford")
 
 CHEMISTRY = "NCA"
 

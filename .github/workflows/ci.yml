@@ -190,3 +190,97 @@ jobs:
 
       - name: Build docs (strict — broken links/nav fail the build)
         run: mkdocs build --strict
+
+  wheel:
+    # Every other job tests an EDITABLE install (`pip install -e .`), which is
+    # the one install mode that cannot catch a missing package-data entry, a
+    # `packages.find` that misses a subpackage, or an import that only resolves
+    # because the repository root happens to be on sys.path. This job builds the
+    # distribution, installs the WHEEL into an empty venv, and runs the
+    # quickstart from outside the checkout.
+    name: wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        # bash on every runner (Git Bash on Windows) so the venv path juggling
+        # is written once instead of once per OS shell.
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # The full cross-product buys little for roughly twice the minutes:
+          # these are the pairs that add signal for a package claiming 3.10-3.13
+          # on any OS (the oldest, the newest, and both non-Linux platforms).
+          - os: macos-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.11"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the distribution metadata
+        run: twine check dist/*
+
+      - name: Install the wheel into a clean venv
+        run: |
+          python -m venv wheel-venv
+          if [ -f "$PWD/wheel-venv/Scripts/python.exe" ]; then
+            PY="$PWD/wheel-venv/Scripts/python.exe"   # Windows
+          else
+            PY="$PWD/wheel-venv/bin/python"           # macOS / Linux
+          fi
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install dist/*.whl
+          echo "PY=$PY" >> "$GITHUB_ENV"
+
+      - name: Import the installed distribution from outside the checkout
+        # cwd is deliberately NOT the repository root, so nothing can resolve
+        # through the source tree by accident — the failure mode this job exists
+        # to catch. The distribution is `battery-lab`; the import package is
+        # `batlab`, which is the pairing that has to hold after installation.
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$PY" -c "import batlab, batlab.results, batlab.cli, batlab.harness; print(batlab.__version__, batlab.AVAILABLE_DATASETS)"
+          "$PY" -m batlab version
+          "$PY" -m batlab cite
+
+      - name: Run the quickstart against the installed wheel
+        # `data_dir` is passed explicitly because the committed CSVs live in the
+        # checkout and this job has no network dependency on purpose. That the
+        # DEFAULT is now a writable per-user cache instead of site-packages is
+        # pinned separately by tests/test_dataset_paths.py.
+        run: |
+          "$PY" - <<'PY'
+          import pathlib
+
+          import batlab
+
+          repo = pathlib.Path.cwd()
+          cells = batlab.load(
+              "nasa", cell_ids=["B0005", "B0006"], data_dir=str(repo / "data" / "raw")
+          )
+          lco = batlab.benchmark(cells)
+          print("cells:", sorted(cells), "soh_r2:", round(lco["soh_r2"], 4))
+          assert 0.0 < lco["soh_r2"] <= 1.0
+          cache = lco["fold_cache"]
+          assert cache["hits"] + cache["fitted"] == len(cells)
+          print("wheel quickstart OK")
+          PY

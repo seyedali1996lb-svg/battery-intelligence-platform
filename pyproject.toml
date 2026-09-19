@@ -3,8 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "batlab"
-version = "0.1.1"
+# Distribution name is `battery-lab`, NOT `batlab`: PyPI's `batlab` is an
+# unrelated hardware library (Lexcelon's Batlab V1.0 tester, 0.5.8). The import
+# package stays `batlab`, so `import batlab` is what the docs and notebooks say
+# while `pip install battery-lab` is what actually resolves.
+name = "battery-lab"
+version = "0.2.0"
 description = "A citable, honest research library for battery degradation analysis: standardized dataset loaders, leave-cell-out-validated SOH/RUL models, and reproducible benchmark manifests."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,11 +18,17 @@ authors = [
 ]
 keywords = ["battery", "lithium-ion", "state-of-health", "remaining-useful-life", "degradation", "machine-learning", "reproducibility"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -43,14 +53,23 @@ docs = ["mkdocs-material", "mkdocstrings[python]", "mkdocs-jupyter"]
 # and the `pip install` in .github/workflows/ci.yml together, deliberately.
 dev = ["pytest", "pyright==1.1.414", "batlab[severson,oxford,calce,notebooks,docs]"]
 
+[project.scripts]
+# `python -m batlab` works too (batlab/__main__.py). See docs/cli.md.
+batlab = "batlab.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
 Repository = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform"
 Documentation = "https://seyedali1996lb-svg.github.io/battery-intelligence-platform/"
+Changelog = "https://github.com/seyedali1996lb-svg/battery-intelligence-platform/blob/master/CHANGELOG.md"
 DOI = "https://doi.org/10.5281/zenodo.21346275"
 
 [tool.setuptools.packages.find]
 include = ["batlab*"]
+
+[tool.setuptools.package-data]
+# PEP 561 marker: consumers' type checkers read the inline annotations.
+batlab = ["py.typed"]
 
 [tool.pyright]
 pythonVersion = "3.10"

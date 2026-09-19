@@ -97,6 +97,8 @@ All of the following are computed in `batlab/features/engineering.py::build_feat
 
 ---
 
+**Optional feature blocks depend on the environment, and the result now says so.** Three blocks degrade to NaN when their input is absent (`c_rate`, `temperature`, `resistance`), which is honest — an all-NaN column is dropped by `get_model_matrix()` rather than imputed into existence. One block is different in kind: the physics-calibration features (`PHYSICS_FEATURE_COLUMNS`, the SEI/LAM decomposition) come from `src/physics_calibration.py`, a module of the **demo application**, so `build_features()` finds them only when the app's `src/` is importable. The same call therefore produces different numbers in the app than in a pip-installed library — measured on the four NASA cells: **SOH R² 0.9580 without the block, 0.9471 with it** (2026-09-19). That is a *population* difference, not noise, so it is treated like one: `build_features()` records `df.attrs["physics_features"]`, `run_lco()` reports it as `physics_features` (True only when **every** cell carried it — a mixed fleet is not rounded up), the fold cache keys on it, and two runs are only comparable when they agree on it. The library does not silently choose one environment's answer for the other. A future release that moves the module into `batlab` (making the block always present) will be a `FEATURE_VERSION` bump, not a quiet improvement.
+
 ## 4. Differential capacity (dQ/dV) analysis — ⚠ simulated, not measured
 
 dQ/dV analysis looks at peak position, amplitude, area, and width of the differential capacity curve — a classic electrode-diagnostic technique (Dubarry & Liaw 2009) that identifies *which* electrode mechanism (loss of active material vs. loss of lithium inventory) is driving fade.

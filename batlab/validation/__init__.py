@@ -25,6 +25,17 @@ from batlab.validation.fingerprints import (
     dataset_fingerprint,
     environment_snapshot,
 )
+from batlab.validation.survival import (
+    cell_event_type,
+    censored_rul_readout,
+    kaplan_meier_survival,
+    rule_of_three_bound,
+)
+from batlab.validation.fold_cache import (
+    cache_dir as fold_cache_dir,
+    clear as clear_fold_cache,
+    describe as describe_fold_cache,
+)
 
 __all__ = [
     "run_lco",
@@ -45,4 +56,11 @@ __all__ = [
     "cell_digest",
     "dataset_fingerprint",
     "environment_snapshot",
+    "cell_event_type",
+    "kaplan_meier_survival",
+    "rule_of_three_bound",
+    "censored_rul_readout",
+    "fold_cache_dir",
+    "clear_fold_cache",
+    "describe_fold_cache",
 ]

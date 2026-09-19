@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 import requests
 import scipy.io
+
+from batlab.datasets._paths import raw_data_dir
 from typing import Any, cast
 
 from batlab.datasets._integrity import verify_sha256
@@ -37,8 +39,11 @@ from batlab.datasets.schema import compute_soh_pct
 # Download configuration
 # ---------------------------------------------------------------------------
 
-# batlab/datasets/nasa.py -> repo root is two levels up.
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "raw")
+# Resolved through batlab.datasets._paths (BATLAB_DATA_DIR > checkout > user
+# cache): a pip-installed batlab must not download into site-packages.
+# Kept as a module constant for callers that imported it; load_nasa_cells()
+# re-resolves per call so an override works without re-importing this module.
+DATA_DIR = str(raw_data_dir())
 
 # NASA PCoE S3 mirror — Battery Data Set #5
 # Source: nasa.gov/intelligent-systems-division/.../pcoe-data-set-repository/
@@ -339,7 +344,7 @@ def load_nasa_cells(
     if cell_ids is None:
         cell_ids = CELL_IDS
     if data_dir is None:
-        data_dir = DATA_DIR
+        data_dir = str(raw_data_dir())
 
     results = {}
 

@@ -253,6 +253,7 @@ def for_run(
     include_predictions: bool,
     params: dict,
     enabled: bool = True,
+    feature_inputs: str = "",
 ) -> FoldCache:
     """A FoldCache for one run_lco() call.
 
@@ -270,6 +271,14 @@ def for_run(
         "seed": int(seed),
         "predictions": bool(include_predictions),
         "env": env_snapshot,
+        # Which OPTIONAL feature blocks were present when these folds were
+        # fitted. `feature_inputs` is empty for callers that do not say — the
+        # pre-existing behaviour — and `run_lco` passes the physics-calibration
+        # availability, which depends on whether the app's src/ is importable
+        # and changes the fitted model. Without this, a fold fitted WITH that
+        # block could be replayed for a run WITHOUT it: same key, different
+        # features, and a replayed answer describing inputs this caller never had.
+        "feature_inputs": str(feature_inputs),
     }
     root = cache_dir()
     key_dir = root / cache_key_id(base)

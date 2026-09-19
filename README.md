@@ -7,6 +7,8 @@
 [![Tests](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/seyedali1996lb-svg/battery-intelligence-platform/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://seyedali1996lb-svg.github.io/battery-intelligence-platform/)
 
+**Install:** `pip install battery-lab` — the import package is `batlab`. (PyPI's `batlab` is Lexcelon's unrelated Batlab V1.0 hardware library, so the distribution is named for what is actually free; see [API stability](docs/api_stability.md).) See the [changelog](CHANGELOG.md) for what each release changed.
+
 ---
 
 ## Why this project exists
@@ -386,7 +388,7 @@ python -m app
 
 Path resolution is handled by `_paths.py`, which walks up from its own directory to find the repo root — so the app works when launched from any working directory. `app/main.py` also bootstraps that root before importing `_paths.py`, which is required when Streamlit Cloud executes the file directly rather than as a package module.
 
-See [`docs/history.md`](docs/history.md) for its full build history and architecture.
+See [`docs/history.md`](docs/history.md) for its full build history and architecture, [`CHANGELOG.md`](CHANGELOG.md) for release notes, and [`docs/quickstart.md`](docs/quickstart.md) for the `pip install`-first walkthrough.
 
 ## Roadmap preview
 
@@ -506,6 +508,29 @@ This gets the Streamlit dashboard open in your web browser with minimal steps:
 ### Using `batlab` as a Python library
 
 ```bash
+pip install battery-lab          # import package: batlab
+```
+
+Three entry points cover the common path, so a first result does not require knowing the module layout:
+
+```python
+import batlab
+
+cells = batlab.load("nasa")                 # {cell_id: DataFrame}, one standardized schema
+lco   = batlab.benchmark(cells)             # leave-cell-out metrics (see LcoResult)
+report = batlab.validate(cells)             # the six harness checks, model=None -> this platform's GBRT
+```
+
+And from a shell, so a CI job or Makefile does not need Python at all:
+
+```bash
+batlab benchmark --dataset nasa --out report.json
+batlab datasets --load
+batlab cite
+```
+The full walkthrough, starting from the wheel rather than a clone, is [`docs/quickstart.md`](docs/quickstart.md); every verb is documented in [`docs/cli.md`](docs/cli.md). The ten-minute tour with plots is [`notebooks/01_quickstart.ipynb`](notebooks/01_quickstart.ipynb).
+
+```bash
 pip install -e ".[severson,oxford,calce]"   # extras are only needed for those loaders' parsers
 ```
 
@@ -532,7 +557,7 @@ print(batlab.cite(dataset="nasa"))               # + license, for whichever data
 
 *Real output from `notebooks/01_quickstart.ipynb`, not a mockup — GBRT trained on the 4 committed NASA PCoE cells.*
 
-The full ten-minute tour is [`notebooks/01_quickstart.ipynb`](notebooks/01_quickstart.ipynb). See [`docs/datasets/`](docs/datasets/index.md) for each dataset's schema, citation, and license, and [`batlab/datasets/CONTRIBUTING.md`](batlab/datasets/CONTRIBUTING.md) for adding a fifth loader.
+See [`docs/datasets/`](docs/datasets/index.md) for each dataset's schema, citation, and license, and [`batlab/datasets/CONTRIBUTING.md`](batlab/datasets/CONTRIBUTING.md) for adding a fifth loader. What you may depend on — and how breaking changes are announced — is written down in [`docs/api_stability.md`](docs/api_stability.md); the typed result schemas behind every returned dict are in [`batlab/results.py`](batlab/results.py).
 
 ---
 

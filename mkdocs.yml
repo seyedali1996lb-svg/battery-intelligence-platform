@@ -29,8 +29,12 @@ theme:
 
 nav:
   - Home: index.md
+  - Quickstart (pip install): quickstart.md
   - Validation harness: harness.md
+  - Command line: cli.md
   - Boot layers & fold caching: performance.md
+  - API stability: api_stability.md
+  - Releasing: releasing.md
   - Product direction:
       - Decision: product_direction.md
       - Overclaiming audit: overclaiming_audit.md
@@ -39,6 +43,7 @@ nav:
       - Deferred concepts: deferred_product_concepts.md
       - Hosted-researcher pricing: hosted_researcher_pricing.md
   - Datasets: datasets/index.md
+  - Import format guide: import_format_guide.md
   - API reference:
       - datasets: api/datasets.md
       - features: api/features.md

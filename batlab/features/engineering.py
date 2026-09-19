@@ -92,6 +92,21 @@ FEATURE_VERSION = "v12-rul-label-provenance"
 def build_features(
     df: pd.DataFrame, eol_threshold_pct: float = 80.0, cell_id: "str | None" = None,
 ) -> pd.DataFrame:
+    """Engineer the literature-cited features and the model targets for one cell.
+
+    Input is a cell's raw cycle table in the standardized schema; output is a
+    copy sorted by ``cycle_number`` carrying the ``FEATURE_COLUMNS`` (fade rate
+    and acceleration over rolling windows, SOH velocity, resistance trend,
+    composite stress index, dQ/dV peaks, knee point, …) plus the SOH and RUL
+    targets and the per-row ``rul_label_kind`` provenance: ``"observed"`` when
+    the cell reached ``eol_threshold_pct`` inside its recorded window, and
+    ``"extrapolated"`` when the RUL target is the closed-form projection.
+
+    That provenance column is what every evaluation in this library reads to keep
+    observed and formula-recovered RUL apart — see ``METHODOLOGY.md`` §2a. A
+    model scored against extrapolated labels is being tested on formula recovery,
+    not forecasting, and no headline number in this library is built from them.
+    """
     df = df.copy().sort_values("cycle_number").reset_index(drop=True)
 
     # ── Capacity fade — ensure present regardless of source ──
@@ -317,6 +332,7 @@ def build_features(
     # ── Physics calibration features (SEI/LAM decomposition) ──
     # Lazy, guarded import — see the module-level note above
     # PHYSICS_FEATURE_COLUMNS for why this isn't a top-level import.
+    physics_available = True
     try:
         from physics_calibration import calibrated_feature_series
         physics_df = calibrated_feature_series(df, cell_id)
@@ -325,12 +341,22 @@ def build_features(
         # environment gap -- physics features are simply absent (NaN),
         # same graceful-degradation contract as every other optional
         # feature block above (c_rate, temperature, resistance, ...).
+        physics_available = False
         physics_df = pd.DataFrame(
             {col: np.full(len(df), np.nan) for col in PHYSICS_FEATURE_COLUMNS},
             index=df.index,
         )
     for col in PHYSICS_FEATURE_COLUMNS:
         df[col] = physics_df[col]
+
+    # Whether the physics-calibrated block was actually available is an INPUT to
+    # the model, not a footnote: `physics_calibration` lives in the demo app's
+    # src/, so the same call yields measurably different numbers depending on
+    # whether src/ happens to be importable — SOH R² 0.9580 vs 0.9471 on the four
+    # NASA cells (measured 2026-09-19). Recording it on the frame is what lets
+    # run_lco() report which population a number came from and key the fold cache
+    # on it, so the two can never replay each other's folds.
+    df.attrs["physics_features"] = physics_available
 
     return df
 
@@ -421,6 +447,14 @@ TARGET_RUL = "rul"
 
 
 def get_model_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Split a featured frame into the model matrix and its two targets.
+
+    ``X`` holds the ``FEATURE_COLUMNS`` that are present in this frame *and* not
+    entirely NaN/Inf — a fleet like NASA's PCoE cells supplies no temperature at
+    all, and an all-NaN column is not a feature, so it is dropped rather than
+    imputed into existence. ``y_soh`` and ``y_rul`` are the aligned SOH and RUL
+    targets, row-for-row with ``X``.
+    """
     # Only use columns that exist AND are not entirely NaN/inf (e.g. NASA cells
     # lack temperature_c, coulombic_efficiency — those columns are all-NaN)
     available = [
@@ -463,5 +497,11 @@ def get_rul_label_kinds(df: pd.DataFrame) -> "pd.Series | None":
 
 
 def feature_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Descriptive statistics for every feature present in ``df`` (4 d.p.).
+
+    A convenience view of a fleet's feature distribution — the columns are the
+    ``FEATURE_COLUMNS`` this frame actually carries, so a fleet without a given
+    protocol quantity simply has fewer rows here rather than a NaN row.
+    """
     available = [c for c in FEATURE_COLUMNS if c in df.columns]
     return df[available].describe().round(4)

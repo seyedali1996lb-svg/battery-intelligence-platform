@@ -59,6 +59,8 @@ rejected at the seam rather than deep-copied, because a model that already
 saw the held-out cell would produce a meaningless, beautiful R².
 """
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -126,7 +128,7 @@ def run_lco(
     forecaster: "ForecasterLike | None" = None,
     include_predictions: bool = False,
     use_fold_cache: bool = True,
-) -> dict:
+) -> dict[str, Any]:
     """
     Run leave-cell-out cross-validation on a dict of cell DataFrames.
 
@@ -208,6 +210,13 @@ def run_lco(
 
     # Build feature matrices per cell
     featured_in = {}
+    # Whether each cell's frame carried the optional physics-calibration block.
+    # `build_features` records it because the block comes from the demo app's
+    # src/ and is therefore present or absent depending on the ENVIRONMENT, not
+    # on the data — the two populations produce different numbers (0.9580 vs
+    # 0.9471 SOH R² on the four NASA cells), so which one a result came from has
+    # to travel with the result and has to key the fold cache.
+    physics_flags: dict[str, bool] = {}
     for cell_id, df in cell_data.items():
         if featured is not None and cell_id in featured:
             frame = featured[cell_id]
@@ -216,11 +225,15 @@ def run_lco(
                 frame = build_features(df, cell_id=cell_id)
         else:
             frame = build_features(df, cell_id=cell_id)
+        physics_flags[cell_id] = bool(frame.attrs.get("physics_features", False))
         X, y_soh, y_rul = get_model_matrix(frame)
         kinds = get_rul_label_kinds(frame)
         featured_in[cell_id] = (X, y_soh, y_rul, kinds)
 
     cell_ids = list(featured_in.keys())
+    # True only when EVERY cell carried it: a mixed fleet is reported as not
+    # fully physics-calibrated rather than rounded up to the nicer answer.
+    physics_features = bool(physics_flags) and all(physics_flags.values())
     empty = {
         "soh_r2": float("nan"), "soh_mae": float("nan"),
         "rul_r2": float("nan"), "rul_mae": float("nan"),
@@ -228,6 +241,7 @@ def run_lco(
         "rul_label_coverage": 0.0,
         "n_rul_observed_rows": 0, "n_rul_extrapolated_rows": 0,
         "rul_extrapolated_r2": None, "rul_extrapolated_mae": None,
+        "physics_features": physics_features,
     }
     if len(cell_ids) < 2:
         return empty
@@ -258,6 +272,9 @@ def run_lco(
         # an explicit use_fold_cache=False (see the docstring: verifiers such
         # as replication's recompute must re-derive, never replay).
         enabled=forecaster is None and use_fold_cache,
+        # Part of the key, not of the report: a fold fitted with the physics
+        # block must never be replayed for a run that did not have it.
+        feature_inputs=f"physics={{{','.join(f'{c}:{int(f)}' for c, f in sorted(physics_flags.items()))}}}",
     )
 
     def _run_fold(test_cell: str) -> dict:
@@ -416,6 +433,7 @@ def run_lco(
     return {
         "fingerprint": fingerprint,
         "fold_cache": fold_cache.summary(),
+        "physics_features": physics_features,
         "soh_r2":       float(np.mean(soh_r2s)) if soh_r2s else float("nan"),
         "soh_mae":      float(np.mean(soh_maes)) if soh_maes else float("nan"),
         "rul_r2":       mean_obs_r2,

@@ -72,7 +72,7 @@ One assumption is load-bearing and stated: when a caller passes pre-built featur
 | `BATLAB_LCO_CACHE` | `on` | `on` replays a completed fold; `off` neither reads nor writes; `refresh` ignores existing entries and rewrites them. |
 | `BATLAB_LCO_CACHE_DIR` | `<checkout>/.cache/lco` (or the user cache dir for a pip-installed `batlab`) | Cache root override. Tests point this at a tmp path, and the test suite pins `BATLAB_LCO_CACHE=off` so a developer's warm cache can't let a fold-counting or timing test pass on last week's answer. |
 
-`run_lco()` returns `fold_cache: {mode, enabled, key, reused, fitted, total, cache_dir}` so a repeated boot reports `46/46 reused` rather than leaving it to be inferred from a layer that finished in 0.4 s instead of 12 minutes.
+`run_lco()` returns `fold_cache: {mode, enabled, key, dir, hits, fitted}` (`dir` is the cache root, `key` the key directory inside it, `hits` the folds replayed) so a repeated boot reports `46/46 reused` rather than leaving it to be inferred from a layer that finished in 0.4 s instead of 12 minutes. The nested schema is declared in `batlab.results.FoldCacheSummary` and checked against a real payload by `tests/test_public_api.py`.
 
 ---
 

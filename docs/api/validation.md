@@ -54,6 +54,27 @@
         - load_bundle
         - format_verification
 
+::: batlab.validation.survival
+    options:
+      show_root_heading: true
+      members:
+        - cell_event_type
+        - kaplan_meier_survival
+        - rule_of_three_bound
+        - censored_rul_readout
+
+::: batlab.validation.fold_cache
+    options:
+      show_root_heading: true
+      members:
+        - cache_mode
+        - cache_dir
+        - fold_key
+        - cache_key_id
+        - for_run
+        - clear
+        - describe
+
 ::: batlab.validation.bundle_data
     options:
       show_root_heading: true

@@ -46,6 +46,7 @@ import pandas as pd
 import requests
 
 from batlab.datasets._integrity import verify_sha256
+from batlab.datasets._paths import raw_data_dir
 from batlab.datasets.schema import compute_soh_pct
 
 _BATCH1_URL = "https://data.matr.io/1/api/v1/file/5c86c0b5fa2ede00015ddf66/download"
@@ -72,8 +73,10 @@ _CELL_INDICES = {k: int(k[3:]) for k in _CELL_KEYS}
 # for the physically-impossible-reading guard below.
 _NOMINAL_CAPACITY_AH = 1.1
 
-# batlab/datasets/severson.py -> repo root is three levels up.
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "severson"
+# Resolved through batlab.datasets._paths: an explicit BATLAB_DATA_DIR wins,
+# then a source checkout's data/raw, then a per-user cache directory — never
+# site-packages, which is where the old repo-relative path pointed in a wheel.
+_RAW_DIR = raw_data_dir("severson")
 SEVERSON_CELL_IDS: list[str] = [f"S-{k}" for k in _CELL_KEYS]
 
 CHEMISTRY = "LFP"

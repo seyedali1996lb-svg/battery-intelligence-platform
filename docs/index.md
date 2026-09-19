@@ -55,5 +55,8 @@ The same honesty applies to *what the model is asked to predict*. A RUL label is
 - [Datasets](datasets/index.md) — schema, citations, licenses, and how to add a fifth loader.
 - [API reference](api/datasets.md) — every public function, generated from docstrings.
 - [Notebooks](notebooks/01_quickstart.ipynb) — the four worked examples, rendered.
+- [Quickstart](quickstart.md) — ten minutes from `pip install battery-lab` to a validated number.
+- [Command line](cli.md) — `batlab benchmark --dataset nasa --out report.json`, and the other verbs.
 - [Boot layers and fold caching](performance.md) — why a cold boot serves the core model first, what the deferred layers disclose while they run, and the measured cost of replaying a leave-cell-out fold versus refitting it.
+- [API stability](api_stability.md) — what you may depend on, the deprecation policy, and the inputs that depend on the environment rather than the data.
 - [Project history](history.md) — the Streamlit demo application this library was extracted from, and everything built in it.

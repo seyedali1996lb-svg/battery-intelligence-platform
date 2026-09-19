@@ -74,12 +74,14 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
+from batlab.datasets._paths import raw_data_dir
 from batlab.datasets.schema import compute_soh_pct
 
 CALCE_INFO_URL = "https://calce.umd.edu/battery-data"
 
-# batlab/datasets/calce.py -> repo root is three levels up.
-_RAW_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "calce"
+# Resolved through batlab.datasets._paths (see its docstring): never
+# site-packages, which is where a repo-relative path points once installed.
+_RAW_DIR = raw_data_dir("calce")
 
 CHEMISTRY = "LiCoO2"
 
