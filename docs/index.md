@@ -13,7 +13,16 @@ A citable, honest research library for battery degradation analysis.
 ## Install
 
 ```bash
-pip install -e ".[severson,oxford,calce]"   # extras only needed for those loaders' parsers
+pip install battery-lab                        # the import package is `batlab`
+pip install "battery-lab[severson,oxford,calce]"   # extras only needed for those loaders' parsers
+```
+
+PyPI's `batlab` is an unrelated hardware library, which is why the distribution
+is named `battery-lab` while the import stays `batlab` — see
+[API stability](api_stability.md). Working from a clone instead:
+
+```bash
+pip install -e ".[dev]"
 ```
 
 `batlab` itself only depends on `pandas`, `numpy`, `scikit-learn`, `scipy`, and `requests`. Each dataset loader's heavier parser (`h5py`, `mat-io`, `openpyxl`) is an optional extra so installing `batlab` doesn't pull in every loader's dependencies.

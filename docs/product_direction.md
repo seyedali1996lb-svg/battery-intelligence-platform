@@ -50,8 +50,14 @@ methodology and easy to run, both of which are already true.
 
 ## What "ready" looks like, concretely
 
-- `pip install -e ".[severson,oxford,calce]"` installs `batlab` as a
-  standalone library with no Streamlit/app dependency required.
+- `pip install battery-lab` installs `batlab` as a standalone library with no
+  Streamlit/app dependency required. (The distribution is `battery-lab` because
+  PyPI's `batlab` is Lexcelon's unrelated Batlab V1.0 hardware library; the
+  import package is unchanged. A clone still installs the same way with
+  `pip install -e ".[severson,oxford,calce]"`.) As of v0.2.0 the library has
+  typed result schemas, `batlab.load` / `batlab.benchmark` / `batlab.validate`
+  entry points, and a `batlab` command line — see
+  [the quickstart](quickstart.md).
 - Five public datasets (NASA PCoE, Severson 2019, Oxford Path-Dependent,
   CALCE) load through one standardized schema, with checksum-verified
   downloads and a `SchemaError` on any malformed input.

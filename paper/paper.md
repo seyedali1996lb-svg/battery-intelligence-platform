@@ -30,11 +30,12 @@ Resolved (as of 2026-07-13):
     README/homepage — both hold up. Not an exhaustive docs read; worth a
     final skim if either project's scope has visibly changed by actual
     submission time.
-  - Archive DOI: 10.5281/zenodo.21346275 (v0.1.1). This is a version-specific
-    DOI, not a concept DOI (one that stays constant across future releases) —
-    check your Zenodo GitHub settings page for the concept DOI if you'd
-    rather cite that instead. JOSS's submission form asks for this as a
-    separate "archive DOI" field, not something written into this file's body.
+  - Archive DOI: 10.5281/zenodo.21346275 (v0.1.1; v0.2.0 is archived on the
+    same concept record — re-check which DOI the current Zenodo release page
+    shows before submitting, and prefer the concept DOI if you'd rather cite
+    something that stays constant across releases). JOSS's submission form
+    asks for this as a separate "archive DOI" field, not something written
+    into this file's body.
 
 Still open — TODO(human author) before submitting to JOSS:
   - Research impact statement (below) is honestly "no external users yet" —
@@ -50,6 +51,20 @@ attribution (batlab.models.attribution), and a machine-readable benchmark
 bundle export (batlab.validation.manifest.export_benchmark_results). The
 summary/statement-of-need/software-design sections below were refreshed to
 match; the research-impact statement stays honest (no external users yet).
+
+Updated 2026-09-19 (v0.2.0, first distributable release): the library is now
+`pip install battery-lab` with a PEP 561 marker, typed result schemas
+(`batlab.results`), three documented entry points (`batlab.load`,
+`batlab.benchmark`, `batlab.validate`), a `batlab` command line, and a
+leave-cell-out fold cache that makes a repeated validation seconds instead of
+minutes at identical numbers. Two evaluation-integrity changes landed with it
+and are worth a sentence at submission time if the design discussion cites
+reproducibility: `build_features()` now records whether the optional
+physics-calibration feature block was available (an environment-dependent
+input that changes SOH R² by ~0.01, and now keys the fold cache), and the
+not-evaluable quantile calibration path no longer fits models it can prove
+cannot produce a measurement. The "research impact" statement is still
+honest — no external users yet.
 -->
 
 # Summary
@@ -80,10 +95,13 @@ the same cell are highly autocorrelated, a random row-level split leaks near-nei
 the same cell into both the training and test sets — the model is not being asked to generalize
 to an unseen cell, only to interpolate between cycles it has effectively already seen. `batlab`'s
 own worked example (`notebooks/02_data_leakage.ipynb`) reproduces this on four NASA PCoE cells:
-a naive row-level split reports SOH R² = 0.998, while leave-cell-out — training on three cells,
-testing on a fourth held out entirely — reports R² = 0.806 on the identical data and model. The
-gap is not a minor calibration difference; it is the difference between a number that describes
-the model's actual ability to generalize to a new cell and one that does not.
+a naive row-level split and a held-out-cycle split of the same pooled data both report SOH
+R² ≈ 1.00, while leave-cell-out — training on three cells, testing on a fourth held out
+entirely — reports R² = 0.958 on the identical data and model (0.745 through the production
+application's data path, which preprocesses the same cells differently; both numbers are
+honest and they are not interchangeable). The gap is not a minor calibration difference; it
+is the difference between a number that describes the model's actual ability to generalize
+to a new cell and one that does not.
 
 Researchers evaluating a new feature, model architecture, or dataset for battery SOH/RUL
 prediction currently have to write dataset-specific parsers, decide how to split their data, and
