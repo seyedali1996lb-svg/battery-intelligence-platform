@@ -174,3 +174,70 @@ def test_recalibration_result_structure():
         assert "rul_interval_coverage" in out[part]
         assert "rul_interval_width_mean" in out[part]
         assert set(out[part]["per_cell"]) == set(folds)
+
+
+def test_not_evaluable_fleet_skips_every_fit():
+    """The all-extrapolated short-circuit must not train a single model.
+
+    Measured motivation: the 46-cell Severson fleet is 38,765 rows of 100%
+    formula-extrapolated RUL labels, and the fitted path spent 46 folds x 3
+    GBRT fits (~13 min of a ~26-min cold boot) producing nothing but the
+    not-evaluable values it returns anyway.
+    """
+    import batlab.validation.calibration as cal
+
+    cell_data = {
+        f"Cell{i}": make_cycles_df(n_cycles=300, fade_per_cycle=0.0002 + i * 1e-5)
+        for i in range(3)
+    }
+
+    calls = []
+    real_fit = cal.fit_forecaster
+    cal.fit_forecaster = lambda *a, **k: calls.append(1) or real_fit(*a, **k)
+    try:
+        result = cal.run_lco_quantiles(cell_data)
+    finally:
+        cal.fit_forecaster = real_fit
+
+    assert calls == [], "an all-extrapolated fleet must not fit a single model"
+    assert result["not_evaluable"]
+    assert result["global_e_star"] is None
+    assert result["pooled_conformity_scores"].size == 0
+
+
+def test_not_evaluable_short_circuit_numbers_match_the_fitted_path(monkeypatch):
+    """Equivalence, asserted rather than claimed: forcing the short-circuit
+    off on the SAME all-extrapolated fleet must reproduce every scalar —
+    the fits were producing exactly these nan/None/False/0.0 values."""
+    import batlab.validation.calibration as cal
+
+    cell_data = {
+        f"Cell{i}": make_cycles_df(n_cycles=300, fade_per_cycle=0.0002 + i * 1e-5)
+        for i in range(3)
+    }
+
+    fast = cal.run_lco_quantiles(cell_data)
+
+    monkeypatch.setattr(cal, "_observed_label_total", lambda _cache: 1)
+    fitted = cal.run_lco_quantiles(cell_data)
+
+    def _same(a, b):
+        if isinstance(a, float) and a != a:
+            return isinstance(b, float) and b != b
+        return a == b
+
+    for key in ("rul_interval_coverage", "rul_interval_width_mean", "rul_r2",
+                "rul_mae", "rul_reliable", "rul_label_coverage", "global_e_star",
+                "recalibrated_coverage", "recalibrated_width_mean"):
+        assert _same(fast[key], fitted[key]), f"{key}: {fast[key]!r} != {fitted[key]!r}"
+
+    assert fast["pooled_conformity_scores"].size == fitted["pooled_conformity_scores"].size
+    assert set(fast["per_cell"]) == set(fitted["per_cell"])
+    for cid, fold in fast["per_cell"].items():
+        fit_fold = fitted["per_cell"][cid]
+        for key in ("rul_interval_coverage", "rul_interval_width_mean", "rul_mae", "rul_r2"):
+            assert fold[key] is None and fit_fold[key] is None, (cid, key)
+        np.testing.assert_array_equal(
+            fold["rul_label_observed"], fit_fold["rul_label_observed"]
+        )
+        np.testing.assert_array_equal(fold["rul_true"], fit_fold["rul_true"])

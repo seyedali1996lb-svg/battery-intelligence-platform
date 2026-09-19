@@ -117,6 +117,29 @@ def partition_cells(
 # Data-mode resolution — which dataset is currently active?
 # ---------------------------------------------------------------------------
 
+def preferred_builtin_mode(*, zhu_fdfs, sev_fdfs, nasa_fdfs) -> str:
+    """Which built-in source a fresh session lands on.
+
+    The order is deliberate, not arbitrary. Zhu 2022 is the only shipped
+    fleet where every cell reaches end-of-life inside the recorded window, so
+    RUL and its calibrated Q10/Q90 interval are populated for every cell on
+    the landing page. Severson (46 LFP cells, all still above the threshold at
+    their last recorded cycle) renders the honest *withheld* state on every
+    cell -- correct, and a bad first impression of a platform whose headline
+    output is remaining useful life. See docs/history.md's label-provenance
+    rule for why that withholding is not something to paper over instead.
+
+    Falls through to the first source this deployment actually has data for.
+    """
+    if zhu_fdfs:
+        return "zhu2022"
+    if sev_fdfs:
+        return "severson"
+    if nasa_fdfs:
+        return "nasa"
+    return "synthetic"
+
+
 def resolve_data_mode(
     *,
     nasa_fdfs,
@@ -146,15 +169,21 @@ def resolve_data_mode(
 
     # Default on first run.
     if not mode:
-        mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
+        mode = preferred_builtin_mode(
+            zhu_fdfs=zhu_fdfs, sev_fdfs=sev_fdfs, nasa_fdfs=nasa_fdfs,
+        )
         st.session_state["data_mode"] = mode
     if "uploaded_mode_meta" not in st.session_state:
         st.session_state["uploaded_mode_meta"] = None
 
-    # Fallback if uploaded mode has no data.
+    # Fallback if uploaded mode has no data — to the same preferred default a
+    # fresh session gets, not a hardcoded NASA (which is absent on some
+    # deployments and only carries 4 cells when present).
     if mode == "uploaded" and (not up_fdfs or up_bundle is None):
-        st.session_state["data_mode"] = "nasa"
-        mode = "nasa"
+        mode = preferred_builtin_mode(
+            zhu_fdfs=zhu_fdfs, sev_fdfs=sev_fdfs, nasa_fdfs=nasa_fdfs,
+        )
+        st.session_state["data_mode"] = mode
 
     _builtin_modes = ("nasa", "synthetic", "severson", "uploaded", "zhu2022", "calce")
     # Fallback if mode is completely unknown, or names an optional source
@@ -164,7 +193,9 @@ def resolve_data_mode(
     ) or (
         mode == "calce" and not calce_fdfs
     ):
-        mode = "severson" if sev_fdfs else ("nasa" if nasa_fdfs else "synthetic")
+        mode = preferred_builtin_mode(
+            zhu_fdfs=zhu_fdfs, sev_fdfs=sev_fdfs, nasa_fdfs=nasa_fdfs,
+        )
         st.session_state["data_mode"] = mode
 
     if mode == "severson":

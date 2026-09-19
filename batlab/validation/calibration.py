@@ -70,6 +70,82 @@ def interval_width_mean(q10, q90) -> float:
     return float(np.mean(np.maximum(0.0, q90 - q10)))
 
 
+def _observed_label_total(featured_cache: dict) -> int:
+    """How many evaluated RUL rows anywhere carry an OBSERVED (measured-EOL)
+    label. Cheap and label-only: it reads `rul_label_kind`, never a model.
+
+    A frame whose kind column is missing counts as zero (a pre-v12 frame
+    cannot say which labels are measured, so the fitted path's mask is
+    all-False for it too — both paths agree, see _not_evaluable_result).
+    Named (and module-level) so the not-evaluable short-circuit below is
+    testable: a test monkeypatches this to 1 to force the fitted path and
+    compare its numbers against the short-circuit's, proving equivalence
+    rather than asserting it in a comment.
+    """
+    from batlab.validation.lco import _LABEL_OBSERVED  # avoid circular import
+
+    total = 0
+    for _cid, (_X, _y, kinds) in featured_cache.items():
+        if kinds is None:
+            continue
+        total += int((kinds == _LABEL_OBSERVED).sum())
+    return total
+
+
+def _not_evaluable_result(cell_ids: list, featured_cache: dict) -> dict:
+    """The result of an all-extrapolated fleet, assembled WITHOUT fitting.
+
+    Every interval metric in this module is computed on OBSERVED-EOL rows:
+    an interval around a formula-generated target measures how tightly the
+    model reproduces the extrapolation formula, not calibrated uncertainty
+    around a measured quantity (see this module's own docstring). So when no
+    row anywhere carries an observed label, every failing field below is
+    not-evaluable BY CONSTRUCTION — nothing a fit produces is ever read.
+
+    The scalars returned here are therefore identical to the fitted path's
+    (all nan / None / False / 0.0, `pooled_conformity_scores` empty), which
+    is what makes skipping the fits a pure time saving rather than a
+    methodology change. The one thing not materialised is each fold's raw
+    Q10/Q90 prediction array: it is the only fit-dependent content, its
+    observed-row mask is all-False, and no reported number reads it. An
+    empty array plus `not_evaluable` says that plainly instead of serving
+    a prediction that no metric consumes.
+
+    Why this is worth a named function: on the 46-cell Severson fleet
+    (38,765 rows, every one of them formula-extrapolated) this path used to
+    run 46 folds x 3 GBRT fits — measured 132 s per fold, ~13 minutes of a
+    ~26-minute cold boot — to produce nothing but the not-evaluable values
+    below.
+    """
+    per_cell = {}
+    for cid in cell_ids:
+        X, y_rul, _kinds = featured_cache[cid]
+        per_cell[cid] = {
+            "rul_true": np.asarray(y_rul.to_numpy(dtype=float), dtype=float),
+            "rul_q10": np.array([], dtype=float),
+            "rul_q90": np.array([], dtype=float),
+            "rul_label_observed": np.zeros(len(X), dtype=bool),
+            "rul_interval_coverage": None,
+            "rul_interval_width_mean": None,
+            "rul_mae": None,
+            "rul_r2": None,
+        }
+    return {
+        "rul_interval_coverage": float("nan"),
+        "rul_interval_width_mean": float("nan"),
+        "pooled_conformity_scores": np.array([]),
+        "global_e_star": None,
+        "recalibrated_coverage": float("nan"),
+        "recalibrated_width_mean": float("nan"),
+        "rul_r2": float("nan"),
+        "rul_mae": float("nan"),
+        "rul_reliable": False,
+        "rul_label_coverage": 0.0,
+        "per_cell": per_cell,
+        "not_evaluable": "no observed end-of-life labels in any cell",
+    }
+
+
 def run_lco_quantiles(
     cell_data: dict,
     seed: int = 42,
@@ -133,6 +209,13 @@ def run_lco_quantiles(
     uncertainty around a measured quantity. A fleet with zero observed rows
     returns global_e_star=None and NaN coverage — not evaluable, never a
     number computed against formula-generated labels.
+
+    Because of that rule, a fleet with zero observed rows costs no fitting
+    at all: _not_evaluable_result() returns the same numbers (every one of
+    them nan/None/False/0.0) without training a single model, and reports
+    `not_evaluable` as the reason. The decision reads only label provenance,
+    so it is forecaster-independent — any interval model evaluates to the
+    same not-evaluable fields on a fleet whose labels are all extrapolated.
     """
     from batlab.validation.lco import (
         RUL_RELIABLE_FLOOR, MIN_RUL_LABEL_OBSERVED_FRACTION,
@@ -156,6 +239,12 @@ def run_lco_quantiles(
             "rul_reliable": False, "per_cell": {},
             "rul_label_coverage": 0.0,
         }
+
+    # ── Not-evaluable short-circuit: do not fit what cannot be measured ──
+    # Checked on LABEL PROVENANCE alone (no model, no fold), and after the
+    # n<2 guard above so that tiny fleet keeps its own (smaller) shape.
+    if _observed_label_total(featured_cache) == 0:
+        return _not_evaluable_result(cell_ids, featured_cache)
 
     factory = as_factory(forecaster, default=default_interval_forecaster(seed))
     if factory is None:  # pragma: no cover - default_interval_forecaster() is never None

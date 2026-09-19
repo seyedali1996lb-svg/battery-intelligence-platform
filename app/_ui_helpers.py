@@ -157,6 +157,188 @@ def _soh_sparkline_svg(soh_series: "pd.Series", width: int = 120, height: int = 
     )
 
 
+def _rul_interval_band_svg(
+    cycles: pd.Series,
+    rul_pred: pd.Series | None = None,
+    rul_q10: pd.Series | None = None,
+    rul_q90: pd.Series | None = None,
+    observed_rul: pd.Series | None = None,
+    eol_pct: float = 80.0,
+    width: int = 320,
+    height: int = 124,
+    max_points: int = 220,
+) -> str:
+    """Inline SVG: the served RUL interval across the cell's life, drawn.
+
+    x is the cycle an estimate was made at, y is cycles remaining to the
+    end-of-life threshold, and the shaded band is the served Q10-Q90 interval
+    at each of those cycles. Its width at any x is the interval width the model
+    actually produced there -- narrowing, or refusing to narrow, in front of
+    the reader instead of being asserted in prose. That is the point: an
+    interval whose coverage was *measured* (batlab.validation.calibration)
+    belongs on the first screen, not in a paragraph below it.
+
+    ``observed_rul`` is the measured remaining life where the label is a
+    genuinely observed end-of-life. The caller passes None (or all-NaN) for
+    formula extrapolations, and nothing is drawn -- the chart never invents an
+    outcome to compare against. Where it is passed, the served interval can be
+    read against what actually happened rather than taken on faith.
+
+    With no served interval -- RUL withheld because a fleet's labels are not
+    observed end-of-life -- no band is drawn, and with no forecast at all the
+    chart renders nothing. An absent band is the honest picture, not a missing
+    feature.
+    """
+    def _series(v) -> pd.Series | None:
+        if v is None:
+            return None
+        try:
+            return pd.to_numeric(v, errors="coerce").reset_index(drop=True)
+        except Exception:
+            return None
+
+    _cyc = _series(cycles)
+    if _cyc is None or len(_cyc) < 2:
+        return ""
+
+    _frame = pd.DataFrame({"x": _cyc})
+    if _frame["x"].isna().all():
+        # Uploaded data can arrive without a cycle_number column: positional x
+        # is the honest fallback, not a chart that collapses to nothing.
+        _frame["x"] = range(len(_frame))
+    _frame["x"] = _frame["x"].ffill().bfill()
+    for _name, _vals in (
+        ("pred", _series(rul_pred)),
+        ("q10", _series(rul_q10)),
+        ("q90", _series(rul_q90)),
+        ("obs", _series(observed_rul)),
+    ):
+        # float64 throughout (missing -> NaN): a column that was never handed
+        # over must behave like one that is entirely missing, not like an
+        # object column that clip/compare will refuse to touch.
+        _frame[_name] = pd.to_numeric(
+            _vals if _vals is not None else pd.Series([pd.NA] * len(_frame)), errors="coerce"
+        ).astype("float64")
+    if _frame[["pred", "q90", "obs"]].isna().all().all():
+        return ""          # nothing was forecast and nothing was observed
+
+    if len(_frame) > max_points:
+        _keep = sorted({round(i * (len(_frame) - 1) / (max_points - 1)) for i in range(max_points)})
+        _frame = _frame.iloc[_keep].reset_index(drop=True)
+
+    # A negative lower bound is not a remaining life: it is the model saying
+    # the cell may already be past the threshold, so it clamps to 0 rather than
+    # dropping the row -- the band should keep reading "0 to Q90" at the tail
+    # instead of stopping short of the end of life.
+    _frame["q10"] = _frame["q10"].clip(lower=0)
+    # A row serves an interval only if both edges are present and the upper edge
+    # is above the lower one. Q10 == 0 is NOT excluded: it is the served lower
+    # bound on every cycle of some fleets, i.e. the interval is open at the low
+    # end, and an open end is information -- hiding it would hide exactly the
+    # case a user most needs to see, that the model cannot rule out that the
+    # cell is already at end of life.
+    _served = _frame["q10"].notna() & _frame["q90"].notna() & (_frame["q90"] > _frame["q10"])
+    _ceiling = max(
+        [float(_frame[c].max()) for c in ("q90", "pred", "obs") if _frame[c].notna().any()] or [0.0]
+    )
+    if _ceiling <= 0:
+        return ""          # no remaining life anywhere in the series
+
+    def _runs(mask) -> list[list[int]]:
+        """Index runs of True, long enough to be drawn as a polygon."""
+        out: list[list[int]] = []
+        cur: list[int] = []
+        for i, ok in enumerate(list(mask)):
+            if ok:
+                cur.append(i)
+            elif cur:
+                out.append(cur)
+                cur = []
+        if cur:
+            out.append(cur)
+        return [run for run in out if len(run) >= 2]
+
+    pad, _top = 4, 12          # _top leaves a strip for the legend line
+    plot_w, plot_h = width - pad * 2, height - _top - pad
+    x0, x1 = float(_frame["x"].iloc[0]), float(_frame["x"].iloc[-1])
+    x_span = (x1 - x0) or 1.0
+
+    def _px(c: float) -> float:
+        return pad + (float(c) - x0) / x_span * plot_w
+
+    def _py(v: float) -> float:
+        return _top + (1 - min(max(float(v), 0.0), _ceiling) / _ceiling) * plot_h
+
+    def _polyline(col: str, stroke: str, dash: str = "", weight: float = 1.5) -> str:
+        rows = _frame[_frame[col].notna()]
+        if len(rows) < 2:
+            return ""
+        pts = " ".join(f"{_px(c):.1f},{_py(v):.1f}" for c, v in zip(rows["x"], rows[col]))
+        dash_attr = f' stroke-dasharray="{dash}"' if dash else ""
+        return (
+            f'<polyline points="{pts}" fill="none" stroke="{stroke}" stroke-width="{weight}"'
+            f'{dash_attr} stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # One polygon per contiguous run of served cycles: a gap in the served
+    # interval (or in the data) must not be bridged by a straight edge.
+    _bands = ""
+    _served_runs = _runs(_served)
+    for _run in _served_runs:
+        rows = _frame.iloc[_run]
+        upper = " ".join(f"{_px(c):.1f},{_py(v):.1f}" for c, v in zip(rows["x"], rows["q90"]))
+        lower = " ".join(
+            f"{_px(c):.1f},{_py(v):.1f}" for c, v in reversed(list(zip(rows["x"], rows["q10"])))
+        )
+        _bands += (
+            f'<polygon points="{upper} {lower}" fill="#63b3ed" fill-opacity="0.16" '
+            f'stroke="#63b3ed" stroke-opacity="0.5" stroke-width="0.8" stroke-dasharray="3,3"/>'
+        )
+
+    _y_zero = _py(0.0)
+    _legend = []
+    if _served_runs:
+        _legend.append(f"band = served {eol_pct:.0f}% interval")
+    if _frame["obs"].notna().any():
+        _legend.append("dashed = observed outcome")
+    if not _legend:
+        _legend.append("forecast only - no interval served")
+
+    if _served_runs:
+        _last = _frame[_served].iloc[-1]
+        _aria = (
+            f"Remaining-life chart: {len(_frame)} cycles plotted. The served {eol_pct:.0f}% "
+            f"interval is drawn for {int(_served.sum())} of them, most recently "
+            f"{_last['q10']:.0f} to {_last['q90']:.0f} cycles remaining at cycle {_last['x']:,.0f}"
+        )
+    else:
+        _aria = (
+            f"Remaining-life chart: {len(_frame)} cycles plotted, no {eol_pct:.0f}% interval "
+            f"served for this cell"
+        )
+    if _frame["obs"].notna().any():
+        _aria += ", drawn against the observed remaining life"
+    _aria += "."
+
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:block;margin:6px auto 0" '
+        f'role="img" aria-label="{_aria}">'
+        f'<title>{_aria}</title>'
+        f'<text x="{pad}" y="9" fill="#8896a8" font-size="9" font-family="monospace">'
+        f'{" · ".join(_legend)}</text>'
+        # Zero remaining life is the threshold the interval is defined against.
+        f'<line x1="{pad}" y1="{_y_zero:.1f}" x2="{pad + plot_w}" y2="{_y_zero:.1f}" '
+        f'stroke="#8896a8" stroke-width="1" stroke-dasharray="4,4" stroke-opacity="0.7"/>'
+        f'<text x="{pad + plot_w}" y="{_y_zero - 3:.1f}" text-anchor="end" fill="#8896a8" '
+        f'font-size="9" font-family="monospace">{eol_pct:.0f}% EOL = 0 cycles left</text>'
+        f'{_bands}'
+        f'{_polyline("pred", "#63b3ed")}'
+        f'{_polyline("obs", "#48bb78", dash="4,3")}'
+        f'</svg>'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Provenance helpers
 # ---------------------------------------------------------------------------

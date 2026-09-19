@@ -11,7 +11,12 @@ import type {
   CyclerDetection,
 } from "./types";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// Same-origin by default. The deployment path is the API serving this build
+// from /app (see src/api.py), so every request goes to the page's own host and
+// no CORS allow-list or second host is involved. Only `npm run dev` is
+// cross-origin (Vite on :5173, API on :8000) — that case sets
+// VITE_API_BASE_URL, see .env.example.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const TOKEN_KEY = "battery_api_token";
 

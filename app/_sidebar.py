@@ -156,6 +156,8 @@ from _onboarding import (
     command_palette_dialog as _command_palette_dialog,
     active_first_run_overlay as _active_first_run_overlay,
     guided_tour_dialog as _guided_tour_dialog,
+    open_guided_tour as _open_guided_tour,
+    ONBOARDING_KEY as _ONBOARDING_KEY,
 )
 
 
@@ -267,13 +269,13 @@ def render_sidebar(
             )
         with _rc2:
             if st.button("↺ Change role", key="change_role_btn", use_container_width=True,
-                         help="Switch role (Engineer / Fleet Manager / Executive)"):
-                st.session_state["role_chosen"] = False
+                         help="Re-open the first-run picker — it sets both the role and where you land"):
+                st.session_state[_ONBOARDING_KEY] = False
                 st.rerun()
 
-        if st.button("↺ Change focus", key="change_mode_btn", use_container_width=True,
-                     help="Re-pick Diagnose / Monitor / Plan — doesn't change your role"):
-            st.session_state["mode_chosen"] = False
+        if st.button("▶ Take the tour", key="take_tour_btn", use_container_width=True,
+                     help="Replay the five-step guided tour without leaving this page"):
+            _open_guided_tour()
             st.rerun()
 
         # ── Nav (grouped) ──

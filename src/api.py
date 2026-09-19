@@ -77,6 +77,7 @@ try:
     from fastapi import FastAPI, HTTPException, Query, Depends, Header, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
+    from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError as _e:
     raise ImportError(
@@ -162,8 +163,10 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Vite's dev server default origin. No production origin configured yet —
-# there's no deployed frontend target in this pass (see README).
+# Vite's dev-server default origin, kept for `npm run dev` (the only case
+# that is genuinely cross-origin). A production/deployment build is served by
+# this same process at /app — see the SPA mount below — so it needs no CORS
+# entry at all.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -171,6 +174,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── React SPA (frontend/) ─────────────────────────────────────────────────────
+# Served from the same origin as the API it calls, which is the point: the
+# SPA's api.ts resolves an unset VITE_API_BASE_URL to a relative path, so a
+# deployment needs no CORS allow-list, no second host, and no second Docker
+# image. The mount is conditional — the built assets are generated, not
+# committed (frontend/dist is gitignored), so a checkout that has not run
+# `npm ci && npm run build` there gets a JSON 404 at /app rather than a boot
+# failure, and the API itself is unaffected either way.
+
+def frontend_dist_dir() -> str:
+    """Absolute path to the built SPA's output directory (may not exist)."""
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist",
+    )
+
+
+def mount_spa(target_app: "FastAPI", dist_dir: Optional[str] = None) -> bool:
+    """Mount the built SPA at /app. Returns whether it actually mounted.
+
+    Separate from the module-level call so it is testable without a build:
+    tests/test_api_serves_spa.py mounts a two-file fake dist into its own
+    FastAPI instance and asserts the route resolves, which is the property
+    that would otherwise be checked by nobody until a deployment 404'd.
+    """
+    directory = dist_dir or frontend_dist_dir()
+    if not os.path.isdir(directory):
+        return False
+    target_app.mount("/app", StaticFiles(directory=directory, html=True), name="spa")
+    return True
+
+
+_SPA_MOUNTED = mount_spa(app)
 
 # ── Auth (JWT) ────────────────────────────────────────────────────────────────
 # Same honesty pattern as this app's other secrets (see README's Production

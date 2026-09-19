@@ -60,7 +60,14 @@ def run_gate_fleet_lco(cell_data: dict | None = None) -> dict:
     """
     from batlab.validation.lco import run_lco
 
-    return run_lco(cell_data if cell_data is not None else build_gate_fleet())
+    # use_fold_cache=False: the gate exists to catch a CHANGE in what the code
+    # computes, so it must re-derive the numbers. A cached fold (this runs as
+    # a script in CI as well as under pytest) would let a regression pass by
+    # replaying the pre-regression result.
+    return run_lco(
+        cell_data if cell_data is not None else build_gate_fleet(),
+        use_fold_cache=False,
+    )
 
 
 def run_metric_gate(cell_data: dict | None = None) -> dict:

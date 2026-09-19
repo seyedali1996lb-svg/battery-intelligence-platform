@@ -281,7 +281,12 @@ def verify_bundle(
                     })
                 else:
                     result = run_lco(
-                        restricted, seed=int(bundle.get("seed", 42)), forecaster=forecaster
+                        restricted, seed=int(bundle.get("seed", 42)), forecaster=forecaster,
+                        # A replication is only a replication if it re-derives:
+                        # replaying a fold from batlab.validation.fold_cache
+                        # would let a drifted fold recipe reproduce its own
+                        # published number.
+                        use_fold_cache=False,
                     )
                     mismatches = _metric_mismatches(bundle, result)
                     if mismatches:

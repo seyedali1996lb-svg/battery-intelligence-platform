@@ -14,6 +14,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+# The leave-cell-out fold cache (batlab.validation.fold_cache) is a real,
+# developer-warm byproduct of running the app: a fold result from a previous
+# local run of the same fixture would be REPLAYED here. That is correct in
+# production and wrong in a test suite — a test that counts model fits, or
+# times one, must fail on the code's behaviour, not pass because someone ran
+# the app an hour ago. So the suite pins the cache off, and the cache's own
+# tests (tests/test_lco_fold_cache.py) opt back in per test, each with its own
+# BATLAB_LCO_CACHE_DIR under tmp_path.
+_os.environ["BATLAB_LCO_CACHE"] = "off"
+
 
 @pytest.fixture(autouse=True)
 def _warm_cache_hits_allowed(monkeypatch):

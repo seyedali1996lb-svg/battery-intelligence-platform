@@ -59,6 +59,28 @@ def page_decision(
     rul_q90_raw     = latest.get("rul_q90", None)
     rul_q90         = float(rul_q90_raw) if (rul_reliable and rul_q90_raw is not None) else None
 
+    # ── Regime-based forecast routing (the "what happens NEXT" number) ──
+    # When the GBRT's RUL is not servable for this cell (rul_reliable False —
+    # the Severson situation: zero measured-EOL rows), the router decides per
+    # regime between the hierarchical partial-pooling model (a measured
+    # forecast, posterior interval, DISCLOSED as uncalibrated) and refusing
+    # to predict. A refused route keeps RUL withheld — but now with the
+    # reason stated at the point of decision instead of a silent em-dash.
+    _route = None
+    if not rul_reliable:
+        try:
+            from forecast_routing import route_forecast_for_cell
+            _route = route_forecast_for_cell(
+                selected, bundles if isinstance(bundles, dict) else {},
+                featured_dfs=featured_dfs,
+            )
+            if _route["served"] == "hierarchical" and _route["rul_pred"] is not None:
+                rul_pred = _route["rul_pred"]
+                rul_q10 = _route["rul_q10"]
+                rul_q90 = _route["rul_q90"]
+        except Exception:
+            _route = None
+
     # Reads precomputed CellSummary rows instead of every peer cell's full
     # per-cycle DataFrame -- see src/cell_store.py's module docstring.
     import db as _db_decision
@@ -159,6 +181,20 @@ def page_decision(
         # measured under different conditions — this must be impossible to
         # miss at the point of decision.
         st.error(_dec_validity_banner)
+
+    if _route is not None and not rul_reliable:
+        # The routing verdict is decision-relevant: either a different model
+        # is answering (with its own, weaker interval guarantee) or RUL was
+        # withheld on purpose. Both must be visible HERE, not on Benchmark.
+        if _route["served"] == "hierarchical":
+            st.info(
+                "🔀 **Forecast routed to the hierarchical partial-pooling model.** "
+                + _route["reason"]
+                + (f" Served RUL: {_route['rul_pred']:.0f} cycles."
+                   if _route["rul_pred"] is not None else "")
+            )
+        elif _route["served"] == "refuse":
+            st.warning("🚫 " + _route["reason"])
 
     # Accuracy by chemistry, reported SEPARATELY: this decision's numbers belong
     # to a chemistry, and more than one model can cover a chemistry (NASA and

@@ -14,6 +14,7 @@ from typing import Any
 
 import streamlit as st
 
+from _onboarding import ONBOARDING_KEY
 from _sidebar import (
     _active_first_run_overlay,
     _guided_tour_dialog,
@@ -62,142 +63,104 @@ def _import_pages():
 
 
 # ---------------------------------------------------------------------------
-# Role onboarding interstitial
+# First-run interstitial — one screen, not three
 # ---------------------------------------------------------------------------
 
-def _render_role_onboarding() -> None:
-    """Render the role picker interstitial (shown once per session)."""
-    st.markdown(
-        "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
-        "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
-        "Welcome to Battery Intelligence</div>"
-        "<div style='font-size:14px;color:#a0aec0;margin-bottom:32px'>"
-        "I'll personalise the dashboard for your role. You can change this any time in Settings.</div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    _r1, _r2, _r3, _r4 = st.columns(4)
-    _role_picked = None
-    with _r1:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>🔧</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Engineer</div>"
-            "<div style='font-size:12px;color:#a0aec0'>Diagnose cells · Deep analytics · Root-cause tools</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select Engineer", key="onboard_eng", use_container_width=True):
-            _role_picked = "Engineer"
-    with _r2:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>🚗</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Fleet Manager</div>"
-            "<div style='font-size:12px;color:#a0aec0'>Monitor fleet · Prioritise replacements · Alerts</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select Fleet Manager", key="onboard_fleet", use_container_width=True):
-            _role_picked = "Fleet Manager"
-    with _r3:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>📊</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Executive</div>"
-            "<div style='font-size:12px;color:#a0aec0'>Fleet KPIs · CAPEX forecast · ESG compliance</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select Executive", key="onboard_exec", use_container_width=True):
-            _role_picked = "Executive"
-    with _r4:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>📋</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Compliance Officer</div>"
-            "<div style='font-size:12px;color:#a0aec0'>EU 2023/1542 passport · Audit trail · Regulatory alerts</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select Compliance Officer", key="onboard_compliance", use_container_width=True):
-            _role_picked = "Compliance Officer"
-    if _role_picked:
-        st.session_state["user_role"] = _role_picked
-        st.session_state["role_chosen"] = True
-        if not (st.session_state.get("tour_seen") and st.session_state.get("page") == "compliance"):
-            if _role_picked == "Executive":
-                st.session_state.page = "exec_summary"
-            elif _role_picked == "Fleet Manager":
-                st.session_state.page = "fleet"
-            elif _role_picked == "Compliance Officer":
-                st.session_state.page = "compliance"
-            else:
-                st.session_state.page = "overview"
-        st.rerun()
-    st.stop()
+# Each card answers "what are you here to do?" with a landing page *and* the
+# role the dashboard should speak to. The role used to be a separate screen
+# with its own four cards, which asked the user to know the platform's
+# internal persona vocabulary before they had seen a single number.
+_ONBOARDING_INTENTS = [
+    {
+        "key":   "onboard_mode_diagnose",
+        "icon":  "🔋",
+        "title": "Diagnose a battery",
+        "blurb": "SOH/RUL, degradation mechanism, recommendations",
+        "role":  "Engineer",
+        "page":  "overview",
+    },
+    {
+        "key":   "onboard_mode_monitor",
+        "icon":  "📡",
+        "title": "Monitor live telemetry",
+        "blurb": "Streaming SOH/anomaly view (demo mode simulates the feed)",
+        "role":  "Engineer",
+        "page":  "live_monitor",
+    },
+    {
+        "key":   "onboard_mode_plan",
+        "icon":  "☀️",
+        "title": "Plan a storage deployment",
+        "blurb": "Size a second-life battery + solar, payback/NPV",
+        "role":  "Executive",
+        "page":  "decision",
+    },
+    {
+        "key":   "onboard_mode_compliance",
+        "icon":  "📋",
+        "title": "Prove EU compliance",
+        "blurb": "EU 2023/1542 passport · audit trail · regulatory alerts",
+        "role":  "Compliance Officer",
+        "page":  "compliance",
+    },
+]
 
 
-# ---------------------------------------------------------------------------
-# Use-case landing interstitial
-# ---------------------------------------------------------------------------
+def _apply_onboarding_intent(intent: dict) -> None:
+    """Set the landing page and role for the chosen intent, then re-run.
 
-def _render_mode_onboarding() -> None:
-    """Render the use-case picker interstitial (shown once per session)."""
+    The legacy ``role_chosen`` / ``mode_chosen`` keys are still written so a
+    session that later reads them (and the tests that assert on them) sees the
+    same state the three-screen flow used to produce.
+    """
+    st.session_state["user_role"] = intent["role"]
+    st.session_state["role_chosen"] = True
+    st.session_state["mode_chosen"] = True
+    st.session_state[ONBOARDING_KEY] = True
+    st.session_state["page"] = intent["page"]
+    if intent["page"] == "decision":
+        # Opens the nested economics expanders on arrival (pop-once; see
+        # tests/test_app_state_combinations.py's regression guard).
+        st.session_state["mode_landing_ess"] = True
+    st.rerun()
+
+
+def _render_onboarding() -> None:
+    """Render the single first-run interstitial (shown once per session)."""
     st.markdown(
         "<div style='max-width:680px;margin:80px auto 0;text-align:center'>"
         "<div style='font-size:28px;font-weight:800;color:#e2e8f0;margin-bottom:8px'>"
         "What are you here to do?</div>"
         "<div style='font-size:14px;color:#a0aec0;margin-bottom:32px'>"
-        "This just picks where you land — everything stays reachable from the sidebar either way.</div>"
+        "This picks where you land and the role the dashboard speaks to — everything "
+        "stays reachable from the sidebar either way.</div>"
         "</div>",
         unsafe_allow_html=True,
     )
-    _m1, _m2, _m3 = st.columns(3)
-    _mode_picked = None
-    with _m1:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>🔋</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Diagnose a battery</div>"
-            "<div style='font-size:12px;color:#a0aec0'>SOH/RUL, degradation mechanism, recommendations</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select", key="onboard_mode_diagnose", use_container_width=True):
-            _mode_picked = "diagnose"
-    with _m2:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>📡</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Monitor live telemetry</div>"
-            "<div style='font-size:12px;color:#a0aec0'>Streaming SOH/anomaly view (demo mode simulates the feed)</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select", key="onboard_mode_monitor", use_container_width=True):
-            _mode_picked = "monitor"
-    with _m3:
-        st.markdown(
-            "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
-            "<div style='font-size:28px;margin-bottom:8px'>☀️</div>"
-            "<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>Plan a storage deployment</div>"
-            "<div style='font-size:12px;color:#a0aec0'>Size a second-life battery + solar, payback/NPV</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Select", key="onboard_mode_plan", use_container_width=True):
-            _mode_picked = "plan"
-    if _mode_picked:
-        st.session_state["mode_chosen"] = True
-        if _mode_picked == "monitor":
-            st.session_state.page = "live_monitor"
-        elif _mode_picked == "plan":
-            st.session_state.page = "decision"
-            st.session_state["mode_landing_ess"] = True
-        else:
-            st.session_state.page = "overview"
-        st.rerun()
+    _cols = st.columns(len(_ONBOARDING_INTENTS))
+    _picked = None
+    for _col, _intent in zip(_cols, _ONBOARDING_INTENTS):
+        with _col:
+            st.markdown(
+                "<div style='border:1px solid #2d3748;border-radius:8px;padding:20px;text-align:center'>"
+                f"<div style='font-size:28px;margin-bottom:8px'>{_intent['icon']}</div>"
+                f"<div style='font-weight:700;color:#e2e8f0;margin-bottom:6px'>{_intent['title']}</div>"
+                f"<div style='font-size:12px;color:#a0aec0'>{_intent['blurb']}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button("Select", key=_intent["key"], use_container_width=True):
+                _picked = _intent
+    if _picked is not None:
+        _apply_onboarding_intent(_picked)
+
+    _skip_col, _ = st.columns([1, 2])
+    with _skip_col:
+        if st.button("Skip — show me the dashboard", key="onboard_skip",
+                     use_container_width=True):
+            _apply_onboarding_intent({
+                "role": "Engineer", "page": "overview",
+            })
     st.stop()
 
 
@@ -230,13 +193,19 @@ def route(
         _audit.log_page_view(page, selected)
         st.session_state["_audit_last"] = f"{page}:{selected}"
 
-    # Demo mode notice
+    # Deployment notice. This line used to read "No auth · session-scoped
+    # uploads · data not persisted", which was false on every page that could
+    # render it: the only way to reach here is through the login gate, against
+    # bcrypt users with per-org scoping and server-side RBAC (src/db.py,
+    # src/rbac.py), and uploads are persisted per tenant. A notice that
+    # understates the platform's own security on every screen is the same
+    # class of error as one that overstates it.
     st.markdown(
         "<div style='text-align:right;margin-bottom:4px'>"
-        "<span title='No auth · session-scoped uploads · data not persisted — see README → Production Roadmap' "
-        "style='font-size:10px;color:#a0aec0;cursor:default'>demo mode</span>"
+        "<span title='Demo deployment on public reference datasets — see README → Limitations' "
+        "style='font-size:10px;color:#a0aec0;cursor:default'>demo deployment</span>"
         "<div style='font-size:9px;color:#a0aec0;margin-top:1px'>"
-        "No auth · session-scoped uploads · data not persisted</div></div>",
+        "signed in · org-scoped · public reference datasets</div></div>",
         unsafe_allow_html=True,
     )
 

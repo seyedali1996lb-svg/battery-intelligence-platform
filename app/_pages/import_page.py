@@ -219,6 +219,81 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 _step("reliability", "✓", "Per-cell reliability computed"
                       + (" — ⚠ LCO limited (< 3 cells)" if lco_limited else ""))
 
+                # ── Hierarchical forecasting + prior-transfer check ──
+                # The same partial-pooling model the reference fleets serve:
+                # fitted on the uploaded fleet, validated through the SAME
+                # leave-cell-out folds, and — when the upload is too small to
+                # trust its own prior — CHECKED against the reference fit's
+                # chemistry prior instead of silently trusting n=1–2 cells.
+                # This is the cross-chemistry guard applied at import time:
+                # NASA→Severson transfer is near-random (SOH R² −34.6), so an
+                # uploaded fleet whose chemistry does not match any reference
+                # prior must be TOLD that, not handed NASA's numbers.
+                try:
+                    from batlab.models.hierarchical import fit_hierarchical
+                    from batlab.validation.hierarchical_lco import run_hierarchical_lco
+                    from chemistry_profiles import ChemistryProfile as _CP_hier
+
+                    _up_chem = {
+                        cid: _CP_hier.for_cell(cid).short_name
+                        for cid in battery["cells"]
+                    }
+                    _up_hfit = fit_hierarchical(
+                        {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
+                        chemistry_by_cell=_up_chem,
+                    )
+                    up_bndl["hierarchical_fit"] = _up_hfit
+                    _up_hval = run_hierarchical_lco(
+                        {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
+                        featured={cid: pair[0] for cid, pair in cell_featured.items()},
+                        chemistry_by_cell=_up_chem,
+                    )
+                    up_bndl["metrics"]["hierarchical_validation"] = {
+                        "soh_r2": _up_hval.get("soh_r2"),
+                        "rul_r2": _up_hval.get("rul_r2"),
+                        "prior_scope": _up_hval.get("prior_scope"),
+                        "per_cell": _up_hval.get("per_cell"),
+                    }
+                    up_bndl["metrics"]["hierarchical_available"] = bool(_up_hval.get("per_cell"))
+
+                    # Prior-transfer honesty check: how big is the uploaded
+                    # fleet's own prior sample, and does a reference prior
+                    # exist for this chemistry? A 1–2-cell upload CANNOT
+                    # estimate its own fade-rate variance (tau2 is floored,
+                    # i.e. guessed) — the disclosure states exactly that.
+                    _up_priors = _up_hfit.get("priors") or {}
+                    _n_prior_cells = sum(
+                        p.get("n_cells", 0) for p in _up_priors.values()
+                    )
+                    _ref_chems = {"LiCoO2", "LFP", "NCM+NCA"}
+                    _up_chems = {c for c in _up_chem.values() if c}
+                    _chem_matched = bool(_up_chems & _ref_chems)
+                    up_bndl["metrics"]["hierarchical_prior_transfer"] = {
+                        "n_upload_cells": n_up,
+                        "n_prior_cells": _n_prior_cells,
+                        "prior_scope": _up_hfit.get("prior_scope"),
+                        "chemistries": sorted(_up_chems),
+                        "reference_prior_available": _chem_matched,
+                        "note": (
+                            f"Uploaded fleet has {_n_prior_cells} cell(s) to build its "
+                            "own fade prior from"
+                            + (" — too few to estimate fade-rate variance; the "
+                               "prior variance is floored at a conservative default, "
+                               "so forecasts lean heavily on each cell's own early "
+                               "window."
+                               if _n_prior_cells < 3 else ".")
+                            + ("" if _chem_matched else
+                               " This chemistry matches no reference fleet's prior "
+                               "on this deployment — hierarchical forecasts here are "
+                               "built ONLY from your own cells' evidence, and the "
+                               "reference models' accuracy numbers do NOT transfer "
+                               "(the cross-chemistry study measured near-random "
+                               "transfer, SOH R² −34.6 NASA→Severson).")
+                        ),
+                    }
+                except Exception:
+                    up_bndl["metrics"]["hierarchical_available"] = False
+
                 # Log this fit to the experiment registry — same call every
                 # upload-training run makes, no separate "log it" step for
                 # the user or a future caller to forget (see
@@ -310,6 +385,11 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 "calibrating_count":        calibrating_cnt,
                 "lco_limited":              lco_limited,
                 "temperature_assumed_cells": battery["temperature_assumed_cells"],
+                # The raw-cycle store's key for this upload, or None with the
+                # reason — read by _show_upload_summary() below and by the
+                # Bring-your-own-model page's fleet picker.
+                "raw_cycles_key":           None if _raw_cycles_error else _upload_key,
+                "raw_cycles_error":         _raw_cycles_error,
             }
             st.session_state["uploaded_mode_meta"] = _upload_meta
             import db
@@ -340,6 +420,26 @@ def _show_upload_summary():
         f'<div style="font-size:12px;color:#f6ad55;margin-top:10px">{lco_lim_note}</div>'
         if meta.get("lco_limited") else ""
     )
+    # Only spoken about when the running code actually recorded it: a session
+    # that predates the raw-cycle store has neither key, and inventing a
+    # warning for it would be a claim about work that was never attempted.
+    _raw_note_html = ""
+    if "raw_cycles_key" in meta:
+        if meta.get("raw_cycles_key"):
+            _raw_note_html = (
+                f'<div style="font-size:12px;color:#8896a8;margin-top:10px">'
+                f'Raw cycles persisted as <code>{meta["raw_cycles_key"]}</code> — this fleet can be '
+                f'graded on the <strong>Bring your own model</strong> page, and sealed there into a '
+                f'bundle a third party can re-derive.</div>'
+            )
+        else:
+            _raw_note_html = (
+                f'<div style="font-size:12px;color:#f6ad55;margin-top:10px">'
+                f'⚠ Raw cycles were NOT persisted ({meta.get("raw_cycles_error")}), so this upload '
+                f'cannot be graded on the Bring your own model page and cannot be sealed into a '
+                f'verifiable bundle. Training and every result above are unaffected.</div>'
+            )
+
     rul_reliable_count = n - k
     _training_mode = lco.get("training_mode", "full_refit")
     _mode_badge = (
@@ -363,6 +463,7 @@ def _show_upload_summary():
         f"{_mode_badge}"
         f"</div>"
         f"{lco_lim_html}"
+        f"{_raw_note_html}"
         f"</div>",
         unsafe_allow_html=True,
     )

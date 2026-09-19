@@ -69,6 +69,7 @@ from batlab.features.engineering import build_features, get_model_matrix, get_ru
 # hyperparameters each logged run was trained with.
 from batlab.models.gbrt import GBRT_PARAMS
 from batlab._parallel import map_folds
+from batlab.validation import fold_cache as fold_cache_mod
 from batlab.harness.forecaster import (
     ForecasterLike,
     as_factory,
@@ -124,6 +125,7 @@ def run_lco(
     featured: "dict | None" = None,
     forecaster: "ForecasterLike | None" = None,
     include_predictions: bool = False,
+    use_fold_cache: bool = True,
 ) -> dict:
     """
     Run leave-cell-out cross-validation on a dict of cell DataFrames.
@@ -151,6 +153,15 @@ def run_lco(
                    'predictions' key. Off by default: the arrays are
                    fold-sized and only the harness's conformal interval
                    calibration consumes them.
+        use_fold_cache: replay folds this exact configuration has already
+                   computed, instead of refitting them (see "Repeating a
+                   run" below). True is right for measurement pipelines and
+                   for anything the app boots; a caller whose PURPOSE is to
+                   re-derive the numbers from code — an independent
+                   replication, a metric regression gate — passes False, so
+                   it cannot pass by replaying a stored answer. Ignored when
+                   a `forecaster` was supplied, which disables the cache
+                   outright.
 
     Returns:
         {
@@ -168,7 +179,24 @@ def run_lco(
                                 # batlab.validation.bootstrap — None on n<2 folds
           "per_cell":    dict,    # per-fold breakdown incl. per-cell label kinds
                                 # (+ a 'predictions' key when include_predictions)
+          "fold_cache":  dict,    # {mode, enabled, key, dir, hits, fitted} —
+                                # how much of this run was replayed rather than
+                                # refitted (batlab.validation.fold_cache)
         }
+
+    Repeating a run
+    ---------------
+    Every fold is a pure function of the pool's cells, their feature frames,
+    the hyperparameters and the seed, so this function caches each completed
+    fold's result on disk and replays it when those ingredients are unchanged
+    (batlab.validation.fold_cache; `BATLAB_LCO_CACHE=off` disables it). That is
+    what makes an interrupted 46-cell run resumable and a repeated boot cheap:
+    replayed folds are the same numbers the refit would have produced, because
+    the fold is pure. A caller-supplied `forecaster=` turns the cache off
+    entirely — its folds are not keyed on anything this module can vouch for —
+    and so does `use_fold_cache=False`, which is what a verification caller
+    (batlab.validation.replication's recompute, the metric regression gate)
+    passes: a check that replays a stored answer is not a check.
     """
     factory = as_factory(forecaster, default=default_forecaster(seed))
     if factory is None:  # pragma: no cover - default_forecaster() never returns None
@@ -204,10 +232,48 @@ def run_lco(
     if len(cell_ids) < 2:
         return empty
 
+    # ── Fingerprint + per-fold cache ───────────────────────────────────────
+    # The dataset/environment fingerprint is computed BEFORE the folds now
+    # rather than after: it is what a fold's cache key is built from (see
+    # batlab.validation.fold_cache), and hashing the cells once up front costs
+    # a fraction of a second against the minutes the key exists to save. The
+    # value returned below is exactly the one this function always returned —
+    # same normalization, same digest source — just computed earlier.
+    from batlab.validation import fingerprints as _fp
+    raw_frames = unwrap_cell_data(cell_data)
+    fingerprint = {
+        "dataset": _fp.dataset_fingerprint(raw_frames),
+        "environment": _fp.environment_snapshot(),
+    }
+    fold_cache = fold_cache_mod.for_run(
+        dataset_sha256=fingerprint["dataset"]["dataset_sha256"],
+        env_snapshot=fingerprint["environment"],
+        cell_ids=cell_ids,
+        seed=seed,
+        include_predictions=include_predictions,
+        params=GBRT_PARAMS,
+        # A caller-supplied forecaster is a model this module has no identity
+        # for; caching its folds would risk grading the wrong estimator on a
+        # hit. Supplying one therefore turns the cache off completely, as does
+        # an explicit use_fold_cache=False (see the docstring: verifiers such
+        # as replication's recompute must re-derive, never replay).
+        enabled=forecaster is None and use_fold_cache,
+    )
+
     def _run_fold(test_cell: str) -> dict:
         """One leave-cell-out fold: fit on every other cell, score this one.
         Pure (no shared state written), so folds can run concurrently --
-        see batlab._parallel."""
+        see batlab._parallel.
+
+        A completed fold is REPLAYED from batlab.validation.fold_cache when
+        the same cells, features, hyperparameters, seed and numeric stack have
+        already produced it -- which is what lets an interrupted run resume
+        and a repeated boot skip the refit entirely. The fold is pure, so
+        replay and refit are the same numbers by construction."""
+        cached = fold_cache.get(test_cell)
+        if cached is not None:
+            return cached
+
         X, y_soh, y_rul, kinds = featured_in[test_cell]
         train_cells = [c for c in cell_ids if c != test_cell]
 
@@ -262,13 +328,17 @@ def run_lco(
             fold_ext_r2 = _safe_r2(rul_true[ext_mask], rul_pred[ext_mask])
             fold_ext_mae = float(mean_absolute_error(rul_true[ext_mask], rul_pred[ext_mask]))
 
-        return dict(
+        result = dict(
             soh_mae=soh_mae, soh_r2=soh_r2,
             n_obs=n_obs, n_ext=n_ext, n_unk=n_unk,
             fold_obs_r2=fold_obs_r2, fold_obs_mae=fold_obs_mae,
             fold_ext_r2=fold_ext_r2, fold_ext_mae=fold_ext_mae,
             predictions=predictions,
         )
+        # Durable BEFORE the aggregate is assembled: a run killed after this
+        # fold finishes keeps it, so the next run fits only what never landed.
+        fold_cache.put(test_cell, result)
+        return result
 
     # Folds are independent; run them concurrently and re-assemble in the
     # original cell order so every list below is identical to the serial
@@ -341,15 +411,11 @@ def run_lco(
     # claiming the same dataset are byte-comparable. Logged with every run
     # via the registry; the Tier-4 NASA loader incident is the failure mode
     # this retires (same name, different bytes, silently incomparable rows).
-    from batlab.validation import fingerprints as _fp
-    raw_frames = unwrap_cell_data(cell_data)
-    fingerprint = {
-        "dataset": _fp.dataset_fingerprint(raw_frames),
-        "environment": _fp.environment_snapshot(),
-    }
+    # Computed above (the fold cache keys on it); returned here unchanged.
 
     return {
         "fingerprint": fingerprint,
+        "fold_cache": fold_cache.summary(),
         "soh_r2":       float(np.mean(soh_r2s)) if soh_r2s else float("nan"),
         "soh_mae":      float(np.mean(soh_maes)) if soh_maes else float("nan"),
         "rul_r2":       mean_obs_r2,

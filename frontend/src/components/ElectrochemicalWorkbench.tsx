@@ -129,8 +129,14 @@ export default function ElectrochemicalWorkbench() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {loading && <span className="badge badge-energy">Loading…</span>}
-          <label style={{ fontSize: 13, color: "var(--c-muted)", fontWeight: 600 }}>Active Cell:</label>
+          <label
+            htmlFor="active-cell-select"
+            style={{ fontSize: 13, color: "var(--c-muted)", fontWeight: 600 }}
+          >
+            Active Cell:
+          </label>
           <select
+            id="active-cell-select"
             value={selectedCell}
             onChange={(e) => setSelectedCell(e.target.value)}
             style={{ width: 140, fontWeight: 700 }}

@@ -325,6 +325,31 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _e1_stress_ratio = (_e1_reduced / _e1_crate_prof) ** 0.7 if _e1_crate_prof > 0.1 else 1.0
     _e1_fade_reduced = _e1_fade_30 * _e1_stress_ratio
 
+    # ── Hierarchical partial-pooling projection: the DEFAULT forecast ──
+    # The GBRT-fade extrapolation below is a linear fit to the LAST 30
+    # cycles alone; the hierarchical model instead shrinks this cell's fade
+    # rate toward its chemistry's fleet prior (empirical Bayes — the
+    # estimator the leave-cell-out benchmark validates for FORECASTING,
+    # where the GBRT's own prospective numbers collapse). When a fit is
+    # available it is the central projection; the per-trend extrapolation
+    # stays on the chart as the comparison line, honestly labelled.
+    _hier_proj = None
+    _hier_note = "Fleet prior unavailable — per-trend extrapolation shown instead"
+    try:
+        from batlab.models.hierarchical import project_future_soh
+        _hfit = (bundle or {}).get("hierarchical_fit") if isinstance(bundle, dict) else None
+        if _hfit:
+            _hier_proj = project_future_soh(_hfit, cell_id, _CYCLES_12M)
+            if _hier_proj is not None:
+                _sw = _hier_proj.get("shrinkage_weight_prior", 0.0)
+                _hier_note = (
+                    f"Fade rate shrunk toward the fleet prior "
+                    f"({max(0.0, min(1.0, _sw)) * 100:.0f}% of the slope comes from the fleet) — "
+                    "the estimator the leave-cell-out benchmark validates for forecasting."
+                )
+    except Exception:
+        _hier_proj = None
+
     def _e1_proj(fade_base, accel, n_cycles):
         cycles = _np_e1.arange(1, n_cycles + 1)
         soh    = _e1_last_soh - fade_base * cycles - 0.5 * accel * cycles**2
@@ -355,10 +380,32 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
         name="Uncertainty cone", hoverinfo="skip",
     ))
     # Base forecast (current C-rate)
+    # Central projection: the hierarchical model when available (the
+    # default "what happens next" answer), the raw per-trend extrapolation
+    # otherwise — whichever is central is named in the trace label so the
+    # chart can never quietly swap models.
+    if _hier_proj is not None:
+        _fig_e1.add_trace(go.Scatter(
+            x=_hier_proj["cycles"].tolist(), y=_hier_proj["soh_pct"].tolist(),
+            name="Hierarchical forecast (pooled)",
+            line=dict(color="#63b3ed", width=2, dash="dash"), mode="lines",
+            hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Hierarchical</extra>",
+        ))
+        # Posterior 80% band from the shrunk fade-rate distribution (AFT-
+        # style, disclosed as uncalibrated — see the caption below).
+        _fig_e1.add_trace(go.Scatter(
+            x=_hier_proj["cycles"].tolist() + _hier_proj["cycles"].tolist()[::-1],
+            y=_hier_proj["soh_q90_pct"].tolist() + _hier_proj["soh_q10_pct"].tolist()[::-1],
+            fill="toself", fillcolor="rgba(99,179,237,0.12)", line=dict(width=0),
+            name="Hierarchical 80% band", hoverinfo="skip",
+        ))
     _fig_e1.add_trace(go.Scatter(
-        x=_e1_cx, y=_e1_cy, name=f"Forecast (current {_e1_crate_prof:.1f}C)",
-        line=dict(color="#63b3ed", width=2, dash="dash"), mode="lines",
-        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Forecast</extra>",
+        x=_e1_cx, y=_e1_cy,
+        name=(f"30-cycle trend (comparison)" if _hier_proj is not None
+              else f"Forecast (current {_e1_crate_prof:.1f}C)"),
+        line=dict(color="#a0aec0" if _hier_proj is not None else "#63b3ed", width=1.5,
+                  dash="dash"), mode="lines",
+        hovertemplate="Cycle %{x}: %{y:.1f}%<extra>Trend</extra>",
     ))
     # Reduced C-rate scenario
     _fig_e1.add_trace(go.Scatter(
@@ -448,6 +495,18 @@ def page_health(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _fig_e1_col, _fig_twin_col = st.columns(2)
     with _fig_e1_col:
         st.plotly_chart(_fig_e1, use_container_width=True)
+        if _hier_proj is not None:
+            _eol_txt = (
+                f"EOL crossing: {_hier_proj['eol_cycle_central']:.0f}"
+                if _hier_proj.get("eol_cycle_central") else "EOL not reached in the 12-month window"
+            )
+            st.caption(
+                f"Central projection: hierarchical partial-pooling model. {_hier_note} "
+                "Band: posterior 80% from fade-rate uncertainty — NOT conformally "
+                "calibrated (unlike the GBRT's interval). " + _eol_txt + "."
+            )
+        else:
+            st.caption(f"Central projection: 30-cycle trend extrapolation. {_hier_note}.")
 
     with _fig_twin_col:
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)

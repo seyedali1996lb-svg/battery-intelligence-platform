@@ -8,6 +8,8 @@ A citable, honest research library for battery degradation analysis.
 - A reproducible benchmark manifest format that records the exact seed, fold assignments, and feature-engineering version behind a reported number, plus a sealed, content-hashed holdout manifest that verifies holdout cells were never touched by training.
 - A **model-agnostic validation harness** (`batlab.harness`): point it at your own sklearn or PyTorch forecaster and it runs the same mechanical leakage lint, per-row label-provenance rule, leave-cell-out evaluation, conformal interval calibration, prospective (forecasting) split, and enforced metric gate this library applies to its own model — returning an explicit list of the claims the run supports and the claims it withholds. A model you did not write can be graded in a **sandbox** (`sandbox_forecaster`): a separate process with an audit-hook policy (no network, no subprocesses, no `ctypes`, writes confined to its own scratch directory) and wall-clock/CPU/memory caps, with the metrics unchanged bit for bit. See the [validation harness](harness.md) page.
 
+- Every leave-cell-out fold is a **pure function of its inputs**, so `batlab.validation.fold_cache` writes completed folds to disk and replays them instead of refitting. Repeating a `run_lco()` with the same cells, model configuration, seed and numeric stack costs seconds rather than minutes; a killed run keeps the folds that finished; and any change to the data, features, hyperparameters, seed or library versions changes the cache key, so a stale fold is recomputed rather than served (`BATLAB_LCO_CACHE=off` to disable). Measured numbers and the knobs: [boot layers and fold caching](performance.md).
+
 ## Install
 
 ```bash
@@ -53,4 +55,5 @@ The same honesty applies to *what the model is asked to predict*. A RUL label is
 - [Datasets](datasets/index.md) — schema, citations, licenses, and how to add a fifth loader.
 - [API reference](api/datasets.md) — every public function, generated from docstrings.
 - [Notebooks](notebooks/01_quickstart.ipynb) — the four worked examples, rendered.
+- [Boot layers and fold caching](performance.md) — why a cold boot serves the core model first, what the deferred layers disclose while they run, and the measured cost of replaying a leave-cell-out fold versus refitting it.
 - [Project history](history.md) — the Streamlit demo application this library was extracted from, and everything built in it.

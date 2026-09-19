@@ -97,6 +97,59 @@ jobs:
         run: python scripts/check_metric_gate.py
         continue-on-error: false
 
+  frontend:
+    # The React SPA (frontend/) had no CI job at all until now: it built and
+    # linted clean when run by hand, which is a property that stops being true
+    # exactly when nobody runs it. Three gates, each one a way for the built
+    # artifact to be wrong in a way a reader of the source would not catch --
+    # a type error, a stale bundle, or an accessibility defect. `npm run build`
+    # is `tsc -b && vite build`, so the type check cannot drift from what
+    # actually ships; `npm run lint` carries oxlint's jsx-a11y plugin (see
+    # frontend/.oxlintrc.json), which is the accessibility gate.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Type check and build
+        run: npm run build
+        working-directory: frontend
+
+      - name: Lint (including jsx-a11y)
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Check the build output is the layout the API serves
+        # src/api.py mounts frontend/dist at /app. A build that emitted
+        # somewhere else, or an index.html pointing at an asset that was not
+        # written, would leave /app as a boot-time 404 with every gate above
+        # still green — so assert the two things the mount actually needs.
+        # (The mount itself is covered by tests/test_api_serves_spa.py in the
+        # Python job, which mounts a fake dist and needs no Node.)
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          index = pathlib.Path("frontend/dist/index.html")
+          if not index.is_file():
+              sys.exit("frontend/dist/index.html missing after build")
+          refs = re.findall(r'(?:src|href)="([^"]+)"', index.read_text(encoding="utf-8"))
+          missing = [r for r in refs if r.startswith("/") and not (pathlib.Path("frontend/dist") / r.lstrip("/")).is_file()]
+          if missing:
+              sys.exit(f"index.html references assets that were not built: {missing}")
+          print("dist layout OK:", len(refs), "asset references resolved")
+          PY
+
   notebooks:
     runs-on: ubuntu-latest
     timeout-minutes: 20

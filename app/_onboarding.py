@@ -91,17 +91,36 @@ _TOUR_STEPS = [
     ),
 ]
 
-# Session-state keys that mark first-run overlays as completed, in show-order.
-_FIRST_RUN_OVERLAYS = ["role_chosen", "mode_chosen", "tour_seen"]
+# The single first-run gate. This used to be three sequential blocking
+# overlays -- a role picker, then a use-case picker, then the guided tour --
+# which meant three screens and three clicks before a new user saw a single
+# number. They are now one screen (intent cards that imply a role; see
+# _router._render_onboarding) plus an on-demand tour opened from the sidebar
+# or from Settings.
+ONBOARDING_KEY = "onboarding_done"
+
+# Written by that one screen (and by the sidebar's role/focus buttons) so a
+# session that predates this change -- or a test that sets the old keys
+# directly to skip onboarding -- is still recognisably onboarded.
+_LEGACY_OVERLAY_KEYS = ("role_chosen", "mode_chosen", "tour_seen")
 
 
 def active_first_run_overlay() -> str | None:
-    """Return the session_state key of the next not-yet-completed first-run
-    overlay, or None once all of them are done."""
-    for key in _FIRST_RUN_OVERLAYS:
-        if not st.session_state.get(key, False):
-            return key
-    return None
+    """Return the session_state key of the blocking first-run overlay, or
+    None once the user has been through it."""
+    done = st.session_state.get(ONBOARDING_KEY)
+    if done is None:
+        if all(st.session_state.get(k, False) for k in _LEGACY_OVERLAY_KEYS):
+            st.session_state[ONBOARDING_KEY] = True
+            return None
+        return ONBOARDING_KEY
+    return None if done else ONBOARDING_KEY
+
+
+def open_guided_tour() -> None:
+    """Queue the guided tour to render on this run (on-demand, not a gate)."""
+    st.session_state["tour_open"] = True
+    st.session_state["tour_step"] = 0
 
 
 def _tour_data_mode_line(mode: str) -> str:
@@ -131,6 +150,7 @@ def guided_tour_dialog() -> None:
     _col_skip, _col_next = st.columns([1, 2])
     with _col_skip:
         if st.button("Skip tour", key="tour_skip", use_container_width=True):
+            st.session_state["tour_open"] = False
             st.session_state["tour_seen"] = True
             st.rerun()
     with _col_next:
@@ -140,6 +160,7 @@ def guided_tour_dialog() -> None:
             key="tour_next", type="primary", use_container_width=True,
         ):
             if _is_last:
+                st.session_state["tour_open"] = False
                 st.session_state["tour_seen"] = True
                 st.session_state["page"] = "compliance"
             else:

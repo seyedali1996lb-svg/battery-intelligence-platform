@@ -70,91 +70,24 @@ from sklearn.metrics import mean_absolute_error
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
 from batlab.validation.lco import unwrap_cell_data
 from batlab.validation.lco import RUL_RELIABLE_FLOOR, MIN_RUL_LABEL_OBSERVED_FRACTION, _safe_r2
+from batlab.models.hierarchical import (
+    cell_local_stats as _cell_local_stats,
+    prior_from_fleet as _prior_from_fleet,
+    shrunk_log_rate as _shrunk_log_rate,
+    hierarchical_hyperparams,
+    MIN_HISTORY_FRACTION,
+    MIN_HISTORY_FLOOR_CYCLES,
+    TAU2_FLOOR,
+)
 
 MODEL_KIND = "hierarchical"
 
-# The fraction of the held-out cell's recorded cycles the model may consume
-# as its "early window" — the deployment-realistic information set.
-MIN_HISTORY_FRACTION = 0.3
-MIN_HISTORY_FLOOR_CYCLES = 10
-
-# Method-of-moments floor on the prior variance: a fleet of near-identical
-# cells must not produce a zero-variance prior (that would make the
-# shrinkage divide by zero and over-trust the fleet mean).
-TAU2_FLOOR = 1e-4
-
-
-def hierarchical_hyperparams() -> dict:
-    """The recorded hyperparameters, mirroring GBRT_PARAMS / pinn_hyperparams."""
-    return {
-        "model_kind": MODEL_KIND,
-        "fade_law": "linear per-cycle capacity loss, log-rate Gaussian prior",
-        "min_history_fraction": MIN_HISTORY_FRACTION,
-        "min_history_floor_cycles": MIN_HISTORY_FLOOR_CYCLES,
-        "tau2_floor": TAU2_FLOOR,
-        "estimator": "empirical-Bayes method of moments + precision-weighted shrinkage",
-    }
-
-
-def _cell_local_stats(cycles: np.ndarray, cap_ah: np.ndarray, early_only: bool) -> "tuple[float, float, float, float] | None":
-    """(log local fade rate, its sampling variance, anchor cycle,
-    anchor capacity) from a cell's data. With `early_only` only the first
-    MIN_HISTORY_FRACTION of the recorded cycles are consumed (the
-    deployment information set). The anchor is the window's FIRST row —
-    the (cycle, capacity) point the predicted line passes through."""
-    if len(cycles) < 4:
-        return None
-    if early_only:
-        n_hist = max(MIN_HISTORY_FLOOR_CYCLES, int(len(cycles) * MIN_HISTORY_FRACTION))
-        n_hist = min(n_hist, len(cycles))
-        cycles, cap_ah = cycles[:n_hist], cap_ah[:n_hist]
-    # OLS slope of capacity on cycle number, plus its sampling variance
-    # sigma^2 / Sxx where sigma^2 is the residual variance.
-    x = cycles.astype(float)
-    y = cap_ah.astype(float)
-    xbar = x.mean()
-    sxx = float(((x - xbar) ** 2).sum())
-    if sxx <= 0:
-        return None
-    slope = float(((x - xbar) * (y - y.mean())).sum() / sxx)
-    # Capacity DECREASES with cycles, so the OLS slope is negative; the
-    # model works on the per-cycle capacity LOSS (positive convention).
-    loss = -slope
-    if loss <= 1e-9:
-        # A non-fading (or charging-up) window carries no degradation info.
-        return None
-    resid = y - (y.mean() + slope * (x - xbar))
-    dof = max(1, len(x) - 2)
-    sigma2 = float((resid ** 2).sum()) / dof
-    var_slope = sigma2 / sxx
-    # var_slope == 0 (noiseless data, e.g. a synthetic generator) means
-    # PERFECT local information — floor it rather than reject the cell.
-    # Variance is sign-invariant, so this is the loss-scale variance.
-    var_slope = max(var_slope, 1e-12)
-    return float(np.log(loss)), float(var_slope / (loss ** 2)), float(x[0]), float(y[0])
-
-
-def _prior_from_fleet(fleet_stats: list) -> "tuple[float, float]":
-    """Empirical-Bayes prior N(mu, tau^2) over LOG fade rates from the
-    training cells' (log theta, sampling variance) pairs."""
-    logs = np.array([s[0] for s in fleet_stats], dtype=float)
-    vs = np.array([s[1] for s in fleet_stats], dtype=float)
-    mu = float(np.mean(logs))
-    tau2 = float(np.var(logs, ddof=1) - np.mean(vs)) if len(logs) >= 2 else 0.0
-    return mu, max(tau2, TAU2_FLOOR)
-
-
-def _shrunk_log_rate(
-    local: "tuple[float, float, float, float]",
-    prior: "tuple[float, float]",
-) -> float:
-    """Precision-weighted shrinkage of the cell's local log fade rate
-    toward the fleet prior."""
-    th_loc, v_loc = local[0], local[1]
-    mu, tau2 = prior
-    w_loc = 1.0 / max(v_loc, 1e-12)
-    w_pri = 1.0 / max(tau2, 1e-12)
-    return (w_loc * th_loc + w_pri * mu) / (w_loc + w_pri)
+# The estimation math (early-window convention, prior floor, shrinkage
+# weights) lives in batlab/models/hierarchical.py — the production estimator
+# and this validation harness re-export the same constants and functions so
+# the two cannot drift apart. The re-exports above keep this module's public
+# surface unchanged for existing importers (tests read MIN_HISTORY_FRACTION
+# from here; experiment_registry imports hierarchical_hyperparams from here).
 
 
 def run_hierarchical_lco(
@@ -231,12 +164,13 @@ def run_hierarchical_lco(
 
     soh_maes, soh_r2s = [], []
     per_cell, per_theta = {}, {}
-    # Set inside the loop below; without this a fleet whose cells list is empty
-    # reaches the return dict with the name unbound (NameError, not "none").
-    prior_scope = "none"
     n_obs_rows = 0
     n_ext_rows = 0
     obs_r2s, obs_maes = [], []
+    # Loop-body assignment hoisted: if every fold is skipped by the guards
+    # below (e.g. no cell yields a usable window), the result dict must
+    # still record a scope rather than raise NameError at return time.
+    prior_scope = "none"
 
     for test_cell in cell_ids:
         train_cells = [c for c in cell_ids if c != test_cell]

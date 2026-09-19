@@ -904,9 +904,10 @@ def test_live_monitor_fragment_does_not_crash_with_an_active_connection(isolated
 # ---------------------------------------------------------------------------
 
 def test_use_case_picker_renders_when_mode_not_yet_chosen(isolated_db):
-    """role_chosen=True but mode_chosen unset must show the new interstitial
-    (not fall through to a page, not crash) -- the sequencing this whole
-    feature depends on (_FIRST_RUN_OVERLAYS in app/main.py)."""
+    """role_chosen=True but mode_chosen unset must show the interstitial
+    (not fall through to a page, not crash) -- the single gate
+    (ONBOARDING_KEY in app/_onboarding.py) still fires for a session that came
+    through the three-screen flow and stopped halfway."""
     at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa", mode_chosen=False)
     at.run()
     assert not at.exception, f"Use-case picker crashed: {at.exception}"
@@ -1392,3 +1393,155 @@ def test_copilot_free_text_falls_back_to_template_without_api_key(isolated_db):
     assert "Template fallback" in text
     assert "Claude Sonnet 5" not in text
 
+
+
+# ---------------------------------------------------------------------------
+# First-run: one gate, and a landing fleet whose numbers are populated
+# ---------------------------------------------------------------------------
+
+def _fresh_app_no_onboarding_choice() -> AppTest:
+    """An authenticated session that has made no first-run choice yet.
+
+    Deliberately does NOT use _logged_in_app(), which sets the three legacy
+    onboarding keys to skip the overlays -- the whole point here is the state
+    before any of them is set.
+    """
+    at = AppTest.from_file(_MAIN_PY, default_timeout=120)
+    at.session_state["authenticated"] = True
+    at.session_state["auth_org_id"] = 1
+    at.session_state["auth_org_name"] = "Demo Org"
+    at.session_state["auth_user"] = "admin"
+    at.session_state["auth_role"] = "admin"
+    at.session_state["auth_name"] = "Administrator"
+    at.session_state["page"] = "overview"
+    return at
+
+
+def test_first_run_shows_one_gate_that_asks_intent(isolated_db):
+    """The role picker, the use-case picker and the guided tour used to be
+    three blocking screens in sequence. One screen now: intent cards that set
+    both the landing page and the role."""
+    at = _fresh_app_no_onboarding_choice()
+    at.run()
+    assert not at.exception, f"first-run gate crashed: {at.exception}"
+    text = _all_text(at)
+    assert "What are you here to do?" in text
+    assert "Diagnose a battery" in text
+    assert "Prove EU compliance" in text    # The skip control is a button, and _all_text() only reads markdown.
+    button_labels = " ".join(b.label for b in at.button)
+    assert "Skip" in button_labels and "show me the dashboard" in button_labels
+    # The role picker and the tour are no longer separate gates.
+    assert "Welcome to Battery Intelligence" not in text
+    assert "Guided Tour" not in text
+
+
+def test_one_gate_sets_role_page_and_completion_flag(isolated_db):
+    at = _fresh_app_no_onboarding_choice()
+    at.run()
+    at.button(key="onboard_mode_compliance").click().run()
+    assert not at.exception
+    assert at.session_state["user_role"] == "Compliance Officer"
+    assert at.session_state["page"] == "compliance"
+    assert at.session_state["onboarding_done"] is True
+
+    # ...and it does not come back.
+    at.run()
+    assert "What are you here to do?" not in _all_text(at)
+
+
+def test_skip_button_lands_on_the_dashboard(isolated_db):
+    at = _fresh_app_no_onboarding_choice()
+    at.run()
+    at.button(key="onboard_skip").click().run()
+    assert not at.exception
+    assert at.session_state["page"] == "overview"
+    assert at.session_state["onboarding_done"] is True
+    assert "What are you here to do?" not in _all_text(at)
+
+
+def test_change_role_reopens_the_single_gate(isolated_db):
+    """The sidebar's re-entry point still works after the three gates collapsed
+    into one -- a user who wants a different role must not have to know that
+    the picker is now the use-case screen."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa")
+    at.run()
+    at.button(key="change_role_btn").click().run()
+    assert not at.exception
+    assert "What are you here to do?" in _all_text(at)
+
+
+def test_legacy_three_flag_session_is_still_onboarded(isolated_db):
+    """Back-compat: a session (or a test) that set all three old keys is not
+    shown the gate again."""
+    at = _logged_in_app(role="Engineer", page="overview", data_mode="nasa")
+    at.run()
+    assert not at.exception
+    assert "What are you here to do?" not in _all_text(at)
+
+
+def test_first_run_defaults_to_a_fleet_where_rul_is_populated(isolated_db):
+    """The default source is chosen for the number the landing page is about.
+
+    Severson (46 LFP cells) never crosses its own end-of-life threshold
+    in-window, so RUL and its calibrated Q10/Q90 interval are withheld for
+    every cell -- correct under the label-provenance rule, and a bad first run
+    for a platform whose headline output is remaining useful life. Zhu 2022 is
+    the shipped fleet in which every cell reaches end-of-life in-window.
+    """
+    at = _fresh_app_no_onboarding_choice()
+    at.session_state["role_chosen"] = True
+    at.session_state["mode_chosen"] = True
+    at.session_state["tour_seen"] = True
+    at.run()
+    assert not at.exception
+    assert at.session_state["data_mode"] == "zhu2022"
+
+
+def test_first_run_hero_shows_the_interval_rather_than_withholding_it(isolated_db):
+    """End-to-end version of the same claim: on the default fleet the hero
+    renders a populated Q10/Q90 interval, not the withheld state.
+
+    The shipped fleets are all cycled to failure, so the cell's *latest* row is
+    already past the threshold -- which is why the quoted interval comes from
+    the cell's last in-life cycle and says so, instead of stating a remaining
+    life at a cell that has none.
+    """
+    at = _fresh_app_no_onboarding_choice()
+    at.session_state["role_chosen"] = True
+    at.session_state["mode_chosen"] = True
+    at.session_state["tour_seen"] = True
+    at.run()
+    assert not at.exception, f"overview crashed on the default fleet: {at.exception}"
+    text = _all_text(at)
+    assert "RUL not calibrated" not in text, "default fleet still lands on the withheld state"
+    assert "80% interval at cycle" in text, (
+        "hero did not name the cycle its served interval comes from"
+    )
+    assert "its last cycle above the 80% threshold" in text, (
+        "interval was quoted at the latest (post-end-of-life) row instead of the "
+        "cell's last in-life cycle"
+    )
+    assert "the cell reached 80% at cycle" in text, (
+        "an observed outcome is the whole point of a calibrated interval; the "
+        "hero must state where the cell actually crossed"
+    )
+
+    # The band is drawn, not narrated: the hero's own SVG carries it.
+    svgs = [m.value for m in at.markdown if "<svg" in m.value and "80% EOL" in m.value]
+    assert svgs, "hero rendered no interval chart"
+    hero = svgs[0]
+    assert "<polygon" in hero, "hero chart drawn without the served interval band"
+    assert "band = served 80% interval" in hero
+    assert "dashed = observed outcome" in hero, (
+        "the default fleet's labels are observed end-of-life, so the outcome "
+        "must be drawn against the interval"
+    )
+    assert "aria-label" in hero and "served 80% interval is drawn" in hero, (
+        "the chart's accessible description must state that the band is served "
+        "and how many cycles it covers"
+    )
+
+    # Q10 is 0 on every cycle of this fleet: an interval that cannot rule out
+    # that the cell is already at end of life. It is drawn (the band is open at
+    # the low end) and named, rather than dropped as degenerate.
+    assert "lower bound 0" in text

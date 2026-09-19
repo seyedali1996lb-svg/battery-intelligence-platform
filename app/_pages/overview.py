@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 
 from utils import (
     _md_html, _action_bar, base_layout, soh_status, _soh_sparkline_svg,
+    _rul_interval_band_svg,
     _cell_provenance, _resample_df, LEGEND_H,
 )
 from data_loader import CELL_STRESS_PROFILES, _stress_factor
@@ -222,6 +223,37 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     rul_q10 = float(latest["rul_q10"]) if "rul_q10" in latest.index else None
     rul_q90 = float(latest["rul_q90"]) if "rul_q90" in latest.index else None
 
+    # ── Which cycle the quoted interval actually belongs to ──────────────────
+    # Every shipped real fleet is cycled *until failure*, so the latest recorded
+    # row of a real cell is already past the 80% threshold: NASA's four cells
+    # end at 58-76% SOH, every Zhu cell at ~66%. A remaining-life interval
+    # quoted at that row describes nothing -- there is no remaining life to
+    # state, and the served Q10/Q90 there is degenerate. That interval is still
+    # the most defensible number this platform produces, so the caption quotes
+    # it at the cell's LAST cycle above the threshold -- the last state in which
+    # a remaining-life answer existed -- and names the row it came from. On a
+    # cell still in life that row is simply the current one.
+    _EOL_CONVENTION = 80.0   # the convention the RUL label is defined against
+    _past_eol = float(current_soh) <= _EOL_CONVENTION
+    _in_life = df[df["soh_pct"] > _EOL_CONVENTION] if "soh_pct" in df.columns else df.iloc[0:0]
+    _anchor_row = _in_life.iloc[-1] if len(_in_life) else None
+    # Where the cell crossed the threshold is a fact about the cell, not about
+    # the model, so it is read from the measured series and never predicted.
+    _crossed = df[df["soh_pct"] <= _EOL_CONVENTION] if "soh_pct" in df.columns else df.iloc[0:0]
+
+    def _row_num(row, col):
+        """Numeric value of a column on a row, or None when absent/NaN."""
+        if row is None or col not in row.index:
+            return None
+        _v = row[col]
+        return None if pd.isna(_v) else float(_v)
+
+    _anchor_cycle   = _row_num(_anchor_row, "cycle_number")
+    _anchor_soh     = _row_num(_anchor_row, "soh_pct")
+    _crossing_cycle = _row_num(_crossed.iloc[0], "cycle_number") if len(_crossed) else None
+    _fan_q10 = rul_q10 if _anchor_row is None else _row_num(_anchor_row, "rul_q10")
+    _fan_q90 = rul_q90 if _anchor_row is None else _row_num(_anchor_row, "rul_q90")
+
     # SoP from features (computed by build_features)
     sop_pct = float(latest["sop_pct"]) if "sop_pct" in latest.index else None
 
@@ -264,6 +296,14 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         _selection.get("chemistry"), bundles={"selected": bundle} if bundle else None,
     )
 
+    # Deferred boot layers (app/_data.py's "Boot layers" section): a bundle
+    # whose leave-cell-out validation has not landed YET carries no verdict,
+    # which is a different statement from "evaluated and not calibrated" —
+    # every pending surface below says so instead of reusing the failure text.
+    _layers_pending = str(
+        ((bundle or {}).get("metrics") or {}).get("boot_layers") or ""
+    ) in ("pending", "failed")
+
     # RUL display: suppress when model doesn't generalise (LCO R² < floor)
     # or when early-cycle features haven't stabilised yet.
     rul_calibrating = (not rul_reliable) or (confidence == "Calibrating")
@@ -273,15 +313,34 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     # formula extrapolations is a statement about the data, not a glitch.
     if rul_reliable:
         rul_sub = f"cycles to 80% SOH{_prov_suffix}"
+    elif _layers_pending:
+        rul_sub = "awaiting leave-cell-out validation"
     elif _prov_label:
         rul_sub = f"withheld — {_prov_label}"
     else:
         rul_sub = "not calibrated"
 
+    # Past the threshold there is no remaining life to state. "0 cycles to 80%
+    # SOH" on a cell sitting at 66% is not a conservative number, it is a wrong
+    # one -- the fact belongs here instead, and the last in-life estimate is
+    # what the hero's interval caption carries.
+    if not rul_calibrating and _past_eol:
+        rul_display = "—"
+        # The provenance suffix travels with the fact in place of the number:
+        # the interval quoted under this card is still that model's output, and
+        # the rule that a served number names its held-out population and
+        # chemistry does not stop applying because the number is a crossing.
+        _crossing_txt = (
+            f"crossed {_EOL_CONVENTION:.0f}% at cycle {_crossing_cycle:,.0f}"
+            if _crossing_cycle is not None else "past end of life"
+        )
+        rul_sub = f"{_crossing_txt}{_prov_suffix}"
+
     # Application EOL threshold — adjust displayed RUL after rul_calibrating is known
     app_eol = float(st.session_state.get("eol_threshold_pct", 80.0))
     adj_rul = current_rul
-    if not rul_calibrating and current_rul is not None and app_eol != 80.0:
+    if (not rul_calibrating and not _past_eol
+            and current_rul is not None and app_eol != 80.0):
         fade_50 = float(latest.get("fade_rate_50cy", 0)) * 100  # SOH %/cy
         if fade_50 > 1e-6:
             adj_rul = max(0, (current_soh - app_eol) / fade_50)
@@ -400,7 +459,20 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 _transfer_reason = " ".join(reason for _, reason in _badges)
     except Exception:
         _transfer_html = ""  # honesty badge is best-effort -- never block the page over it
-    rul_hero = "Not calibrated" if not rul_reliable else f"Est. {current_rul:.0f} cycles remaining"
+    # A cell past the threshold has no remaining life to state; saying "Est. 0
+    # cycles remaining" (or a negative one) would be a number that means
+    # nothing. It gets the fact instead, and the interval caption below carries
+    # the last in-life estimate.
+    if _layers_pending:
+        # Running now, not measured-and-failed: "Not calibrated" here would
+        # report a missing measurement as a bad one.
+        rul_hero = "Validation pending"
+    elif not rul_reliable:
+        rul_hero = "Not calibrated"
+    elif _past_eol:
+        rul_hero = f"Past {_EOL_CONVENTION:.0f}% end of life"
+    else:
+        rul_hero = f"Est. {current_rul:.0f} cycles remaining"
 
     # ── Reconcile the primary RUL model against the trajectory-match model ──
     # Computed once here (not inside _render_trajectory_match_card) so the
@@ -417,7 +489,12 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
     _reconcile = reconcile_rul_estimates(_primary_cycles_remaining, _traj_match)
 
     # Confidence inline reason (two non-engineer templates per CTO spec)
-    if rul_calibrating and not rul_reliable:
+    if _layers_pending:
+        conf_reason = (
+            "RUL withheld while this fleet's leave-cell-out validation runs in the "
+            "background — the verdict appears here as soon as it lands."
+        )
+    elif rul_calibrating and not rul_reliable:
         if fold_r2 is not None:
             conf_reason = (
                 "RUL not calibrated — model accuracy insufficient for this cell's "
@@ -464,18 +541,53 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         source_tag = f"{_profile.display_name} · real measured data"
 
     sparkline_svg = _soh_sparkline_svg(df["soh_pct"])
+
+    # ── The calibrated interval, drawn ───────────────────────────────────────
+    # The hero used to state its interval in prose. An interval whose real
+    # coverage was *measured* (batlab.validation.calibration) is the most
+    # defensible number this platform produces, so it gets the most visible
+    # real estate: the served Q10-Q90 band at every cycle the model answered
+    # for, with the observed outcome drawn against it where the labels are
+    # observed end-of-life. Nothing is drawn while RUL is withheld
+    # (rul_calibrating) -- a decorative cone under a withheld number would undo
+    # the withholding it sits beside.
+    _observed_rul = None
+    if "rul" in df.columns and "rul_label_kind" in df.columns:
+        _observed_rul = df["rul"].where(df["rul_label_kind"] == "observed")
+    _fan_svg = _rul_interval_band_svg(
+        df["cycle_number"] if "cycle_number" in df.columns else pd.Series(range(len(df))),
+        rul_pred=None if rul_calibrating else df.get("rul_pred"),
+        rul_q10=None if rul_calibrating else df.get("rul_q10"),
+        rul_q90=None if rul_calibrating else df.get("rul_q90"),
+        observed_rul=None if rul_calibrating else _observed_rul,
+        eol_pct=_EOL_CONVENTION,
+    )
+
     interval_html = ""
-    # D5: epistemic vs aleatoric uncertainty explanation
+    # D5: epistemic vs aleatoric uncertainty explanation — moved into the
+    # "Why this number?" disclosure below: it is the *explanation* of the
+    # interval, and the interval itself now renders as the band above it.
     _unc_explanation = ""
-    if not rul_calibrating and rul_q10 is not None and rul_q90 is not None and rul_q90 > rul_q10:
-        _band_width = rul_q90 - rul_q10
-        _band_pct   = _band_width / max(float(current_rul), 1) * 100 if current_rul else 0
-        if _band_pct > 40:
+    if not rul_calibrating and _fan_q10 is not None and _fan_q90 is not None and _fan_q90 > _fan_q10:
+        _band_width = _fan_q90 - _fan_q10
+        # Relative width is measured against the interval's own midpoint, not
+        # against the cell's current point estimate: on a cell that has already
+        # crossed the threshold the point estimate is ~0, which made this ratio
+        # meaningless (and the sentence below wrong).
+        _band_center = max((_fan_q10 + _fan_q90) / 2.0, 1.0)
+        _band_pct   = _band_width / _band_center * 100
+        # The band is judged against the age of the row it was quoted at (the
+        # current row on a live cell, the last in-life row otherwise) and only
+        # called wide when it is wide in *cycles*: a 5-cycle spread is not wide
+        # uncertainty at any ratio, and calling it that is the kind of prose
+        # this page is trying to stop narrating over the picture.
+        _band_cycle = int(_anchor_cycle) if _anchor_cycle is not None else current_cycle
+        if _band_pct > 40 and _band_width >= 25:
             # Wide band — diagnose source
-            if current_cycle < 60:
+            if _band_cycle < 60:
                 _unc_explanation = (
                     f"Wide uncertainty ({_band_width:.0f}-cycle spread) because this cell has only "
-                    f"{current_cycle} cycles — the model hasn't seen enough of its degradation curve "
+                    f"{_band_cycle} cycles — the model hasn't seen enough of its degradation curve "
                     f"(epistemic). Uncertainty will narrow as cycles accumulate."
                 )
             elif fold_r2 is not None and fold_r2 < 0.55:
@@ -507,16 +619,48 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 f"{_cal_cov * 100:.0f}% at nominal 80% (conformally calibrated "
                 "on unseen cells)</span>"
             )
+        elif _layers_pending:
+            _cov_html = (
+                "&nbsp;·&nbsp;<span style='color:#a0aec0'>coverage measurement "
+                "still running on unseen cells — treat the 80% as nominal until "
+                "it lands</span>"
+            )
         else:
             _cov_html = (
                 "&nbsp;·&nbsp;<span style='color:#a0aec0'>coverage not measured "
                 "on this fleet — treat the 80% as nominal, not verified</span>"
             )
+        # The caption names the cycle the quoted interval came from, so the
+        # sentence and the chart cannot describe two different moments -- and
+        # where the labels are observed it states what the cell did afterwards,
+        # because an interval is only as good as the outcome it bracketed.
+        if _past_eol and _anchor_cycle is not None:
+            _interval_lead = (
+                f"80% interval at cycle {_anchor_cycle:,.0f} "
+                f"({_anchor_soh:.1f}% SOH — its last cycle above the "
+                f"{_EOL_CONVENTION:.0f}% threshold): "
+            )
+        else:
+            _interval_lead = "80% interval: "
+        # Q10 == 0 is the served lower bound on every cycle of some fleets: an
+        # interval that cannot rule out that the cell is already at end of
+        # life. Read as a bare "0" that looks like a defect, so it is named.
+        _open_low = (
+            "&nbsp;·&nbsp;<span style='color:#a0aec0'>lower bound 0 — this "
+            "interval cannot rule out end of life today</span>"
+            if _fan_q10 is not None and float(_fan_q10) <= 0 else ""
+        )
+        _outcome = (
+            f"&nbsp;·&nbsp;<span style='color:#a0aec0'>the cell reached "
+            f"{_EOL_CONVENTION:.0f}% at cycle {_crossing_cycle:,.0f}</span>"
+            if _past_eol and _crossing_cycle is not None else ""
+        )
         interval_html = (
-            f"<div style='font-size:11px;color:#8896a8;margin-top:4px'>"
-            f"80% interval: <strong style='color:#a0aec0'>{rul_q10:.0f}–{rul_q90:.0f} cycles</strong>"
+            f"<div style='font-size:11px;color:#8896a8;margin-top:4px;text-align:center'>"
+            f"{_interval_lead}<strong style='color:#a0aec0'>{_fan_q10:.0f}–{_fan_q90:.0f} cycles</strong>"
             + _cov_html
-            + (f"&nbsp;·&nbsp;<span style='color:#a0aec0'>{_unc_explanation}</span>" if _unc_explanation else "")
+            + _open_low
+            + _outcome
             + f"</div>"
         )
 
@@ -533,41 +677,23 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
                 &nbsp;·&nbsp; {conf_html}
                 {("&nbsp;·&nbsp; " + _transfer_html) if _transfer_html else ""}
             </div>
+            {_fan_svg}
             {interval_html}
         </div>
         """
     )
-
-    if conf_reason:
-        conf_c = "#fc8181" if (rul_calibrating and not rul_reliable) else "#4a5568"
-        st.markdown(
-            f"<div style='font-size:12px;color:{conf_c};margin:-8px 0 12px;"
-            f"padding:6px 12px;background:#1a202c;border-radius:6px;"
-            f"border-left:3px solid {conf_c}'>{conf_reason}</div>",
-            unsafe_allow_html=True,
-        )
-
-    if _transfer_reason:
-        st.markdown(
-            f"<div style='font-size:12px;color:#a0aec0;margin:-8px 0 12px;"
-            f"padding:6px 12px;background:#1a202c;border-radius:6px;"
-            f"border-left:3px solid #a0aec0'>{html.escape(_transfer_reason)}</div>",
-            unsafe_allow_html=True,
-        )
-
-    if _chem_accuracy_line:
-        st.caption(
-            f"Accuracy by chemistry (from the experiment registry, per-chemistry "
-            f"not platform-wide): {_chem_accuracy_line}"
-        )
-    if _validity_banner:
-        st.warning(_validity_banner)
 
     # ── Plain-English summary sentence ─────────────────────────────────────
     if rul_calibrating:
         _plain_sentence = (
             f"This cell has completed {current_cycle:,} cycles at {current_soh:.1f}% SOH — "
             f"RUL cannot be estimated reliably for this cell's degradation profile."
+        )
+    elif _past_eol:
+        _plain_sentence = (
+            f"This cell is past its {_EOL_CONVENTION:.0f}% end-of-life threshold, standing at "
+            f"{current_soh:.1f}% SOH after {current_cycle:,} cycles. The interval above is the "
+            f"model's estimate from earlier in its life, not a live remaining-life figure."
         )
     elif months_remaining is not None and months_remaining > 0:
         _action = (
@@ -591,11 +717,73 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
             f"This cell has completed {current_cycle:,} cycles at {current_soh:.1f}% SOH."
         )
     st.markdown(
-        f"<div style='font-size:14px;color:#a0aec0;margin:-4px 0 18px;"
+        f"<div style='font-size:14px;color:#a0aec0;margin:-4px 0 10px;"
         f"padding:10px 16px;background:#1a202c;border-radius:8px;"
         f"border-left:3px solid #2d3748'>{_plain_sentence}</div>",
         unsafe_allow_html=True,
     )
+
+    # ── "Why this number?" — the evidence, one click away ────────────────────
+    # Everything here used to be rendered flat under the hero: a red paragraph
+    # on an unreliable cell, the cross-chemistry transfer reasons, an accuracy
+    # caption and a validity warning -- four blocks of validation prose
+    # between the user and the rest of the page, naming loader internals and
+    # feature-pipeline functions at a battery engineer. The verdict itself is
+    # still always visible (it is this expander's own label, and the hero's
+    # badges); the reasoning behind it is what moves behind one click. Nothing
+    # was cut -- every string below is the same string it was.
+    _why_label = (
+        "Calibrating — why this cell's RUL is withheld"
+        if (rul_calibrating and not rul_reliable)
+        else "Why this number? — validation, provenance and caveats"
+    )
+    with st.expander(_why_label, expanded=False):
+        _why_rendered = False
+        if conf_reason:
+            conf_c = "#fc8181" if (rul_calibrating and not rul_reliable) else "#a0aec0"
+            st.markdown(
+                f"<div style='font-size:12px;color:{conf_c};"
+                f"padding:6px 12px;background:#1a202c;border-radius:6px;"
+                f"border-left:3px solid {conf_c}'>{conf_reason}</div>",
+                unsafe_allow_html=True,
+            )
+            _why_rendered = True
+
+        if _unc_explanation:
+            st.markdown(
+                f"<div style='font-size:12px;color:#a0aec0;margin-top:6px;"
+                f"padding:6px 12px;background:#1a202c;border-radius:6px;"
+                f"border-left:3px solid #2d3748'>{html.escape(_unc_explanation)}</div>",
+                unsafe_allow_html=True,
+            )
+            _why_rendered = True
+
+        if _transfer_reason:
+            st.markdown(
+                f"<div style='font-size:12px;color:#a0aec0;margin-top:6px;"
+                f"padding:6px 12px;background:#1a202c;border-radius:6px;"
+                f"border-left:3px solid #a0aec0'>{html.escape(_transfer_reason)}</div>",
+                unsafe_allow_html=True,
+            )
+            _why_rendered = True
+
+        if _chem_accuracy_line:
+            st.caption(
+                f"Accuracy by chemistry (from the experiment registry, per-chemistry "
+                f"not platform-wide): {_chem_accuracy_line}"
+            )
+            _why_rendered = True
+
+        if _validity_banner:
+            st.warning(_validity_banner)
+            _why_rendered = True
+
+        if not _why_rendered:
+            st.caption(
+                "No caveats apply to this cell: its model is inside its validated "
+                "envelope, its RUL labels are measured, and its margins cleared "
+                "the reliability floor."
+            )
 
     # ── Trajectory match warning ──────────────────────────────────────────────
     # A disagreeing match is reconciled into one unified card instead of

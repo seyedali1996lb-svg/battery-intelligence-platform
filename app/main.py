@@ -43,7 +43,8 @@ from _sidebar import (
     _guided_tour_dialog,
     NAV_GROUPS,
 )
-from _router import route, _render_role_onboarding, _render_mode_onboarding
+from _onboarding import ONBOARDING_KEY
+from _router import route, _render_onboarding
 from _session import hydrate_persistence, partition_cells, resolve_data_mode
 from utils import _md_html, cached_match_fleet, load_tenant_bundle_cached
 from trajectory_memory import TrajectoryMemory
@@ -200,6 +201,30 @@ if st.session_state.get("light_mode", False):
 # Main
 # ---------------------------------------------------------------------------
 
+def _render_boot_layers_notice() -> None:
+    """Say plainly which reference fleets are still being validated.
+
+    On a cold bundle cache load_everything() now serves each fleet's core model
+    and finishes its leave-cell-out validation / forecast / calibration layers
+    on a background thread (see app/_data.py's "Boot layers" section). Until
+    those land, the affected numbers are absent from the bundle; this banner is
+    what keeps "not computed yet" from reading as "evaluated and unavailable",
+    and it names every fleet still running.
+    """
+    from _data import boot_layers_status
+
+    status = boot_layers_status()
+    if status["state"] != "running" or not status["pending"]:
+        return
+    st.info(
+        "Validation layers still computing for: "
+        + ", ".join(status["pending"])
+        + " — leave-cell-out reliability, the hierarchical forecast and the "
+        "calibrated interval coverage appear as each fleet finishes. They run "
+        "in the background; nothing is assumed in the meantime."
+    )
+
+
 def main() -> None:
     # ── Authentication gate ───────────────────────────────────────────────────
     from _pages.login import render_login
@@ -218,15 +243,17 @@ def main() -> None:
     )
     featured_dfs_all, bundles, split_cycles_all = load_everything()
     _train_placeholder.empty()
+    _render_boot_layers_notice()
     ensure_cell_summaries_synced(list(featured_dfs_all.keys()))
     graph = get_platform_graph(featured_dfs_all, bundles)
 
-    # ── Guided tour (once per session, first-time visitors) ───────────────────
+    # ── Guided tour — on demand, never a gate ─────────────────────────────────
+    # It used to be the third blocking overlay of first-run; it is now opened
+    # from the sidebar or Settings (both set ``tour_open``), so a new user sees
+    # a number on the first screen instead of a five-step slideshow.
     if "tour_seen" not in st.session_state:
         st.session_state["tour_seen"] = False
-    if "tour_step" not in st.session_state:
-        st.session_state["tour_step"] = 0
-    if _active_first_run_overlay() == "tour_seen":
+    if st.session_state.get("tour_open", False):
         _guided_tour_dialog()
 
     # ── Failure trajectory memory (built once per session) ────────────────────
@@ -271,12 +298,9 @@ def main() -> None:
     )
     cell_ids = list(active_fdfs.keys())
 
-    # ── Onboarding interstitials ──────────────────────────────────────────────
-    if _active_first_run_overlay() == "role_chosen":
-        _render_role_onboarding()
-
-    if _active_first_run_overlay() == "mode_chosen":
-        _render_mode_onboarding()
+    # ── Onboarding interstitial (one screen: intent cards that imply a role) ──
+    if _active_first_run_overlay() == ONBOARDING_KEY:
+        _render_onboarding()
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     try:

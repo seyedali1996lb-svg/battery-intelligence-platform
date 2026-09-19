@@ -500,8 +500,12 @@ def populate_reference_fleet(g: nx.MultiDiGraph, featured_dfs: dict, bundles: "d
         soh     = float(latest["soh_pct"])
         fade_30 = float(latest.get("fade_rate_30cy", 0.0))
         fade_50 = float(latest.get("fade_rate_50cy", 0.0))
-        per_cell_ok  = bundle.get("metrics", {}).get("per_cell_rul_reliable", {})
-        rul_reliable = per_cell_ok.get(cell_id, bundle.get("metrics", {}).get("rul_reliable", False))
+        # `or {}` on the VALUE, not just the default: a deferred bundle
+        # (app/_data.py's boot layers) carries this key with an empty map while
+        # its leave-cell-out validation is still running, and a None here would
+        # raise instead of reading as "no verdict yet".
+        per_cell_ok  = (bundle.get("metrics") or {}).get("per_cell_rul_reliable") or {}
+        rul_reliable = per_cell_ok.get(cell_id, (bundle.get("metrics") or {}).get("rul_reliable", False))
         rul_pred     = float(latest["rul_pred"]) if (rul_reliable and "rul_pred" in latest.index) else None
 
         peer_fades = [

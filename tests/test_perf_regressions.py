@@ -108,6 +108,83 @@ def test_cell_store_parquet_read_budget(tmp_path, monkeypatch):
         cs.clear_lru()
 
 
+# ── Boot-path layering (app/_data.py's "Boot layers" section) ───────────────
+#
+# Profiled on the dev machine (12 vCPU, warm features cache): a reference
+# fleet's cold boot is 80-95% leave-cell-out refitting — run_lco 7.4 s and the
+# quantile calibration 5.5 s on NASA's 4 cells, 23.6 s and 30.2 s on Zhu2022's
+# 9, > 400 s each on Severson's 46 — against 0.17 s of hierarchical /
+# survival / routing work. The layer split lets the core bundle be served
+# first; these tests assert the SHAPE of the split (the deferred bundle misses
+# exactly the layer numbers, and the runner then completes it) rather than a
+# wall-clock budget, which is machine-dependent.
+
+
+@_skip_unless_perf
+def test_deferred_boot_serves_before_the_lco_layers_land(monkeypatch):
+    import _data
+    from batlab.datasets import nasa
+
+    raw_cells = nasa.load_nasa_cells()
+    cells = {cid: {"cycles": df} for cid, df in raw_cells.items()}
+    cached_feats = _data.load_features_cached("nasa", cells)
+    if cached_feats is None:
+        raw_fdfs, model_inputs = _data.compute_features_only(cells)
+    else:
+        raw_fdfs, model_inputs = cached_feats
+
+    served_generations: list = []
+    real_serve = _data._serve_frames
+
+    def _record_serve(bndl, raw, inputs):
+        result = real_serve(bndl, raw, inputs)
+        served_generations.append(result)
+        return result
+
+    monkeypatch.setattr(_data, "_serve_frames", _record_serve)
+    monkeypatch.setattr(_data, "_persist_cell_data", lambda fdfs: None)
+    monkeypatch.setattr(_data, "_log_bundle_run", lambda *a, **k: None)
+    monkeypatch.setattr(_data, "save_cached", lambda *a, **k: None)
+
+    t0 = time.perf_counter()
+    eager, eager_frames, _ = _data.train_and_predict(
+        cells, raw_fdfs, model_inputs, dataset="nasa", org_id=None, defer_layers=False,
+    )
+    t_eager = time.perf_counter() - t0
+    assert eager["metrics"]["boot_layers"] == "done"
+    assert eager["metrics"]["lco_soh_r2"] is not None
+    assert "soh_forecast" in eager_frames[next(iter(eager_frames))].columns
+
+    t0 = time.perf_counter()
+    deferred, deferred_frames, _ = _data.train_and_predict(
+        cells, raw_fdfs, model_inputs, dataset="nasa", org_id=None, defer_layers=True,
+    )
+    t_deferred = time.perf_counter() - t0
+    assert deferred["metrics"]["boot_layers"] == "pending"
+    assert deferred["metrics"]["lco_soh_r2"] is None
+    assert "soh_forecast" not in deferred_frames[next(iter(deferred_frames))].columns
+    assert t_deferred < t_eager, (
+        f"deferred boot ({t_deferred:.1f}s) must be faster than eager ({t_eager:.1f}s)"
+    )
+
+    print(f"[perf] nasa core bundle: eager {t_eager:.1f}s, deferred {t_deferred:.1f}s")
+    served_generations.clear()  # only the runner's re-serve is under test below
+    _data.BOOT_LAYERS.update(pending=[], completed=[], failed=[], skipped={}, seconds={})
+    _data._launch_boot_layers(
+        "nasa", cells, deferred,
+        {cid: c["cycles"] for cid, c in cells.items()}, raw_fdfs, model_inputs,
+    )
+    deadline = time.time() + 300
+    while _data.BOOT_LAYERS["pending"] and time.time() < deadline:
+        time.sleep(0.05)
+
+    assert not _data.BOOT_LAYERS["pending"], "the layer runner never finished"
+    assert deferred["metrics"]["boot_layers"] == "done", _data.BOOT_LAYERS["failed"]
+    assert deferred["metrics"]["lco_soh_r2"] is not None
+    assert len(served_generations) == 1, "the runner must re-serve the frames"
+    assert "soh_forecast" in served_generations[-1][0][next(iter(served_generations[-1][0]))].columns
+
+
 def _big_df(cell_id: str, n_cycles: int) -> pd.DataFrame:
     """A wide-ish per-cycle DataFrame (more columns than real cells carry,
     to make the read a slightly pessimistic bound)."""

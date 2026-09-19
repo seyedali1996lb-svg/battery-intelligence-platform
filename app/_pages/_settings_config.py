@@ -1063,7 +1063,9 @@ def render_ai_copilot_key() -> None:
 def render_onboarding_replay() -> None:
     _section("Onboarding")
     if st.button("↺ Replay guided tour", key="settings_replay_tour"):
-        st.session_state["tour_seen"] = False
+        # ``tour_seen`` no longer gates anything (the tour is on-demand), so
+        # the replay opens the dialog directly rather than un-setting a flag.
+        st.session_state["tour_open"] = True
         st.session_state["tour_step"] = 0
         st.rerun()
 

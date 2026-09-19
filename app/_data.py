@@ -11,8 +11,11 @@ from __future__ import annotations
 import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
 import os
+import threading
+import time
 from typing import Any
 
+import numpy as np
 import streamlit as st
 import pandas as pd
 
@@ -134,29 +137,178 @@ def cached_bundle_run_missing(cached) -> bool:
         return False
 
 
-def train_and_predict(
-    battery_dict: dict,
-    raw_fdfs: dict[str, pd.DataFrame],
-    model_inputs: dict[str, tuple[pd.DataFrame, pd.Series, pd.Series]],
-    dataset: str | None = None,
-    org_id: int | None = None,
-) -> tuple[dict, dict, dict]:
-    """Train SOH+RUL models on pre-computed features and apply predictions.
+# ---------------------------------------------------------------------------
+# Boot layers: validation / forecast / calibration
+# ---------------------------------------------------------------------------
+# Measured on the dev machine (10-core / 12-thread laptop, warm features
+# cache, via scripts/profile_boot.py + scripts/profile_lco.py — the profilers
+# that motivated this split):
+#
+#   fleet (cells/rows)         train_models   run_lco   quantile LCO   hier+surv+routing
+#   nasa    (4 /     580)           2.7 s      1.6 s          < 1 s              0.17 s
+#   zhu2022 (9 /   8 726)           6.3 s     23.6 s        30.2 s              0.17 s
+#   severson(46 / 38 765)          43.5 s      710 s          2.0 s               0.1 s
+#
+# On a COLD bundle cache a reference fleet's boot is therefore 80-95%
+# leave-cell-out refitting (run_lco + run_lco_quantiles), not model training
+# and not the hierarchical / survival / routing work — which is 0.1-0.2 s per
+# fleet at every fleet size shipped here.
+#
+# Severson's two numbers are the interesting ones, because they are the two
+# halves of the same finding — leave-cell-out work that obtains nothing:
+#
+#   * quantile LCO 2.0 s (was ~13 min): Severson's 46 cells carry 38 765 RUL
+#     rows and NOT ONE observed-EOL label, and every interval metric is
+#     computed on observed rows only. So the old path trained 46 folds x 3
+#     GBRT fits — measured 132 s per fold — to return nan/None and nothing
+#     else. batlab.validation.calibration now reads label provenance first
+#     (_observed_label_total) and returns the identical not-evaluable result
+#     with no fit at all. Numbers unchanged by construction, asserted by
+#     test_not_evaluable_short_circuit_numbers_match_the_fitted_path.
+#   * run_lco 710 s: 92 GBRT fits (46 SOH + 46 RUL) on 35 822 rows, ~53 s
+#     each, ~7x effective parallelism on this laptop. That is the honest
+#     floor for this fleet's LCO numbers and it is NOT removable without
+#     changing them: the 46 SOH fits are the real headline (soh_r2 0.992),
+#     and the 46 RUL fits are the only source of the extrapolated-label
+#     formula-recovery diagnostic (observed-label RUL is not evaluable here,
+#     so there is no headline to lose — but the diagnostic is reported
+#     per-cell on Model Validation).
+#
+# So the post-fitting work is split into three named layers which
+# load_everything() can either run inline or hand to a background thread that
+# finishes the bundle afterwards (re-serve the frames, complete the registry
+# row, rewrite the bundle cache):
+#
+#   validation  — leave-cell-out GBRT, the honest denominators (observed-EOL
+#                 RUL pool, formula baselines, label coverage), the validity
+#                 envelope and the per-regime reliability table.
+#   forecast    — hierarchical partial pooling + its LCO, censored survival,
+#                 per-cell forecast routing.
+#   calibration — the quantile LCO that MEASURES the served Q10/Q90 interval's
+#                 real coverage and derives the conformal widening E*.
+#
+# Two boot-time consequences worth knowing before reading a registry row:
+# the experiment run for a fleet is logged WHEN ITS LAYERS LAND, not at boot
+# (a row logged at boot would carry lco_metrics=None until someone patched it,
+# and nothing re-logs a cache hit), so a cached core-only bundle keeps its
+# experiment_run_id unset until the runner completes it; and the oxford
+# "not evaluable for modelling" disclosure — gated on the registry already
+# holding a real run — therefore arrives with the first completed fleet
+# instead of on the very first cold boot.
+#
+# What a deferred bundle is missing is disclosed, never guessed:
+# metrics["boot_layers"] carries the state and _mark_layers_pending() installs
+# every layer metric as an explicit None — never a missing key, so a consumer's
+# `is not None` check reads "not computed yet" instead of raising or silently
+# reading as "not evaluated".
+BOOT_LAYER_NAMES = ("validation", "forecast", "calibration")
 
-    Separated from feature engineering so load_everything() can use a
-    features cache hit to skip build_features() while still running
-    LCO + model training.
+BOOT_LAYERS: dict[str, Any] = {
+    "state": "idle",     # idle | running | done | off
+    "started_at": None,
+    "finished_at": None,
+    "pending": [],       # fleet keys whose layers are still computing
+    "completed": [],     # fleet keys whose layer runner returned
+    "failed": [],        # "<fleet>:<layer>" for any layer that raised
+    "skipped": {},       # fleet key -> why its layers were NOT (re)launched
+    "seconds": {},       # fleet key -> {layer: measured seconds}
+}
+
+# Every metric _mark_layers_pending() must pre-create, mapped to the value that
+# means "not computed yet" for THAT metric. Scalars are None so an
+# `is not None` check reads as unavailable; anything consumers index or call
+# .get() on is its empty container instead — a None there does not read as
+# "pending", it raises (`per_cell_ok.get(cell_id, ...)` on a None
+# per_cell_rul_reliable took the cold-boot graph build down on 2026-09-19).
+# A test pins this map against the layer bodies, so a new metric cannot be
+# added without a placeholder for the deferred case.
+_LAYER_METRIC_PLACEHOLDERS: dict[str, Any] = {
+    # validation — scalars
+    "lco_soh_r2": None, "lco_rul_r2": None, "rul_reliable": None,
+    "baseline_soh_r2": None, "rul_formula_baseline_r2": None,
+    "rul_label_coverage": None, "n_rul_observed_rows": None,
+    "n_rul_extrapolated_rows": None,
+    # validation — containers
+    "lco_per_cell": {}, "per_cell_rul_reliable": {}, "baseline_lco_per_cell": {},
+    "rul_baseline_pool": {}, "rul_formula_baseline_per_cell": {},
+    "regime_reliability": {},
+    # forecast
+    "hierarchical_validation": {}, "hierarchical_available": None,
+    "censored_rul": {}, "forecast_routing": [],
+    # calibration
+    "rul_interval_coverage": None, "rul_interval_coverage_calibrated": None,
+    "rul_interval_width_mean": None, "rul_interval_width_calibrated": None,
+    "rul_interval_n_calibration_rows": None,
+}
+_LAYER_METRIC_KEYS = tuple(_LAYER_METRIC_PLACEHOLDERS)
+_LAYER_BUNDLE_KEYS = (
+    "training_envelope", "hierarchical_fit", "hier_forecasts", "hier_cycles",
+    "interval_e_star",
+    # Provenance of the validation layer itself: {mode, enabled, key, dir,
+    # hits, fitted} from batlab.validation.fold_cache. None until that layer
+    # lands, so a deferred bundle cannot read as "no folds were reused"
+    # (which is what a confident zero would say) rather than "not computed".
+    "lco_fold_cache",
+)
+
+_LAYERS_LOCK = threading.Lock()
+
+
+def boot_layers_status() -> dict:
+    """Snapshot of BOOT_LAYERS for the UI (copy, not the live dict)."""
+    return {
+        **BOOT_LAYERS,
+        "pending": list(BOOT_LAYERS["pending"]),
+        "completed": list(BOOT_LAYERS["completed"]),
+        "failed": list(BOOT_LAYERS["failed"]),
+        "skipped": dict(BOOT_LAYERS["skipped"]),
+        "seconds": {k: dict(v) for k, v in BOOT_LAYERS["seconds"].items()},
+    }
+
+
+def _boot_layers_mode() -> str:
+    """BATLAB_BOOT_LAYERS: background (default) | eager | off.
+
+    background — load_everything() serves the core bundle (features + GBRT +
+                 predictions) and finishes the three layers on a daemon
+                 thread.
+    eager      — inline, the pre-split behaviour; for scripts (and tests)
+                 that need a complete bundle, and therefore a complete
+                 registry row, before they return.
+    off        — compute nothing; the bundle keeps its placeholders and the
+                 app says the layers are off.
     """
-    X_all     = pd.concat([m[0] for m in model_inputs.values()])
-    y_soh_all = pd.concat([m[1] for m in model_inputs.values()])
-    y_rul_all = pd.concat([m[2] for m in model_inputs.values()])
+    mode = (os.environ.get("BATLAB_BOOT_LAYERS") or "background").strip().lower()
+    return mode if mode in ("background", "eager", "off") else "background"
 
-    bndl = train_models(X_all, y_soh_all, y_rul_all)
-    bndl["metrics"]["n_cells"] = len(battery_dict)
-    bndl["metrics"]["n_rows"]  = len(X_all)
 
-    cell_cycles = {cid: cell["cycles"] for cid, cell in battery_dict.items()}
-    lco = run_lco(cell_cycles)
+def _mark_layers_pending(bndl: dict, state: str = "pending") -> None:
+    """Mark a bundle whose three layers have not been computed yet."""
+    metrics = bndl.setdefault("metrics", {})
+    for _k, _placeholder in _LAYER_METRIC_PLACEHOLDERS.items():
+        # A FRESH empty container per bundle, never the shared prototype.
+        metrics[_k] = None if _placeholder is None else type(_placeholder)()
+    for _k in _LAYER_BUNDLE_KEYS:
+        bndl[_k] = None
+    metrics["boot_layers"] = state
+
+
+def _layer_validation(bndl: dict, cell_cycles: dict, raw_fdfs: dict, lco: dict) -> dict:
+    """Leave-cell-out GBRT + baselines + validity envelope, in place.
+
+    run_lco() is passed `featured=raw_fdfs`: without it the harness rebuilds
+    every cell's features — including the PyBaMM-backed physics calibration —
+    a second time per fold, which is pure duplicate work on the boot path
+    (the same frames were built moments earlier by compute_features_only()).
+    """
+    lco = run_lco(cell_cycles, featured=raw_fdfs)
+    # How much of this fleet's leave-cell-out validation was replayed from
+    # batlab.validation.fold_cache rather than refitted — a repeated or
+    # interrupted boot reports 46/46 reused instead of leaving it to be
+    # inferred from a layer that finished in 0.4 s instead of 12 min. A
+    # bundle key, not a metrics key: it is provenance about the computation,
+    # and nothing that iterates metrics should have to step over a dict.
+    bndl["lco_fold_cache"] = lco.get("fold_cache")
     bndl["metrics"]["lco_soh_r2"]        = lco["soh_r2"]
     bndl["metrics"]["lco_rul_r2"]        = lco["rul_r2"]
     bndl["metrics"]["rul_reliable"]      = lco["rul_reliable"]
@@ -239,6 +391,139 @@ def train_and_predict(
         bndl["training_envelope"] = None
         lco = {**lco, "validity_meta": {"envelope": None, "envelope_attempted": True}}
 
+    return lco
+
+
+def _layer_forecast(bndl: dict, cell_cycles: dict, raw_fdfs: dict, lco: dict) -> dict:
+    """Hierarchical partial pooling + censored survival + per-cell routing.
+
+    Measured at 0.1-0.2 s for every fleet shipped here (see the section
+    header) — it is deferred for uniformity with the two expensive layers
+    rather than for its own cost, and because it writes the served forecast
+    columns that only the re-serve path should add.
+    """
+    # ── Hierarchical partial-pooling: the served forecasting model ─────
+    # The GBRT interpolates; the prospective split shows it collapsing below
+    # a straight line when denied the future. The hierarchical partial-
+    # pooling model (batlab.models.hierarchical — empirical-Bayes prior over
+    # log fade rates pooled per chemistry, the held-out/served cell
+    # contributing only its early window) is the platform's forecasting
+    # answer and is served ALONGSIDE the GBRT: per-row forecast columns
+    # (soh_forecast / rul_forecast / posterior interval), a validation run
+    # through the SAME leave-cell-out folds as the GBRT (logged so the two
+    # models' numbers stay comparable), the per-cell regime routing verdicts
+    # (src/forecast_routing.py — which model may answer "what happens
+    # next" per cell), and the censored-data survival readout
+    # (batlab.validation.survival — makes "still alive at last cycle"
+    # informative for fleets whose RUL is not evaluable, e.g. Severson).
+    hier_forecasts: dict = {}
+    hier_cycles: dict = {}
+    try:
+        from batlab.models.hierarchical import fit_hierarchical, forecast_soh
+        from batlab.validation.hierarchical_lco import run_hierarchical_lco
+        from batlab.validation.survival import censored_rul_readout
+        from forecast_routing import route_forecast_for_cell
+
+        _chem_by_cell = {
+            cid: ChemistryProfile.for_cell(cid).short_name for cid in cell_cycles
+        }
+        _hfit = fit_hierarchical(cell_cycles, chemistry_by_cell=_chem_by_cell)
+        _hier_val = run_hierarchical_lco(cell_cycles, featured=raw_fdfs, chemistry_by_cell=_chem_by_cell)
+        bndl["hierarchical_fit"] = _hfit
+        bndl["metrics"]["hierarchical_validation"] = {
+            "soh_r2": _hier_val.get("soh_r2"),
+            "soh_mae": _hier_val.get("soh_mae"),
+            "rul_r2": _hier_val.get("rul_r2"),
+            "rul_label_coverage": _hier_val.get("rul_label_coverage"),
+            "prior_scope": _hier_val.get("prior_scope"),
+            "hyperparams": _hier_val.get("hyperparams"),
+            "per_cell": _hier_val.get("per_cell"),
+        }
+        bndl["metrics"]["hierarchical_available"] = bool(_hier_val.get("per_cell"))
+
+        for _hid, _hdf in cell_cycles.items():
+            if not isinstance(_hdf, pd.DataFrame) or "cycle_number" not in _hdf.columns:
+                continue
+            _hs = _hdf.sort_values("cycle_number", kind="stable")
+            _hx = _hs["cycle_number"].to_numpy(dtype=np.float64)
+            _hy = _hs["capacity_ah"].to_numpy(dtype=float)
+            _hfc = forecast_soh(_hfit, _hid, _hx, _hy)
+            if _hfc is None:
+                continue
+            hier_forecasts[_hid] = _hfc
+            hier_cycles[_hid] = _hx
+
+        # On the bundle, not in a local: _serve_frames() re-reads these when
+        # the deferred runner re-serves the frames, and this layer is the only
+        # writer.
+        bndl["hier_forecasts"] = hier_forecasts
+        bndl["hier_cycles"] = hier_cycles
+
+        _surv = censored_rul_readout(
+            cell_cycles, hierarchical_fit=_hfit, featured=raw_fdfs,
+            chemistry_by_cell=_chem_by_cell,
+        )
+        bndl["metrics"]["censored_rul"] = _surv
+        # Fleet-level routing verdicts (which model answers per cell) ride on
+        # the bundle so surfaces read the routing without recomputing it.
+        bndl["metrics"]["forecast_routing"] = [
+            {"cell_id": _cid, "served": _rf["served"], "reason": _rf["reason"]}
+            for _cid, _rf in (
+                (_cid, route_forecast_for_cell(
+                    _cid,
+                    {(bndl.get("serve_meta") or {}).get("dataset") or "fleet": bndl},
+                    featured_dfs=None,
+                ))
+                for _cid in cell_cycles
+            )
+        ]
+        lco = {
+            **lco,
+            "hierarchical_meta": {
+                "soh_r2": _hier_val.get("soh_r2"),
+                "rul_r2": _hier_val.get("rul_r2"),
+                "prior_scope": _hier_val.get("prior_scope"),
+                "hyperparams": _hier_val.get("hyperparams"),
+            },
+            "censored_rul_meta": {
+                "n_cells": (_surv.get("kaplan_meier") or {}).get("n_cells"),
+                "n_events": (_surv.get("kaplan_meier") or {}).get("n_events"),
+                "n_censored": (_surv.get("kaplan_meier") or {}).get("n_censored"),
+                "upper_bound_eol_prob": _surv.get("upper_bound_eol_prob"),
+                "censoring_note": _surv.get("censoring_note"),
+            },
+        }
+        if isinstance(lco.get("validity_meta"), dict):
+            lco["validity_meta"] = {
+                **lco["validity_meta"],
+                "hierarchical": {
+                    "available": bndl["metrics"]["hierarchical_available"],
+                    "soh_r2": _hier_val.get("soh_r2"),
+                },
+                # JSON-safe fleet-level routing verdicts: WHICH model answers
+                # "what happens next" per cell, with the reason. Rides into
+                # the registry with every logged run so a historical run can
+                # be audited for which model was serving.
+                "forecast_routing": bndl["metrics"].get("forecast_routing") or [],
+            }
+    except Exception:
+        # No hierarchical fit: every consumer renders "hierarchical forecast
+        # unavailable" and routing falls back to its refuse/honest path —
+        # the absence is disclosed, never silently papered over by the GBRT.
+        bndl["metrics"]["hierarchical_available"] = False
+    return lco
+
+
+def _layer_calibration(bndl: dict, cell_cycles: dict, raw_fdfs: dict, lco: dict) -> dict:
+    """Measure the served Q10/Q90 interval's real coverage, and widen it.
+
+    The nominal 80% is a CLAIM; run_lco_quantiles() evaluates the quantile
+    models under the same leave-cell-out folds as the point models and derives
+    global_e_star, the conformal widening whose resulting coverage is reported
+    as rul_interval_coverage_calibrated. predict() applies it, which is why the
+    caller re-serves the frames after this layer.
+    """
+
     # ── Calibrated uncertainty (Tier 3) ─────────────────────────────────
     # The served Q10/Q90 interval's nominal 80% is a CLAIM; what ships here
     # is a MEASUREMENT. run_lco_quantiles() evaluates the quantile models
@@ -297,46 +582,132 @@ def train_and_predict(
             "nominal_coverage": 0.8,
             "calibration_attempted": True,
         }}
+    return lco
 
-    if dataset is not None and org_id is not None:
-        import experiment_registry as _reg
-        from batlab.features.engineering import FEATURE_VERSION as _FV
-        from batlab.models.gbrt import GBRT_PARAMS as _GBRT_PARAMS
-        from chemistry_profiles import ChemistryProfile as _CP
 
-        _sample_cell = next(iter(battery_dict))
-        _cal_note = ""
-        if (
-            bndl["metrics"].get("rul_interval_coverage_calibrated") is not None
-            and bndl["metrics"].get("rul_interval_coverage") is not None
-            and bndl.get("interval_e_star") is not None
-        ):
-            _cal_note = (
-                f" Calibrated interval: served Q10/Q90 widened by a cross-cell "
-                f"conformal correction E*={bndl.get('interval_e_star'):.2f} cycles, "
-                f"measured coverage "
-                f"{bndl['metrics']['rul_interval_coverage_calibrated'] * 100:.0f}% "
-                f"(raw {bndl['metrics']['rul_interval_coverage'] * 100:.0f}%) at "
-                f"nominal 80%, from "
-                f"{bndl['metrics']['rul_interval_n_calibration_rows']} "
-                "leave-cell-out calibration rows (observed-EOL only)."
-            )
-        else:
-            _cal_note = " Calibrated interval: NOT available on this fleet — served Q10/Q90 are the raw quantile regressor's nominal 80%, coverage unmeasured on unseen cells."
-        bndl["metrics"]["experiment_run_id"] = _reg.log_run(
-            org_id=org_id,
-            dataset=dataset,
-            chemistry=_CP.for_cell(_sample_cell).short_name,
-            feature_set=list(X_all.columns),
-            feature_version=_FV,
-            hyperparams=dict(_GBRT_PARAMS),
-            seed=_GBRT_PARAMS["random_state"],
-            cell_ids=list(battery_dict.keys()),
-            n_rows=len(X_all),
-            lco_metrics=lco,
-            notes=_cal_note.strip(),
+def train_and_predict(
+    battery_dict: dict,
+    raw_fdfs: dict[str, pd.DataFrame],
+    model_inputs: dict[str, tuple[pd.DataFrame, pd.Series, pd.Series]],
+    dataset: str | None = None,
+    org_id: int | None = None,
+    defer_layers: bool = False,
+) -> tuple[dict, dict, dict]:
+    """Train SOH+RUL models on pre-computed features and apply predictions.
+
+    Separated from feature engineering so load_everything() can use a
+    features cache hit to skip build_features() while still running model
+    training.
+
+    `defer_layers=True` hands the three post-fitting layers — validation,
+    forecast and calibration (see the section above) — to the background
+    runner and returns this bundle with metrics["boot_layers"] == "pending"
+    for the caller to complete. The served predictions in that bundle are the
+    CORE model's (un-widened Q10/Q90, no hierarchical columns);
+    _launch_boot_layers() re-serves them once the layers land. Deferring
+    changes WHEN numbers appear, never WHICH: each layer is the same code in
+    both modes.
+    """
+    X_all     = pd.concat([m[0] for m in model_inputs.values()])
+    y_soh_all = pd.concat([m[1] for m in model_inputs.values()])
+    y_rul_all = pd.concat([m[2] for m in model_inputs.values()])
+
+    bndl = train_models(X_all, y_soh_all, y_rul_all)
+    bndl["metrics"]["n_cells"] = len(battery_dict)
+    bndl["metrics"]["n_rows"]  = len(X_all)
+    # What a later re-serve, and the deferred runner's log_run(), need and
+    # cannot derive from the bundle itself.
+    bndl["serve_meta"] = {
+        "cell_ids": list(battery_dict.keys()),
+        "feature_columns": [str(c) for c in X_all.columns],
+        # The fleet key the per-cell routing verdicts are recorded under — the
+        # forecast layer runs off this bundle, not off this function's args.
+        "dataset": dataset,
+    }
+
+    cell_cycles = {cid: cell["cycles"] for cid, cell in battery_dict.items()}
+    if defer_layers:
+        _mark_layers_pending(bndl)
+        lco: dict = {}
+    else:
+        lco = run_boot_layers(bndl, cell_cycles, raw_fdfs)
+
+    if not defer_layers:
+        _log_bundle_run(bndl, lco, dataset, org_id)
+
+    featured_dfs, split_cycles = _serve_frames(bndl, raw_fdfs, model_inputs)
+
+    return bndl, featured_dfs, split_cycles
+
+
+def run_boot_layers(
+    bndl: dict,
+    cell_cycles: dict,
+    raw_fdfs: dict,
+    key: str | None = None,
+    guarded: bool = False,
+) -> dict:
+    """Run the three post-fitting layers in place; returns the `lco` dict.
+
+    Order matters (validation → forecast → calibration): calibration's served
+    widening is read by predict(), which is why the caller re-serves the frames
+    afterwards. `guarded` — used by the background runner — contains a layer
+    failure to that layer, leaving its placeholders in place; an eager boot
+    stays unguarded, so it fails exactly as it always has.
+    """
+    lco: dict = {}
+    failed = False
+    for name, layer in (
+        ("validation", _layer_validation),
+        ("forecast", _layer_forecast),
+        ("calibration", _layer_calibration),
+    ):
+        t0 = time.perf_counter()
+        try:
+            lco = layer(bndl, cell_cycles, raw_fdfs, lco)
+        except Exception:
+            if not guarded:
+                raise
+            failed = True
+            BOOT_LAYERS["failed"].append(f"{key}:{name}")
+        finally:
+            if key:
+                BOOT_LAYERS["seconds"].setdefault(key, {})[name] = round(
+                    time.perf_counter() - t0, 2
+                )
+    bndl["metrics"]["boot_layers"] = "failed" if failed else "done"
+    return lco
+
+
+def _persist_cell_data(featured_dfs: dict) -> None:
+    """Write each cell's full per-cycle DataFrame to cell_store's Parquet
+    store + a precomputed CellSummary row."""
+    import db as _db_persist
+    from experiment_registry import PLATFORM_ORG_ID as _PLATFORM_ORG_ID
+
+    for cell_id, df in featured_dfs.items():
+        cell_store.save_cell_df(cell_id, df)
+        _db_persist.upsert_cell_summary(
+            _PLATFORM_ORG_ID, cell_id, cell_store.build_summary(cell_id, df),
         )
 
+
+def _serve_frames(
+    bndl: dict,
+    raw_fdfs: dict[str, pd.DataFrame],
+    model_inputs: dict[str, tuple[pd.DataFrame, pd.Series, pd.Series]],
+) -> tuple[dict, dict]:
+    """Apply the bundle's models to every cell's featured frame.
+
+    The hierarchical forecast columns are read off the bundle
+    (bndl["hier_forecasts"] / ["hier_cycles"], written by _layer_forecast)
+    rather than taken as arguments, so the deferred runner can re-serve the SAME
+    frames once the layers land: predict() widens the served Q10/Q90 by
+    bndl["interval_e_star"], which only the calibration layer sets, so the first
+    serve (core only, un-widened) and the second run the same code path.
+    """
+    hier_forecasts = bndl.get("hier_forecasts") or {}
+    hier_cycles = bndl.get("hier_cycles") or {}
     featured_dfs: dict[str, pd.DataFrame] = {}
     split_cycles: dict[str, int] = {}
     for cell_id, (X, y_soh, y_rul) in model_inputs.items():
@@ -348,11 +719,158 @@ def train_and_predict(
         df_out["rul_q10"]        = preds.get("rul_q10", preds["rul_pred"])
         df_out["rul_q90"]        = preds.get("rul_q90", preds["rul_pred"])
         df_out["confidence_tag"] = preds["confidence_tag"]
+        # Hierarchical forecast columns, joined by cycle_number (the served
+        # rows are a subset of the featured rows; the forecast was computed
+        # over the cell's full recorded window). dict(zip()) keeps the last
+        # value on any duplicated cycle number rather than raising.
+        _hfc = hier_forecasts.get(cell_id)
+        _hcy = hier_cycles.get(cell_id)
+        if _hfc is not None and _hcy is not None:
+            df_out["soh_forecast"] = df_out["cycle_number"].map(dict(zip(_hcy, _hfc["soh_forecast"])))
+            df_out["forecast_kind"] = df_out["cycle_number"].map(dict(zip(_hcy, _hfc["forecast_kind"])))
+            df_out["rul_forecast"] = df_out["cycle_number"].map(dict(zip(_hcy, _hfc["rul_forecast"])))
+            df_out["rul_q10_hier"] = df_out["cycle_number"].map(dict(zip(_hcy, _hfc["rul_q10"])))
+            df_out["rul_q90_hier"] = df_out["cycle_number"].map(dict(zip(_hcy, _hfc["rul_q90"])))
         featured_dfs[cell_id]  = df_out
         split_idx = int(len(X) * 0.8)
         split_cycles[cell_id]  = int(X["cycle_number"].iloc[split_idx])
+    return featured_dfs, split_cycles
 
-    return bndl, featured_dfs, split_cycles
+
+def _log_bundle_run(bndl: dict, lco: dict, dataset: str | None, org_id: int | None) -> None:
+    """Log one completed reference-fleet fit + its layer evidence.
+
+    Called from the boot path (eager mode) or from the deferred layer runner
+    once the layers have landed — one row per fleet per fit either way, and
+    never a row carrying only the metrics that happened to be ready.
+    """
+    if dataset is None or org_id is None:
+        return
+    import experiment_registry as _reg
+    from batlab.features.engineering import FEATURE_VERSION as _FV
+    from batlab.models.gbrt import GBRT_PARAMS as _GBRT_PARAMS
+    from chemistry_profiles import ChemistryProfile as _CP
+
+    serve_meta = bndl.get("serve_meta") or {}
+    _cell_ids = list(serve_meta.get("cell_ids") or [])
+    if not _cell_ids:
+        return  # nothing identifiable to log against
+    _sample_cell = _cell_ids[0]
+    _cal_note = ""
+    if (
+        bndl["metrics"].get("rul_interval_coverage_calibrated") is not None
+        and bndl["metrics"].get("rul_interval_coverage") is not None
+        and bndl.get("interval_e_star") is not None
+    ):
+        _cal_note = (
+            f" Calibrated interval: served Q10/Q90 widened by a cross-cell "
+            f"conformal correction E*={bndl.get('interval_e_star'):.2f} cycles, "
+            f"measured coverage "
+            f"{bndl['metrics']['rul_interval_coverage_calibrated'] * 100:.0f}% "
+            f"(raw {bndl['metrics']['rul_interval_coverage'] * 100:.0f}%) at "
+            f"nominal 80%, from "
+            f"{bndl['metrics']['rul_interval_n_calibration_rows']} "
+            "leave-cell-out calibration rows (observed-EOL only)."
+        )
+    else:
+        _cal_note = " Calibrated interval: NOT available on this fleet — served Q10/Q90 are the raw quantile regressor's nominal 80%, coverage unmeasured on unseen cells."
+    bndl["metrics"]["experiment_run_id"] = _reg.log_run(
+        org_id=org_id,
+        dataset=dataset,
+        chemistry=_CP.for_cell(_sample_cell).short_name,
+        feature_set=list(serve_meta.get("feature_columns") or []),
+        feature_version=_FV,
+        hyperparams=dict(_GBRT_PARAMS),
+        seed=_GBRT_PARAMS["random_state"],
+        cell_ids=_cell_ids,
+        n_rows=int(bndl["metrics"].get("n_rows") or 0),
+        lco_metrics=lco,
+        notes=_cal_note.strip(),
+    )
+
+
+def _launch_boot_layers(
+    key: str,
+    cell_dict: dict,
+    bndl: dict,
+    cell_cycles: dict,
+    raw_fdfs: dict,
+    model_inputs: dict,
+) -> None:
+    """Finish a deferred bundle on a daemon thread.
+
+    The job runs the three layers, re-serves the frames (so the calibrated
+    widening and the hierarchical columns reach the served rows), persists
+    them, then logs the run and rewrites the bundle cache — one completion step,
+    so a process that dies mid-layer leaves NO half-validated bundle cached and
+    NO run row missing its evidence; the next boot simply retries (see
+    _resume_deferred_layers). Only when every layer returned does the cache
+    written here replace the core-only one saved at boot.
+    """
+    if _boot_layers_mode() == "off":
+        BOOT_LAYERS["state"] = "off"
+        return
+    with _LAYERS_LOCK:
+        if key in BOOT_LAYERS["pending"]:
+            return  # this fleet's layers are already in flight
+        BOOT_LAYERS["pending"].append(key)
+    BOOT_LAYERS.update(state="running", started_at=time.time(), finished_at=None)
+    BOOT_LAYERS["skipped"].pop(key, None)
+
+    def _job() -> None:
+        try:
+            import experiment_registry as _reg
+
+            lco = run_boot_layers(bndl, cell_cycles, raw_fdfs, key=key, guarded=True)
+            featured_dfs, split_cycles = _serve_frames(bndl, raw_fdfs, model_inputs)
+            _persist_cell_data(featured_dfs)
+            if (bndl.get("metrics") or {}).get("boot_layers") == "done":
+                _log_bundle_run(bndl, lco, key, _reg.PLATFORM_ORG_ID)
+                save_cached(key, cell_dict, (bndl, split_cycles))
+                BOOT_LAYERS["completed"].append(key)
+            # boot_layers == "failed": the core-only cache entry is left in
+            # place deliberately (no registry row, no completed bundle) so the
+            # next boot retries the layers instead of serving them as done.
+        except Exception:
+            BOOT_LAYERS["failed"].append(f"{key}:runner")
+            bndl.setdefault("metrics", {})["boot_layers"] = "failed"
+        finally:
+            with _LAYERS_LOCK:
+                if key in BOOT_LAYERS["pending"]:
+                    BOOT_LAYERS["pending"].remove(key)
+                BOOT_LAYERS["finished_at"] = time.time()
+                if not BOOT_LAYERS["pending"] and BOOT_LAYERS["state"] == "running":
+                    BOOT_LAYERS["state"] = "done"
+
+    threading.Thread(target=_job, name=f"boot-layers-{key}", daemon=True).start()
+
+
+def _resume_deferred_layers(key: str, cached: Any, cell_dict: dict) -> None:
+    """Re-launch a cached bundle's deferred layers, when they never landed.
+
+    A bundle cached with boot_layers "pending"/"failed" is completable rather
+    than broken: the features cache the same signature produced is reloaded and
+    the layer runner runs again. Without that cache the bundle is served as-is
+    and the pending state is disclosed in BOOT_LAYERS["skipped"] — never
+    silently upgraded, and never confused with an eager bundle (which has no
+    boot_layers key at all and is therefore left alone).
+    """
+    bndl = cached[0] if isinstance(cached, tuple) and cached else None
+    if not isinstance(bndl, dict):
+        return
+    state = (bndl.get("metrics") or {}).get("boot_layers")
+    if state not in ("pending", "failed") or _boot_layers_mode() != "background":
+        return
+    feat_cached = load_features_cached(key, cell_dict)
+    if feat_cached is None:
+        BOOT_LAYERS["skipped"][key] = "features cache absent — layers not retried"
+        return
+    raw_fdfs, model_inputs = feat_cached
+    _launch_boot_layers(
+        key, cell_dict, bndl,
+        {cid: cell["cycles"] for cid, cell in cell_dict.items()},
+        raw_fdfs, model_inputs,
+    )
 
 
 def train_on_cells(battery_dict: dict) -> tuple[dict, dict, dict]:
@@ -379,18 +897,6 @@ def load_everything() -> tuple[Any, dict, dict]:
     synthetic and NASA resistance measurements are on incompatible scales.
     """
     import concurrent.futures as _cf
-
-    def _persist_cell_data(featured_dfs: dict) -> None:
-        """Write each cell's full per-cycle DataFrame to cell_store's
-        Parquet store + a precomputed CellSummary row."""
-        import db as _db_persist
-        from experiment_registry import PLATFORM_ORG_ID as _PLATFORM_ORG_ID
-
-        for cell_id, df in featured_dfs.items():
-            cell_store.save_cell_df(cell_id, df)
-            _db_persist.upsert_cell_summary(
-                _PLATFORM_ORG_ID, cell_id, cell_store.build_summary(cell_id, df),
-            )
 
     def _backfill_validity(cached: tuple, cell_dict: dict) -> None:
         """Stamp the Tier-5 training envelope onto a cache-hit bundle.
@@ -436,6 +942,7 @@ def load_everything() -> tuple[Any, dict, dict]:
                 clear_cache(key)
             else:
                 _backfill_validity(cached, cell_dict)
+                _resume_deferred_layers(key, cached, cell_dict)
                 return cached
         feat_cached = load_features_cached(key, cell_dict)
         if feat_cached is not None:
@@ -444,10 +951,28 @@ def load_everything() -> tuple[Any, dict, dict]:
             raw_fdfs, model_inputs = compute_features_only(cell_dict)
             save_features_cached(key, cell_dict, raw_fdfs, model_inputs)
 
+        # Boot split (see the "Boot layers" section): the core fit is what the
+        # app needs to render a number, so it is the only part load_everything()
+        # waits for. The validation / forecast / calibration layers are 80-95%
+        # of a cold fleet's cost and go to a background runner that finishes
+        # the bundle (re-serve, persist, registry row, cache rewrite).
+        # BATLAB_BOOT_LAYERS=eager restores the inline behaviour.
+        _mode = _boot_layers_mode()
         bundle, featured_dfs, split_cycles = train_and_predict(
             cell_dict, raw_fdfs, model_inputs, dataset=key, org_id=_reg.PLATFORM_ORG_ID,
+            defer_layers=_mode in ("background", "off"),
         )
         _persist_cell_data(featured_dfs)
+        if (bundle.get("metrics") or {}).get("boot_layers") in ("pending", "failed"):
+            if _mode == "off":
+                # "off" means the layers are neither running nor coming; label
+                # it so no surface reports a retry that will never happen.
+                _mark_layers_pending(bundle, "off")
+            _launch_boot_layers(
+                key, cell_dict, bundle,
+                {cid: cell["cycles"] for cid, cell in cell_dict.items()},
+                raw_fdfs, model_inputs,
+            )
         result = (bundle, split_cycles)
         save_cached(key, cell_dict, result)
         return result

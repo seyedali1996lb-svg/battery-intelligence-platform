@@ -30,6 +30,7 @@ theme:
 nav:
   - Home: index.md
   - Validation harness: harness.md
+  - Boot layers & fold caching: performance.md
   - Product direction:
       - Decision: product_direction.md
       - Overclaiming audit: overclaiming_audit.md

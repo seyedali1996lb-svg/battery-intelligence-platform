@@ -43,6 +43,7 @@ from _ui_helpers import (  # noqa: F401
     soh_status,
     friendly,
     _soh_sparkline_svg,
+    _rul_interval_band_svg,
     _cell_provenance,
     _analysis_provenance,
     _cell_source,

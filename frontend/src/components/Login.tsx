@@ -38,7 +38,6 @@ export default function Login({ onLoggedIn }: Props) {
         placeholder="Username"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
-        autoFocus
       />
       <input
         type="password"
