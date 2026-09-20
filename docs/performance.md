@@ -76,6 +76,124 @@ One assumption is load-bearing and stated: when a caller passes pre-built featur
 
 ---
 
+## 0.2.0: the physics block moved into the library (feature set `v13`)
+
+`build_features()`'s SEI/LAM block used to be imported from the demo application's `src/`, which made a *feature column* depend on the caller's `sys.path`: on the four NASA cells the same call reported **SOH R² 0.9580** in a pip-installed process and **0.9471** with the app's `src/` importable. It now lives in `batlab.features.physics_calibration` and is gated on the frame's own declared `source`/`chemistry` attrs, so the population is a property of the data:
+
+| four NASA cells, `batlab.load` + `benchmark` (library only) | before | after |
+|---|---|---|
+| SOH R² | 0.9580 | **0.9471** |
+| RUL R² (observed-EOL pool) | 0.7614 | **0.4216** |
+| SOH R², the same call with the app's `src/` on `sys.path` | 0.9471 | **0.9471** |
+| feature version | `v12-rul-label-provenance` | `v13-features-owned-physics` |
+
+Both after-values are the same floats bit for bit (`soh_r2 = 0.9470975121947384`) on either path — measured, not assumed, and pinned by `tests/test_feature_environment_inputs.py`, which also runs the library in a subprocess with no `src/` anywhere on the path.
+
+The RUL move is the larger one and is worth stating plainly: on this 4-cell fleet the physics block *costs* ~0.34 RUL R² (0.7614 → 0.4216). The production app path — which always had the block, and which preprocesses these four cells differently — reports **0.7449 / 0.4121**, so v13 makes the library agree with the app rather than the other way round, and both then lose to the RUL formula baseline (**0.6768** on the app path). A negative result on n=4 cells with wide bootstrap brackets, published as-is rather than reverted to the population that looked better.
+
+The app path itself is unchanged, verified after the move: `src/data_loader.build_battery` → `compute_features_only` → `run_lco` gives `soh_r2 = 0.7448917744577574`, `rul_r2 = 0.41212031190361514`, `baseline_soh_r2 = 0.6030539120231699`, `rul_formula_baseline_r2 = 0.6767915168720835` — the same numbers the README publishes for it.
+
+Severson's headline is unchanged by the move: 46 cells, `soh_r2 = 0.9920`, `rul_r2 = nan` (not evaluable, 0% observed labels) — re-measured on the real fleet, 46/46 folds fitted cold under the new key.
+
+Consequences worth knowing:
+
+- every v12 fold-cache entry and every v12 bundle is invalidated by the version bump; a first boot after upgrading pays the cold cost once, then caches as usual;
+- registry rows logged under v12 remain valid for what they measured, but a v13 row is a different population — `src/metric_history.py` reports movement across a feature-version boundary separately from drift, which is exactly this case;
+- the app's own loader (`src/data_loader.build_battery`, which reads the NASA and synthetic CSVs under `data/raw/` directly) had never declared provenance, although the batlab schema requires it. It does now, from the same `ChemistryProfile` classifier the rest of the app uses, so the app's frames keep the physics features they always had;
+- PyBaMM remains an optional extra (`pip install "battery-lab[physics]"`), and it can only affect `physics_spm_capacity_ah`, which is not in `FEATURE_COLUMNS` — so its absence changes no reported number, only whether that display column is populated.
+
+### Did any of this cost the demo application anything?
+
+No — and that is a measured claim, not an assurance. The app's numbers on its own
+path are unchanged (0.7448917744577574 / 0.41212031190361514 / 0.6030539120231699 /
+0.6767915168720835 on the four NASA cells), and each seam was exercised directly
+rather than inferred from "the app still boots":
+
+| what the app does | pre-move rule | after |
+|---|---|---|
+| eligibility, synthetic fleet (`Cell1`… — LiCoO₂, but the synthetic profile) | not eligible | **not eligible** |
+| eligibility, NASA `B0005` | `NCA_Kim2011` | **`NCA_Kim2011`** |
+| eligibility, Severson `S-b1c0` | `Chen2020` | **`Chen2020`** |
+| eligibility, CALCE `CS2_33` | not eligible | **not eligible** |
+| `from physics_calibration import …` (3 call sites) | the app's own module | **re-export of the library** — `calibrate_cell`, `physics_ml_agreement`, `physics_gbrt_divergence_report` are the *same objects* |
+| `physics_ml_agreement("B0005", df)` | physics verdict + ML verdict | **physics verdict + ML verdict** (`agree=False`, note populated — the app's `recommendations.diagnose_mechanism` is what the shim registers) |
+| `physics_gbrt_divergence_report({cid: raw_df})` | per-cell report | **4 cells**, `B0005` first, `closer_model="physics"` |
+| physics features in the app's own frames | NASA populated, synthetic all-NaN | **NASA 91.7% finite, synthetic all-NaN** — unchanged |
+
+Two things worth stating plainly. First, the synthetic fleet was never
+calibration-eligible: the pre-move rule keyed on the *profile class*
+(`LiCoO2NASAProfile` → NCA_Kim2011, `LFPSeversonProfile` → Chen2020, everything else
+None), and synthetic cells resolve to `LiCoO2SyntheticProfile`. The allow-list
+narrowed *how* eligibility is decided (data attrs instead of a profile import), not
+*who* is eligible — which is the only reason no app number moved.
+
+Second, the app's physics call sites wrap these calls in `try/except`
+(`app/_pages/health.py`, `app/_pages/benchmark.py`), so a broken shim would have
+degraded silently into "physics unavailable" rather than failing loudly. That is
+exactly why the table above calls the functions directly, and why the shim's
+registration step is pinned by `tests/test_physics_calibration.py` rather than left
+to a boot smoke test.
+
+What *did* have to change app-side: the shim itself, `build_battery()`'s provenance
+declaration (a latent defect — the app's own loader had never declared
+`source`/`chemistry` for the CSVs it reads directly), and one added profile field.
+Three files, no page rewritten.
+
+---
+
+## A blank measurement row, and why a baseline can stop being a number
+
+A per-cycle summary can carry a row with nothing in it. Severson's batch-1
+records S-b1c0 (cycle 11) and S-b1c18 (cycle 39) have an empty capacity column
+in the source CSV, so `soh_pct = capacity/q0*100` is blank with it.
+
+`run_lco` never shows such a row to a model: `get_model_matrix()` drops rows
+whose *features* are non-finite, and the blank row's `dod_proxy` is non-finite.
+A least-squares line cannot be handed a blank *target*, though — sklearn's
+`LinearRegression` raises (`Input y contains NaN`) and `r2_score` returns NaN for
+one without raising at all — so the trivial baselines used to take the whole
+fleet's floor down with one blank row: the fit raised inside `app/_data.py`'s
+defensive `except`, which recorded `None`, and the "+X over the trivial baseline"
+claim lost its denominator with no trace of why.
+
+Both baselines now score only the rows they can score, count what they set
+aside, report an unscorable fold as unscorable *with a reason* instead of
+averaging a NaN into the mean, and reject a non-finite headline at `_safe_r2`.
+They also accept the same `{"cycles": df}` cell shape `run_lco` accepts, so the
+CI metric gate hands one dict to both.
+
+Measured by running the pre-fix implementation side by side with the new one
+(same process, same frames):
+
+| fleet | pre-fix `baseline_soh_r2` | after | folds | blank rows set aside |
+|---|---|---|---|---|
+| CI fixture fleet (5 cells) | −1.7676911798184485 | **−1.7676911798184485** (bit-identical) | 5/5 | 0 |
+| NASA, production app path (4 cells) | 0.6030539120231699 | **0.6030539120231699** (bit-identical) | 4/4 | 0 |
+| Severson (46 cells) | **`ValueError: Input y contains NaN`** | **−0.3278149205944300** | 46/46 | 2 |
+
+The move is therefore additive: one fleet's floor is restored, and no published
+baseline changes — which is why this needed no `FEATURE_VERSION` bump and no
+fold-cache invalidation (features and folds are untouched; only the baseline's
+row selection changed).
+
+Severson's restored floor is **negative**, and that is the honest reading rather
+than a bug: 46 LFP cells fade at very different rates, so a single global
+straight line is worse than predicting each cell's mean. Against it, the GBRT's
+`soh_r2 = 0.9920` is **+1.32** — a much larger advantage than NASA's +0.142,
+because a 46-cell fleet is exactly where a per-cell model should beat one line.
+The gate now pins this number (`tests/metric_gate_expectations.json`,
+declared as a *ceiling* — the risk is the trivial floor getting smarter and
+quietly shrinking the claim), and both ways it used to disappear fail the gate:
+`None` under rule 3, and a NaN under the new non-finite guard in `check_metric`
+(NaN compares False against every floor, ceiling and tolerance, so an unguarded
+one would have passed).
+
+App-side, a failed baseline is no longer silent: `metrics["baseline_soh_r2_error"]`
+carries the exception text into the bundle and the registry row, `None` there
+means "computed".
+
+---
+
 ## Measuring it on your own machine
 
 Both profilers call the same functions the app calls — they are not a parallel implementation of the pipeline.

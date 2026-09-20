@@ -100,6 +100,49 @@ def _score_count(scores) -> int:
         return 0
 
 
+def _baseline_absence_reason(result: dict) -> "str | None":
+    """WHY a trivial baseline came back without a number, or None when it has one.
+
+    A baseline can now be absent without anything raising: every fold unscorable
+    (a frame that carries no `soh_pct` column, a single-cell fleet) returns NaN,
+    and NaN→None at the caller's seam is indistinguishable from "not computed
+    yet" unless the reason travels with it. `baseline_lco_r2()` puts a reason on
+    each unscored fold; this lifts them to one string for the bundle and the
+    registry row, so an absent number is never a mystery again — the same rule
+    the except branch below applies to a raised failure.
+    """
+    value = result.get("baseline_soh_r2")
+    if value is not None and value == value:
+        return None  # a real number: nothing to explain
+    notes = [
+        f"{cid}: {entry.get('note')}"
+        for cid, entry in (result.get("per_cell") or {}).items()
+        if isinstance(entry, dict) and entry.get("note")
+    ]
+    if notes:
+        shown = "; ".join(notes[:3])
+        return shown + (f" (+{len(notes) - 3} more folds)" if len(notes) > 3 else "")
+    if int(result.get("n_cells") or 0) < 2:
+        return "fewer than two cells: leave-cell-out cannot form a fold"
+    return "no fold produced an R²"
+
+
+def _finite_or_none(value):
+    """`value` when it is a finite number, else None.
+
+    NaN passes every `is not None` check a consumer writes, so a metric that
+    can come back NaN has to be converted where it becomes a served number —
+    the same rule _layer_calibration applies in-line to the interval coverage
+    numbers, which is what took the 2026-09-13 cold boot down (`:.2f` on a
+    None that a NaN had sailed past). A NaN baseline stored raw would render
+    as "+nan over the trivial baseline" instead of an absent number.
+    """
+    try:
+        return None if (value is None or value != value) else value
+    except (TypeError, ValueError):
+        return None
+
+
 # Whether _load_or_train_bg() runs cached_bundle_run_missing() on a cache
 # hit. On for the app. tests/conftest.py turns it OFF for the whole suite:
 # every AppTest uses an isolated_db fixture whose registry is empty by
@@ -226,6 +269,11 @@ _LAYER_METRIC_PLACEHOLDERS: dict[str, Any] = {
     # validation — scalars
     "lco_soh_r2": None, "lco_rul_r2": None, "rul_reliable": None,
     "baseline_soh_r2": None, "rul_formula_baseline_r2": None,
+    # WHY a baseline is absent, when it is: a bare `except` here once recorded
+    # None for every fleet whose SOH target had a single blank row, so the
+    # absence was indistinguishable from "not computed yet" or from a real
+    # zero. None means "computed"; a string means "failed, and here is why".
+    "baseline_soh_r2_error": None, "rul_formula_baseline_r2_error": None,
     "rul_label_coverage": None, "n_rul_observed_rows": None,
     "n_rul_extrapolated_rows": None,
     # validation — containers
@@ -332,15 +380,35 @@ def _layer_validation(bndl: dict, cell_cycles: dict, raw_fdfs: dict, lco: dict) 
         # re-run the full feature pipeline — including the PyBaMM-backed
         # physics calibration — a second time per cell.
         _base = baseline_lco_r2(cell_cycles, featured=raw_fdfs)
-        bndl["metrics"]["baseline_soh_r2"] = _base["baseline_soh_r2"]
+        # NaN → None at this seam. A non-finite baseline is "not evaluable",
+        # and NaN is not valid JSON — it would render as "nan" beside a real R².
+        _base_r2 = _finite_or_none(_base["baseline_soh_r2"])
+        bndl["metrics"]["baseline_soh_r2"] = _base_r2
         bndl["metrics"]["baseline_lco_per_cell"] = _base["per_cell"]
+        # Not an exception, but still an absent number: the per-fold reasons are
+        # lifted into the same field so "no baseline" is always accompanied by why.
+        bndl["metrics"]["baseline_soh_r2_error"] = _baseline_absence_reason(_base)
         # Merge into the dict handed to log_run() so the baseline reaches the
-        # registry/model card too, not just the in-memory bundle.
-        lco = {**lco, "baseline_soh_r2": _base["baseline_soh_r2"],
-               "baseline_per_cell": _base["per_cell"]}
-    except Exception:
+        # registry/model card too, not just the in-memory bundle — with how many
+        # folds were scored and how many blank target rows were set aside, so an
+        # n-of-fewer-than-the-fleet baseline is inspectable rather than implied.
+        lco = {**lco, "baseline_soh_r2": _base_r2,
+               "baseline_per_cell": _base["per_cell"],
+               "baseline_n_folds_scored": _base.get("n_folds_scored"),
+               "baseline_n_nonfinite_target_rows": _base.get("n_nonfinite_target_rows")}
+    except Exception as _exc:
+        # DISCLOSED, never silently None. This bare `except` used to record None
+        # for every fleet whose SOH target carried a blank row — Severson has two
+        # (S-b1c0 cycle 11, S-b1c18 cycle 39: capacity is blank in the summary
+        # CSV, so soh_pct = capacity/q0*100 is blank with it, and sklearn's
+        # LinearRegression raises on a NaN in y) — which left the "+X over the
+        # trivial baseline" claim with no number behind it and no trace of why.
+        # The reason now rides the bundle AND the registry row.
+        _err = f"{type(_exc).__name__}: {_exc}"
         bndl["metrics"]["baseline_soh_r2"] = None
+        bndl["metrics"]["baseline_soh_r2_error"] = _err
         bndl["metrics"]["baseline_lco_per_cell"] = None
+        lco = {**lco, "baseline_soh_r2_error": _err}
 
     # RUL formula baseline (Tier-0 #2): the closed form that GENERATED the
     # extrapolated RUL labels, evaluated under the same LCO folds. A model
@@ -349,15 +417,22 @@ def _layer_validation(bndl: dict, cell_cycles: dict, raw_fdfs: dict, lco: dict) 
     try:
         from batlab.validation.trivial_baseline import rul_formula_baseline_lco
         _fb = rul_formula_baseline_lco(cell_cycles, featured=raw_fdfs)
-        bndl["metrics"]["rul_formula_baseline_r2"] = _fb["rul_formula_baseline_r2"]
+        _fb_r2 = _finite_or_none(_fb["rul_formula_baseline_r2"])
+        bndl["metrics"]["rul_formula_baseline_r2"] = _fb_r2
         bndl["metrics"]["rul_baseline_pool"] = _fb["rul_baseline_pool"]
         bndl["metrics"]["rul_formula_baseline_per_cell"] = _fb["per_cell"]
-        lco = {**lco, "rul_formula_baseline_r2": _fb["rul_formula_baseline_r2"],
-               "rul_baseline_pool": _fb["rul_baseline_pool"]}
-    except Exception:
+        bndl["metrics"]["rul_formula_baseline_r2_error"] = None
+        lco = {**lco, "rul_formula_baseline_r2": _fb_r2,
+               "rul_baseline_pool": _fb["rul_baseline_pool"],
+               "rul_formula_n_nonfinite_rows_excluded":
+                   _fb.get("n_nonfinite_rows_excluded")}
+    except Exception as _exc:
+        _err = f"{type(_exc).__name__}: {_exc}"
         bndl["metrics"]["rul_formula_baseline_r2"] = None
         bndl["metrics"]["rul_baseline_pool"] = None
         bndl["metrics"]["rul_formula_baseline_per_cell"] = None
+        bndl["metrics"]["rul_formula_baseline_r2_error"] = _err
+        lco = {**lco, "rul_formula_baseline_r2_error": _err}
 
     # Label-population transparency: what fraction of the RUL evaluation pool
     # actually carries measured (observed-EOL) labels. Surfaces the honest

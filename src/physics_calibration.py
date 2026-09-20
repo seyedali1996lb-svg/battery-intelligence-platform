@@ -1,691 +1,92 @@
 """
-Physics calibration — per-cell degradation-mode decomposition, wired into
-the GBRT feature pipeline and cross-checked against the ML mechanism
-classifier.
+Compatibility shim — the implementation moved to
+``batlab.features.physics_calibration`` (battery-lab 0.2.0).
 
-Relationship to src/pybamm_rul.py
-----------------------------------
-pybamm_rul.py already does a bounded PyBaMM-anchored physics fit: one SPM
-discharge for a chemistry-appropriate nominal capacity, then a single-
-parameter sqrt(n) SEI-fade fit (`SOH(n) = 1 - beta*sqrt(n)`) for RUL
-projection. That module is unchanged and still owns RUL projection (used by
-the Health page's Model Comparison and Live Monitor's Physics Twin Check).
+Why it moved
+------------
+This module used to *be* the implementation, inside the demo application, and
+``batlab.features.engineering.build_features()`` reached across the package
+boundary to import it opportunistically. That made a library feature column
+depend on whose ``src/`` happened to be on ``sys.path``: the same four NASA
+cells scored SOH R² **0.9580 without** the physics features and **0.9471 with
+them** (measured 2026-09-19) depending only on how the process was launched.
+A library whose numbers depend on the caller's import path is not a library.
 
-This module answers a different question: not "what will SOH be at cycle
-N", but "which degradation mode — lithium-inventory loss (LLI/SEI) or
-active-material loss (LAM) — is physically dominant for this cell, and does
-that agree with what the ML mechanism classifier
-(recommendations.diagnose_mechanism) independently concludes from the same
-data?" It reuses pybamm_rul's SPM discharge helper (one PyBaMM run per
-parameter set, not per cell — see _nominal_capacity_ah's caching note) so
-there is exactly one PyBaMM-invocation code path in the codebase, not two.
+So the implementation now lives in ``batlab.features.physics_calibration``, and
+every environment that can ``pip install battery-lab`` computes one set of
+features. PyBaMM stays an optional extra (``pip install "battery-lab[physics]"``),
+whose absence is a declared dependency being missing — not an accident of
+``sys.path``.
 
-Two-term degradation model
----------------------------
-    SOH(n) / 100 = 1 - beta_sei * sqrt(n) - beta_lam * n
+What this file is for
+---------------------
+Two things only, both application concerns:
 
-  beta_sei : SEI/LLI-driven loss rate. Diffusion-limited SEI growth adds
-             capacity loss proportional to sqrt(cycle count) — the same
-             functional form pybamm_rul.py already uses for its single-term
-             fit, split out here as one of two channels.
-  beta_lam : Active-material-loss rate. Modeled as linear-in-cycle, tracking
-             the classic "particle cracking / electrical contact loss"
-             failure mode, which does not slow down the way diffusion-
-             limited SEI growth does.
+1. Re-export the library's public names, so the existing
+   ``from physics_calibration import calibrate_cell`` call sites
+   (src/recommendations.py, app/_pages/health.py,
+   app/_pages/_health_diagnostics.py, app/_pages/benchmark.py) keep working
+   unchanged and there is exactly one implementation.
+2. Register the application's ML mechanism classifier
+   (``recommendations.diagnose_mechanism``) for ``physics_ml_agreement()``'s
+   physics-vs-ML comparison. That classifier is an *application* artifact, so
+   the library takes it through ``register_mechanism_classifier()`` instead of
+   importing it.
 
-Resistance growth (independent corroborating signal, not part of the SOH
-fit — see the honesty note in calibrate_cell()'s docstring on why beta_sei
-and beta_lam are only weakly identifiable from capacity data alone):
-    R(n) / R0 = 1 + k_r * sqrt(n)
-  k_r : SEI resistance growth rate. SEI is resistive, so its diffusion-
-        limited thickening also shows up as sqrt(n) resistance rise —
-        this is the more robust standalone evidence for an active SEI/LLI
-        channel, since it comes from a completely different measured
-        channel than the capacity fit.
-
-All three parameters are fit via scipy.optimize.curve_fit against the
-cell's OWN measured history — never a PyBaMM degradation-submodel constant
-tuned from the literature. PyBaMM's role stays exactly what it already is
-in pybamm_rul.py: a real-electrochemistry anchor for nominal capacity, nothing
-more.
-
-Scope: only NASA and Severson cells are eligible for calibration (dense,
-cycle-resolved measured data). Oxford's dataset is checkpoint-indexed
-(~8-14 sparse RPT checkpoints/cell, no cycle_number-resolved history) —
-already decided to stay reference-curve-only for dQ/dV and the GBRT model
-scope (see chemistry_profiles.NCAOxfordProfile, experiment_registry.py's
-REFERENCE_DATASETS docstring); the same reasoning applies here. Synthetic
-and uploaded cells are NOT calibrated either — synthetic cells' degradation
-is generated by a known injected stress model, not something worth
-"discovering" via a physics fit, and uploaded cells have no PyBaMM
-parameter-set mapping. Calibration-eligible cells get real numeric feature
-values; every other cell gets NaN in these columns, gracefully dropped by
-batlab.features.engineering.get_model_matrix() the same way c_rate/dod_proxy
-already are for sources that lack the underlying signal.
+Importing this module is what performs the registration.
 """
 
 from __future__ import annotations
 
-import functools
-
-import numpy as np
-import pandas as pd
-
-
-# ---------------------------------------------------------------------------
-# Eligibility + PyBaMM parameter-set resolution — derived from cell_id via
-# the SAME chemistry classification chemistry_profiles.py already owns, so
-# there is exactly one place a cell_id maps to a chemistry (no duplicated
-# prefix-matching logic to drift out of sync with it).
-# ---------------------------------------------------------------------------
-
-# Refit cadence for the causal expanding-window feature series — mirrors
-# Live Monitor's _PB_RECOMPUTE_EVERY=15 throttle (app/_pages/live_monitor.py):
-# a full two-parameter + resistance curve_fit is cheap (milliseconds, pure
-# scipy, no PyBaMM), but running it on every single row of a 1000-cycle cell
-# during training is still needless work multiplied across the whole fleet.
-REFIT_EVERY_CYCLES = 25
-
-# Below this many usable cycles, curve_fit is numerically unstable (too few
-# points to separate a sqrt(n) term from a linear-in-n term) — matches the
-# spirit of pybamm_rul._fit_sei_fade's own "need >= 5" floor, raised here
-# because a 2-parameter joint fit needs more points than a 1-parameter one.
-MIN_CYCLES_FOR_CALIBRATION = 15
-
-# Below this two-term-fit R^2, the beta_sei/beta_lam apportionment is not
-# trustworthy enough to call a dominant mode — same idea as
-# batlab.validation.lco.RUL_RELIABLE_FLOOR gating the "Not calibrated" badge.
-MIN_FIT_R2_FOR_DOMINANT_MODE = 0.3
-
-# A cycle-loss channel's contribution must exceed the other by this ratio to
-# be called "dominant" rather than "mixed" — identical threshold and framing
-# to recommendations.diagnose_mechanism()'s lli_score/lam_score 1.5x rule,
-# reused here for consistency between the two independent classifiers being
-# compared (see physics_ml_agreement()).
-DOMINANT_MODE_RATIO = 1.5
-
-
-def _eligible_for_calibration(cell_id: str) -> bool:
-    from chemistry_profiles import ChemistryProfile, LiCoO2NASAProfile, LFPSeversonProfile
-
-    profile = ChemistryProfile.for_cell(cell_id)
-    return isinstance(profile, (LiCoO2NASAProfile, LFPSeversonProfile))
-
-
-def _param_set_for_cell(cell_id: str) -> "str | None":
-    """PyBaMM parameter set for this cell's chemistry, or None if not eligible.
-
-    Deliberately keyed by profile class rather than importing pybamm_rul's
-    own private _PARAM_MAP (which is keyed by a different "data_mode" string
-    vocabulary — "nasa"/"severson"/"synthetic"/"uploaded" — than the
-    "nasa"/"synth"/"severson" dataset-key vocabulary used by
-    experiment_registry.py/app/main.py's training pipeline; these two
-    vocabularies already coexist in this codebase and are not something this
-    module should have to reconcile). The actual parameter-set STRINGS
-    ("Chen2020"/"NCA_Kim2011") match pybamm_rul._PARAM_MAP exactly since
-    both describe the same real chemistries.
-    """
-    from chemistry_profiles import ChemistryProfile, LiCoO2NASAProfile, LFPSeversonProfile
-
-    profile = ChemistryProfile.for_cell(cell_id)
-    if isinstance(profile, LiCoO2NASAProfile):
-        return "NCA_Kim2011"
-    if isinstance(profile, LFPSeversonProfile):
-        return "Chen2020"
-    return None
-
-
-# ---------------------------------------------------------------------------
-# SPM nominal-capacity anchor — reuses pybamm_rul's discharge helper, cached
-# per PARAMETER SET (there are only 2 eligible for calibration: Chen2020,
-# NCA_Kim2011), not per cell. pybamm_rul.project_rul() re-runs this per cell
-# per call today (acceptable there since it's an on-demand, user-triggered
-# view); here it would otherwise run once per cell per fleet-wide training
-# pass, which is wasted work — every NASA cell shares one NCA_Kim2011
-# discharge result, every Severson cell shares one Chen2020 result.
-#
-# Measured cost (this dev environment, PyBaMM 26.6.2.0, first call per
-# parameter set): NCA_Kim2011 ~1.6s (cold — includes casadi/JIT compile),
-# Chen2020 ~0.08s (warm — shares compiled machinery with the prior call in
-# the same process). In the same ballpark as this feature's original ~2.7s/
-# cell estimate; caching per param_set instead of per cell means an
-# N-cell fleet pays this cost at most twice (once per eligible chemistry),
-# not N times. The two-term/resistance scipy fits themselves (the actual
-# per-cell, per-refit cost inside calibrated_feature_series()) are
-# consistently sub-millisecond — the SPM discharge is the only PyBaMM-
-# dependent, genuinely slow part of this module.
-#
-# Beyond this in-process cache, every real training pipeline call site
-# (app/main.py's load_everything(), app/_pages/import_page.py's upload
-# flow) already routes build_features() output through src/bundle_cache.py's
-# existing disk cache, keyed by a signature that includes FEATURE_VERSION —
-# so on any warm start (server restart, repeat page load), the physics
-# columns are loaded from disk with zero PyBaMM/scipy re-computation at
-# all, the same as every other feature column. No new disk-caching layer
-# was needed for that: bumping FEATURE_VERSION when this module was wired
-# in was enough to make bundle_cache.py's existing signature-based
-# invalidation cover it for free.
-# ---------------------------------------------------------------------------
-
-@functools.lru_cache(maxsize=8)
-def _nominal_capacity_ah(param_set: str) -> "float | None":
-    """One SPM discharge for this parameter set, cached for the process
-    lifetime. Returns None (not raises) if PyBaMM isn't installed or the
-    simulation fails — every caller must degrade gracefully, the same
-    contract pybamm_rul.project_rul() already uses (its "error" field)."""
-    try:
-        from pybamm_rul import _run_spm_single_cycle
-        return _run_spm_single_cycle(param_set)
-    except Exception:
-        return None
-
-
-def reset_nominal_capacity_cache() -> None:
-    """Test/debug hook — clears the process-level SPM cache."""
-    _nominal_capacity_ah.cache_clear()
-
-
-# ---------------------------------------------------------------------------
-# Pure-scipy fits — no PyBaMM dependency, fully testable without it installed
-# ---------------------------------------------------------------------------
-
-def _two_term_fade_model(n, beta_sei, beta_lam):
-    return 1.0 - beta_sei * np.sqrt(n) - beta_lam * n
-
-
-def fit_two_term_fade(cycles: np.ndarray, soh_pct: np.ndarray) -> dict:
-    """
-    Jointly fit beta_sei (sqrt(n) term) and beta_lam (linear-in-n term) to
-    a cell's measured SOH history via scipy.optimize.curve_fit.
-
-    Honesty note: sqrt(n) and n are strongly correlated over any realistic,
-    narrow cycle-count range, so this joint fit only weakly separates the
-    two channels from capacity data alone — a curve_fit will always produce
-    SOME apportionment, but a low r2 (returned here) or a wide sigma
-    relative to the fitted value means that apportionment isn't trustworthy.
-    Callers should gate on `r2` (see MIN_FIT_R2_FOR_DOMINANT_MODE) before
-    treating the beta_sei vs beta_lam split as a real mechanism verdict —
-    the independently-fit resistance growth rate (fit_resistance_growth) is
-    the more robust standalone evidence for an active SEI/LLI channel, since
-    it comes from a different measured quantity entirely.
-
-    Returns dict: beta_sei, beta_sei_sigma, beta_lam, beta_lam_sigma, r2,
-    n_cycles_used. Falls back to a closed-form 1-term estimate (all fade
-    attributed to beta_sei, beta_lam=0) if curve_fit fails to converge —
-    mirrors pybamm_rul._fit_sei_fade's own fallback contract.
-    """
-    from scipy.optimize import curve_fit
-
-    cycles = np.asarray(cycles, dtype=float)
-    soh_norm = np.clip(np.asarray(soh_pct, dtype=float) / 100.0, 0.01, 1.0)
-    n0 = cycles[0] if cycles[0] > 0 else 1.0
-    n_shifted = cycles - n0 + 1.0
-
-    try:
-        popt, pcov = curve_fit(
-            _two_term_fade_model, n_shifted, soh_norm,
-            p0=[0.001, 0.0001], bounds=([0, 0], [0.1, 0.01]), maxfev=4000,
-        )
-        beta_sei, beta_lam = float(popt[0]), float(popt[1])
-        sigmas = np.sqrt(np.diag(pcov))
-        beta_sei_sigma, beta_lam_sigma = float(sigmas[0]), float(sigmas[1])
-        pred = _two_term_fade_model(n_shifted, beta_sei, beta_lam)
-        ss_res = float(np.sum((soh_norm - pred) ** 2))
-        ss_tot = float(np.sum((soh_norm - soh_norm.mean()) ** 2))
-        r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
-    except Exception:
-        delta_soh = soh_norm[0] - soh_norm[-1]
-        delta_sqrt = np.sqrt(n_shifted[-1]) - np.sqrt(n_shifted[0])
-        beta_sei = max(1e-9, delta_soh / (delta_sqrt + 1e-9))
-        beta_lam = 0.0
-        beta_sei_sigma = beta_sei * 0.1
-        beta_lam_sigma = 0.0
-        r2 = 0.0
-
-    return {
-        "beta_sei": beta_sei, "beta_sei_sigma": beta_sei_sigma,
-        "beta_lam": beta_lam, "beta_lam_sigma": beta_lam_sigma,
-        "r2": r2, "n_cycles_used": int(len(cycles)),
-    }
-
-
-def _resistance_growth_model(n, k_r):
-    return 1.0 + k_r * np.sqrt(n)
-
-
-def fit_resistance_growth(cycles: np.ndarray, resistance_ohm: np.ndarray) -> "dict | None":
-    """
-    Fit k_r (SEI resistance growth rate) to a cell's measured resistance
-    history: R(n)/R0 = 1 + k_r*sqrt(n). Returns None if fewer than
-    MIN_CYCLES_FOR_CALIBRATION valid (>0) resistance readings are present
-    (e.g. Severson cells with a zero-filled first reading, or any cell
-    genuinely missing IR data) — never fabricates a value.
-    """
-    from scipy.optimize import curve_fit
-
-    cycles = np.asarray(cycles, dtype=float)
-    r = np.asarray(resistance_ohm, dtype=float)
-    valid = r > 0
-    if valid.sum() < MIN_CYCLES_FOR_CALIBRATION:
-        return None
-
-    cycles_v, r_v = cycles[valid], r[valid]
-    r0 = float(r_v[0])
-    n0 = cycles_v[0] if cycles_v[0] > 0 else 1.0
-    n_shifted = cycles_v - n0 + 1.0
-    r_norm = r_v / r0
-
-    try:
-        popt, pcov = curve_fit(
-            _resistance_growth_model, n_shifted, r_norm,
-            p0=[0.001], bounds=(0, 0.5), maxfev=2000,
-        )
-        k_r = float(popt[0])
-        k_r_sigma = float(np.sqrt(np.diag(pcov))[0])
-    except Exception:
-        delta_r = r_norm[-1] - r_norm[0]
-        delta_sqrt = np.sqrt(n_shifted[-1]) - np.sqrt(n_shifted[0])
-        k_r = max(0.0, delta_r / (delta_sqrt + 1e-9))
-        k_r_sigma = k_r * 0.1
-
-    return {"k_r": k_r, "k_r_sigma": k_r_sigma, "n_cycles_used": int(valid.sum())}
-
-
-# ---------------------------------------------------------------------------
-# Dominant-mode classification — same verdict vocabulary as
-# knowledge_graph.MECHANISM_KEYS ("lli", "lam", "mixed", "insufficient_data")
-# so physics_ml_agreement() can compare directly against
-# recommendations.diagnose_mechanism()'s verdict without a translation table
-# that could silently drift.
-# ---------------------------------------------------------------------------
-
-def dominant_mode(beta_sei: float, beta_lam: float, at_cycle: float, fit_r2: float) -> tuple[str, str]:
-    """
-    Returns (key, label) where key in {"lli", "lam", "mixed", "insufficient_data"}.
-
-    Compares each channel's TOTAL contribution to fade at the last observed
-    cycle (not the raw beta magnitudes, which live on different scales —
-    sqrt(n) vs n — so are not directly comparable to each other).
-    """
-    if fit_r2 < MIN_FIT_R2_FOR_DOMINANT_MODE:
-        return "insufficient_data", "Insufficient data"
-
-    contrib_sei = beta_sei * np.sqrt(max(at_cycle, 1.0))
-    contrib_lam = beta_lam * max(at_cycle, 1.0)
-
-    if contrib_sei < 1e-9 and contrib_lam < 1e-9:
-        return "insufficient_data", "Insufficient data"
-    if contrib_sei > contrib_lam * DOMINANT_MODE_RATIO:
-        return "lli", "LLI — Loss of Lithium Inventory (physics: SEI growth)"
-    if contrib_lam > contrib_sei * DOMINANT_MODE_RATIO:
-        return "lam", "LAM — Loss of Active Material (physics: linear fade channel)"
-    return "mixed", "Mixed LLI + LAM (physics)"
-
-
-# ---------------------------------------------------------------------------
-# Single-shot calibration — the full-history fit used for the offline
-# per-cell diagnostic view and the physics-vs-ML agreement check.
-# ---------------------------------------------------------------------------
-
-def calibrate_cell(cell_id: str, df: pd.DataFrame, eol_threshold_pct: float = 80.0) -> dict:
-    """
-    Full-history physics calibration for one cell. Returns a dict:
-
-      eligible          bool  — False (with reason in "error") for any cell
-                                 outside {NASA, Severson}
-      param_set         str | None
-      chem_label        str | None
-      spm_capacity_ah   float | None — None if PyBaMM unavailable/failed;
-                                 every other field is still populated (the
-                                 scipy fits don't need PyBaMM at all)
-      beta_sei, beta_sei_sigma, beta_lam, beta_lam_sigma, fit_r2
-      k_r, k_r_sigma    float | None — None if no usable resistance data
-      dominant_mode_key, dominant_mode_label
-      last_cycle        int
-      error             str | None
-    """
-    result: dict = {
-        "eligible": False, "param_set": None, "chem_label": None,
-        "spm_capacity_ah": None,
-        "beta_sei": None, "beta_sei_sigma": None,
-        "beta_lam": None, "beta_lam_sigma": None, "fit_r2": None,
-        "k_r": None, "k_r_sigma": None,
-        "dominant_mode_key": "insufficient_data",
-        "dominant_mode_label": "Insufficient data",
-        "last_cycle": None,
-        "error": None,
-    }
-
-    if not _eligible_for_calibration(cell_id):
-        result["error"] = (
-            "Physics calibration is only run for NASA and Severson cells "
-            "(dense, cycle-resolved measured data) — not this cell's source."
-        )
-        return result
-
-    param_set = _param_set_for_cell(cell_id)
-    result["eligible"] = True
-    result["param_set"] = param_set
-
-    from pybamm_rul import _CHEM_LABEL
-    result["chem_label"] = _CHEM_LABEL.get(param_set, param_set)  # pyright: ignore[reportArgumentType, reportCallIssue]
-
-    valid = df[["cycle_number", "soh_pct"]].dropna()
-    if len(valid) < MIN_CYCLES_FOR_CALIBRATION:
-        result["error"] = (
-            f"Insufficient measured cycles for calibration (need >= "
-            f"{MIN_CYCLES_FOR_CALIBRATION}, have {len(valid)})."
-        )
-        return result
-
-    result["spm_capacity_ah"] = _nominal_capacity_ah(param_set)
-
-    cycles = valid["cycle_number"].values.astype(float)
-    soh = valid["soh_pct"].values.astype(float)
-    fade_fit = fit_two_term_fade(cycles, soh)
-    result.update({
-        "beta_sei": fade_fit["beta_sei"], "beta_sei_sigma": fade_fit["beta_sei_sigma"],
-        "beta_lam": fade_fit["beta_lam"], "beta_lam_sigma": fade_fit["beta_lam_sigma"],
-        "fit_r2": fade_fit["r2"],
-    })
-
-    if "resistance_ohm" in df.columns:
-        r_valid = df[["cycle_number", "resistance_ohm"]].dropna()
-        r_fit = fit_resistance_growth(
-            r_valid["cycle_number"].values.astype(float),
-            r_valid["resistance_ohm"].values.astype(float),
-        )
-        if r_fit is not None:
-            result["k_r"] = r_fit["k_r"]
-            result["k_r_sigma"] = r_fit["k_r_sigma"]
-
-    last_cycle = float(cycles[-1] - cycles[0] + 1.0)
-    result["last_cycle"] = int(cycles[-1])
-    key, label = dominant_mode(fade_fit["beta_sei"], fade_fit["beta_lam"], last_cycle, fade_fit["r2"])
-    result["dominant_mode_key"] = key
-    result["dominant_mode_label"] = label
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Causal expanding-window feature series — what actually feeds the GBRT
-# feature pipeline (batlab.features.engineering.build_features()).
-#
-# Refit every REFIT_EVERY_CYCLES cycles using only cycles observed SO FAR
-# (an expanding window, not the whole cell's future), forward-filled between
-# refits. This is deliberately the same causal discipline every other
-# rolling-window feature in build_features() already follows (fade_rate_Ncy,
-# soh_velocity_50cy, etc. all use only past cycles) — a feature fit from a
-# cell's ENTIRE lifetime (including cycles far in that row's future) would
-# be a real information leak the GBRT could exploit during training but
-# could never replicate in an actual online deployment, where the future
-# hasn't happened yet. calibrate_cell() above is fine to use the full
-# history — it's an offline, user-triggered diagnostic view, not a training
-# feature — but this function is not, so it stays causal throughout.
-# ---------------------------------------------------------------------------
-
-from batlab.features.engineering import PHYSICS_FEATURE_COLUMNS  # single source of truth
-
-
-def calibrated_feature_series(df: pd.DataFrame, cell_id: "str | None") -> pd.DataFrame:
-    """
-    Returns a DataFrame aligned to df's index with PHYSICS_FEATURE_COLUMNS.
-    All-NaN if cell_id is None or not calibration-eligible, or if df has
-    fewer than MIN_CYCLES_FOR_CALIBRATION rows.
-    """
-    n = len(df)
-    out = pd.DataFrame(
-        {col: np.full(n, np.nan) for col in PHYSICS_FEATURE_COLUMNS},
-        index=df.index,
-    )
-    if cell_id is None or not _eligible_for_calibration(cell_id) or n < MIN_CYCLES_FOR_CALIBRATION:
-        return out
-
-    param_set = _param_set_for_cell(cell_id)
-    spm_cap = _nominal_capacity_ah(param_set)  # one process-cached PyBaMM call for the whole series
-
-    df_sorted = df.sort_values("cycle_number")
-    cycles_all = df_sorted["cycle_number"].values.astype(float)
-    soh_all = df_sorted["soh_pct"].values.astype(float)
-    has_resistance = "resistance_ohm" in df_sorted.columns
-    resistance_all = df_sorted["resistance_ohm"].values.astype(float) if has_resistance else None
-
-    last_refit_i = -1
-    cur = {"beta_sei": np.nan, "beta_lam": np.nan, "r2": np.nan, "k_r": np.nan}
-
-    values = {col: np.full(n, np.nan) for col in PHYSICS_FEATURE_COLUMNS}
-    for i in range(n):
-        window_size = i + 1
-        if window_size >= MIN_CYCLES_FOR_CALIBRATION and (
-            last_refit_i < 0 or (window_size - (last_refit_i + 1)) >= REFIT_EVERY_CYCLES
-        ):
-            fade_fit = fit_two_term_fade(cycles_all[: i + 1], soh_all[: i + 1])
-            cur["beta_sei"] = fade_fit["beta_sei"]
-            cur["beta_lam"] = fade_fit["beta_lam"]
-            cur["r2"] = fade_fit["r2"]
-            if has_resistance:
-                r_fit = fit_resistance_growth(cycles_all[: i + 1], resistance_all[: i + 1])  # pyright: ignore[reportOptionalSubscript]
-                cur["k_r"] = r_fit["k_r"] if r_fit is not None else np.nan
-            last_refit_i = i
-
-        if last_refit_i >= 0:
-            values["physics_beta_sei"][i] = cur["beta_sei"]
-            values["physics_beta_lam"][i] = cur["beta_lam"]
-            values["physics_fit_r2"][i] = cur["r2"]
-            values["physics_k_r"][i] = cur["k_r"]
-            values["physics_spm_capacity_ah"][i] = spm_cap if spm_cap is not None else np.nan
-
-    out = pd.DataFrame(values, index=df_sorted.index).reindex(df.index)
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Physics-vs-ML mechanism agreement — the diagnostic wired into
-# recommendations.physics_ml_agreement_note() for UI surfacing.
-# ---------------------------------------------------------------------------
-
-def physics_ml_agreement(cell_id: str, df: pd.DataFrame) -> dict:
-    """
-    Compares the physics-fitted dominant degradation mode (full-history
-    calibrate_cell()) against the ML mechanism classifier's independent
-    verdict (recommendations.diagnose_mechanism(df)) for the same cell.
-
-    Returns:
-      physics   dict — calibrate_cell()'s full result
-      ml        dict — diagnose_mechanism()'s full result
-      agree     bool | None — None when either side has insufficient data
-                 to compare (not treated as agreement OR disagreement)
-      note      str  — a short, honest, plain-English summary of the
-                 comparison, always populated (unlike
-                 recommendations.mechanism_corroboration_note(), which
-                 returns None in the common non-noteworthy case — this
-                 function is the always-on diagnostic; the UI's caution-only
-                 note is a separate, thinner wrapper in recommendations.py)
-    """
-    from recommendations import diagnose_mechanism
-
-    physics = calibrate_cell(cell_id, df)
-    ml = diagnose_mechanism(df)
-
-    ml_key_by_verdict = {
-        "LLI — Loss of Lithium Inventory": "lli",
-        "LAM — Loss of Active Material": "lam",
-        "Mixed LLI + LAM": "mixed",
-        "Insufficient data": "insufficient_data",
-    }
-    ml_key = ml_key_by_verdict.get(ml.get("verdict", ""), "insufficient_data")
-    physics_key = physics.get("dominant_mode_key", "insufficient_data")
-
-    if not physics.get("eligible"):
-        return {
-            "physics": physics, "ml": ml, "agree": None,
-            "note": physics.get("error", "Physics calibration not available for this cell."),
-        }
-    if physics_key == "insufficient_data" or ml_key == "insufficient_data":
-        return {
-            "physics": physics, "ml": ml, "agree": None,
-            "note": (
-                "One or both classifiers have insufficient data to reach a mechanism "
-                "verdict for this cell yet — comparison deferred until more cycling data accumulates."
-            ),
-        }
-
-    agree = (physics_key == ml_key) or "mixed" in (physics_key, ml_key)
-    if physics_key == ml_key:
-        note = (
-            f"Physics-fitted degradation ({physics['dominant_mode_label']}) agrees with the "
-            f"ML mechanism classifier's independent verdict ({ml['verdict']}, "
-            f"{ml['confidence_label']} confidence) — two independently-derived signals "
-            f"(a scipy fit to this cell's own capacity/resistance history vs. a CE/fade-shape/"
-            f"resistance-slope classifier) point the same way."
-        )
-    elif "mixed" in (physics_key, ml_key):
-        note = (
-            f"Physics fit ({physics['dominant_mode_label']}) and the ML mechanism classifier "
-            f"({ml['verdict']}) partially overlap — one calls this cell mixed-mode, the other "
-            f"a single dominant channel. Not a hard disagreement, but not a clean match either."
-        )
-    else:
-        agree = False
-        note = (
-            f"Physics fit says {physics['dominant_mode_label']} but the ML mechanism "
-            f"classifier independently concludes {ml['verdict']} ({ml['confidence_label']} "
-            f"confidence) — a real disagreement between the two analytical surfaces, surfaced "
-            f"honestly rather than silently picking one."
-        )
-
-    return {"physics": physics, "ml": ml, "agree": agree, "note": note}
-
-
-# ---------------------------------------------------------------------------
-# Held-out-cell validation — physics-fitted trajectory vs the GBRT's own
-# leave-cell-out SOH prediction for a cell it never trained on.
-#
-# Precedent for surfacing disagreement rather than suppressing it: this
-# project's established pattern (see app/_pages/overview.py's
-# reconcile_rul_estimates()/trajectory_memory.py docstrings) is that when
-# two independent estimates of the same quantity disagree, the disagreement
-# itself is surfaced honestly — never silently resolved by picking
-# whichever number looks better. The same discipline applies here.
-# ---------------------------------------------------------------------------
-
-def physics_gbrt_divergence_report(cell_data: dict) -> list[dict]:
-    """
-    For every calibration-eligible cell in cell_data, run one leave-cell-out
-    fold (GBRT trained on every OTHER cell, predicting this cell's SOH
-    trajectory — same fold structure as batlab.validation.lco.run_lco(),
-    not reimplemented, just invoked per-cell here so each fold's raw
-    predictions are available) and compare it against this cell's own
-    physics calibration (fit entirely from ITS OWN measured history — no
-    cross-cell information at all, the physics side of this comparison is
-    "held out" by construction, not by a train/test split).
-
-    Returns a list of per-cell dicts:
-      cell_id, n_cycles,
-      physics_fit_r2, physics_dominant_mode_label,
-      gbrt_soh_mae         — GBRT LCO fold's SOH MAE (%) vs actual, this cell
-      physics_soh_mae      — physics two-term model's SOH MAE (%) vs actual,
-                             fit and evaluated on the SAME cycles (in-sample
-                             for physics, out-of-sample for GBRT — an honest
-                             asymmetry, called out in `note` below, not
-                             hidden)
-      closer_model         — "physics" | "gbrt" | "comparable"
-      divergence_pct       — |physics_soh_mae - gbrt_soh_mae| / gbrt_soh_mae * 100
-      note                 — plain-English disclosure of what this
-                             comparison does and does not prove
-    Cells that aren't calibration-eligible, or have too few cycles, are
-    skipped (not silently — the returned list simply won't contain them;
-    callers wanting an explicit "why is X missing" should check
-    _eligible_for_calibration / calibrate_cell()'s own error field directly).
-
-    Training folds are restricted to OTHER calibration-eligible cells in
-    cell_data, not every cell passed in — mirrors app/main.py's own
-    per-source-only training rule (NASA/Severson/synthetic are never
-    trained together; see load_everything()'s docstring on incompatible
-    resistance scales). A non-eligible cell's featured DataFrame has no
-    physics_* columns at all (all-NaN, dropped by get_model_matrix()),
-    while an eligible cell's does — concatenating those two would crash
-    GradientBoostingRegressor on real NaNs, not a graceful degradation, so
-    this function never builds that combination in the first place.
-    """
-    from batlab.features.engineering import build_features, get_model_matrix
-    from batlab.models.gbrt import train_models, predict
-    from sklearn.metrics import mean_absolute_error
-
-    eligible_ids = [cid for cid in cell_data if _eligible_for_calibration(cid)]
-    reports = []
-
-    for held_out in eligible_ids:
-        train_ids = [c for c in eligible_ids if c != held_out]
-        if len(train_ids) < 1:
-            continue
-
-        train_inputs = []
-        for cid in train_ids:
-            feat = build_features(cell_data[cid], cell_id=cid)
-            X, y_soh, y_rul = get_model_matrix(feat)
-            if len(X) > 0:
-                train_inputs.append((X, y_soh, y_rul))
-        if not train_inputs:
-            continue
-
-        held_out_df = cell_data[held_out]
-        physics = calibrate_cell(held_out, held_out_df)
-        if physics.get("error") is not None:
-            continue
-
-        feat_test = build_features(held_out_df, cell_id=held_out)
-        X_test, y_soh_test, y_rul_test = get_model_matrix(feat_test)
-        if len(X_test) == 0:
-            continue
-
-        import pandas as _pd
-        X_train = _pd.concat([t[0] for t in train_inputs])
-        y_soh_train = _pd.concat([t[1] for t in train_inputs])
-        y_rul_train = _pd.concat([t[2] for t in train_inputs])
-        bndl = train_models(X_train, y_soh_train, y_rul_train)  # pyright: ignore[reportArgumentType]
-        gbrt_preds = predict(bndl, X_test)
-        gbrt_soh_mae = float(mean_absolute_error(y_soh_test, gbrt_preds["soh_pred"]))
-
-        cycles_test = feat_test.loc[X_test.index, "cycle_number"].values.astype(float)
-        soh_actual = y_soh_test.values.astype(float)
-        n0 = cycles_test[0] if cycles_test[0] > 0 else 1.0
-        n_shifted = cycles_test - n0 + 1.0
-        physics_soh_pred = _two_term_fade_model(
-            n_shifted, physics["beta_sei"], physics["beta_lam"],
-        ) * 100.0
-        physics_soh_mae = float(mean_absolute_error(soh_actual, physics_soh_pred))
-
-        divergence_pct = (
-            abs(physics_soh_mae - gbrt_soh_mae) / max(gbrt_soh_mae, 1e-9) * 100.0
-        )
-        if physics_soh_mae < gbrt_soh_mae * 0.85:
-            closer = "physics"
-        elif gbrt_soh_mae < physics_soh_mae * 0.85:
-            closer = "gbrt"
-        else:
-            closer = "comparable"
-
-        reports.append({
-            "cell_id": held_out,
-            "n_cycles": int(len(cycles_test)),
-            "physics_fit_r2": physics["fit_r2"],
-            "physics_dominant_mode_label": physics["dominant_mode_label"],
-            "gbrt_soh_mae": gbrt_soh_mae,
-            "physics_soh_mae": physics_soh_mae,
-            "closer_model": closer,
-            "divergence_pct": divergence_pct,
-            "note": (
-                f"GBRT trained on {len(train_ids)} other cell(s), evaluated on "
-                f"{held_out} it never saw a single row of (true held-out generalization). "
-                f"Physics was fit directly on {held_out}'s own history (in-sample by "
-                f"construction — not a generalization test, a different question: "
-                f"'does this cell's own physics-fitted curve match its own measured "
-                f"trajectory?'). The two MAEs are not measuring the same thing and this "
-                f"divergence number should not be read as 'physics beat GBRT' or vice "
-                f"versa without that asymmetry in mind."
-            ),
-        })
-
-    return reports
+from batlab.features import physics_calibration as _impl
+
+# Re-export the public surface the library declares (see its __all__).
+from batlab.features.physics_calibration import *  # noqa: F401,F403
+from batlab.features.physics_calibration import (  # noqa: F401  explicit, for readers and type checkers
+    ANCHOR_PARAM_SETS,
+    DOMINANT_MODE_RATIO,
+    MIN_CYCLES_FOR_CALIBRATION,
+    MIN_FIT_R2_FOR_DOMINANT_MODE,
+    PHYSICS_FEATURE_COLUMNS,
+    REFIT_EVERY_CYCLES,
+    calibrate_cell,
+    calibrated_feature_series,
+    dominant_mode,
+    fit_resistance_growth,
+    fit_two_term_fade,
+    get_mechanism_classifier,
+    physics_gbrt_divergence_report,
+    physics_ml_agreement,
+    register_anchor_param_set,
+    register_mechanism_classifier,
+    reset_nominal_capacity_cache,
+)
+
+# ── Application-only wiring ────────────────────────────────────────────────
+# Registered at import time: recommendations imports this module, and the pages
+# import recommendations, so by the time any UI calls physics_ml_agreement() the
+# classifier is in place. `register_mechanism_classifier` itself is part of the
+# re-exported surface above.
+from recommendations import diagnose_mechanism as _diagnose_mechanism  # noqa: E402
+
+_impl.register_mechanism_classifier(_diagnose_mechanism)
+
+__all__ = [
+    "ANCHOR_PARAM_SETS",
+    "DOMINANT_MODE_RATIO",
+    "MIN_CYCLES_FOR_CALIBRATION",
+    "MIN_FIT_R2_FOR_DOMINANT_MODE",
+    "PHYSICS_FEATURE_COLUMNS",
+    "REFIT_EVERY_CYCLES",
+    "calibrate_cell",
+    "calibrated_feature_series",
+    "dominant_mode",
+    "fit_resistance_growth",
+    "fit_two_term_fade",
+    "get_mechanism_classifier",
+    "physics_gbrt_divergence_report",
+    "physics_ml_agreement",
+    "register_anchor_param_set",
+    "register_mechanism_classifier",
+    "reset_nominal_capacity_cache",
+]

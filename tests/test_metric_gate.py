@@ -131,6 +131,23 @@ class TestCheckMetric:
         r = check_metric("new_metric", 0.7, None)
         assert r["verdict"] == UNTRACKED
 
+    def test_nan_observed_is_not_evaluable_not_a_pass(self):
+        """NaN compares False against every floor, ceiling and tolerance, so an
+        unguarded one sails through the gate — the failure mode this module
+        exists to prevent. It is treated exactly like None."""
+        r = check_metric("soh_r2", float("nan"), _expectation())
+        assert r["verdict"] == FAIL
+        assert "not evaluable" in r["detail"]
+
+    def test_nan_observed_passes_only_when_explicitly_allowed(self):
+        r = check_metric(
+            "rul_r2", float("nan"), _expectation(allow_not_evaluable=True)
+        )
+        assert r["verdict"] == PASS
+
+    def test_inf_observed_is_not_evaluable(self):
+        assert check_metric("soh_r2", float("inf"), _expectation())["verdict"] == FAIL
+
     def test_near_zero_baseline_uses_absolute_epsilon(self):
         r = check_metric("delta", 0.0005, {"baseline": 0.0, "tolerance": 0.05})
         assert r["verdict"] == PASS  # 0.0005 <= epsilon 1e-3 scaled

@@ -383,9 +383,19 @@ def _baseline_sections(
         try:
             trend = baseline_lco_r2(cells, featured=featured)
             out["lco_trend_r2"] = trend.get("baseline_lco_r2", trend.get("baseline_soh_r2"))
+            # The key is trivial_baseline's own name for this number; reading
+            # "r2" here returned None for every cell of every fleet (that key
+            # belongs to rul_formula_baseline_lco's per_cell entries).
             out["lco_trend_per_cell"] = {
-                cid: v.get("r2") for cid, v in (trend.get("per_cell") or {}).items()
+                cid: v.get("baseline_soh_r2", v.get("r2"))
+                for cid, v in (trend.get("per_cell") or {}).items()
             }
+            # A floor averaged over fewer folds than the fleet has, or with
+            # blank target rows set aside, is a weaker floor; the counts travel
+            # with the number instead of being implied.
+            out["lco_trend_n_folds_scored"] = trend.get("n_folds_scored")
+            out["lco_trend_n_folds_skipped"] = trend.get("n_folds_skipped")
+            out["lco_trend_n_nonfinite_target_rows"] = trend.get("n_nonfinite_target_rows")
         except Exception as exc:  # a baseline that cannot run is disclosed, not hidden
             out["lco_trend_r2"] = None
             out["lco_trend_error"] = f"{type(exc).__name__}: {exc}"

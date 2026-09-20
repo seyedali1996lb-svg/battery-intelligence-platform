@@ -265,6 +265,35 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Provenance declaration
+# ---------------------------------------------------------------------------
+
+def _declare_provenance(df: pd.DataFrame, cell_id: str) -> pd.DataFrame:
+    """Declare df.attrs["source"]/["chemistry"], as every batlab loader does.
+
+    The batlab schema requires both attrs (batlab/datasets/schema.py's
+    REQUIRED_ATTRS, surfaced by condition_completeness()); this loader reads the
+    NASA and synthetic CSVs under data/raw/ directly and simply never set them.
+    That was invisible until batlab.features.physics_calibration began gating its
+    eligibility on those attrs — an undeclared frame would then have silently
+    lost the SEI/LAM physics feature block these cells have always carried, a
+    *feature* change dressed up as a refactor.
+
+    Chemistry comes from the app's one classifier (ChemistryProfile.for_cell —
+    tests/test_source_classification_guard.py forbids re-deriving that chain
+    here); the source key comes from the same profile's dataset_source, which is
+    pinned against the real loaders' constants in
+    tests/test_feature_environment_inputs.py.
+    """
+    from chemistry_profiles import ChemistryProfile
+
+    profile = ChemistryProfile.for_cell(cell_id)
+    df.attrs["source"] = profile.dataset_source
+    df.attrs["chemistry"] = profile.short_name
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Enrich cycles with derived metrics
 # ---------------------------------------------------------------------------
 
@@ -305,6 +334,7 @@ def build_battery(battery_id: str, cell_ids: list[str]) -> dict:
         raw_df   = load_or_generate_cell(cell_id)
         clean_df = _normalise_columns(raw_df) if "capacity_ah" not in raw_df.columns else raw_df
         enriched = enrich_cycles(clean_df)
+        enriched = _declare_provenance(enriched, cell_id)
 
         n       = len(enriched)
         soh_end = enriched["soh_pct"].iloc[-1]

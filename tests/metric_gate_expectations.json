@@ -22,6 +22,12 @@
       "baseline": 0.1415351315175002,
       "tolerance": 0.5,
       "note": "Observed-EOL RUL R^2 on synthetic cells (coverage 0.68, extrapolated labels mixed in pre-v12 style). Floor 0.0: the model must at least not invert RUL ordering. Wide 50% tolerance because this metric is genuinely noisier across library versions on a 5-cell fleet."
+    },
+    "baseline_soh_r2": {
+      "ceiling": -1.0,
+      "baseline": -1.7676911798184485,
+      "measured_at": "2026-09-20",
+      "note": "The trivial cycle_number -> SOH line under the SAME five folds (batlab.validation.trivial_baseline.baseline_lco_r2) - the denominator of every '+X over the trivial baseline' claim on this fleet. Tracked since 2026-09-20, when a blank target row was found to delete it: sklearn's LinearRegression raises on a NaN in y, app/_data.py's bare `except` recorded None, and the claim lost its floor with no trace of why. NEGATIVE by design here - the five cells fade at very different rates (Cell5's own line reaches R^2 = -9.2 against the global fit), so one straight line is worse than predicting the mean, and that is the honest floor the model beats (soh_r2 baseline 0.9959). A CEILING rather than a floor because the risk is this number getting BETTER, which would quietly shrink the model's claimed advantage; its only inputs are cycle_number and soh_pct, so it is insensitive to feature and model changes by construction and a recorded move means the TARGET changed. Value verified bit-identical to the pre-fix implementation, and bit-identical under the 2026-09-20 environment (numpy 2.4.6 / pandas 3.0.3 / scikit-learn 1.9.0 / pybamm 26.6.2.0), i.e. the NaN tolerance changed no measured number on this fleet."
     }
   }
 }

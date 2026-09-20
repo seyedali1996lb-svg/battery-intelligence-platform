@@ -28,29 +28,76 @@ fit the closed form (remaining-SOH headroom ÷ fade rate) per training
 population, apply it to the held-out cell, score against the same labels the
 GBRT is scored on. If the GBRT cannot beat THIS number, it learned nothing —
 it is either reproducing the formula or losing to it.
+
+Missing measurements (NaN targets)
+----------------------------------
+A cell summary can carry a row with no measurement in it. Severson's batch-1
+records S-b1c0 (cycle 11) and S-b1c18 (cycle 39) have a blank capacity in the
+summary CSV, so `soh_pct = capacity/q0*100` is blank with it. run_lco() never
+shows such a row to a model — get_model_matrix() drops rows whose FEATURES are
+non-finite — but a linear fit cannot tolerate a missing TARGET: sklearn's
+LinearRegression raises on a NaN in y, and an R² computed over one comes back
+NaN instead of raising. Both baselines here therefore score only the rows they
+can actually score and REPORT how many they set aside (`n_nonfinite_target_rows`
+for the SOH line, `n_nonfinite_rows_excluded` for the formula, and a per-cell
+`note` on any fold that could not be scored at all). A baseline that silently
+turns into None — or, worse, into NaN, which passes every `is not None` check a
+consumer writes — is not a floor.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 
 from batlab.features.engineering import build_features, get_model_matrix, get_rul_label_kinds
+from batlab.validation.lco import unwrap_cell_data
 
 _LABEL_OBSERVED = "observed"
 _LABEL_EXTRAPOLATED = "extrapolated"
+
+# The trivial SOH line's own two columns: the only ones it fits and scores.
+_SOH_PAIR = ("cycle_number", "soh_pct")
+# The closed form's inputs, read off the featured frame.
+_RUL_FADE = "fade_rate_50cy"
+
+
+def _finite_rows(df: pd.DataFrame, columns) -> pd.DataFrame:
+    """Rows of `df` where every named column holds a finite number.
+
+    Selection is by TARGET (and the trivial predictor), which is the one thing
+    a least-squares fit cannot be handed a blank of; see the module docstring's
+    "Missing measurements". A column that is absent altogether means there is
+    nothing here to score, so an empty frame comes back — a fold with no rows
+    is reported as unscorable, never crashed on.
+    """
+    keep = np.ones(len(df), dtype=bool)
+    for column in columns:
+        if column not in df.columns:
+            return df.iloc[0:0]
+        keep &= np.isfinite(
+            np.asarray(pd.to_numeric(df[column], errors="coerce"), dtype=float)
+        )
+    return df.loc[keep]
 
 
 def baseline_lco_r2(cell_data: dict, featured: "dict | None" = None) -> dict:
     """Trivial baseline (cycle_number -> SOH) evaluated leave-cell-out.
 
     Same fold structure as run_lco(): one cell held out, trained on the rest,
-    repeated once per cell, then averaged.
+    repeated once per cell, then averaged — over the rows the trivial line can
+    actually be scored on (see "Missing measurements" in the module docstring).
 
     Parameters
     ----------
-    cell_data : {cell_id: raw_cycles_DataFrame}
+    cell_data : {cell_id: raw_cycles_DataFrame}, or the wrapper shape
+        {"cell_id": {"cycles": df}} that build_battery()/the dataset loaders
+        produce. Unwrapped by the same helper run_lco() uses, so a caller can
+        hand this function the exact dict it hands run_lco() — which is what
+        the CI metric gate does, and what used to raise AttributeError on a
+        dict for every fleet built by the app's own loader path.
     featured : optional {cell_id: already-built feature DataFrame}. Callers
         that already ran build_features() (e.g. app/_data.py's
         train_and_predict, which has raw_fdfs in hand right after run_lco)
@@ -62,12 +109,20 @@ def baseline_lco_r2(cell_data: dict, featured: "dict | None" = None) -> dict:
     Returns
     -------
     {
-        "baseline_soh_r2": float,   # mean LCO R² of the trivial linear baseline
-        "per_cell": dict,           # {cell_id: {"baseline_soh_r2": float}}
+        "baseline_soh_r2": float,   # mean LCO R² over the SCORED folds
+        "per_cell": dict,           # {cell_id: {"baseline_soh_r2": float|None,
+                                    #            "n_rows": int,
+                                    #            "note": str when unscorable}}
         "n_cells": int,
+        "n_folds_scored": int,      # folds that produced an R²
+        "n_folds_skipped": int,     # folds that could not (reason in per_cell)
+        "n_nonfinite_target_rows": int,   # rows set aside for a blank target
     }
     """
-    feat_inputs = {}
+    cell_data = unwrap_cell_data(cell_data)
+
+    scorable: dict = {}
+    dropped = 0
     for cell_id, df in cell_data.items():
         if featured is not None and cell_id in featured:
             df_feat = featured[cell_id]
@@ -75,34 +130,66 @@ def baseline_lco_r2(cell_data: dict, featured: "dict | None" = None) -> dict:
                 df_feat = build_features(df, cell_id=cell_id)
         else:
             df_feat = build_features(df, cell_id=cell_id)
-        _, y_soh, _ = get_model_matrix(df_feat)
-        feat_inputs[cell_id] = (df_feat, y_soh)
-    featured = feat_inputs
+        rows = _finite_rows(df_feat, _SOH_PAIR)
+        dropped += int(len(df_feat) - len(rows))
+        scorable[cell_id] = rows
 
-    cell_ids = list(featured.keys())
+    cell_ids = list(scorable.keys())
     if len(cell_ids) < 2:
-        return {"baseline_soh_r2": float("nan"), "per_cell": {}, "n_cells": len(cell_ids)}
+        # LCO needs two cells to form a single fold. run_lco() reports NaN for
+        # the same "cannot be evaluated"; app/_data.py converts a non-finite
+        # baseline to None where it builds the JSON-bound metrics dict.
+        return {
+            "baseline_soh_r2": float("nan"), "per_cell": {},
+            "n_cells": len(cell_ids), "n_folds_scored": 0, "n_folds_skipped": 0,
+            "n_nonfinite_target_rows": dropped,
+        }
 
-    per_cell = {}
-    r2s = []
+    per_cell: dict = {}
+    r2s: list[float] = []
+    skipped = 0
     for test_cell in cell_ids:
         train_cells = [c for c in cell_ids if c != test_cell]
 
-        train_df = __import__("pandas").concat(
-            [featured[c][0][["cycle_number", "soh_pct"]] for c in train_cells]
-        )
-        test_df = featured[test_cell][0][["cycle_number", "soh_pct"]]
+        train_df = pd.concat([scorable[c] for c in train_cells], ignore_index=True)
+        test_df = scorable[test_cell]
+        n_rows = int(len(test_df))
+
+        # A fold the trivial line cannot be scored on is REPORTED as unscorable
+        # rather than averaged in as a NaN: np.mean() over a NaN-poisoned list
+        # is NaN, and NaN passes every `is not None` check a consumer writes.
+        if len(train_df) < 2 or n_rows < 2:
+            per_cell[test_cell] = {
+                "baseline_soh_r2": None,
+                "n_rows": n_rows,
+                "note": "not scored: fewer than two rows with a finite "
+                        "cycle_number and soh_pct",
+            }
+            skipped += 1
+            continue
 
         baseline = LinearRegression().fit(train_df[["cycle_number"]], train_df["soh_pct"])
         pred = baseline.predict(test_df[["cycle_number"]])
-        r2 = float(r2_score(test_df["soh_pct"], pred))
+        r2 = _safe_r2(test_df["soh_pct"], pred)
+        if r2 is None:
+            per_cell[test_cell] = {
+                "baseline_soh_r2": None,
+                "n_rows": n_rows,
+                "note": "not scored: the held-out cell's SOH has zero "
+                        "variance, so R² is undefined",
+            }
+            skipped += 1
+            continue
         r2s.append(r2)
-        per_cell[test_cell] = {"baseline_soh_r2": r2}
+        per_cell[test_cell] = {"baseline_soh_r2": r2, "n_rows": n_rows}
 
     return {
-        "baseline_soh_r2": float(np.mean(r2s)),
+        "baseline_soh_r2": float(np.mean(r2s)) if r2s else float("nan"),
         "per_cell": per_cell,
         "n_cells": len(cell_ids),
+        "n_folds_scored": len(r2s),
+        "n_folds_skipped": skipped,
+        "n_nonfinite_target_rows": dropped,
     }
 
 
@@ -141,6 +228,7 @@ def rul_formula_baseline_lco(cell_data: dict, featured: "dict | None" = None) ->
         "n_cells": int,
     }
     """
+    cell_data = unwrap_cell_data(cell_data)
     feat_inputs = {}
     for cell_id, df in cell_data.items():
         if featured is not None and cell_id in featured:
@@ -161,12 +249,14 @@ def rul_formula_baseline_lco(cell_data: dict, featured: "dict | None" = None) ->
         "rul_formula_baseline_r2_extrapolated": None,
         "rul_formula_baseline_mae": None,
         "per_cell": {}, "n_cells": len(cell_ids),
+        "n_nonfinite_rows_excluded": 0,
     }
     if len(cell_ids) < 2:
         return empty
 
     per_cell: dict = {}
     obs_r2s, ext_r2s, obs_maes = [], [], []
+    n_nonfinite = 0
 
     for test_cell in cell_ids:
         df_feat, X, y_rul, kinds = featured[test_cell]
@@ -177,12 +267,26 @@ def rul_formula_baseline_lco(cell_data: dict, featured: "dict | None" = None) ->
         rul_true = np.asarray(y_rul, dtype=float)
 
         # The closed form, from the held-out cell's own measured quantities.
-        initial_cap = float(df_feat["capacity_ah"].iloc[0])
+        # The FIRST MEASURED capacity, not row 0's: a blank opening row would
+        # otherwise make eol_capacity — and with it every prediction — NaN.
+        capacity = pd.to_numeric(df_feat["capacity_ah"], errors="coerce")
+        measured = capacity.dropna()
+        initial_cap = float(measured.iloc[0]) if len(measured) else float("nan")
         eol_capacity = initial_cap * 0.80
-        fade = df_feat.loc[X.index, "fade_rate_50cy"].clip(lower=1e-6).to_numpy(dtype=float)
-        rul_pred = ((df_feat.loc[X.index, "capacity_ah"].to_numpy(dtype=float) - eol_capacity)
-                    / fade)
+        fade = np.asarray(
+            pd.to_numeric(df_feat.loc[X.index, _RUL_FADE], errors="coerce"), dtype=float
+        )
+        rul_pred = ((capacity.loc[X.index].to_numpy(dtype=float) - eol_capacity)
+                    / np.clip(fade, 1e-6, None))
         rul_pred = np.clip(rul_pred, 0.0, None)
+
+        # Rows this fold cannot score — a blank RUL label, a blank capacity or
+        # fade rate, a blank first capacity (→ NaN eol_capacity) — leave BOTH
+        # pools and are counted, never averaged in as a NaN.
+        finite = np.isfinite(rul_true) & np.isfinite(rul_pred)
+        n_nonfinite += int((~finite).sum())
+        obs_mask = obs_mask & finite
+        ext_mask = ext_mask & finite
 
         entry = {"pool": "none", "r2": None, "mae": None, "n_rows": int(len(X))}
         if obs_mask.sum() >= 2:
@@ -215,12 +319,18 @@ def rul_formula_baseline_lco(cell_data: dict, featured: "dict | None" = None) ->
         "rul_formula_baseline_mae": float(np.mean(obs_maes)) if obs_maes else None,
         "per_cell": per_cell,
         "n_cells": len(cell_ids),
+        "n_nonfinite_rows_excluded": n_nonfinite,
     }
 
 
 def _safe_r2(y_true, y_pred) -> "float | None":
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
+    # A non-finite input is "cannot be scored", not a number to average:
+    # sklearn's r2_score returns NaN for one without raising, so guarding here
+    # is what keeps a blank measurement out of a published headline.
+    if not (np.isfinite(y_true).all() and np.isfinite(y_pred).all()):
+        return None
     if len(y_true) < 2 or float(np.var(y_true)) <= 0.0:
         return None
     return float(r2_score(y_true, y_pred))

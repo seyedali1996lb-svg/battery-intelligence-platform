@@ -1,5 +1,6 @@
 """Literature-cited feature engineering: fade rate, dQ/dV, knee detection, CE/resistance trends, stress index."""
 
+from batlab.features import physics_calibration
 from batlab.features.dqdv import add_dqdv_features, extract_dqdv_features, simulate_vq_curve
 from batlab.features.engineering import (
     FEATURE_COLUMNS,
@@ -23,4 +24,5 @@ __all__ = [
     "simulate_vq_curve",
     "extract_dqdv_features",
     "add_dqdv_features",
+    "physics_calibration",
 ]

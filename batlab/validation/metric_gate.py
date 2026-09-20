@@ -35,6 +35,7 @@ drift_report() over metric history.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 GATE_SCHEMA_VERSION = 1
@@ -110,6 +111,20 @@ def check_metric(
     ceiling = expectation.get("ceiling")
     baseline = expectation.get("baseline")
     tolerance = float(expectation.get("tolerance", DEFAULT_BASELINE_TOLERANCE))
+
+    # A non-finite observation IS "not evaluable", never a number: NaN
+    # compares False against every floor, ceiling and tolerance, so letting one
+    # reach the rules below would pass the gate silently — the exact failure
+    # mode this module exists to prevent, and the shape the 2026-09-20 baseline
+    # regression would have taken had the caller handed the gate a NaN instead
+    # of converting it first.
+    if observed is not None:
+        try:
+            observed = float(observed)
+        except (TypeError, ValueError):
+            observed = None
+        if observed is not None and not math.isfinite(observed):
+            observed = None
 
     if observed is None:
         if expectation.get("allow_not_evaluable"):

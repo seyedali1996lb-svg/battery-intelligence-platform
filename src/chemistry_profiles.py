@@ -63,6 +63,21 @@ class ChemistryProfile:
     source_kind:  str = "upload"
     source_label: str = "Uploaded"
 
+    # The batlab LOADER's df.attrs["source"] value for this fleet — deliberately a
+    # different vocabulary from source_kind above ("severson2019" vs "severson",
+    # "synthetic" vs "synth", "oxford_pathdep_2020" vs "oxford") because the
+    # library's loaders declare the dataset KEY they read
+    # (batlab/datasets/schema.py's REQUIRED_ATTRS), not this app's display
+    # grouping. Added 2026-09-19: src/data_loader.build_battery() reads the NASA
+    # and synthetic CSVs under data/raw/ directly and never declared provenance,
+    # so its frames were non-conformant with the schema every batlab loader
+    # follows — invisible until batlab.features.physics_calibration started
+    # gating its eligibility on those attrs, at which point an undeclared frame
+    # would have silently lost the physics feature block the app had always had.
+    # tests/test_feature_environment_inputs.py pins these against the real
+    # loaders' constants, so this table cannot drift.
+    dataset_source: str = "uploaded"
+
     # Battery Passport identity fields — override in every subclass.
     nominal_capacity_kwh_key: str | None = None   # key into CELL_NOMINAL_KWH, or None
     passport_chemistry:       str = "Not specified in this demonstration"
@@ -102,6 +117,7 @@ class ChemistryProfile:
 class LFPSeversonProfile(ChemistryProfile):
     display_name    = "LFP (Severson 2019)"
     short_name      = "LFP"
+    dataset_source  = "severson2019"
     dqdv_applicable = False
     provenance      = "measured"
     dataset_citation = "Severson et al., Nature Energy 2019"
@@ -148,6 +164,7 @@ class LFPSeversonProfile(ChemistryProfile):
 class LiCoO2NASAProfile(ChemistryProfile):
     display_name    = "LiCoO2 (NASA PCoE)"
     short_name      = "LiCoO2"
+    dataset_source  = "nasa"
     dqdv_applicable = True
     provenance      = "measured"
     dataset_citation = "NASA PCoE Battery Aging Dataset, Saha & Goebel 2007"
@@ -209,6 +226,7 @@ class NCAOxfordProfile(ChemistryProfile):
     """
     display_name    = "NCA (Oxford Path-Dependent 2020)"
     short_name      = "NCA"
+    dataset_source  = "oxford_pathdep_2020"
     dqdv_applicable = False
     provenance      = "measured"
     dataset_citation = "Raj et al., Batteries & Supercaps 2020 (ODC-ODbL)"
@@ -272,6 +290,7 @@ class NCMNCAZhuProfile(ChemistryProfile):
     """
     display_name    = "NCM+NCA (Zhu 2022)"
     short_name      = "NCM+NCA"
+    dataset_source  = "zhu2022"
     dqdv_applicable = False   # per-cycle summaries only — no V(t) curves to integrate
     provenance      = "measured"
     dataset_citation = "Zhu et al., Nature Communications 2022 (CC BY 4.0)"
@@ -331,6 +350,7 @@ class LiCoOCalceProfile(ChemistryProfile):
     """
     display_name    = "LiCoO2 (CALCE CS2)"
     short_name      = "LiCoO2"
+    dataset_source  = "calce"
     dqdv_applicable = False   # loader reduces sheets to one row per cycle — no dense V-curves
     provenance      = "measured"
     dataset_citation = "CALCE CS2, University of Maryland (web.calce.umd.edu/batteries)"
@@ -381,6 +401,7 @@ class LiCoOCalceProfile(ChemistryProfile):
 class LiCoO2SyntheticProfile(ChemistryProfile):
     display_name    = "LiCoO2 (synthetic)"
     short_name      = "LiCoO2"
+    dataset_source  = "synthetic"
     dqdv_applicable = True
     provenance      = "synthetic"
     dataset_citation = "Physics-informed synthetic model"

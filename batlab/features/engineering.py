@@ -50,16 +50,20 @@ import pandas as pd
 
 from batlab.features.dqdv import add_dqdv_features
 
-# physics_calibration lives in src/ (the app-specific integration layer),
-# not batlab — batlab is a standalone, independently-citable research
-# library (see pyproject.toml: its own minimal dependency list, no PyBaMM,
-# no dependency on the app's sys.path setup) and every existing import
-# direction in this codebase is src/app -> batlab, never the reverse.
-# build_features() below imports physics_calibration lazily, inside the
-# function body, guarded by try/except, and only when a cell_id is actually
-# supplied -- so `pip install batlab` on its own (no src/ on sys.path, no
-# PyBaMM installed) still works exactly as it does today; only this app's
-# own pipeline (which has both) actually exercises that import path.
+# Physics calibration merged into the library in 0.2.0. It used to live in the
+# demo app's src/, and build_features() imported it opportunistically at
+# runtime -- which made these columns' POPULATION depend on whether src/ was on
+# sys.path, and therefore made the model's numbers depend on it too: the same
+# four NASA cells scored SOH R² 0.9580 (physics block absent) or 0.9471
+# (present) purely by launch method, measured 2026-09-19.
+#
+# It is now an intra-package import (batlab.features.physics_calibration) and
+# knows only the frame's own declared attrs, so one code path computes one set
+# of features in every environment -- wheel, clone, notebook, test. PyBaMM
+# remains an OPTIONAL EXTRA (pip install "battery-lab[physics]"), which is a
+# declared dependency being absent rather than an accident of sys.path, and it
+# only ever affects the display-only physics_spm_capacity_ah column (it is not
+# in FEATURE_COLUMNS), never a model input.
 PHYSICS_FEATURE_COLUMNS = [
     "physics_beta_sei",
     "physics_beta_lam",
@@ -87,7 +91,14 @@ PHYSICS_FEATURE_COLUMNS = [
 #     only on feature values, not on model training code.
 # Both now import it from here instead, so it is structurally impossible
 # for them to disagree with each other or with this module.
-FEATURE_VERSION = "v12-rul-label-provenance"
+#
+# v13-features-owned-physics (2026-09-19): physics calibration moved out of the
+# demo app's src/ and into this package. It is a value-changing bump in the
+# strict sense — the physics block is now computed by every environment, where
+# before its presence depended on sys.path, so published v12 numbers may have
+# come from either population. Every v12 baseline/registry row is superseded; the
+# measured deltas are recorded in docs/performance.md.
+FEATURE_VERSION = "v13-features-owned-physics"
 
 def build_features(
     df: pd.DataFrame, eol_threshold_pct: float = 80.0, cell_id: "str | None" = None,
@@ -330,17 +341,17 @@ def build_features(
     df = add_dqdv_features(df)
 
     # ── Physics calibration features (SEI/LAM decomposition) ──
-    # Lazy, guarded import — see the module-level note above
-    # PHYSICS_FEATURE_COLUMNS for why this isn't a top-level import.
+    # In-package (see the module-level note above): this import cannot fail for
+    # an environment reason, so the guard is now purely about the per-cell fit.
     physics_available = True
     try:
-        from physics_calibration import calibrated_feature_series
+        from batlab.features.physics_calibration import calibrated_feature_series
         physics_df = calibrated_feature_series(df, cell_id)
     except Exception:
-        # src/ not on sys.path, PyBaMM/scipy import failure, or any other
-        # environment gap -- physics features are simply absent (NaN),
-        # same graceful-degradation contract as every other optional
-        # feature block above (c_rate, temperature, resistance, ...).
+        # A numerical failure or an unexpected frame shape for this cell --
+        # physics features are simply absent (NaN), the same graceful-
+        # degradation contract as every other optional feature block above
+        # (c_rate, temperature, resistance, ...).
         physics_available = False
         physics_df = pd.DataFrame(
             {col: np.full(len(df), np.nan) for col in PHYSICS_FEATURE_COLUMNS},
@@ -349,13 +360,17 @@ def build_features(
     for col in PHYSICS_FEATURE_COLUMNS:
         df[col] = physics_df[col]
 
-    # Whether the physics-calibrated block was actually available is an INPUT to
-    # the model, not a footnote: `physics_calibration` lives in the demo app's
-    # src/, so the same call yields measurably different numbers depending on
-    # whether src/ happens to be importable — SOH R² 0.9580 vs 0.9471 on the four
-    # NASA cells (measured 2026-09-19). Recording it on the frame is what lets
-    # run_lco() report which population a number came from and key the fold cache
-    # on it, so the two can never replay each other's folds.
+    # Whether the physics-calibrated block was actually computed is an INPUT to
+    # the model, not a footnote — its presence changes feature values, so two
+    # frames that disagree about it must never share a fold or a number.
+    #
+    # Note the direction this changed in 0.2.0: it used to vary with whether the
+    # demo app's src/ was importable (SOH R² 0.9580 vs 0.9471 on the same four
+    # NASA cells, measured 2026-09-19) — a coin flip, not an input. Now that the
+    # calibration lives in the library it no longer tracks the environment; what
+    # it still truthfully reports is per-cell provenance (a cell with too few
+    # usable cycles, or a bare frame built outside a loader, gets no physics
+    # block), which run_lco() surfaces and the fold cache keys on.
     df.attrs["physics_features"] = physics_available
 
     return df
@@ -418,11 +433,13 @@ FEATURE_COLUMNS = [
     # c_rate_rolling_10cy itself is absent -- same cells that don't get
     # stress_index/dod_proxy.
     "usage_profile_code",
-    # Physics calibration (src/physics_calibration.py) — per-cell scipy fit
+    # Physics calibration (batlab.features.physics_calibration) — scipy fit
     # of a two-term degradation model against this cell's OWN measured
     # history, refit causally every 25 cycles (no future leakage). Only
-    # populated for NASA/Severson cells; NaN (dropped by get_model_matrix)
-    # for everything else.
+    # populated for cells whose (source, chemistry) has a PyBaMM anchor in
+    # ANCHOR_PARAM_SETS (NASA/LiCoO2, Severson/LFP) and enough usable cycles;
+    # NaN (dropped by get_model_matrix) for everything else — the same rule in
+    # every environment, since 0.2.0.
     #   physics_beta_sei: SEI/LLI-driven sqrt(n) capacity-loss rate.
     #   physics_beta_lam: active-material-loss linear-in-n rate.
     #   physics_k_r: SEI resistance growth rate (independent corroborating

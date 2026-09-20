@@ -62,16 +62,17 @@ print(lco["fold_cache"])               # what was replayed vs refitted
 Leave-cell-out holds out **entire cells** — the model is scored only on cells it
 never saw, which is the question a deployment actually asks. The same data and
 model under a naive row-level split reports `R² ≈ 1.00`; the honest number here
-is ≈ `0.96` through this loader. That gap is reproduced live in
+is `0.947` through this library's loader. That gap is reproduced live in
 `notebooks/02_data_leakage.ipynb`.
 
 One output key is worth looking at before comparing your number to anyone
-else's: `physics_features`. `build_features()` uses a physics-calibration feature
-block when `physics_calibration` is importable, and that module ships with the
-demo application rather than with this library — so the same call gives SOH R²
-**0.9580** installed on its own and **0.9471** when the demo app's `src/` is on
-the path. Both are honest; they are simply different populations, and the flag is
-how you know which one you are reading. See
+else's: `physics_features`. It reports whether **every** cell in the run carried
+the physics-calibration feature block (`PHYSICS_FEATURE_COLUMNS`, the SEI/LAM
+decomposition) — which depends on the data (whether a fleet's chemistry has a
+PyBaMM anchor and the cell has enough usable cycles), not on the environment:
+since 0.2.0 that block ships with this library, so the same call gives the same
+soh_r2 whether or not the demo app is on your path. Two runs are comparable
+when they agree on the flag. See
 [API stability](api_stability.md#environment-dependent-inputs).
 
 Two things in that output are worth reading carefully, because they are the

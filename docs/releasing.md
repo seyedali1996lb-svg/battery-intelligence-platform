@@ -12,7 +12,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-The [`Release` workflow](../.github/workflows/release.yml) then builds the sdist
+The `Release` workflow (`.github/workflows/release.yml`) then builds the sdist
 and wheel, runs `twine check`, **fails if the tag, `pyproject.toml` and the
 wheel's own metadata disagree**, attaches the artifacts to a GitHub release, and
 publishes to PyPI when `PYPI_API_TOKEN` is configured.

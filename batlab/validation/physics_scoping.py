@@ -41,8 +41,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-# Sources whose loaders populate the physics features (physics_calibration's
-# own eligibility: cells with enough history to refit causally).
+# Sources whose loaders populate the physics features. Keyed in THIS module's
+# dataset-key vocabulary ("nasa"/"severson", as everywhere else in the registry
+# and these tables) — not the loaders' df.attrs["source"] vocabulary that
+# physics_calibration.ANCHOR_PARAM_SETS uses ("nasa"/"severson2019"), which is
+# the eligibility rule itself: a (source, chemistry) pair with a PyBaMM anchor
+# AND enough usable history to refit the two-term model causally.
 PHYSICS_FEATURE_SOURCES = ("nasa", "severson")
 
 PROVENANCE_STATEMENT = (

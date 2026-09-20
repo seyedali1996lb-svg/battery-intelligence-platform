@@ -97,7 +97,7 @@ to an unseen cell, only to interpolate between cycles it has effectively already
 own worked example (`notebooks/02_data_leakage.ipynb`) reproduces this on four NASA PCoE cells:
 a naive row-level split and a held-out-cycle split of the same pooled data both report SOH
 R² ≈ 1.00, while leave-cell-out — training on three cells, testing on a fourth held out
-entirely — reports R² = 0.958 on the identical data and model (0.745 through the production
+entirely — reports R² = 0.947 on the identical data and model (0.745 through the production
 application's data path, which preprocesses the same cells differently; both numbers are
 honest and they are not interchangeable). The gap is not a minor calibration difference; it
 is the difference between a number that describes the model's actual ability to generalize

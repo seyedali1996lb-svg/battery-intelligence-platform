@@ -31,7 +31,14 @@ GATE_FLEET_CELL_IDS = ["Cell1", "Cell3", "Cell5", "Cell6", "Cell8"]
 # Metrics the gate tracks on the fixture fleet. Everything else run_lco()
 # returns is surfaced as UNTRACKED (a new headline number should be a
 # conscious decision to give it a floor).
-GATE_TRACKED_METRICS = ["soh_r2", "rul_r2"]
+#
+# baseline_soh_r2 is tracked since 2026-09-20: it is the number every SOH claim
+# here is stated AGAINST ("+X over the trivial baseline"), and it was the one
+# headline that could disappear without any gate noticing — a fleet with a
+# single blank target row made the trivial LinearRegression raise, app/_data.py's
+# bare `except` recorded None, and the claim lost its floor silently. Gating a
+# metric is how this project says a number is part of the promise.
+GATE_TRACKED_METRICS = ["soh_r2", "rul_r2", "baseline_soh_r2"]
 
 _HERE = Path(__file__).resolve().parent
 EXPECTATIONS_PATH = _HERE / "metric_gate_expectations.json"
@@ -70,19 +77,44 @@ def run_gate_fleet_lco(cell_data: dict | None = None) -> dict:
     )
 
 
-def run_metric_gate(cell_data: dict | None = None) -> dict:
-    """Build (or accept) the fixture fleet, run LCO, check the gate.
+def compute_fleet_baseline(cell_data: dict | None = None) -> dict:
+    """The trivial cycle_number -> SOH floor for the SAME cells run_lco grades.
 
-    Returns {gate, observed, lco} — `gate` is evaluate_gate()'s dict; the
-    verdict string is gate["verdict"].
+    The cells are handed to baseline_lco_r2() in whatever shape the caller has
+    them — build_battery()'s {"cell_id": {"cycles": df}} wrappers included,
+    which is the shape run_lco() takes and the shape this function is called
+    with (the trivial baselines unwrap it the same way run_lco does; before
+    2026-09-20 they did not, so the gate's own fleet raised AttributeError on a
+    dict the moment anyone tried).
+
+    Returns the full result dict — the scalar the gate pins plus the fold/target
+    counts a reader needs to know the floor rests on the whole fleet.
+    """
+    from batlab.validation.trivial_baseline import baseline_lco_r2
+
+    cells = cell_data if cell_data is not None else build_gate_fleet()
+    return baseline_lco_r2(cells)
+
+
+def run_metric_gate(cell_data: dict | None = None) -> dict:
+    """Build (or accept) the fixture fleet, run LCO + its baseline, check the gate.
+
+    Returns {gate, observed, lco, baseline} — `gate` is evaluate_gate()'s dict;
+    the verdict string is gate["verdict"].
     """
     from batlab.validation.metric_gate import evaluate_gate, load_expectations
 
-    observed_raw = run_gate_fleet_lco(cell_data)
+    # Built once and handed to both measurements: run_lco(use_fold_cache=False)
+    # and the baseline must grade the identical cells, or the "+X over the
+    # trivial baseline" the gate compares would be two different fleets.
+    cells = cell_data if cell_data is not None else build_gate_fleet()
+    observed_raw = run_gate_fleet_lco(cells)
+    baseline = compute_fleet_baseline(cells)
+    observed_raw = {**observed_raw, "baseline_soh_r2": baseline["baseline_soh_r2"]}
     expectations = load_expectations(EXPECTATIONS_PATH)
     observed = {k: observed_raw.get(k) for k in GATE_TRACKED_METRICS}
     gate = evaluate_gate(observed, expectations)
-    return {"gate": gate, "observed": observed, "lco": observed_raw}
+    return {"gate": gate, "observed": observed, "lco": observed_raw, "baseline": baseline}
 
 
 def load_expectations_json() -> dict:

@@ -522,12 +522,16 @@ def test_workbench_manual_view_switch_has_no_crash(isolated_db):
     # Severson S-b1c2 (Tier-0 v12): NO cell reaches EOL in-window, so its RUL
     # labels are formula extrapolations — RUL is now withheld and the badge
     # must say WHY, not show a number with a caveat.
-    ("severson", "S-b1c2", "n=12", "RUL not evaluable"),
+    # n=46, not n=12: the fleet was expanded to all 46 batch-1 records in the
+    # 2026-09 expansion (the 12 the earlier loaders took became 46), and the
+    # badge reports the folds actually run. Left at n=12 this expectation
+    # fails against a correct page.
+    ("severson", "S-b1c2", "n=46", "RUL not evaluable"),
 ])
 def test_overview_hero_card_shows_lco_sample_size(isolated_db, data_mode, cell, expected_n, expected_phrase):
     """
     Regression test (Battery Engineering Accuracy review finding): n=4
-    (NASA) / n=12 (Severson) leave-cell-out validation is a thin population
+    (NASA) / n=46 (Severson) leave-cell-out validation is a thin population
     for any fleet-scale reliability claim -- this used to only be
     discoverable in a settings-page footnote. The confidence badge next to
     every RUL number on Overview must now carry the actual cell count — and

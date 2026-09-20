@@ -306,6 +306,7 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                 # carry the same honest accuracy framing as the reference fleets.
                 try:
                     from batlab.validation.trivial_baseline import baseline_lco_r2
+                    from _data import _finite_or_none
                     # Reuse the feature frames already built above — rebuilding
                     # them here would re-run the whole pipeline (incl. the
                     # PyBaMM-backed physics calibration) a second time.
@@ -313,28 +314,48 @@ def _run_analysis_button(df_raw: "pd.DataFrame", summary: dict):
                         {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
                         featured={cid: pair[0] for cid, pair in cell_featured.items()},
                     )
+                    _up_r2 = _finite_or_none(_up_base["baseline_soh_r2"])
                     _up_lco_metrics = dict(lco)
-                    _up_lco_metrics["baseline_soh_r2"] = _up_base["baseline_soh_r2"]
+                    _up_lco_metrics["baseline_soh_r2"] = _up_r2
                     _up_lco_metrics["baseline_per_cell"] = _up_base["per_cell"]
-                except Exception:
+                    # On the bundle too, not only in the registry dict: the
+                    # reference-fleet path writes both, and an uploaded fleet
+                    # showing no baseline beside the same model card is a
+                    # difference in bookkeeping, not in validation.
+                    up_bndl["metrics"]["baseline_soh_r2"] = _up_r2
+                    up_bndl["metrics"]["baseline_lco_per_cell"] = _up_base["per_cell"]
+                    up_bndl["metrics"]["baseline_soh_r2_error"] = None
+                except Exception as _exc:
+                    # Disclosed rather than silently absent (see app/_data.py's
+                    # _layer_validation for the incident behind this rule).
+                    _up_err = f"{type(_exc).__name__}: {_exc}"
                     _up_lco_metrics = dict(lco)
                     _up_lco_metrics.setdefault("baseline_soh_r2", None)
                     _up_lco_metrics.setdefault("baseline_per_cell", None)
+                    _up_lco_metrics["baseline_soh_r2_error"] = _up_err
+                    up_bndl["metrics"]["baseline_soh_r2"] = None
+                    up_bndl["metrics"]["baseline_soh_r2_error"] = _up_err
                 # RUL formula baseline — the honest "did the model beat the
                 # label-generating formula?" denominator for uploaded data too.
                 try:
                     from batlab.validation.trivial_baseline import rul_formula_baseline_lco
+                    from _data import _finite_or_none
                     _up_fb = rul_formula_baseline_lco(
                         {cid: cell["cycles"] for cid, cell in battery["cells"].items()},
                         featured={cid: pair[0] for cid, pair in cell_featured.items()},
                     )
-                    _up_lco_metrics["rul_formula_baseline_r2"] = _up_fb["rul_formula_baseline_r2"]
+                    _up_fb_r2 = _finite_or_none(_up_fb["rul_formula_baseline_r2"])
+                    _up_lco_metrics["rul_formula_baseline_r2"] = _up_fb_r2
                     _up_lco_metrics["rul_baseline_pool"] = _up_fb["rul_baseline_pool"]
-                    up_bndl["metrics"]["rul_formula_baseline_r2"] = _up_fb["rul_formula_baseline_r2"]
+                    up_bndl["metrics"]["rul_formula_baseline_r2"] = _up_fb_r2
                     up_bndl["metrics"]["rul_baseline_pool"] = _up_fb["rul_baseline_pool"]
-                except Exception:
+                    up_bndl["metrics"]["rul_formula_baseline_r2_error"] = None
+                except Exception as _exc:
+                    _up_fb_err = f"{type(_exc).__name__}: {_exc}"
                     _up_lco_metrics.setdefault("rul_formula_baseline_r2", None)
                     _up_lco_metrics.setdefault("rul_baseline_pool", None)
+                    _up_lco_metrics["rul_formula_baseline_r2_error"] = _up_fb_err
+                    up_bndl["metrics"]["rul_formula_baseline_r2_error"] = _up_fb_err
 
                 up_bndl["metrics"]["experiment_run_id"] = _reg.log_run(
                     org_id=st.session_state["auth_org_id"],

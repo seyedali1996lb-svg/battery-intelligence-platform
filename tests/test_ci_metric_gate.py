@@ -62,6 +62,74 @@ def test_run_lco_result_carries_fingerprint():
         assert pkg in fp["environment"]
 
 
+def test_gate_fleet_baseline_is_tracked_and_whole():
+    """baseline_soh_r2 is part of the promise now (see GATE_TRACKED_METRICS):
+    every fold scored, no blank target row set aside, and the number the gate
+    pins is the one the model's advantage is measured against."""
+    import math
+
+    import metric_gate_fleet as _mgf
+
+    baseline = _mgf.compute_fleet_baseline()
+    assert baseline["n_cells"] == len(_mgf.GATE_FLEET_CELL_IDS)
+    assert baseline["n_folds_scored"] == len(_mgf.GATE_FLEET_CELL_IDS)
+    assert baseline["n_folds_skipped"] == 0
+    assert baseline["n_nonfinite_target_rows"] == 0
+    assert math.isfinite(baseline["baseline_soh_r2"])
+
+
+def test_blank_target_row_does_not_delete_the_baseline():
+    """The regression this tracking exists to catch.
+
+    One blank capacity row used to make the trivial LinearRegression raise
+    ("Input y contains NaN"), which app/_data.py's bare `except` recorded as
+    None — a headline that stopped being computable, silently. On Severson it
+    happened twice (S-b1c0 cycle 11, S-b1c18 cycle 39). Here the row is set
+    aside, counted, every fold is still scored, and the value stays inside the
+    declared tolerance — while the old outcomes (None, or a NaN handed to the
+    gate) both FAIL."""
+    import math
+
+    import numpy as np
+
+    import metric_gate_fleet as _mgf
+    from batlab.features.engineering import build_features, get_model_matrix
+    from batlab.validation.lco import unwrap_cell_data
+    from batlab.validation.metric_gate import check_metric
+
+    cells = _mgf.build_gate_fleet()
+    raw = unwrap_cell_data(cells)
+    victim = sorted(raw)[0]
+    df = raw[victim].copy()
+    blank_row = df.index[len(df) // 2]
+    df.loc[blank_row, ["capacity_ah", "soh_pct"]] = float("nan")
+    poisoned = dict(raw)
+    poisoned[victim] = df
+
+    clean = _mgf.compute_fleet_baseline(cells)
+    dirty = _mgf.compute_fleet_baseline(poisoned)
+
+    assert dirty["n_nonfinite_target_rows"] == 1
+    assert dirty["n_folds_scored"] == clean["n_folds_scored"]
+    assert math.isfinite(dirty["baseline_soh_r2"])
+    # Measured |delta| is ~8e-4 against a 5% tolerance (0.088) — the row is
+    # dropped, not imputed, so the number barely moves.
+    assert abs(dirty["baseline_soh_r2"] - clean["baseline_soh_r2"]) < 0.01
+
+    expectation = _mgf.load_expectations_json()["metrics"]["baseline_soh_r2"]
+    assert check_metric("baseline_soh_r2", clean["baseline_soh_r2"], expectation)["verdict"] == "pass"
+    assert check_metric("baseline_soh_r2", dirty["baseline_soh_r2"], expectation)["verdict"] == "pass"
+    # The two ways this used to disappear, both caught.
+    assert check_metric("baseline_soh_r2", None, expectation)["verdict"] == "fail"
+    assert check_metric("baseline_soh_r2", float("nan"), expectation)["verdict"] == "fail"
+
+    # Why blanking the row cannot move the model's own number either: the same
+    # row is dropped from run_lco's model matrix (dod_proxy = capacity/initial
+    # is a feature), so the baseline and the model are on the same population.
+    _, y_soh, _ = get_model_matrix(build_features(df, cell_id=victim))
+    assert not np.isnan(np.asarray(y_soh, dtype=float)).any()
+
+
 @pytest.mark.metric_gate
 def test_ci_metric_gate_passes():
     """THE gate: fixture-fleet headline numbers within declared floors and

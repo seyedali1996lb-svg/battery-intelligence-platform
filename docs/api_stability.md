@@ -40,7 +40,7 @@ A deprecated public name:
 1. **keeps working**, and returns exactly what it returned before;
 2. emits a `DeprecationWarning` naming what to use instead, the version that
    deprecated it, and the version that removes it;
-3. is listed in [`CHANGELOG.md`](../CHANGELOG.md) with the same three facts;
+3. is listed in `CHANGELOG.md` (repository root) with the same three facts;
 4. survives **at least one minor release** before removal, and is removable in a
    single commit on the announced version — no behavioural shim hiding behind an
    expired warning.
@@ -78,21 +78,35 @@ def run_lco_legacy(cells): ...
 ## Environment-dependent inputs
 
 One class of input is not in the data and not in the code: **what happens to be importable**.
-`build_features()` opportunistically uses the physics-calibration feature block, whose module
-lives in the demo application's `src/`, not in this library. A pip-installed `batlab` therefore
-produces different numbers from a checkout of the demo app — measured on four NASA cells,
-SOH R² **0.9580** without the block and **0.9471** with it.
+Until 0.2.0 that reached into a feature column — `build_features()` imported the
+physics-calibration block from the demo application's `src/`, so a pip-installed `batlab`
+produced different numbers from a checkout of the demo app: on four NASA cells, SOH R²
+**0.9580** without the block and **0.9471** with it. A library whose numbers move with the
+caller's import path is not a library.
+
+The block now ships **inside the library** (`batlab.features.physics_calibration`, feature set
+`v13-features-owned-physics`), so there is one number in every environment — measured
+bit-identical (`soh_r2 = 0.9470975121947384`) in a bare process and in an app-importable one,
+with `tests/test_feature_environment_inputs.py` pinning it, including a subprocess run with no
+`src/` anywhere on the path.
+
+What remains environment-dependent in that block is a **declared optional extra**: PyBaMM
+(`pip install "battery-lab[physics]"`) supplies only `physics_spm_capacity_ah`, a display-only
+column that is not in `FEATURE_COLUMNS` and therefore cannot move a model number.
 
 That is handled rather than hidden:
 
+- eligibility reads the frame's own schema attrs (`df.attrs["source"]` / `["chemistry"]`, both
+  `REQUIRED_ATTRS`) against `physics_calibration.ANCHOR_PARAM_SETS`, so the population is a
+  property of the DATA — a loader fix or one different row can change it, a `sys.path` cannot;
 - every result carries `physics_features: bool` (`batlab.results.LcoResult`), true only when
-  **every** cell in the run carried the block;
+  **every** cell in the run was calibrated; a mixed fleet is never rounded up;
 - two runs are comparable only when they agree on that flag — the same rule as
   `FEATURE_VERSION`, applied to the one input a feature version cannot see;
 - the leave-cell-out fold cache keys on it, so a fold fitted with the block is never replayed
   for a run that did not have it;
-- `METHODOLOGY.md` §3 states the measured difference and the plan to move the module into the
-  library (which would be a `FEATURE_VERSION` bump, not a quiet change).
+- `METHODOLOGY.md` §3 carries the measured before/after and the loader-side fix that keeps the
+  demo app on the library's path (`src/data_loader.build_battery` now declares provenance).
 
 ## What this policy does not cover: the numbers
 

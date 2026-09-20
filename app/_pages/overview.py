@@ -265,7 +265,7 @@ def page_overview(df: pd.DataFrame, split_cycle: int, cell_id: str,
         cell_fold = _lco_per_cell.get(cell_id, {})
         fold_r2   = cell_fold.get("rul_r2", None)
         # Sample-size honesty (Battery Engineering Accuracy review finding):
-        # leave-cell-out validation on n=4 (NASA) or n=12 (Severson) cells is
+        # leave-cell-out validation on n=4 (NASA) or n=46 (Severson) cells is
         # a thin population for any fleet-level reliability claim -- this
         # used to only appear in a settings-page footnote. Now shown
         # directly on the badge next to every RUL number, not just on request.

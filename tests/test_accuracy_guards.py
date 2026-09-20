@@ -1,8 +1,8 @@
 """Regression guard: the platform must never produce a random row-split metric.
 
 The whole credibility story of this project is "row-level shuffle split gives
-≈ 1.00 (wrong question) vs leave-cell-out gives 0.958 (right question)" —
-0.998/0.806 with the pre-v12 feature set, same story. That
+≈ 1.00 (wrong question) vs leave-cell-out gives 0.947 (right question)" —
+0.958 with the pre-v13 feature set, same story. That
 story only holds if every training/evaluation path in the live code actually
 uses LCO or a chronological holdout — never a random row split. This test
 asserts that property for the library paths a deployed app would actually hit.
@@ -49,7 +49,7 @@ def test_run_lco_is_the_only_eval_path_in_lco_module():
 def test_no_random_row_split_inside_run_lco():
     """run_lco must not internally fall back to a random (shuffle=True) row split.
 
-    This is the structural guard behind the ≈1.00-vs-0.958 honesty claim. If a
+    This is the structural guard behind the ≈1.00-vs-0.947 honesty claim. If a
     future edit silently introduced a random row split anywhere in this module,
     this test should catch it: a random split on two correlated synthetic cells
     would not reliably reproduce the leave-cell-out per-cell fold structure.

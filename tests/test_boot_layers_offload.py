@@ -201,6 +201,27 @@ def test_status_snapshot_is_a_copy():
 # ── Placeholders + layer wiring ────────────────────────────────────────────
 
 
+def test_baseline_absence_is_explained_not_left_blank():
+    """A trivial baseline can come back without a number WITHOUT raising (every
+    fold unscorable returns NaN), and NaN -> None at the metrics seam is
+    indistinguishable from "not computed yet". The reason must travel with the
+    absence: the fold notes are lifted into one string."""
+    assert _data._baseline_absence_reason({"baseline_soh_r2": 0.603, "per_cell": {}}) is None
+
+    reason = _data._baseline_absence_reason({
+        "baseline_soh_r2": float("nan"),
+        "n_cells": 2,
+        "per_cell": {
+            "A": {"baseline_soh_r2": None, "note": "not scored: no soh_pct column"},
+            "B": {"baseline_soh_r2": None, "note": "not scored: one row only"},
+        },
+    })
+    assert reason and "no soh_pct column" in reason and "one row only" in reason
+
+    single = _data._baseline_absence_reason({"baseline_soh_r2": float("nan"), "n_cells": 1})
+    assert single and "fewer than two cells" in single
+
+
 def test_mark_layers_pending_sets_every_key_explicitly():
     bndl = {"metrics": {}}
     _data._mark_layers_pending(bndl)

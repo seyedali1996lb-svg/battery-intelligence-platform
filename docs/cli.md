@@ -67,8 +67,8 @@ loading batlab.datasets.nasa:load_nasa_cells ...
 leave-cell-out validation (seed=42) ...
 
 leave-cell-out (new-cell generalization)
-  SOH R²   0.9580   MAE 0.8980
-  RUL R²   0.7614   MAE 7.5705
+  SOH R²   0.9471   MAE 0.9875
+  RUL R²   0.4216   MAE 8.6698
   folds    0 reused / 4 fitted (cache on)
 ```
 
@@ -83,7 +83,7 @@ leave-cell-out (new-cell generalization)
 `RUL R²` is printed only when the run's `rul_reliable` flag is true. When it is
 not, the CLI says **not evaluable** and names the observed-label count, because
 "we cannot measure this on this fleet" and "we measured it and it was bad" are
-different facts — see [`METHODOLOGY.md`](../METHODOLOGY.md) §2a.
+different facts — see `METHODOLOGY.md` §2a (repository root).
 
 ## Exit codes
 

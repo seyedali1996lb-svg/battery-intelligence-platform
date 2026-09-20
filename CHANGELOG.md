@@ -14,7 +14,54 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **Physics calibration is part of the library, not of the demo application.**
+  `batlab.features.physics_calibration` (with `src/physics_calibration.py` kept as a thin
+  re-export shim that registers the app's mechanism classifier). `build_features()` used to import
+  that module opportunistically from the app's `src/`, which made a feature column — and therefore
+  the model's numbers — depend on the caller's `sys.path`: the same four NASA cells scored SOH R²
+  **0.9580** in a pip-installed process and **0.9471** with the app importable. Eligibility now
+  reads the frame's own declared `source`/`chemistry` attrs (`ANCHOR_PARAM_SETS`), so the
+  population is a property of the data, and `register_anchor_param_set()` lets a caller extend it.
+  PyBaMM stays an optional extra (`battery-lab[physics]`) and now affects only the display-only
+  `physics_spm_capacity_ah` column.
+- **`FEATURE_VERSION` is `v13-features-owned-physics`.** A deliberate, value-changing bump: `v12`
+  numbers may have come from either population. It invalidates the fold cache and every cached
+  bundle, and supersedes the earlier baselines — the measured deltas are recorded in
+  [`docs/performance.md`](docs/performance.md). There is now one number per environment.
+- **The demo application's loader declares provenance** (`src/data_loader.build_battery()` sets
+  `df.attrs["source"]` / `["chemistry"]` from the app's `ChemistryProfile` classifier, via the new
+  profile field `dataset_source`). The batlab schema always required these attrs; the omission was
+  invisible until the physics block began gating on them.
+
+### Fixed
+
+- **A fleet's trivial baseline can no longer vanish into `None`.** A blank measurement row in a
+  per-cycle summary (Severson's `S-b1c0` cycle 11 and `S-b1c18` cycle 39 carry an empty capacity
+  column, so `soh_pct` is blank with it) made `baseline_lco_r2()`'s least-squares fit raise —
+  sklearn's `LinearRegression` rejects a NaN target while `r2_score` returns NaN for one without
+  raising — and the app's defensive `except` recorded `None`. On the 46-cell Severson fleet that
+  deleted the denominator of every "+X over the trivial baseline" claim, silently. Both trivial
+  baselines (`baseline_lco_r2`, `rul_formula_baseline_lco`) now select the rows they can score,
+  report what they set aside (`n_nonfinite_target_rows` / `n_nonfinite_rows_excluded`) and why
+  (per-fold `note`), and never return a non-finite headline (`_safe_r2` rejects non-finite input).
+  They also accept the `{"cycles": df}` cell shape `run_lco()` accepts, so one dict can be handed
+  to both — which is what the metric gate now does. Severson's restored floor is **−0.328**, all
+  46 folds scored; no published baseline moved (NASA's `0.6030539120231699` and the CI fixture
+  fleet's value are both bit-identical — see [`docs/performance.md`](docs/performance.md)).
+- **A failed baseline is disclosed, not swallowed.** `app/_data.py` and the upload path in
+  `app/_pages/import_page.py` record the exception text in `metrics["baseline_soh_r2_error"]` /
+  `["rul_formula_baseline_r2_error"]` (on the bundle *and* in the registry's `lco_metrics`), and
+  convert a non-finite baseline to `None` at the seam rather than storing a NaN the UI would
+  render as a number.
+- **`check_metric()` no longer passes on a NaN observation.** NaN compares False against every
+  floor, ceiling and tolerance, so one reached the gate as a silent pass; it is now treated
+  exactly like `None` (not evaluable), which is what rule 3 already said it meant.
+- **The harness reports its trend baseline per cell.** `lco_trend_per_cell` read a key the trivial
+  baseline does not produce (`r2`), so it was `None` for every cell of every fleet. The counts
+  behind the floor (`n_folds_scored` / `n_folds_skipped` / `n_nonfinite_target_rows`) now travel
+  with it.
 
 ## [0.2.0] — 2026-09-19
 

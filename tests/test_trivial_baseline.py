@@ -1,11 +1,24 @@
 """Unit tests for batlab.validation.trivial_baseline — the honest accuracy
 denominator (how much of a model's R² a dumb cycle_number->SOH line already
-explains under the same leave-cell-out folds)."""
+explains under the same leave-cell-out folds).
+
+A second group covers the blank-measurement class: a cell summary can carry a
+row with no capacity in it (Severson's S-b1c0 at cycle 11 and S-b1c18 at cycle
+39 do), and sklearn's LinearRegression RAISES on a NaN target while r2_score
+returns NaN for one. Both used to reach the mean, which is how a real fleet's
+baseline became a silent None in the app and could have become a NaN headline
+anywhere that checked `is not None`.
+"""
 
 import numpy as np
 import pandas as pd
 
-from batlab.validation.trivial_baseline import baseline_lco_r2
+from batlab.features.engineering import build_features
+from batlab.validation.trivial_baseline import (
+    _safe_r2,
+    baseline_lco_r2,
+    rul_formula_baseline_lco,
+)
 from batlab.validation.lco import run_lco
 
 
@@ -101,3 +114,122 @@ def test_baseline_can_be_negative_when_cells_have_opposing_trends():
     cells = {"fast": _df(0.004, 2.0), "slow": _df(0.0005, 1.6)}
     base = baseline_lco_r2(cells)
     assert np.isfinite(base["baseline_soh_r2"])
+
+
+# ── Blank measurements (NaN targets) ───────────────────────────────────────
+
+
+def _blank_row(cells, cell_id, row=5):
+    """A copy of `cells` with one row's measurement blanked, the way Severson's
+    S-b1c0 (cycle 11) and S-b1c18 (cycle 39) carry an empty capacity column."""
+    out = {cid: df.copy() for cid, df in cells.items()}
+    df = out[cell_id]
+    df.loc[df.index[row], ["capacity_ah", "soh_pct"]] = float("nan")
+    return out
+
+
+def test_baseline_tolerates_a_blank_target_row():
+    """A blank target used to raise (LinearRegression: "Input y contains NaN"),
+    which the app's bare except turned into a silent None baseline. The row is
+    now set aside, counted, and the fold it belonged to is still scored."""
+    cells = _cells()
+    result = baseline_lco_r2(_blank_row(cells, "A"))
+
+    assert np.isfinite(result["baseline_soh_r2"])
+    assert result["n_nonfinite_target_rows"] == 1
+    assert result["n_folds_scored"] == 2
+    assert result["n_folds_skipped"] == 0
+    assert result["per_cell"]["A"]["n_rows"] == len(cells["A"]) - 1
+
+
+def test_blank_target_row_is_excluded_not_imputed():
+    """Setting the row aside must equal deleting it: the trivial line neither
+    fills a value in nor lets a NaN into the mean."""
+    cells = _cells()
+    blanked = _blank_row(cells, "A")
+    deleted = {
+        cid: (df.drop(df.index[5]) if cid == "A" else df)
+        for cid, df in cells.items()
+    }
+
+    assert baseline_lco_r2(blanked)["baseline_soh_r2"] == baseline_lco_r2(deleted)["baseline_soh_r2"]
+
+
+def test_baseline_reports_an_unscorable_fold_instead_of_averaging_nan():
+    """When NOTHING can be scored the fold is reported with a reason; NaN comes
+    back only as 'no fold scored at all', never as a fold that entered the mean."""
+    cells = _cells()
+    cells["B"] = cells["B"].copy()
+    cells["B"]["soh_pct"] = float("nan")
+
+    result = baseline_lco_r2(cells)
+
+    assert result["n_folds_scored"] == 0
+    assert result["n_folds_skipped"] == 2
+    assert result["per_cell"]["A"]["baseline_soh_r2"] is None
+    assert "not scored" in result["per_cell"]["A"]["note"]
+    assert result["n_nonfinite_target_rows"] == len(cells["B"])
+    # NaN means "no fold could be scored" — the app converts that to None.
+    assert result["baseline_soh_r2"] != result["baseline_soh_r2"]
+
+
+def test_baseline_accepts_the_wrapper_cell_shape():
+    """build_battery()/the dataset loaders hand out {"cell_id": {"cycles": df}}.
+    run_lco() unwraps that shape, and the metric gate passes the SAME dict to
+    run_lco and to this baseline — which used to raise AttributeError ('dict'
+    object has no attribute 'sort_values') the moment anyone wired the two
+    together."""
+    cells = _cells()
+    wrapped = {cid: {"cell_id": cid, "cycles": df} for cid, df in cells.items()}
+
+    assert (
+        baseline_lco_r2(wrapped)["baseline_soh_r2"]
+        == baseline_lco_r2(cells)["baseline_soh_r2"]
+    )
+
+
+def test_rul_formula_baseline_never_returns_a_nan_headline():
+    """A blank fade rate, a blank capacity, or a blank opening capacity (which
+    used to make eol_capacity NaN and with it every prediction) must not reach
+    the headline: the result is a number or an explicit 'none' pool."""
+    cells = _cells()
+    frames = {cid: build_features(df, cell_id=cid) for cid, df in cells.items()}
+    frames["A"] = frames["A"].copy()
+    frames["A"].loc[frames["A"].index[5], "fade_rate_50cy"] = float("nan")
+
+    poisoned_fade = rul_formula_baseline_lco(cells, featured=frames)
+    assert poisoned_fade["n_nonfinite_rows_excluded"] == 1
+    assert poisoned_fade["rul_formula_baseline_r2"] is None or np.isfinite(
+        poisoned_fade["rul_formula_baseline_r2"]
+    )
+
+    blank_open = _cells()
+    blank_open["A"] = blank_open["A"].copy()
+    blank_open["A"].loc[blank_open["A"].index[0], "capacity_ah"] = float("nan")
+
+    result = rul_formula_baseline_lco(blank_open)
+    assert result["rul_formula_baseline_r2"] is None or np.isfinite(
+        result["rul_formula_baseline_r2"]
+    )
+    assert result["rul_formula_baseline_mae"] is None or np.isfinite(
+        result["rul_formula_baseline_mae"]
+    )
+
+
+def test_rul_formula_baseline_accepts_the_wrapper_cell_shape():
+    cells = _cells()
+    wrapped = {cid: {"cycles": df} for cid, df in cells.items()}
+
+    assert (
+        rul_formula_baseline_lco(wrapped)["rul_formula_baseline_r2"]
+        == rul_formula_baseline_lco(cells)["rul_formula_baseline_r2"]
+    )
+
+
+def test_safe_r2_rejects_non_finite_inputs():
+    """r2_score returns NaN for a blank input without raising, so the guard is
+    what keeps one out of a published headline."""
+    assert _safe_r2(np.array([1.0, np.nan, 3.0]), np.array([1.0, 2.0, 3.0])) is None
+    assert _safe_r2(np.array([1.0, 2.0, 3.0]), np.array([1.0, np.nan, 3.0])) is None
+    assert _safe_r2(np.array([1.0, np.inf]), np.array([1.0, 2.0])) is None
+    assert _safe_r2([1.0, 2.0], [1.0, 2.0]) == 1.0
