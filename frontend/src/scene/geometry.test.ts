@@ -38,7 +38,9 @@ import {
   extrudeOpen,
   mergeBuildOptions,
   mergeMeshes,
+  DEFAULT_PEEL,
   partReadings,
+  peelSweepDeg,
   readingAt,
   rollModel,
   ringPoints,
@@ -679,7 +681,7 @@ test("a cursor asked for at mount is the cursor the scene opens on", () => {
 });
 
 test("an option a host does not mention keeps its current value", () => {
-  const current = { cursor: 42, exploded: 1, casing: "hidden" as const, dataScaled: true };
+  const current = { cursor: 42, exploded: 1, casing: "hidden" as const, dataScaled: true, peel: 0.25 };
   assert.deepEqual(mergeBuildOptions(current, { cursor: 7 }), { ...current, cursor: 7 });
   assert.deepEqual(mergeBuildOptions(current, { exploded: 0.25 }), { ...current, exploded: 0.25 });
 });
@@ -702,6 +704,47 @@ test("folding options never mutates the options it was given", () => {
   const snapshot = JSON.stringify(current);
   mergeBuildOptions(current, { cursor: 9, exploded: 1, casing: "hidden", dataScaled: true });
   assert.equal(JSON.stringify(current), snapshot);
+});
+
+// ---------------------------------------------------------------------------
+// The peel: the cut-away as a view control
+// ---------------------------------------------------------------------------
+
+test("the default peel draws exactly the cut-away every previous build drew", () => {
+  assert.equal(peelSweepDeg(DEFAULT_PEEL), 285);
+});
+
+test("peel 0 closes the can; a quarter peel removes exactly a quarter of the ring", () => {
+  assert.equal(peelSweepDeg(0), 360);
+  assert.equal(peelSweepDeg(0.25), 270);
+  assert.equal(peelSweepDeg(1), 90); // a quarter shell always remains
+  assert.equal(peelSweepDeg(Number.NaN), 285); // a garbage value falls back, never NaN
+});
+
+test("peel opens the shell and changes nothing inside it", () => {
+  const closed = buildScene(makeSpec(), { peel: 0 });
+  const open = buildScene(makeSpec(), { peel: 0.25 });
+  for (const id of ["cathode_sheet", "anode_sheet", "separator", "mandrel"] as const) {
+    assert.deepEqual(
+      Array.from(partOf(open, id).mesh.positions),
+      Array.from(partOf(closed, id).mesh.positions),
+      `${id} moved — peel must only open the casing`,
+    );
+  }
+  assert.notDeepEqual(
+    Array.from(partOf(open, "can").mesh.positions),
+    Array.from(partOf(closed, "can").mesh.positions),
+    "peel must change the casing's arc",
+  );
+});
+
+test("the wrap opens with the can, because the jacket is skin of the casing", () => {
+  const closed = buildScene(makeSpec(), { peel: 0 });
+  const open = buildScene(makeSpec(), { peel: 0.25 });
+  assert.notDeepEqual(
+    Array.from(partOf(open, "wrap").mesh.positions),
+    Array.from(partOf(closed, "wrap").mesh.positions),
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -417,11 +417,30 @@ export function sphereMesh(radius: number, widthSegments = 6, heightSegments = 4
  * terminals, particle count) — and the spec's own `schematic` list names the
  * second group so nobody has to guess which is which.
  */
+/**
+ * Peel at which the casing is closed to the historic cut: 75/360 of the ring
+ * removed draws exactly the 285° every build before this control drew, which a
+ * test pins — the peel is a new knob on an old look, never a new look.
+ */
+export const DEFAULT_PEEL = 75 / 360;
+
+/**
+ * Degrees of casing circumference DRAWN at a peel position.
+ *
+ * A view control, never data: peel 0 closes the can, peel 0.25 removes exactly
+ * a quarter of the ring ("¼ Peel"), and a quarter shell (90°) always remains —
+ * taking the casing off entirely is `casing: "hidden"`'s job, so this function
+ * can never return a cell with no shell at all. A non-finite input falls back
+ * to the default rather than producing NaN geometry.
+ */
+export function peelSweepDeg(peel: number): number {
+  const p = Number.isFinite(peel) ? Math.min(1, Math.max(0, peel)) : DEFAULT_PEEL;
+  return Math.max(90, 360 * (1 - p));
+}
+
 export const CELL_GEOMETRY = {
   /** Fallback 18650 figures, used only when a document carries no `physical`. */
   canRadius: 9.2 / 65,
-  /** Fraction of the casing's circumference drawn (the cut-away). */
-  canSweep: (285 * Math.PI) / 180,
   /** 0.25 mm of 304 stainless — the format's typical can wall, in cell units. */
   canThickness: 0.25 / 65,
   /** A prismatic (CALCE 1.1 Ah pouch class) cell: 20.5 × 5.4 × 64 mm. */
@@ -989,6 +1008,11 @@ export interface BuildOptions {
   casing: "translucent" | "hidden";
   /** Data-scaled geometry instead of anatomical proportions. Opt-in. */
   dataScaled: boolean;
+  /**
+   * 0 = closed can, 0.25 = a quarter of the ring removed ("¼ Peel"), 1 = a
+   * quarter shell. The default reproduces the historic 285° cut exactly.
+   */
+  peel: number;
 }
 
 export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
@@ -996,6 +1020,7 @@ export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
   exploded: 0,
   casing: "translucent",
   dataScaled: false,
+  peel: DEFAULT_PEEL,
 };
 
 /**
@@ -1018,6 +1043,7 @@ export function mergeBuildOptions(build: BuildOptions, patch: Partial<BuildOptio
     exploded: patch.exploded ?? build.exploded,
     casing: patch.casing ?? build.casing,
     dataScaled: patch.dataScaled ?? build.dataScaled,
+    peel: patch.peel ?? build.peel,
   };
 }
 
@@ -1220,15 +1246,17 @@ function _cylindricalPlacements(
   spec: CellSceneSpec,
   model: RollModel,
   drawn: DrawnRoll,
+  /** Casing arc in radians, from `peelSweepDeg(opts.peel)` — the cut-away. */
+  sweepRad: number,
 ): Record<string, Placement> {
-  const { canSweep, roll, explode } = CELL_GEOMETRY;
+  const { roll, explode } = CELL_GEOMETRY;
   // The casing is a datum, so it sits on the declared diameter — but its offset
   // is still read from the radial table, so a host that gives the can room to
   // move gets the motion it asked for and everything measured *inside* the can
   // (the bore, the wrap, the cap that closes it) moves with it.
   const canRadius = model.canRadius + drawn.offsets.casing;
   const canThickness = model.canThickness;
-  const casing = extrudeOpen(arcPoints(canRadius, canSweep, 64, Math.PI * 0.6), 1.0);
+  const casing = extrudeOpen(arcPoints(canRadius, sweepRad, 64, Math.PI * 0.6), 1.0);
   const floorDisc = extrudeClosed(ringPoints(canRadius, 64), 0.012);
   const canMesh = mergeMeshes([casing, translateMesh(floorDisc, 0, -0.494, 0)]);
 
@@ -1312,7 +1340,7 @@ function _cylindricalPlacements(
       // Translated because `extrudeOpen` centres: the declared skips are
       // measured from the ends, not from the middle.
       mesh: translateMesh(
-        extrudeOpen(arcPoints(top.wrapOuterRadius + drawn.offsets.casing, canSweep, 64, Math.PI * 0.6), top.wrapTop - top.wrapBottom),
+        extrudeOpen(arcPoints(top.wrapOuterRadius + drawn.offsets.casing, sweepRad, 64, Math.PI * 0.6), top.wrapTop - top.wrapBottom),
         0,
         (top.wrapTop + top.wrapBottom) / 2,
         0,
@@ -1572,10 +1600,11 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   const model = rollModel(spec);
   const drawn = drawnRoll(model, exploded);
   const prism = prismaticModel(spec);
+  const sweepRad = (peelSweepDeg(opts.peel) * Math.PI) / 180;
   const placements =
     spec.cell.formFactor === "prismatic"
       ? _prismaticPlacements(exploded, filmThickness, prism, topAssemblyModel(spec))
-      : _cylindricalPlacements(exploded, filmThickness, spec, model, drawn);
+      : _cylindricalPlacements(exploded, filmThickness, spec, model, drawn, sweepRad);
 
   // The particle cloud: a legibility-limited sample of the coating volume. The
   // *lost* fraction follows the fitted linear term only when the split is

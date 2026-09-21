@@ -21,7 +21,7 @@ import type { CellSceneSpec, SceneTheme } from "./types.ts";
 export { SCENE_SCHEMA_VERSION };
 export type { CellSceneSpec, SceneTheme } from "./types.ts";
 export type { CellSceneHandle, FrameState, MountOptions } from "./engine.ts";
-export { buildScene, buildTimeline, partReadings, readingAt, todayCursor } from "./geometry.ts";
+export { buildScene, buildTimeline, DEFAULT_PEEL, partReadings, peelSweepDeg, readingAt, todayCursor } from "./geometry.ts";
 export type { PartReading } from "./geometry.ts";
 export { mountCellScene } from "./engine.ts";
 
