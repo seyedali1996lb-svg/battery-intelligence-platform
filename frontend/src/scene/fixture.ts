@@ -56,6 +56,21 @@ const TITLES: Record<PartId, string> = {
   bottom_insulator: "Bottom insulator — the floor's plastic disc",
 };
 
+/** The same ten-word editorial taxonomy the producer carries, per part. */
+const CATEGORIES: Record<PartId, string> = {
+  can: "SHELL",
+  wrap: "INSULATION", gasket: "INSULATION", bottom_insulator: "INSULATION",
+  crimp: "SEAL",
+  vent: "SAFETY", cid_ptc: "SAFETY",
+  cap: "TERMINAL", terminal_pos: "TERMINAL", terminal_neg: "TERMINAL",
+  mandrel: "WINDING",
+  cathode_sheet: "ELECTRODE", anode_sheet: "ELECTRODE",
+  tab_pos: "ELECTRODE", tab_neg: "ELECTRODE",
+  separator: "SEPARATOR",
+  electrolyte: "ELECTROLYTE",
+  particles: "DEGRADATION", sei_film: "DEGRADATION",
+};
+
 export const THEME = {
   background: "#0b1120",
   panel: "#111827",
@@ -310,6 +325,7 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
       id,
       label: LABELS[id],
       title: TITLES[id],
+      category: CATEGORIES[id],
       value: id === "sei_film" ? seiThicknessNm[n - 1] : id === "particles" ? lamPct[n - 1] : last,
       unit:
         id === "sei_film"

@@ -624,6 +624,11 @@
               "string",
               "null"
             ]
+          },
+          "category": {
+            "type": "string",
+            "enum": ["SHELL", "INSULATION", "SEAL", "SAFETY", "TERMINAL", "WINDING", "ELECTRODE", "SEPARATOR", "ELECTROLYTE", "DEGRADATION"],
+            "description": "Editorial grouping for the annotation layer. Optional: documents from before it existed render cards without a second row."
           }
         }
       }

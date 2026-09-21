@@ -957,3 +957,14 @@ def test_the_mesh_part_registry_and_the_cards_stay_a_bijection():
     schema = json.load(open("docs/cell_scene.schema.json", encoding="utf-8"))
     enum = set(schema["properties"]["parts"]["items"]["properties"]["id"]["enum"])
     assert enum == set(MESH_PART_IDS)
+
+
+def test_every_part_carries_a_category_from_the_declared_taxonomy():
+    from cell_scene import _CATEGORY
+    spec = _spec()
+    taxonomy = {"SHELL", "INSULATION", "SEAL", "SAFETY", "TERMINAL",
+                "WINDING", "ELECTRODE", "SEPARATOR", "ELECTROLYTE", "DEGRADATION"}
+    assert len(spec["parts"]) == 19
+    for part in spec["parts"]:
+        assert part["category"] in taxonomy, part["id"]
+        assert part["category"] == _CATEGORY[part["id"]]

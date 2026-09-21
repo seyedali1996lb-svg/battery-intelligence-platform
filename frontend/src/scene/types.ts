@@ -183,6 +183,12 @@ export interface ScenePart {
   series: Series | null;
   available: boolean;
   unavailableReason: string | null;
+  /**
+   * Editorial grouping shown on the callout's second row. Optional: documents
+   * from before it existed render cards without that row rather than a blank
+   * word where the category would be.
+   */
+  category?: string;
 }
 
 export interface SceneSeries {
@@ -220,7 +226,19 @@ export interface SceneTheme {
   text: string;
   muted: string;
   accent: string;
+  /**
+   * A second accent for drafting chrome (the frame's ornament). Optional:
+   * a document that does not spell it falls back to `accent`, so the frame
+   * never shows a colour the document did not declare.
+   */
+  accent2?: string;
   grid: string;
+  /**
+   * Font stacks the chrome may set — `mono` for the drafting frame's ruler
+   * marks. Optional with a monospace fallback, for the same reason `accent2`
+   * is optional.
+   */
+  fonts?: { mono: string };
   metal: string;
   anodeColor: string;
   cathodeColor: string;

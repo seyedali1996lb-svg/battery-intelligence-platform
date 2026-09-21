@@ -1,21 +1,22 @@
 {
   "builtBy": "cd frontend && npm run build:scene (frontend/vite.scene.config.ts)",
   "bundle": "cell_scene.js",
-  "bundleBytes": 597394,
-  "bundleSha256": "1fce5fd07da9351df057f40b742785cf384428d1a3701b40920eabcc62d67289",
+  "bundleBytes": 598793,
+  "bundleSha256": "83d48c9b70b19c984435ff5bc2e6a08f63bc81d81b20a527cb9010d79c1bdf77",
   "sampleScene": "sample_scene.json",
   "sampleSceneCell": "B0005",
-  "sampleSceneSha256": "00ea2a9d989d4f8c7d954af44d42df82c4000a54f7865930a8728d2290d67d64",
+  "sampleSceneSha256": "a7b9a84da31d15938dad1f92b5db8704c74ba0035ac88c420e097332e106de70",
   "schemaVersion": 1,
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
-    "src/scene/engine.ts": "f483a04a6ece57fec5b584e82a01c07354e08bf30e2183d62cefb3f7a68ecad0",
-    "src/scene/geometry.ts": "9215a0a32d8fbf7bf054e69e1e617c36f21718982c49b466ea3611b009c1264c",
+    "src/scene/annotation.ts": "44ab095da0476389c62b8850ad1b9f6d6ccdc290a6b3538b4310c8bb64844fcb",
+    "src/scene/engine.ts": "810cf8a333bd23e4932131a6acda3d86836534f0362261f5b7b0b837127fb5fb",
+    "src/scene/geometry.ts": "a822695db18e8aac48d44e883cbd6461c8515c0e22921ebc3c8efbd124cf14a8",
     "src/scene/index.ts": "e483f9491d3e068ed1afccfdeff5d6a93226be572583790f62ce2183a37b0786",
     "src/scene/materials.ts": "2be6916043b0580896485a9b5112e962cf8ad6aa9c5e6af4a6f18b7b995db85a",
     "src/scene/standalone.ts": "84ca28a92bc210b37e5d47d46771b38cc0b234506e09277e8305ccb962227987",
     "src/scene/theme.ts": "b3d0547e91696d93063fa09e171b3d38cf0c2e34629f6931bcef56e24efa1b39",
-    "src/scene/types.ts": "2d454aefe16d8043f72fe85ed26ce4b2cdecfec5cb06344cbb006e030df245b0",
+    "src/scene/types.ts": "bb2ef3d6fb92d32582ea116f7b8c6367caea58d756728f5ef7626e826e11c468",
     "vite.scene.config.ts": "b5fdc9dbeb9aa740acf308b815796d5b918dfa4a293a9f1fe062340e31000791"
   },
   "threeVersion": "^0.186.0"

@@ -2389,7 +2389,8 @@
         33.87
       ],
       "available": true,
-      "unavailableReason": null
+      "unavailableReason": null,
+      "category": "SHELL"
     },
     {
       "id": "wrap",
@@ -2402,7 +2403,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "INSULATION"
     },
     {
       "id": "cap",
@@ -2415,7 +2417,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data separates the cap from the rest of the cell"
+      "unavailableReason": "no measurement in the cycle-summary data separates the cap from the rest of the cell",
+      "category": "TERMINAL"
     },
     {
       "id": "vent",
@@ -2428,7 +2431,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "SAFETY"
     },
     {
       "id": "crimp",
@@ -2441,7 +2445,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "SEAL"
     },
     {
       "id": "terminal_pos",
@@ -2609,7 +2614,8 @@
         0.05868
       ],
       "available": true,
-      "unavailableReason": null
+      "unavailableReason": null,
+      "category": "TERMINAL"
     },
     {
       "id": "terminal_neg",
@@ -2777,7 +2783,8 @@
         0.05868
       ],
       "available": true,
-      "unavailableReason": null
+      "unavailableReason": null,
+      "category": "TERMINAL"
     },
     {
       "id": "tab_pos",
@@ -2945,7 +2952,8 @@
         1.3136333109469442
       ],
       "available": true,
-      "unavailableReason": null
+      "unavailableReason": null,
+      "category": "ELECTRODE"
     },
     {
       "id": "tab_neg",
@@ -3113,7 +3121,8 @@
         76.12474437627812
       ],
       "available": true,
-      "unavailableReason": null
+      "unavailableReason": null,
+      "category": "ELECTRODE"
     },
     {
       "id": "mandrel",
@@ -3126,7 +3135,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "WINDING"
     },
     {
       "id": "cathode_sheet",
@@ -3139,7 +3149,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no dQ/dV features recorded for this cell"
+      "unavailableReason": "no dQ/dV features recorded for this cell",
+      "category": "ELECTRODE"
     },
     {
       "id": "anode_sheet",
@@ -3152,7 +3163,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no dQ/dV features recorded for this cell"
+      "unavailableReason": "no dQ/dV features recorded for this cell",
+      "category": "ELECTRODE"
     },
     {
       "id": "separator",
@@ -3165,7 +3177,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "SEPARATOR"
     },
     {
       "id": "electrolyte",
@@ -3178,7 +3191,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no measurement in the cycle-summary data"
+      "unavailableReason": "no measurement in the cycle-summary data",
+      "category": "ELECTROLYTE"
     },
     {
       "id": "particles",
@@ -3191,7 +3205,8 @@
       "law": "\u03b2_lam\u00b7n  (full-history fitted, see the fit-quality caveat below)",
       "series": null,
       "available": false,
-      "unavailableReason": "This cell's data cannot separate the \u221an (SEI, lithium-inventory) fade from the linear (active-material) fade: the SEI (\u221an) coefficient fits below its own standard error (|\u03b2_sei|/\u03c3 = 5.4e-07, |\u03b2_lam|/\u03c3 = 32), and over a narrow cycle range the two regressors are strongly correlated. The combined fitted fade is still identified and is shown; the split between the two layers is not, so the scene does not draw one."
+      "unavailableReason": "This cell's data cannot separate the \u221an (SEI, lithium-inventory) fade from the linear (active-material) fade: the SEI (\u221an) coefficient fits below its own standard error (|\u03b2_sei|/\u03c3 = 5.4e-07, |\u03b2_lam|/\u03c3 = 32), and over a narrow cycle range the two regressors are strongly correlated. The combined fitted fade is still identified and is shown; the split between the two layers is not, so the scene does not draw one.",
+      "category": "DEGRADATION"
     },
     {
       "id": "sei_film",
@@ -3204,7 +3219,8 @@
       "law": "\u03b2_sei\u00b7\u221an  (full-history fitted, see the fit-quality caveat below)",
       "series": null,
       "available": false,
-      "unavailableReason": "This cell's data cannot separate the \u221an (SEI, lithium-inventory) fade from the linear (active-material) fade: the SEI (\u221an) coefficient fits below its own standard error (|\u03b2_sei|/\u03c3 = 5.4e-07, |\u03b2_lam|/\u03c3 = 32), and over a narrow cycle range the two regressors are strongly correlated. The combined fitted fade is still identified and is shown; the split between the two layers is not, so the scene does not draw one."
+      "unavailableReason": "This cell's data cannot separate the \u221an (SEI, lithium-inventory) fade from the linear (active-material) fade: the SEI (\u221an) coefficient fits below its own standard error (|\u03b2_sei|/\u03c3 = 5.4e-07, |\u03b2_lam|/\u03c3 = 32), and over a narrow cycle range the two regressors are strongly correlated. The combined fitted fade is still identified and is shown; the split between the two layers is not, so the scene does not draw one.",
+      "category": "DEGRADATION"
     },
     {
       "id": "gasket",
@@ -3217,7 +3233,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture",
+      "category": "INSULATION"
     },
     {
       "id": "cid_ptc",
@@ -3230,7 +3247,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture",
+      "category": "SAFETY"
     },
     {
       "id": "bottom_insulator",
@@ -3243,7 +3261,8 @@
       "law": "",
       "series": null,
       "available": false,
-      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture",
+      "category": "INSULATION"
     }
   ],
   "geometryScales": {

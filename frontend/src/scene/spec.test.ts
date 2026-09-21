@@ -345,3 +345,13 @@ test("a document with no film block still draws, and says the band is a fallback
   const scene = buildScene(stripped, { cursor: 10, dataScaled: true });
   assert.ok(scene.bounds.radius > 0);
 });
+
+test("every part in the sample carries one of the ten declared categories", () => {
+  const taxonomy = new Set([
+    "SHELL", "INSULATION", "SEAL", "SAFETY", "TERMINAL",
+    "WINDING", "ELECTRODE", "SEPARATOR", "ELECTROLYTE", "DEGRADATION",
+  ]);
+  for (const part of sample.parts) {
+    assert.ok(taxonomy.has(part.category ?? ""), `${part.id}: ${part.category}`);
+  }
+});

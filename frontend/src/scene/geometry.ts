@@ -1087,6 +1087,8 @@ export interface BuiltPart {
   provenance: string;
   available: boolean;
   reason: string | null;
+  /** Editorial grouping for the annotation layer; "" when the document predates it. */
+  category: string;
 }
 
 /**
@@ -1886,6 +1888,7 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
       provenance: part.provenance,
       available: part.available,
       reason: part.unavailableReason,
+      category: part.category ?? "",
     };
   });
 

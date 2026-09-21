@@ -53,6 +53,7 @@ import {
 } from "./geometry.ts";
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
 import { provenanceColor } from "./theme.ts";
+import { CARD_H_ONE, CARD_H_TWO, layoutFlank } from "./annotation.ts";
 import type { CellSceneSpec } from "./types.ts";
 
 /**
@@ -526,6 +527,12 @@ export function mountCellScene(
     sy: number;
     targetY: number;
     available: boolean;
+    /** Editorial grouping for the badge's second row; "" for old documents. */
+    category: string;
+    /** What the provenance dot says on hover, spelled for someone who has none. */
+    provenanceWord: string;
+    /** Set per flank by the solver: this badge dropped to single-line mode. */
+    singleLine: boolean;
   }
 
   function updateLeaderLines(): void {
@@ -557,18 +564,28 @@ export function mountCellScene(
       if (sx < -30 || sx > width + 30 || sy < -30 || sy > height + 30) continue;
 
       const color = provenanceColor(partSpec.provenance, currentSpec.theme);
+      const category = partSpec.category;
+      const provenanceWord = partSpec.provenance || "no provenance — drawn as architecture";
+      const baseTitle = partSpec.available
+        ? `${partSpec.label} — ${partSpec.provenance || "unmeasured"}${partSpec.unit ? ` (${partSpec.unit})` : ""}`
+        : `${partSpec.label} — no measurement: ${partSpec.reason ?? "not measured"}`;
       visibleItems.push({
         id,
         label: partSpec.label,
         valueStr: formatValue(partSpec),
-        title: partSpec.available
-          ? `${partSpec.label} — ${partSpec.provenance || "unmeasured"}${partSpec.unit ? ` (${partSpec.unit})` : ""}`
-          : `${partSpec.label} — no measurement: ${partSpec.reason ?? "not measured"}`,
+        // The tooltip always carries category + provenance, because a
+        // single-line badge has no second row to put them in.
+        title: [baseTitle, category, partSpec.provenance ? "" : provenanceWord]
+          .filter(Boolean)
+          .join(" · "),
         color,
         sx,
         sy,
         targetY: sy,
         available: partSpec.available,
+        category,
+        provenanceWord,
+        singleLine: false,
       });
     }
 
@@ -578,27 +595,30 @@ export function mountCellScene(
       return;
     }
 
-    // Partition into left and right flanks based on projected 3D anchor X
+    // Partition into left and right flanks based on projected 3D anchor X.
+    // Invariant (c) of the solver: the partition happens BEFORE the call, so
+    // each solver run covers exactly one column and the flanks never mix.
     const leftItems = visibleItems.filter((item) => item.sx < width * 0.5);
     const rightItems = visibleItems.filter((item) => item.sx >= width * 0.5);
 
     leftItems.sort((a, b) => a.sy - b.sy);
     rightItems.sort((a, b) => a.sy - b.sy);
 
-    function layoutFlank(items: LeaderItem[]): void {
+    // The pure solver returns card TOPS in anchor order: gaps hold (no card
+    // overlaps its neighbour), order follows the anchors (leader lines cannot
+    // cross within a flank), and a flank too crowded for two-row cards drops
+    // wholesale to single-line instead of half of it overlapping.
+    const applyFlank = (items: LeaderItem[]): void => {
       if (items.length === 0) return;
-      const minGap = 26;
-      const totalSpan = items.length * minGap;
-      const startY = Math.max(22, Math.min(height - totalSpan - 18, (height - totalSpan) / 2));
-      let curY = startY;
-      for (const item of items) {
-        item.targetY = Math.max(item.sy - 16, Math.min(height - 24, Math.max(18, curY)));
-        curY = item.targetY + minGap;
-      }
-    }
+      const layout = layoutFlank(items.map((item) => ({ id: item.id, sy: item.sy })), height);
+      items.forEach((item, i) => {
+        item.targetY = layout.targetY[i];
+        item.singleLine = layout.singleLine;
+      });
+    };
 
-    layoutFlank(leftItems);
-    layoutFlank(rightItems);
+    applyFlank(leftItems);
+    applyFlank(rightItems);
 
     const activeId = pinned ?? hovered;
 
@@ -614,34 +634,41 @@ export function mountCellScene(
       const lineColor = isTarget ? currentSpec.theme.accent : item.color;
 
       // The line ends on the badge's *inner* border — the edge facing the cell
-      // — at a fixed distance from the stage edge, so the badges line up into
-      // two columns whatever the parts do. The elbow is the midpoint of the
-      // anchor and that terminus: one dog-leg, drawn the same way on both
-      // flanks.
+      // — at the card's vertical centre (the solver returns card TOPS), a fixed
+      // distance from the stage edge, so the badges line up into two columns
+      // whatever the parts do. The elbow is the midpoint of the anchor and that
+      // terminus: one dog-leg, drawn the same way on both flanks.
+      const cardH = item.singleLine ? CARD_H_ONE : CARD_H_TWO;
+      const endY = item.targetY + cardH / 2;
       const badgeEdgeX = onLeft ? BADGE_MARGIN + BADGE_WIDTH : width - BADGE_MARGIN - BADGE_WIDTH;
       const elbowX = (item.sx + badgeEdgeX) / 2;
 
       svgContent += `
         <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="2.5" fill="${item.color}" opacity="${opacity}" />
         <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${isTarget ? 6.5 : 5}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="2 2" opacity="${opacity}" />
-        <polyline points="${item.sx.toFixed(1)},${item.sy.toFixed(1)} ${elbowX.toFixed(1)},${item.targetY.toFixed(1)} ${badgeEdgeX.toFixed(1)},${item.targetY.toFixed(1)}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" opacity="${opacity}" />
+        <polyline points="${item.sx.toFixed(1)},${item.sy.toFixed(1)} ${elbowX.toFixed(1)},${endY.toFixed(1)} ${badgeEdgeX.toFixed(1)},${endY.toFixed(1)}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" opacity="${opacity}" />
       `;
 
       // `box-sizing: border-box` is what makes `width` the *whole* badge, so
       // the border the line meets is exactly at `badgeEdgeX` above rather than
-      // a padding-and-border's width past it.
+      // a padding-and-border's width past it. Height and the column layout
+      // match the solver's own card constants: it reasons with CARD_H_TWO or
+      // CARD_H_ONE, and the badge must be exactly that tall or its centre and
+      // the line's terminus disagree.
       const badgeStyle = `
         position: absolute;
-        top: ${(item.targetY - 10).toFixed(1)}px;
+        top: ${item.targetY.toFixed(1)}px;
+        height: ${cardH}px;
         ${onLeft ? `left: ${BADGE_MARGIN}px;` : `right: ${BADGE_MARGIN}px;`}
         box-sizing: border-box;
         width: ${BADGE_WIDTH}px;
         pointer-events: auto;
         cursor: pointer;
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 6px;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 1px;
         padding: 2px 7px;
         font: 500 10.5px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         background: ${isTarget ? "rgba(22, 33, 58, 0.95)" : "rgba(11, 17, 32, 0.82)"};
@@ -660,8 +687,15 @@ export function mountCellScene(
 
       badgesContent += `
         <div class="cell-scene-callout" data-part="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}" style="${badgeStyle}">
-          <span style="font-weight: 600; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; min-width: 0;">${escapeHtml(item.label)}</span>
-          <span style="color: ${item.available ? "#94a3b8" : "#64748b"}; font-size: 10px; flex-shrink: 0;">${escapeHtml(item.valueStr)}</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
+            <span style="font-weight: 600; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; min-width: 0;">${escapeHtml(item.label)}</span>
+            <span style="color: ${item.available ? "#94a3b8" : "#64748b"}; font-size: 10px; flex-shrink: 0;">${escapeHtml(item.valueStr)}</span>
+          </div>
+          ${item.singleLine ? "" : `
+          <div style="display:flex;align-items:center;gap:6px;min-width:0">
+            <span style="font-size:9px;letter-spacing:0.06em;color:${item.available ? currentSpec.theme.muted : "#64748b"};overflow:hidden;text-overflow:ellipsis">${escapeHtml(item.category)}</span>
+            <span title="${escapeHtml(item.provenanceWord)}" style="width:7px;height:7px;border-radius:50%;background:${item.color};flex-shrink:0;margin-left:auto"></span>
+          </div>`}
         </div>
       `;
     };

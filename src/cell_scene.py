@@ -535,10 +535,33 @@ _PLAIN_TITLE = {
 }
 
 
+#: Editorial taxonomy for the annotation layer. Colour- and claim-free: it says
+#: what subsystem a part belongs to, never what is true of this cell.
+_CATEGORY = {
+    "can": "SHELL",
+    "wrap": "INSULATION", "gasket": "INSULATION", "bottom_insulator": "INSULATION",
+    "crimp": "SEAL",
+    "vent": "SAFETY", "cid_ptc": "SAFETY",
+    "cap": "TERMINAL", "terminal_pos": "TERMINAL", "terminal_neg": "TERMINAL",
+    "mandrel": "WINDING",
+    "cathode_sheet": "ELECTRODE", "anode_sheet": "ELECTRODE",
+    "tab_pos": "ELECTRODE", "tab_neg": "ELECTRODE",
+    "separator": "SEPARATOR",
+    "electrolyte": "ELECTROLYTE",
+    "particles": "DEGRADATION", "sei_film": "DEGRADATION",
+}
+
+
+def _editorial(part_id: str) -> dict:
+    """The part's category (and, in later tasks, its dossier) — absent when unknown."""
+    cat = _CATEGORY.get(part_id)
+    return {"category": cat} if cat else {}
+
+
 def _part(part_id: str, label: str, *, value=None, unit: str = "", provenance: str = "",
           meaning: str = "", law: str = "", series: "list | None" = None,
           available: bool = True, reason: "str | None" = None) -> dict:
-    return {
+    card = {
         "id": part_id,
         "label": label,
         "title": _PLAIN_TITLE.get(part_id, label),
@@ -551,6 +574,9 @@ def _part(part_id: str, label: str, *, value=None, unit: str = "", provenance: s
         "available": bool(available),
         "unavailableReason": reason,
     }
+    # The editorial category rides only when the taxonomy knows the part: an
+    # unknown future part renders a single-row card rather than an empty word.
+    return {**card, **_editorial(part_id)}
 
 
 def _unavailable(part_id: str, label: str, reason: str, meaning: str) -> dict:
