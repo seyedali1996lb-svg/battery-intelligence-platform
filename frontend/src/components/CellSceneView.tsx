@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCellScene, listCells, ApiError } from "../api";
-import type { CellSceneHandle, CellSceneSpec, FrameState, PartReading } from "../scene";
+import type { CellSceneHandle, CellSceneSpec, DossierView, FrameState, PartReading } from "../scene";
+// The composer is imported from its own module, not from `../scene`: the
+// scene's index re-exports the engine, and a static import of *that* would
+// fold three.js into this chunk — the exact payload the dynamic import below
+// exists to keep off the critical path. `dossier` reaches only into
+// three-free modules (geometry, types, theme), so this import is cheap.
+import { composeDossier } from "../scene/dossier";
 
 /**
  * The scene engine, loaded on demand.
@@ -25,105 +31,6 @@ type SceneModule = typeof import("../scene");
  * them is reading a different document, which is exactly the failure the shared
  * spec exists to make impossible.
  */
-const PART_DOSSIERS: Record<string, { latinTitle: string; subsystem: string; material: string; degradation: string }> = {
-  can: {
-    latinTitle: "THORAX METALLICUS",
-    subsystem: "Deep-Drawn Can & Structural Pressure Shell",
-    material: "Nickel-plated cold-rolled steel (0.25 mm wall)",
-    degradation: "Mechanical deformation, internal pressure bulging, atmospheric corrosion.",
-  },
-  wrap: {
-    latinTitle: "TUNICA CONTRACTA",
-    subsystem: "Heat-Shrink Electrical Isolation Jacket",
-    material: "Polyethylene terephthalate (PET) film (0.15 mm)",
-    degradation: "Thermal abrasion, chemical puncture, dielectric breakdown.",
-  },
-  cap: {
-    latinTitle: "GALEA TERMINALIS",
-    subsystem: "Lathed Cap Plate, Boss & Crimp Groove",
-    material: "Aluminium / Nickel-plated steel formed assembly",
-    degradation: "Mechanical stress relaxation of crimp seal, micro-fissuring under thermal cycling.",
-  },
-  vent: {
-    latinTitle: "VALVULA SALUTIS",
-    subsystem: "Laser-Scored Overpressure Safety Vent Disc",
-    material: "Embossed aluminum rupture foil (4.5 mm diameter)",
-    degradation: "Fatigue from cyclic gas accumulation; engineered rupture at 1.5–2.0 MPa.",
-  },
-  crimp: {
-    latinTitle: "CORONA COMPRESSA",
-    subsystem: "Mechanical Crimp Seal & Radial Compression Bead",
-    material: "Rolled steel rim over polypropylene (PP) gasket",
-    degradation: "Polymer creep under thermal loads, micro-leakage of volatile carbonate solvent.",
-  },
-  terminal_pos: {
-    latinTitle: "POLUS POSITIVUS",
-    subsystem: "Positive Current Collector Stud & Button",
-    material: "Cold-forged nickel-plated copper/steel stud",
-    degradation: "Surface oxidation, contact resistance rise, ultrasonic weld degradation.",
-  },
-  terminal_neg: {
-    latinTitle: "POLUS NEGATIVUS",
-    subsystem: "Negative Cell Floor Current Collector Contact",
-    material: "Direct steel can base (18.4 mm OD)",
-    degradation: "Fretting wear, interfacial contact oxidation and impedance rise.",
-  },
-  tab_pos: {
-    latinTitle: "LIGAMENTUM ALUMINII",
-    subsystem: "Positive Electrode Current Lead & Ultrasonic Weld",
-    material: "High-purity aluminium foil ribbon (0.1 mm)",
-    degradation: "Ultrasonic weld fatigue, localized Joule heating, vibration detachment.",
-  },
-  tab_neg: {
-    latinTitle: "LIGAMENTUM CUPRI",
-    subsystem: "Negative Electrode Current Lead & Bottom Spot Weld",
-    material: "High-conductivity annealed copper ribbon",
-    degradation: "Localized overcurrent stress, micro-cracking at sharp bend radii.",
-  },
-  mandrel: {
-    latinTitle: "AXIS WINDING",
-    subsystem: "Removable Steel Winding Core & Jelly-Roll Datum",
-    material: "Hardened steel mandrel (4.0 mm diameter, withdrawn after winding)",
-    degradation: "None — it is not electrochemically active; concentricity loss shows up as uneven electrode tension.",
-  },
-  cathode_sheet: {
-    latinTitle: "STRATUM CATHODICUM",
-    subsystem: "Lithiated Transition Metal Intercalation Matrix",
-    material: "Active oxide (e.g. LiCoO2 / NMC) on 15 µm aluminium foil",
-    degradation: "Transition metal dissolution, micro-cracking, lattice distortion, impedance rise.",
-  },
-  anode_sheet: {
-    latinTitle: "STRATUM ANODICUM",
-    subsystem: "Graphite / Silicon Intercalation Host & Current Collector",
-    material: "MCMB graphite / Si blend on 10 µm copper foil",
-    degradation: "Lithium plating under low temp/fast charge, particle pulverization, exfoliation.",
-  },
-  separator: {
-    latinTitle: "SEPTUM SEPARANS",
-    subsystem: "Microporous Polymeric Electronic Barrier",
-    material: "Trilayer PE/PP ceramic-coated microporous film (20 µm)",
-    degradation: "Pore clogging by decomposed species, dendrite penetration, thermal shrinkage.",
-  },
-  electrolyte: {
-    latinTitle: "LIQUIDUM CONDUCTOR",
-    subsystem: "Non-Aqueous Lithium Salt & Alkyl Carbonate Solution",
-    material: "1.0–1.2 M LiPF6 in EC/DMC/EMC organic solvent",
-    degradation: "Parasitic solvent oxidation, salt consumption, HF formation, gassing.",
-  },
-  particles: {
-    latinTitle: "PARTICULAE MOBILES",
-    subsystem: "Active Insertion Material Volume & Cycling Kinetics",
-    material: "Intercalation micro-crystallites (2–15 µm particles)",
-    degradation: "Loss of active material (LAM) via particle isolation, lattice strain, crack networks.",
-  },
-  sei_film: {
-    latinTitle: "MEMBRANA SEI",
-    subsystem: "Solid Electrolyte Interphase Passivation Layer",
-    material: "Li2CO3, LiF, lithium alkyl carbonates (compact inner + porous outer)",
-    degradation: "Continuous parasitic reduction consumes cyclable lithium inventory (LLI).",
-  },
-};
-
 export default function CellSceneView() {
   const [cells, setCells] = useState<string[]>([]);
   const [cellId, setCellId] = useState<string>("");
@@ -256,7 +163,70 @@ export default function CellSceneView() {
 
   const activePartId = inspected;
   const inspectedPart = cards.find((c) => c.id === activePartId) ?? null;
-  const dossier = activePartId ? PART_DOSSIERS[activePartId] : null;
+  /**
+   * The inspected part's dossier, composed from the *document* at the current
+   * cursor — the React twin of the stage's floating card, and the reason
+   * `PART_DOSSIERS` used to live in this file: it doesn't anymore. Null only
+   * for documents that predate dossiers, which fall back to the old panel.
+   */
+  const dossier: DossierView | null =
+    spec && activePartId ? composeDossier(spec, activePartId, frame?.cursor ?? 0) : null;
+
+  /**
+   * The tag dot beside every dossier row — the same provenance-colour
+   * mapping the engine's floating card uses: computed rows take the
+   * document's own palette, `typical` sits back in a neutral tone, and a
+   * `refusal` never wears a colour that could be misread as a measurement.
+   */
+  const tagDot = (tag: string): string =>
+    tag === "refusal"
+      ? "var(--c-muted, #94a3b8)"
+      : tag === "typical"
+        ? "rgba(148, 163, 184, 0.4)"
+        : (spec?.theme.provenanceColors[tag] ?? "var(--c-accent, #63b3ed)");
+
+  /** The big current-reading box — identical in both panel branches. */
+  const readingBox = (part: PartReading) => (
+    <div style={{ background: "rgba(15, 23, 42, 0.6)", padding: "8px 10px", borderRadius: 6, marginBottom: 12, border: "1px solid rgba(51, 65, 85, 0.5)" }}>
+      <div style={{ fontSize: 10, color: "var(--c-muted, #94a3b8)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        Current Reading
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "#f1f5f9" }}>
+        {partValue(part)}
+      </div>
+      <div style={{ fontSize: 10.5, color: spec?.theme.provenanceColors[part.provenance] ?? "#94a3b8", fontWeight: 600, marginTop: 2 }}>
+        {part.provenance.toUpperCase()}
+        {part.carried ? " · LAST MEASURED" : ""}
+      </div>
+    </div>
+  );
+
+  /** One dossier row: label left, tagged value and dot right. */
+  const dossierRow = (r: { label: string; value: string; unit?: string; tag: string }, i: number) => (
+    <div key={`${r.label}-${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" }}>
+      <span style={{ color: "var(--c-muted, #94a3b8)" }}>{r.label}</span>
+      <span style={{ textAlign: "right" }}>
+        <span style={{ color: r.tag === "refusal" ? "var(--c-muted, #94a3b8)" : "#f1f5f9" }}>
+          {r.value}
+          {r.unit ? ` ${r.unit}` : ""}
+        </span>
+        <span
+          title={r.tag}
+          style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", marginLeft: 4, background: tagDot(r.tag), verticalAlign: "middle" }}
+        />
+      </span>
+    </div>
+  );
+
+  /** A titled row block inside the dossier, divided like the stage's card. */
+  const dossierBlock = (heading: string, rows: ReactNode) => (
+    <div style={{ borderTop: "1px solid rgba(51, 65, 85, 0.5)", marginTop: 10, paddingTop: 8 }}>
+      <div style={{ fontSize: 9.5, color: "var(--c-accent, #63b3ed)", letterSpacing: "0.1em", marginBottom: 3 }}>
+        {heading}
+      </div>
+      {rows}
+    </div>
+  );
 
   if (error) return <div className="error-text">{error}</div>;
 
@@ -402,24 +372,13 @@ export default function CellSceneView() {
           {inspectedPart && dossier ? (
             <div>
               <div style={{ fontFamily: "serif", fontSize: 16, fontWeight: 700, color: "#f8fafc", letterSpacing: "0.02em" }}>
-                {dossier.latinTitle}
+                {dossier.latinTitle ?? inspectedPart.label}
               </div>
               <div style={{ fontSize: 11, color: "var(--c-accent, #63b3ed)", fontWeight: 600, marginBottom: 10 }}>
                 // {inspectedPart.label.toUpperCase()}
               </div>
 
-              <div style={{ background: "rgba(15, 23, 42, 0.6)", padding: "8px 10px", borderRadius: 6, marginBottom: 12, border: "1px solid rgba(51, 65, 85, 0.5)" }}>
-                <div style={{ fontSize: 10, color: "var(--c-muted, #94a3b8)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Current Reading
-                </div>
-                <div style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "#f1f5f9" }}>
-                  {partValue(inspectedPart)}
-                </div>
-                <div style={{ fontSize: 10.5, color: spec?.theme.provenanceColors[inspectedPart.provenance] ?? "#94a3b8", fontWeight: 600, marginTop: 2 }}>
-                  {inspectedPart.provenance.toUpperCase()}
-                  {inspectedPart.carried ? " · LAST MEASURED" : ""}
-                </div>
-              </div>
+              {readingBox(inspectedPart)}
 
               <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 11.5 }}>
                 <div>
@@ -430,14 +389,49 @@ export default function CellSceneView() {
                   <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Material Spec</span>
                   <span style={{ color: "#cbd5e0" }}>{dossier.material}</span>
                 </div>
-                <div>
-                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Degradation Mode</span>
-                  <span style={{ color: "#fca5a5" }}>{dossier.degradation}</span>
+                {dossier.degradation && (
+                  <div>
+                    <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Degradation Mode</span>
+                    <span style={{ color: "#fca5a5" }}>{dossier.degradation}</span>
+                  </div>
+                )}
+              </div>
+
+              {dossierBlock("LIVE AT CURSOR", dossier.live.map(dossierRow))}
+              {dossier.specs.length > 0 && dossierBlock("PHYSICAL SPEC", dossier.specs.map(dossierRow))}
+
+              {dossier.insight && (
+                <div style={{ borderTop: "1px solid rgba(51, 65, 85, 0.5)", marginTop: 10, paddingTop: 8, fontSize: 11, fontStyle: "italic", color: "var(--c-muted, #94a3b8)" }}>
+                  {dossier.insight}
                 </div>
-                <div>
-                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Diagnostic Significance</span>
-                  <span style={{ color: "var(--c-muted, #94a3b8)" }}>{inspectedPart.meaning || inspectedPart.reason || "No specific note."}</span>
-                </div>
+              )}
+
+              <div style={{ marginTop: 14 }}>
+                <button
+                  className="btn-outline"
+                  style={{ width: "100%", fontSize: 11, padding: "5px 8px" }}
+                  onClick={() => handleRef.current?.inspect(inspectedPart.id)}
+                >
+                  🎯 Frame Camera
+                </button>
+              </div>
+            </div>
+          ) : inspectedPart ? (
+            // A document from before dossiers existed: the part's own card
+            // reading and meaning, honestly labelled — no invented prose.
+            <div>
+              <div style={{ fontFamily: "serif", fontSize: 16, fontWeight: 700, color: "#f8fafc", letterSpacing: "0.02em" }}>
+                {inspectedPart.label}
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--c-muted, #94a3b8)", margin: "4px 0 10px" }}>
+                No dossier in this document — showing the card's own reading.
+              </div>
+
+              {readingBox(inspectedPart)}
+
+              <div style={{ fontSize: 11.5 }}>
+                <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Diagnostic Significance</span>
+                <span style={{ color: "var(--c-muted, #94a3b8)" }}>{inspectedPart.meaning || inspectedPart.reason || "No specific note."}</span>
               </div>
 
               <div style={{ marginTop: 14 }}>

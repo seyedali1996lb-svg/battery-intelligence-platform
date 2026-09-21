@@ -53,9 +53,10 @@ import {
 } from "./geometry.ts";
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
 import { provenanceColor } from "./theme.ts";
-import { CARD_H_ONE, CARD_H_TWO, layoutFlank } from "./annotation.ts";
+import { CARD_H_ONE, CARD_H_TWO, desaturateHex, layoutFlank } from "./annotation.ts";
 import { poseFacing, poseLerp, poseToPosition, type CameraPose } from "./tween.ts";
-import type { CellSceneSpec } from "./types.ts";
+import { composeDossier } from "./dossier.ts";
+import type { CellSceneSpec, DossierSpecRow, SceneTheme } from "./types.ts";
 
 /**
  * How far the labels of unlit parts fade when one part is lit.
@@ -141,6 +142,12 @@ interface PartObject {
   material: MeshStandardMaterial;
   /** Emissive intensity the current build asked for, before hover highlight. */
   baseEmissive: number;
+  /** The build's own colour, so clearing a selection restores exactly it. */
+  baseColor: string;
+  /** The build's own opacity — likewise, never a remembered dim. */
+  baseOpacity: number;
+  /** Uniform the Fresnel rim reads; 1 on the selected part, 0 everywhere else. */
+  rim: { value: number };
 }
 
 const MAX_PIXEL_RATIO = 2;
@@ -251,6 +258,20 @@ export function mountCellScene(
   badgeOverlay.style.height = "100%";
   badgeOverlay.style.pointerEvents = "none";
   overlayContainer.appendChild(badgeOverlay);
+
+  // The floating dossier card: the stage's own copy of the document's prose,
+  // shown while a part is pinned or hovered. Positioned below the HUD strip
+  // (which sits at the top of the stage) and scrollable, because a dossier
+  // with its full spec table must never be clipped into unreadability.
+  const dossierCard = document.createElement("div");
+  dossierCard.id = "cell-scene-dossier";
+  dossierCard.style.cssText =
+    "position:absolute;top:56px;left:16px;width:300px;max-height:60%;overflow:auto;" +
+    "display:none;pointer-events:auto;padding:10px 12px;border-radius:6px;" +
+    `background:${currentSpec.theme.panel};border:1px solid ${currentSpec.theme.grid};` +
+    `color:${currentSpec.theme.text};font-family:${currentSpec.theme.fonts?.mono ?? "ui-monospace, monospace"};` +
+    "font-size:11px;z-index:3;";
+  overlayContainer.appendChild(dossierCard);
 
   const scene3 = new Scene();
   // An environment map, not extra lamps: metals need something to reflect, and
@@ -436,12 +457,39 @@ export function mountCellScene(
         const material = new MeshStandardMaterial({
           transparent: true, roughness: 0.55, metalness: 0.25, side: DoubleSide,
         });
+        // The Fresnel rim: a uniform-driven edge glow the selection treatment
+        // turns up on exactly one part. Injection rather than a post-process
+        // pass — the whole stage stays one render. Graceful by construction:
+        // if three ever renames the chunk, `replace` matches nothing, the
+        // shader compiles untouched, and the only cost is no rim.
+        const rim = { value: 0 };
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.uRimStrength = rim;
+          shader.uniforms.uRimColor = {
+            value: new Color(currentSpec.theme.accent2 ?? currentSpec.theme.accent),
+          };
+          shader.fragmentShader =
+            "uniform float uRimStrength;\nuniform vec3 uRimColor;\n" +
+            shader.fragmentShader.replace(
+              "#include <emissivemap_fragment>",
+              "#include <emissivemap_fragment>\n" +
+                "float rimFactor = pow(1.0 - clamp(abs(dot(normalize(vViewPosition), normal)), 0.0, 1.0), 2.5);\n" +
+                "totalEmissiveRadiance += uRimColor * rimFactor * uRimStrength;",
+            );
+        };
+        material.customProgramCacheKey = () => "cell-rim";
         const mesh = new Mesh(toBuffer(part.mesh), material);
         mesh.userData.partId = part.id;
         const group = new Group();
         group.add(mesh);
         partsRoot.add(group);
-        object = { id: part.id, group, mesh, material, baseEmissive: part.emissive };
+        object = {
+          id: part.id, group, mesh, material,
+          baseEmissive: part.emissive,
+          baseColor: part.color,
+          baseOpacity: part.opacity,
+          rim,
+        };
         objects.set(part.id, object);
       }
       object.mesh.geometry.dispose();
@@ -451,6 +499,8 @@ export function mountCellScene(
       object.material.emissive = new Color(part.color);
       object.baseEmissive = part.emissive;
       object.material.emissiveIntensity = part.emissive;
+      object.baseColor = part.color;
+      object.baseOpacity = part.opacity;
       const shading = materialFor(part.id);
       object.material.roughness = shading.roughness;
       object.material.metalness = shading.metalness;
@@ -480,6 +530,11 @@ export function mountCellScene(
     gaugeMaterial.color = new Color(built.gauge.color);
     gaugeMaterial.emissive = new Color(built.gauge.color);
     gaugeMaterial.emissiveIntensity = built.gauge.projected ? 0.75 : 0.3;
+
+    // A repaint restored the build's colours and opacities above; the active
+    // selection must survive a scrub, so the treatment is re-applied from the
+    // (unchanged) selection state rather than being remembered in a material.
+    applyActiveTreatment();
   }
 
   // ── Hover inspection ──────────────────────────────────────────────────
@@ -487,25 +542,121 @@ export function mountCellScene(
   const pointer = new Vector2();
   let pointerInside = false;
 
+  /**
+   * Paint the current selection onto every mesh.
+   *
+   * The active part keeps the build's colour, gains emissive and the Fresnel
+   * rim; every other part falls back toward the theme's muted tone at 15%
+   * opacity, so the eye lands where the callout points. `pinned` beats
+   * `hovered` — the exact precedence the badges already compute at line one
+   * of `updateLeaderLines` — so meshes and callouts cannot disagree about
+   * what is selected. Everything is an offset from what the build asked for:
+   * clearing the selection restores the build's own colour and opacity, never
+   * a remembered highlight.
+   */
+  function applyActiveTreatment(): void {
+    const active = pinned ?? hovered;
+    for (const object of objects.values()) {
+      const isActive = active !== null && object.id === active;
+      // Highlight is an offset from the value the build asked for, never a
+      // mutation of it — otherwise hovering would permanently brighten a part
+      // until the next rebuild. The annotation badges dim the same way, from
+      // the same precedence, in `updateLeaderLines`.
+      object.material.emissiveIntensity = isActive ? object.baseEmissive + 0.6 : object.baseEmissive;
+      object.rim.value = isActive ? 1 : 0;
+      if (active !== null && !isActive) {
+        object.material.opacity = Math.min(object.baseOpacity, 0.15);
+        object.material.color.set(desaturateHex(object.baseColor, 0.7, currentSpec.theme.muted));
+      } else {
+        object.material.opacity = object.baseOpacity;
+        object.material.color.set(object.baseColor);
+      }
+    }
+  }
+
   function setHovered(id: string | null): void {
     if (hovered === id) return;
     hovered = id;
     if (pinned === null) {
-      for (const [partId, object] of objects) {
-        const isTarget = partId === id;
-        // Highlight is an offset from the value the build asked for, never a
-        // mutation of it — otherwise hovering would permanently brighten a part
-        // until the next rebuild. The annotation badges dim the same way, from
-        // the same number, in `updateLeaderLines`.
-        object.material.emissiveIntensity = isTarget ? object.baseEmissive + 0.6 : object.baseEmissive;
-      }
       options.onInspect?.(id);
     }
+    applyActiveTreatment();
     // The host paints from `onFrame`, so a hover that the host never hears
     // about is a hover it cannot show: the part list and the scene must agree
     // about which part is lit at all times, not only after a click.
     emit();
     updateLeaderLines();
+    syncDossier();
+  }
+
+  // ── Dossier card ──────────────────────────────────────────────────────
+  /** Tag dot: the same provenance-colour mapping the cards and React use. */
+  const tagColor = (tag: string, theme: SceneTheme): string =>
+    tag === "refusal"
+      ? theme.muted
+      : tag === "typical"
+        ? theme.grid
+        : theme.provenanceColors[tag] ?? theme.accent;
+
+  function renderDossier(partId: string): void {
+    const view = composeDossier(currentSpec, partId, build.cursor);
+    if (!view) {
+      // A document from before dossiers existed gets no card at all: an
+      // empty shell would be a reading the document never wrote.
+      dossierCard.style.display = "none";
+      dossierCard.innerHTML = "";
+      return;
+    }
+    const theme = currentSpec.theme; // Task 11 swaps this for the active palette
+    const row = (r: DossierSpecRow): string => `
+      <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0">
+        <span style="color:${theme.muted}">${escapeHtml(r.label)}</span>
+        <span style="text-align:right">
+          <span style="color:${r.tag === "refusal" ? theme.muted : theme.text}">${escapeHtml(r.value)}</span>
+          <span style="color:${theme.muted};font-size:9px">${r.unit ? ` ${escapeHtml(r.unit)}` : ""}</span>
+          <span title="${r.tag}" style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:4px;background:${tagColor(r.tag, theme)}"></span>
+        </span>
+      </div>`;
+    dossierCard.innerHTML =
+      `<div style="font-weight:600;letter-spacing:0.08em">${escapeHtml(view.latinTitle ?? view.label)}</div>` +
+      `<div style="color:${theme.muted};margin-bottom:6px">${escapeHtml(view.subsystem ?? "")}</div>` +
+      `<div style="border-top:1px solid ${theme.grid};margin:6px 0;padding-top:6px">` +
+      `<div style="color:${theme.accent};font-size:9px;letter-spacing:0.1em">LIVE AT CURSOR</div>${view.live.map(row).join("")}</div>` +
+      (view.specs.length
+        ? `<div style="border-top:1px solid ${theme.grid};margin:6px 0;padding-top:6px">` +
+          `<div style="color:${theme.accent};font-size:9px;letter-spacing:0.1em">PHYSICAL SPEC</div>${view.specs.map(row).join("")}</div>`
+        : "") +
+      (view.insight
+        ? `<div style="border-top:1px solid ${theme.grid};margin-top:6px;padding-top:6px;color:${theme.muted}">${escapeHtml(view.insight)}</div>`
+        : "");
+    dossierCard.style.display = "block";
+  }
+
+  /**
+   * Show the dossier for the effective selection, or none.
+   *
+   * Called every frame (cheap: one string compare on the no-op path) because
+   * the card moves with *both* axes of change — which part is active and
+   * where the cursor is — and must re-render when the theme swaps. Called
+   * explicitly from hover and inspect too, so the card lands with the click
+   * rather than a frame later.
+   */
+  let dossierKey = "|none";
+  function syncDossier(): void {
+    const active = pinned ?? hovered;
+    const theme = currentSpec.theme;
+    const key =
+      active === null
+        ? "|none"
+        : `${active}|${build.cursor}|${theme.panel}|${theme.accent}|${theme.muted}|${theme.grid}`;
+    if (key === dossierKey) return;
+    dossierKey = key;
+    if (active === null) {
+      dossierCard.style.display = "none";
+      dossierCard.innerHTML = "";
+      return;
+    }
+    renderDossier(active);
   }
 
   function onPointerMove(event: PointerEvent): void {
@@ -802,6 +953,9 @@ export function mountCellScene(
     controls.update();
     renderer.render(scene3, camera);
     updateLeaderLines();
+    // The card follows the cursor (a scrub changes every live row) and the
+    // selection — one string compare when nothing moved.
+    syncDossier();
     if (pointerInside) {
       // A hover highlight decays once the pointer stops moving; refresh it so
       // the lit part stays lit while the camera orbits around it.
@@ -868,10 +1022,7 @@ export function mountCellScene(
     inspect(partId) {
       if (disposed) return;
       pinned = partId;
-      for (const [id, object] of objects) {
-        const isTarget = id === partId;
-        object.material.emissiveIntensity = isTarget ? object.baseEmissive + 0.6 : object.baseEmissive;
-      }
+      applyActiveTreatment();
       // Turn the camera to the inspected part's own side, keeping the distance
       // and height the viewer chose — a click in a list should not throw away
       // their framing — and as a tween rather than a jump, so the click turns
@@ -883,6 +1034,7 @@ export function mountCellScene(
       options.onInspect?.(partId);
       emit();
       updateLeaderLines();
+      syncDossier();
     },
     setAnnotations(visible) {
       annotationsVisible = visible;
