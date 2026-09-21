@@ -1,4 +1,12 @@
 // Mirrors the Pydantic response models in src/api.py.
+//
+// One exception, and it is deliberate: `CellSceneSpec` is not repeated here.
+// The 3D cell scene's contract is `docs/cell_scene.schema.json` with its own
+// `schemaVersion`, produced by src/cell_scene.py and consumed by
+// frontend/src/scene/, and its types live with the renderer that reads them
+// (`frontend/src/scene/types.ts`) so the document and the code that draws it
+// cannot drift apart through a second declaration.
+export type { CellSceneSpec } from "./scene/types.ts";
 
 export interface LoginResponse {
   access_token: string;

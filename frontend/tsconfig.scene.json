@@ -1,29 +1,26 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.scene.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
-    "types": ["vite/client"],
+    /* The scene's own tests run under Node (`npm run test:scene`), which is the
+       frontend's only test runner — so this project needs Node's types, where
+       the app project deliberately does not. */
+    "types": ["node"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 
-    /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
-    "jsx": "react-jsx",
 
-    /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
-  /* The scene's Node-run tests are type-checked by tsconfig.scene.json, which
-     has Node's types; this project ships to a browser and has none. */
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src/scene"]
 }

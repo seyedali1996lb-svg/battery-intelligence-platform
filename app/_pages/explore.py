@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
+from _pages._explore_3d import render_degradation_space_3d
 from utils import _md_html, _empty_state, base_layout, _action_bar, render_pack_builder, render_card, _resample_df
 
 def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
@@ -13,13 +14,19 @@ def page_compare(cell_ids: list, active_fdfs: dict, bundles: dict, graph=None):
     st.markdown("# Explore")
 
     _exp_view = st.radio(
-        "view", ["Compare", "Cluster", "Cohort", "Pack Builder", "Related Cells", "Reference Datasets"],
+        "view", ["Compare", "Cluster", "3D Degradation Space", "Cohort", "Pack Builder",
+                 "Related Cells", "Reference Datasets"],
         horizontal=True, key="explore_view_radio", label_visibility="collapsed",
     )
 
     # ── Cluster tab ──────────────────────────────────────────────────────────
     if _exp_view == "Cluster":
         _page_explore_cluster(cell_ids, active_fdfs, bundles)
+        return
+
+    # ── 3D Degradation Space tab ─────────────────────────────────────────────
+    if _exp_view == "3D Degradation Space":
+        render_degradation_space_3d(cell_ids, active_fdfs)
         return
 
     # ── Cohort tab ───────────────────────────────────────────────────────────

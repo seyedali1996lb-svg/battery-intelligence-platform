@@ -24,6 +24,7 @@ import rbac
 NAV_GROUPS = [
     ("Analyse", [
         ("Overview",   "overview"),
+        ("Battery 3D", "battery3d"),
         ("Explore",    "compare"),
         ("Benchmark",  "benchmark"),
         ("Bring your own model", "model_validation"),

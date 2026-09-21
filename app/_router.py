@@ -38,6 +38,7 @@ def _import_pages():
     from _pages.grading import page_grading
     from _pages.live_monitor import page_live_monitor
     from _pages.explore import page_compare
+    from _pages.battery3d import page_battery3d
     from _pages.import_page import page_import
     from _pages.settings import page_settings
     from _pages.operations import page_operations
@@ -54,6 +55,7 @@ def _import_pages():
         "page_grading":       page_grading,
         "page_live_monitor":  page_live_monitor,
         "page_compare":       page_compare,
+        "page_battery3d":     page_battery3d,
         "page_import":        page_import,
         "page_settings":      page_settings,
         "page_operations":    page_operations,
@@ -217,6 +219,8 @@ def route(
                                      rul_reliable, bundle, graph=graph)
     elif page == "compare":
         pages["page_compare"](cell_ids, active_fdfs, bundles, graph=graph)
+    elif page == "battery3d":
+        pages["page_battery3d"](cell_ids, active_fdfs, bundles, selected, graph=graph)
     elif page == "benchmark":
         pages["page_benchmark"](st.session_state["auth_org_id"])
     elif page == "model_validation":

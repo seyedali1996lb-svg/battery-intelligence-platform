@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/seyedali1996lb-svg/battery-intelligence-platform/docs/cell_scene.schema.json",
+  "title": "CellSceneSpec",
+  "description": "The host-agnostic contract between this platform's data layer and any 3D cell renderer. Produced by src/cell_scene.build_cell_scene(); consumed by the Streamlit page (app/_pages/battery3d.py), the React SPA (frontend/src/components/CellSceneView.tsx), the static harness (app/static/cell_scene/index.html), the REST endpoint (GET /cells/{id}/scene) and any third-party host. Validated by tests/test_cell_scene.py on the Python side and by frontend/src/scene/spec.test.ts on the renderer side, so producer and renderer cannot drift apart silently.",
+  "type": "object",
+  "required": [
+    "schemaVersion", "cell", "series", "record", "physics", "mechanism", "knee",
+    "projection", "parts", "geometryScales", "disclosures", "theme"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Must match SCENE_SCHEMA_VERSION in src/cell_scene.py and SCENE_SCHEMA_VERSION in frontend/src/scene/index.ts."
+    },
+    "cell": {
+      "type": "object",
+      "required": ["id", "source", "chemistry", "formFactor", "provenance", "dqdvApplicable"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "description": "Human-facing dataset label, e.g. \"NASA\"." },
+        "chemistry": { "type": "string", "description": "The chemistry profile's passport string, including form factor where declared." },
+        "formFactor": { "enum": ["cylindrical", "prismatic", "unknown"] },
+        "formFactorNote": { "type": ["string", "null"] },
+        "provenance": { "type": "string", "description": "\"measured\" for reference datasets, \"synthetic\" for generated fleets." },
+        "dqdvApplicable": { "type": "boolean", "description": "The chemistry profile's own declaration of whether the platform's LiCoO2-shaped dQ/dV model is valid here." }
+      }
+    },
+    "series": {
+      "type": "object",
+      "description": "Every array is sampled on one shared index (see record.sampled), so a renderer can address all of them with a single cursor. A null entry means 'no measurement at this cycle' and is never a zero.",
+      "required": [
+        "cycles", "sohPct", "capacityAh", "resistanceOhm", "resistanceNormalized",
+        "temperatureC", "sopPct", "fadeRate30cy", "seiPct", "lamPct", "seiSharePct", "fadeModelPct"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cycles": { "$ref": "#/$defs/series" },
+        "sohPct": { "$ref": "#/$defs/series" },
+        "capacityAh": { "$ref": "#/$defs/series" },
+        "resistanceOhm": { "$ref": "#/$defs/series" },
+        "resistanceNormalized": { "$ref": "#/$defs/series" },
+        "temperatureC": { "$ref": "#/$defs/series" },
+        "sopPct": { "$ref": "#/$defs/series" },
+        "fadeRate30cy": { "$ref": "#/$defs/series" },
+        "seiPct": { "$ref": "#/$defs/series", "description": "Fitted lithium-inventory (SEI, sqrt(n)) term as % of initial capacity. Emitted even when the channel split is not identified — but the renderer must not draw geometry from it unless physics.splitIdentified is true." },
+        "lamPct": { "$ref": "#/$defs/series", "description": "Fitted active-material (linear) term, same caveat as seiPct." },
+        "seiSharePct": { "$ref": "#/$defs/series", "description": "SEI's share of the fitted total at each cycle." },
+        "fadeModelPct": { "$ref": "#/$defs/series", "description": "Total fitted fade — the *identified* quantity, and what the scene animates when the split is not identified." }
+      }
+    },
+    "record": {
+      "type": "object",
+      "required": ["firstCycle", "lastCycle", "nCycles", "nRecordedRows", "sampled", "lastSohPct"],
+      "additionalProperties": false,
+      "properties": {
+        "firstCycle": { "type": ["number", "null"] },
+        "lastCycle": { "type": ["number", "null"], "description": "\"Today\": the boundary between measured replay and projection." },
+        "nCycles": { "type": "integer", "minimum": 0 },
+        "nRecordedRows": { "type": "integer", "minimum": 0 },
+        "sampled": { "type": "boolean" },
+        "lastSohPct": { "type": ["number", "null"] }
+      }
+    },
+    "physics": {
+      "type": "object",
+      "required": [
+        "law", "seiTerm", "lamTerm", "available", "splitIdentified", "betaSei", "betaLam",
+        "fitR2", "refitEveryCycles", "perWindowBetasInFrame", "source"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "law": { "type": "string" },
+        "seiTerm": { "type": "string" },
+        "lamTerm": { "type": "string" },
+        "available": { "type": "boolean" },
+        "splitIdentified": {
+          "type": "boolean",
+          "description": "True only when BOTH fitted channels are distinguishable from zero (|beta|/sigma >= 1). False means the scene must not draw a per-layer thickness."
+        },
+        "splitReason": { "type": ["string", "null"] },
+        "betaSei": { "type": ["number", "null"] },
+        "betaLam": { "type": ["number", "null"] },
+        "fitR2": { "type": ["number", "null"] },
+        "betaSeiSigma": { "type": ["number", "null"] },
+        "betaLamSigma": { "type": ["number", "null"] },
+        "seiTStat": { "type": ["number", "null"] },
+        "lamTStat": { "type": ["number", "null"] },
+        "modelTotalFadePct": { "type": ["number", "null"] },
+        "measuredFadePct": { "type": ["number", "null"], "description": "100 - last measured SOH, for reconciling the fit against measurement." },
+        "kR": { "type": ["number", "null"], "description": "Fitted resistance-growth rate — the library nominates this as the more robust standalone signal for an active SEI channel." },
+        "kRSigma": { "type": ["number", "null"] },
+        "nCyclesUsed": { "type": ["integer", "null"] },
+        "reason": { "type": ["string", "null"] },
+        "fitR2Series": { "$ref": "#/$defs/series", "description": "The frame's per-window fit r2, reported but not drawn as geometry." },
+        "refitEveryCycles": { "type": "integer", "minimum": 1 },
+        "perWindowBetasInFrame": { "type": "integer", "minimum": 0 },
+        "spmCapacityAh": { "type": ["number", "null"] },
+        "source": { "type": "string" }
+      }
+    },
+    "mechanism": {
+      "type": "object",
+      "required": ["agree", "agreementIsEvidence", "note", "emphasis", "emphasisSource"],
+      "additionalProperties": false,
+      "properties": {
+        "physics": {
+          "type": ["object", "null"],
+          "required": ["key", "label", "gatePassed"],
+          "additionalProperties": true,
+          "properties": {
+            "key": { "enum": ["lli", "lam", "mixed", "insufficient_data"] },
+            "label": { "type": "string" },
+            "gatePassed": { "type": "boolean" }
+          }
+        },
+        "ml": {
+          "type": ["object", "null"],
+          "required": ["verdict", "source"],
+          "additionalProperties": true,
+          "properties": {
+            "verdict": { "type": "string" },
+            "source": { "type": "string" }
+          }
+        },
+        "agree": { "type": ["boolean", "null"], "description": "null whenever agreement would not be evidence (one side unavailable, or the fitted channels are not separable)." },
+        "agreementIsEvidence": { "type": "boolean" },
+        "note": { "type": "string" },
+        "emphasis": { "enum": ["sei", "particles", "neutral"] },
+        "emphasisSource": { "enum": ["physics", "ml", "none"] }
+      }
+    },
+    "knee": {
+      "type": "object",
+      "required": ["detected", "cycle", "sohAtKnee", "confidence", "phase"],
+      "additionalProperties": false,
+      "properties": {
+        "detected": { "type": "boolean" },
+        "cycle": { "type": ["number", "null"] },
+        "sohAtKnee": { "type": ["number", "null"] },
+        "confidence": { "type": ["number", "null"] },
+        "phase": { "type": ["string", "null"] }
+      }
+    },
+    "projection": {
+      "description": "The forward half of the timeline. available:false means the scene must stop at the last measured cycle and show reason.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["available", "reason"],
+          "additionalProperties": true,
+          "properties": {
+            "available": { "const": false },
+            "reason": { "type": "string", "minLength": 1 },
+            "route": { "type": ["object", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["available", "cycles", "sohPct", "kind", "modelLabel"],
+          "additionalProperties": true,
+          "properties": {
+            "available": { "const": true },
+            "cycles": { "$ref": "#/$defs/series" },
+            "sohPct": { "$ref": "#/$defs/series" },
+            "sohQ10Pct": { "$ref": "#/$defs/series" },
+            "sohQ90Pct": { "$ref": "#/$defs/series" },
+            "kind": { "const": "projected" },
+            "modelLabel": { "type": "string", "minLength": 1 },
+            "shrinkageFromPrior": { "type": ["number", "null"] },
+            "route": { "type": ["object", "null"] },
+            "reason": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "parts": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "description": "Exactly one card per anatomy mesh, in the renderer's own order — a bijection the tests assert on both sides.",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "value", "unit", "provenance", "meaning", "law", "series", "available"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "enum": [
+              "can", "cap", "vent", "terminal_pos", "terminal_neg", "tab_pos", "tab_neg",
+              "cathode_sheet", "anode_sheet", "separator", "electrolyte", "particles", "sei_film"
+            ]
+          },
+          "label": { "type": "string" },
+          "value": { "type": ["number", "null"] },
+          "unit": { "type": "string" },
+          "provenance": { "enum": ["measured", "derived", "fitted", "projected", ""] },
+          "meaning": { "type": "string" },
+          "law": { "type": "string" },
+          "series": { "oneOf": [{ "$ref": "#/$defs/series" }, { "type": "null" }] },
+          "available": { "type": "boolean" },
+          "unavailableReason": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "geometryScales": {
+      "type": "object",
+      "description": "How the renderer maps a data series to drawn size. Display policy, held here so the renderer never invents a mapping and the scene can print the one it used.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["target", "from", "unit", "note"],
+        "additionalProperties": true,
+        "properties": {
+          "target": { "enum": ["shellThickness", "lostFraction", "colour", "crossSection", "capacityLoss"] },
+          "from": { "type": "string" },
+          "unit": { "type": "string" },
+          "displayMin": { "type": ["number", "null"] },
+          "displayMax": { "type": ["number", "null"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "disclosures": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "theme": {
+      "type": "object",
+      "description": "Host-supplied design tokens (src/cell_scene.default_theme() is the default). The renderer reads every colour it paints from here and hard-codes none of its own, so a host can restyle the scene without the scene knowing anything about the host. Nested values are allowed because the SOH band table (sohBands) carries thresholds as well as colours.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "series": {
+      "type": "array",
+      "items": { "type": ["number", "null"] }
+    }
+  }
+}

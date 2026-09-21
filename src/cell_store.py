@@ -115,6 +115,26 @@ def _evict_if_needed() -> None:
         _lru.popitem(last=False)  # drop least-recently-used
 
 
+def available_columns(cell_id: str) -> "list[str] | None":
+    """Column names stored in a cell's Parquet file, read from the file
+    footer only (no column data decoded). Returns None when the cell has no
+    stored file.
+
+    Consumers that want a pruned read can ask first and request a subset
+    that is known to exist, instead of discovering that a source's records
+    simply do not carry a column (Zhu 2022's cells have no
+    ``resistance_ohm``; single-chemistry fleets have one constant
+    ``temperature_c``) by catching an ArrowInvalid from
+    ``get_cell_df(columns=...)``.
+    """
+    path = CELL_STORE_DIR / f"{cell_id}.parquet"
+    if not path.exists():
+        return None
+    import pyarrow.parquet as pq
+
+    return list(pq.ParquetFile(path).schema_arrow.names)
+
+
 def clear_lru() -> None:
     """Test/debug helper -- drop the in-process cache without touching disk."""
     _lru.clear()

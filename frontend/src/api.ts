@@ -1,4 +1,5 @@
 import type {
+  CellSceneSpec,
   LoginResponse,
   CellLatest,
   CellHistory,
@@ -78,6 +79,15 @@ export async function getCellHistory(cellId: string, limit = 200): Promise<CellH
 
 export async function getCellRul(cellId: string): Promise<RULResult> {
   return request(`/cells/${encodeURIComponent(cellId)}/rul`);
+}
+
+// The 3D cell scene. A raw `CellSceneSpec` rather than a modelled type: the
+// contract is the published JSON Schema (docs/cell_scene.schema.json) and the
+// versioned `schemaVersion` field inside the document, so a server that adds a
+// field cannot silently drift from a renderer that was built before it — see
+// frontend/src/scene/index.ts's `checkSchemaVersion`.
+export async function getCellScene(cellId: string, horizonCycles = 300): Promise<CellSceneSpec> {
+  return request(`/cells/${encodeURIComponent(cellId)}/scene?horizon_cycles=${horizonCycles}`);
 }
 
 export async function getFleetSummary(): Promise<FleetSummary> {

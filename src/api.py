@@ -206,7 +206,35 @@ def mount_spa(target_app: "FastAPI", dist_dir: Optional[str] = None) -> bool:
     return True
 
 
+# ── 3D cell scene (app/static/cell_scene/) ────────────────────────────────────
+# The same two files the Streamlit app serves from its own static directory:
+# the committed scene bundle and the standalone harness page that loads it.
+# Mounted here too because the API is the one surface a third party can reach
+# without this repository's Python: `GET /scene/index.html` renders a cell,
+# `GET /cells/{id}/scene` is the document it draws, and neither needs Streamlit.
+# The build artifacts are committed (unlike frontend/dist), so this mount is
+# unconditional — but it is still a function so tests can mount a fake
+# directory without a build, exactly like mount_spa.
+
+def cell_scene_dir() -> str:
+    """Absolute path to the committed scene assets (may not exist)."""
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app", "static", "cell_scene",
+    )
+
+
+def mount_cell_scene(target_app: "FastAPI", directory: Optional[str] = None) -> bool:
+    """Mount the 3D scene's static host at /scene. Returns whether it mounted."""
+    directory = directory or cell_scene_dir()
+    if not os.path.isdir(directory):
+        return False
+    target_app.mount("/scene", StaticFiles(directory=directory, html=True), name="cell-scene")
+    return True
+
+
 _SPA_MOUNTED = mount_spa(app)
+_CELL_SCENE_MOUNTED = mount_cell_scene(app)
 
 # ── Auth (JWT) ────────────────────────────────────────────────────────────────
 # Same honesty pattern as this app's other secrets (see README's Production
@@ -890,6 +918,50 @@ def cell_stakeholder_view(
         fields = build_recycler_view(cell_id, profile.short_name, soh, fade_30, sop_pct=sop_pct, user_region=region)
 
     return {"cell_id": cell_id, "stakeholder": stakeholder, "fields": fields}
+
+@app.get(
+    "/cells/{cell_id}/scene",
+    summary="3D cell scene — the renderer's own data contract",
+)
+def cell_scene(
+    cell_id: str,
+    horizon_cycles: int = Query(
+        300, ge=0, le=2000,
+        description="Cycles of the platform's own forecast to carry past the record (0 = measured only)",
+    ),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """One cell as a `CellSceneSpec` — the same document every 3D host draws.
+
+    Deliberately a raw dictionary rather than a Pydantic model: the contract is
+    "JSON Schema, versioned", not "this Python class". `docs/cell_scene.schema.json`
+    is published, `tests/test_cell_scene.py` validates the builder against it,
+    and `frontend/src/scene/spec.test.ts` validates a real document against the
+    schema on the JavaScript side — so a third-party renderer can be written
+    against the schema without this endpoint's types, and adding a field here
+    does not silently redefine the contract for the renderer already deployed.
+
+    Nothing new is computed for it: the frame is the same one every other
+    endpoint serves, the forecast is the same `hierarchical_fit` the Health page
+    draws and is gated by the same per-cell routing, and a part no source can
+    speak to is reported unavailable with a reason rather than given a zero.
+    """
+    fdfs = _get_featured_dfs(current_user["org_id"])
+    if cell_id not in fdfs:
+        _cell_not_found(cell_id)
+    df = fdfs[cell_id]
+    bundles = _get_bundles(current_user["org_id"])
+
+    from cell_scene import build_cell_scene, resolve_bundle_key
+
+    return build_cell_scene(
+        cell_id,
+        df,
+        bundle=bundles.get(resolve_bundle_key(cell_id)),
+        bundles=bundles,
+        horizon_cycles=int(horizon_cycles),
+    )
+
 
 @app.get("/fleet/summary", response_model=FleetSummary, summary="Fleet-level KPIs")
 def fleet_summary(current_user: dict = Depends(get_current_user)):

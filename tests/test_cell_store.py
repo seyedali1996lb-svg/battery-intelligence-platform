@@ -89,6 +89,45 @@ def test_lru_never_exceeds_max_cache_cells_across_many_saves(isolated_store, mon
         assert len(isolated_store._lru) <= 10
 
 
+def test_available_columns_lists_a_saved_cells_columns(isolated_store):
+    df = _make_df(n_cycles=40)
+    isolated_store.save_cell_df("CellA", df)
+    cols = isolated_store.available_columns("CellA")
+    assert cols is not None
+    assert set(cols) == set(df.columns)
+    assert "soh_pct" in cols and "resistance_ohm" in cols
+
+
+def test_available_columns_returns_none_when_never_saved(isolated_store):
+    assert isolated_store.available_columns("no-such-cell") is None
+
+
+def test_available_columns_reports_an_axis_a_source_does_not_carry(isolated_store):
+    """The reason this probe exists: Zhu 2022's records have no resistance
+    column, so a consumer that asks for it in a pruned read gets an
+    ArrowInvalid from get_cell_df(columns=...) instead of a column. Asking
+    first turns that into an ordinary negative answer."""
+    df = _make_df(n_cycles=40).drop(columns=["resistance_ohm"])
+    isolated_store.save_cell_df("ZhuLike", df)
+    cols = isolated_store.available_columns("ZhuLike")
+    assert cols is not None
+    assert "resistance_ohm" not in cols
+    with pytest.raises(Exception):
+        isolated_store.get_cell_df("ZhuLike", columns=["cycle_number", "resistance_ohm"])
+
+
+def test_available_columns_decodes_no_column_data(isolated_store, monkeypatch):
+    """Footer-only read: the probe must stay cheap on a wide, long record."""
+    df = _make_df(n_cycles=500)
+    isolated_store.save_cell_df("CellA", df)
+
+    def _no_data_read(*args, **kwargs):
+        raise AssertionError("available_columns() must not read column data")
+
+    monkeypatch.setattr(pd, "read_parquet", _no_data_read)
+    assert isolated_store.available_columns("CellA") is not None
+
+
 def test_build_summary_basic_fields(isolated_store):
     df = _make_df(n_cycles=120, soh_start=100.0, soh_end=70.0, eol_cycle=110)
     summary = isolated_store.build_summary("CellA", df)

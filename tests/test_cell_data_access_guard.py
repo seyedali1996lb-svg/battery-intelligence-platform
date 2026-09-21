@@ -55,9 +55,12 @@ _ITER_RE = re.compile(rf"\b{_FDFS_VAR_RE}\.(?:items|values)\(\)")
 # cleanly) migrate to a CellSummary query). Nested functions use dotted
 # names (load_everything._persist_cell_data); module-level code is "<module>".
 _ALLOWLIST: dict[str, tuple[int, str]] = {
-    "app/_data.py::load_everything._persist_cell_data": (1,
-        "Inside load_everything()'s _persist_cell_data() callback -- the "
-        "write path that populates cell_store's Parquet files + CellSummary."
+    # _persist_cell_data() was extracted out of load_everything() to module
+    # level (it is now called from two write paths there); the key follows the
+    # function's actual scope, per this module's file::enclosing.function rule.
+    "app/_data.py::_persist_cell_data": (1,
+        "The write path that populates cell_store's Parquet files + CellSummary, "
+        "called from load_everything() -- a persistence pass, not a render pass."
     ),
     "app/_pages/explore.py::_page_explore_cluster": (1,
         "Explore's Cluster tab -- opt-in secondary view, needs "

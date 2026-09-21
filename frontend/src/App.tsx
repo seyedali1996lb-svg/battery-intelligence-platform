@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FlaskConical, BarChart3, Target, Leaf, UploadCloud, Radio } from "lucide-react";
+import { FlaskConical, BarChart3, Target, Leaf, UploadCloud, Radio, Box } from "lucide-react";
 import Login from "./components/Login";
 import FleetSummaryView from "./components/FleetSummaryView";
 import ElectrochemicalWorkbench from "./components/ElectrochemicalWorkbench";
@@ -7,13 +7,15 @@ import ActionCenterView from "./components/ActionCenterView";
 import PassportCircularityView from "./components/PassportCircularityView";
 import UniversalIngestionView from "./components/UniversalIngestionView";
 import LiveMonitorView from "./components/LiveMonitorView";
+import CellSceneView from "./components/CellSceneView";
 import { clearToken, getToken } from "./api";
 import type { LoginResponse } from "./types";
 
-type Tab = "workbench" | "fleet" | "actions" | "passport" | "ingest" | "monitor";
+type Tab = "workbench" | "scene" | "fleet" | "actions" | "passport" | "ingest" | "monitor";
 
 const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: "workbench", label: "Diagnostic Workbench", icon: <FlaskConical size={15} /> },
+  { key: "scene", label: "Cell 3D", icon: <Box size={15} /> },
   { key: "fleet", label: "Fleet Analytics", icon: <BarChart3 size={15} /> },
   { key: "actions", label: "Action Center", icon: <Target size={15} /> },
   { key: "passport", label: "Passport & Circularity", icon: <Leaf size={15} /> },
@@ -80,6 +82,7 @@ function App() {
 
       {/* Active View Container */}
       {tab === "workbench" && <ElectrochemicalWorkbench />}
+      {tab === "scene" && <CellSceneView />}
       {tab === "fleet" && <FleetSummaryView />}
       {tab === "actions" && <ActionCenterView />}
       {tab === "passport" && <PassportCircularityView />}

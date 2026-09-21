@@ -14,6 +14,32 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+### Added
+
+- **A 3D cell scene, as a portable capability rather than a widget.** One framework-free renderer plus one versioned
+  JSON document (`docs/cell_scene.schema.json`, built by `src/cell_scene.py`), consumed unchanged by four hosts: the
+  Streamlit page *Analyse → Battery 3D*, the React SPA's *Cell 3D* tab, a standalone HTML page served at
+  `/scene/index.html` (Streamlit's static route and the API's new `/scene` mount), and a new authenticated REST
+  endpoint `GET /cells/{id}/scene` (`?horizon_cycles=` bounds the projection; `0` asks for the measured record only).
+  Every drawn part is bound to a measurement the platform already computes and tagged measured / derived / fitted /
+  projected; a part no source can speak to is drawn *with a reason* instead of a zero. The SEI film and particle loss
+  are drawn only when the two fitted fade channels are separable, and the timeline's future half is the platform's own
+  hierarchical forecast gated by its existing per-cell routing — a refused route yields no future at all. The renderer's
+  geometry is DOM-free and unit-tested by Node's own runner (`npm run test:scene`, 53 tests); the renderer bundle is
+  built by `npm run build:scene` into `app/static/cell_scene/` and committed, because Streamlit serves it to a browser
+  that has no Node — so a manifest records the digest of the bundle and of every source file it was built from, and
+  `tests/test_cell_scene_bundle.py` fails on a stale or hand-edited artifact instead of shipping a scene that
+  disagrees with its own source.
+- **A host contract for the 3D scene, so a host's panels cannot disagree with the scene beside them.**
+  `CellSceneHandle.parts()` returns every part's reading **at the scene's own cursor** (id, label, value, unit,
+  provenance, availability, a `carried` flag for a cycle with no measurement, and the document's own sentence about
+  the part) — the four hosts' part tables are reading it, so scrubbing the cursor moves the cards with the cylinders
+  instead of leaving today's numbers next to a cylinder drawn at cycle 15. `MountOptions` are applied **at mount**, not
+  only on a later `update()` (a scene opens on the cursor its host asked for), `play()` returns `false` when there is
+  no life left to play and replays from the first frame rather than doing nothing, and the new `onPlaybackEnd`
+  callback tells a host that playback reached the end of the timeline — the button is the host's, so only the host can
+  put its label back.
+
 ### Changed
 
 - **Physics calibration is part of the library, not of the demo application.**
