@@ -96,6 +96,9 @@ def scene_iframe_html(spec: dict, *, height: int = 700) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600&family=EB+Garamond&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   html, body {{ margin:0; padding:0; background:{theme.get('background', '#0b1120')};
                 color:{theme.get('text', '#e2e8f0')};

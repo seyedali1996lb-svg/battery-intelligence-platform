@@ -355,3 +355,19 @@ test("every part in the sample carries one of the ten declared categories", () =
     assert.ok(taxonomy.has(part.category ?? ""), `${part.id}: ${part.category}`);
   }
 });
+
+test("paletteFor falls back to the document's own theme, and unknown names never throw", async () => {
+  const { paletteFor } = await import("./theme.ts");
+  assert.equal(paletteFor(sample, "codex").background, "#F4EEDA");
+  assert.equal(paletteFor(sample, "nope"), sample.theme);
+  assert.equal(paletteFor({ ...sample, palettes: undefined }, "codex"), sample.theme);
+});
+
+test("the light palette asks for softer metals than the dark one, clamped into range", async () => {
+  const { materialFor } = await import("./materials.ts");
+  const dark = materialFor("can", "dark");
+  const light = materialFor("can", "light");
+  assert.ok(light.roughness >= dark.roughness);
+  assert.ok(light.metalness >= 0 && light.roughness <= 1);
+  assert.ok(light.envMapIntensity < dark.envMapIntensity);
+});

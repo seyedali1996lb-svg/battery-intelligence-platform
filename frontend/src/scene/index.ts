@@ -21,6 +21,7 @@ import type { CellSceneSpec, SceneTheme } from "./types.ts";
 export { SCENE_SCHEMA_VERSION };
 export type { CellSceneSpec, SceneTheme } from "./types.ts";
 export type { DossierSpecRow, DossierTag, PartDossier } from "./types.ts";
+export { paletteFor } from "./theme.ts";
 export { composeDossier } from "./dossier.ts";
 export type { DossierView, LiveRow } from "./dossier.ts";
 export type { CellSceneHandle, FrameState, MountOptions } from "./engine.ts";

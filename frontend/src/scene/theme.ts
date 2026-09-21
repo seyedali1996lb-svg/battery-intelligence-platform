@@ -7,7 +7,49 @@
  * scene can never call a cell healthy using bands the host would disagree with.
  */
 
-import type { SceneBand, SceneTheme } from "./types.ts";
+import type { CellSceneSpec, SceneBand, SceneTheme } from "./types.ts";
+
+/**
+ * The palette a stage should paint with: the named one if the document
+ * carries it, else the document's own theme. Unknown names and pre-palette
+ * documents are not errors — they are the default, and a switcher that threw
+ * on a stale document would be punishing its reader for the document's age.
+ */
+export function paletteFor(spec: CellSceneSpec, name: string | null | undefined): SceneTheme {
+  if (name && spec.palettes && spec.palettes[name]) return spec.palettes[name];
+  return spec.theme;
+}
+
+/**
+ * Per-origin stage preferences, stored as one small JSON bag.
+ *
+ * A browser that refuses storage (private mode, disabled cookies) simply
+ * keeps none: persistence is a courtesy here, never a requirement, and no
+ * preference read or write may ever surface as an error in the scene.
+ */
+const PREF_KEY = "cell-scene.pref";
+
+export function readPref<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(PREF_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return key in parsed ? (parsed[key] as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writePref(key: string, value: unknown): void {
+  try {
+    const raw = window.localStorage.getItem(PREF_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    parsed[key] = value;
+    window.localStorage.setItem(PREF_KEY, JSON.stringify(parsed));
+  } catch {
+    /* no persistence, never an error */
+  }
+}
 
 /** '#rrggbb' (or '#rgb') → [r, g, b] in 0–255. Throws on anything else. */
 export function hexToRgb(hex: string): [number, number, number] {

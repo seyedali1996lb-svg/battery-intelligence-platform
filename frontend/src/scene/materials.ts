@@ -73,6 +73,29 @@ export const DEFAULT_PART_MATERIAL: PartMaterial = {
   envMapIntensity: 0.6,
 };
 
-export function materialFor(partId: string): PartMaterial {
-  return PART_MATERIALS[partId] ?? DEFAULT_PART_MATERIAL;
+/**
+ * Per-palette shading adjust. Light backgrounds wash metals out, so the
+ * light variant dulls the metal, roughens every surface a touch and pulls the
+ * environment contribution back; the dark variant is the base table (zero
+ * adjust) so behaviour predating palettes is byte-identical to it. Deltas,
+ * not replacements — a membrane is still a membrane whichever palette paints it.
+ */
+export const PALETTE_MATERIAL_ADJUST: Record<"dark" | "light", PartMaterial> = {
+  dark: { metalness: 0, roughness: 0, envMapIntensity: 1 },
+  light: { metalness: -0.1, roughness: 0.12, envMapIntensity: 0.6 },
+};
+
+/**
+ * A part's material, adjusted for the palette's light. Both tables are data a
+ * test reads; the clamping is because a delta must never push a value out of
+ * the range three accepts (metalness and roughness are 0–1).
+ */
+export function materialFor(partId: string, variant: "dark" | "light" = "dark"): PartMaterial {
+  const base = PART_MATERIALS[partId] ?? DEFAULT_PART_MATERIAL;
+  const d = PALETTE_MATERIAL_ADJUST[variant] ?? PALETTE_MATERIAL_ADJUST.dark;
+  return {
+    metalness: Math.min(1, Math.max(0, base.metalness + d.metalness)),
+    roughness: Math.min(1, Math.max(0, base.roughness + d.roughness)),
+    envMapIntensity: base.envMapIntensity * d.envMapIntensity,
+  };
 }

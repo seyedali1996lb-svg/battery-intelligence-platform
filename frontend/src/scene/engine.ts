@@ -52,8 +52,8 @@ import {
   vertexCount,
 } from "./geometry.ts";
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
-import { provenanceColor } from "./theme.ts";
-import { CARD_H_ONE, CARD_H_TWO, desaturateHex, layoutFlank } from "./annotation.ts";
+import { paletteFor, provenanceColor, readPref, writePref } from "./theme.ts";
+import { CARD_H_ONE, CARD_H_TWO, chromeSvg, desaturateHex, layoutFlank } from "./annotation.ts";
 import { poseFacing, poseLerp, poseToPosition, type CameraPose } from "./tween.ts";
 import { composeDossier } from "./dossier.ts";
 import type { CellSceneSpec, DossierSpecRow, SceneTheme } from "./types.ts";
@@ -65,6 +65,36 @@ import type { CellSceneSpec, DossierSpecRow, SceneTheme } from "./types.ts";
  * looks the same whichever way the viewer made it.
  */
 const DIM_OPACITY = 0.3;
+
+/**
+ * The dark palettes' backdrop: a vignette in the palette's own background, so
+ * the stage's edges deepen without the renderer painting a second scene.
+ */
+function vignette(theme: SceneTheme): string {
+  return `background:radial-gradient(ellipse at center, transparent 55%, ${theme.background}cc 100%)`;
+}
+
+/**
+ * The light palettes' backdrop: a procedural paper grain, ~64×64 pixels drawn
+ * once onto a canvas. Deterministic (a fixed hash of the pixel index, never
+ * `Math.random`) so the same document renders the same paper every time — and
+ * a canvas that cannot be had (a bare DOM shim) falls back to no grain rather
+ * than to a broken stage.
+ */
+function paperGrain(theme: SceneTheme): string {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const ctx = c.getContext("2d");
+  if (!ctx) return vignette(theme);
+  const img = ctx.createImageData(64, 64);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 200 + Math.floor((i * 2654435761) % 55);
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 14;
+  }
+  ctx.putImageData(img, 0, 0);
+  return `background-image:url(${c.toDataURL()});background-repeat:repeat;opacity:0.5;mix-blend-mode:multiply`;
+}
 
 /**
  * Where the annotation badges live, in pixels, relative to the stage's own
@@ -109,6 +139,12 @@ export interface MountOptions extends Partial<BuildOptions> {
    * stays stuck on "Pause" after the cell has finished aging.
    */
   onPlaybackEnd?: () => void;
+  /**
+   * Which of the document's palettes to paint with on the first frame. Absent
+   * means the reader's stored preference if there is one, else the document's
+   * own `theme` — the default has to be the document's, not the host's taste.
+   */
+  theme?: string;
 }
 
 export interface CellSceneHandle {
@@ -130,6 +166,12 @@ export interface CellSceneHandle {
   pause(): void;
   isPlaying(): boolean;
   resetView(): void;
+  /**
+   * Paint the stage with one of the document's named palettes (`null`/unknown
+   * returns to the document's own `theme`). Bands never move: a palette may
+   * repaint the platform's colours, never re-band what it calls healthy.
+   */
+  setTheme(name: string | null): void;
   /** The most recent state handed to `onFrame`. */
   state(): FrameState | null;
   dispose(): void;
@@ -192,6 +234,35 @@ export function mountCellScene(
   }
   let scene: BuiltScene | null = null;
   let currentSpec: CellSceneSpec = spec;
+  /** The document's chosen palette name: host option, else stored pref, else none. */
+  let themeName: string | null = options.theme ?? readPref<string>("theme") ?? null;
+  if (themeName === "") themeName = null;
+  let themeVariant: "dark" | "light" = "dark";
+  const activePalette = (): SceneTheme => paletteFor(currentSpec, themeName);
+  /**
+   * One uniform object shared by every part's rim shader, so a palette swap
+   * recolours all nineteen rims with a single `.set()` instead of waiting for
+   * a recompile that may never come.
+   */
+  const rimColorUniform = { value: new Color() };
+  /** What the expensive stage styling last saw; "" forces the first pass. */
+  let styleKey = "";
+  /**
+   * Themed copies of a host's documents, one per source. Caching is what keeps
+   * `framedSpec !== spec_` honest: without it every view toggle while a palette
+   * is active would hand `rebuild` a fresh object and re-frame the camera,
+   * throwing away the orbit over a checkbox.
+   */
+  const themedSpecs = new WeakMap<CellSceneSpec, CellSceneSpec>();
+  function themed(source: CellSceneSpec): CellSceneSpec {
+    const palette = themeName ? paletteFor(source, themeName) : source.theme;
+    if (palette === source.theme) return source;
+    const cached = themedSpecs.get(source);
+    if (cached && cached.theme === palette) return cached;
+    const out = { ...source, theme: palette };
+    themedSpecs.set(source, out);
+    return out;
+  }
   let disposed = false;
   let playTimer: number | null = null;
   let hovered: string | null = null;
@@ -238,6 +309,12 @@ export function mountCellScene(
   overlayContainer.style.overflow = "hidden";
   container.appendChild(overlayContainer);
 
+  // The palette's backdrop, painted over the canvas and under everything the
+  // reader reads: a vignette for dark palettes, paper grain for light ones.
+  const backdrop = document.createElement("div");
+  backdrop.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:0";
+  overlayContainer.appendChild(backdrop);
+
   const svgNamespace = "http://www.w3.org/2000/svg";
   const svgOverlay = document.createElementNS(svgNamespace, "svg");
   svgOverlay.setAttribute("class", "cell-scene-leader-svg");
@@ -259,6 +336,12 @@ export function mountCellScene(
   badgeOverlay.style.pointerEvents = "none";
   overlayContainer.appendChild(badgeOverlay);
 
+  // The drafting frame: ruled border, ticks, compass rose. Above the badges
+  // (it frames the whole plate, callouts included) and below the dossier card.
+  const chromeLayer = document.createElement("div");
+  chromeLayer.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:2";
+  overlayContainer.appendChild(chromeLayer);
+
   // The floating dossier card: the stage's own copy of the document's prose,
   // shown while a part is pinned or hovered. Positioned below the HUD strip
   // (which sits at the top of the stage) and scrollable, because a dossier
@@ -272,6 +355,44 @@ export function mountCellScene(
     `color:${currentSpec.theme.text};font-family:${currentSpec.theme.fonts?.mono ?? "ui-monospace, monospace"};` +
     "font-size:11px;z-index:3;";
   overlayContainer.appendChild(dossierCard);
+
+  /**
+   * Paint the stage for the active palette: exposure, key/fill/rim lights,
+   * environment strength, backdrop, drafting frame and the dossier card's
+   * own surface. Called from every paint, so the cheap facts below always
+   * hold; the expensive strings (grain canvas, chrome SVG) rebuild only when
+   * the palette, its colours or the stage size actually changed.
+   */
+  function applyStageStyle(): void {
+    const theme = activePalette();
+    themeVariant = theme.variant ?? "dark";
+    scene3.background = new Color(theme.background);
+    renderer.toneMappingExposure = themeVariant === "light" ? 1.15 : 1.05;
+    key.color.set(themeVariant === "light" ? "#fff6e0" : "#ffffff");
+    fill.intensity = themeVariant === "light" ? 0.9 : 0.7;
+    fill.groundColor.set(theme.panel); // bounce light is the palette's own panel
+    rimLight.color.set(theme.accent);
+    scene3.environmentIntensity = themeVariant === "light" ? 0.4 : 0.55;
+    rimColorUniform.value.set(theme.accent2 ?? theme.accent);
+
+    const nextKey =
+      `${theme.background}|${theme.panel}|${theme.grid}|${theme.text}|${theme.accent}|${themeVariant}` +
+      `|${container.clientWidth}x${container.clientHeight}`;
+    if (nextKey === styleKey) return;
+    styleKey = nextKey;
+
+    backdrop.innerHTML = themeVariant === "light" ? paperGrain(theme) : vignette(theme);
+    chromeLayer.innerHTML = chromeSvg({
+      theme,
+      ornate: themeVariant === "light",
+      width: container.clientWidth || 640,
+      height: container.clientHeight || 480,
+    });
+    dossierCard.style.background = theme.panel;
+    dossierCard.style.borderColor = theme.grid;
+    dossierCard.style.color = theme.text;
+    writePref("theme", themeName ?? "");
+  }
 
   const scene3 = new Scene();
   // An environment map, not extra lamps: metals need something to reflect, and
@@ -327,7 +448,9 @@ export function mountCellScene(
   // A three-point rig over the environment: the hemisphere carries the fill (so
   // nothing is ever pitch black), the key does the modelling and casts the
   // shadow, and the rim separates the cell's far edge from the background.
-  scene3.add(new HemisphereLight(0xffffff, 0x1a202c, 0.55));
+  // All three are named because `applyStageStyle` re-tints them per palette.
+  const fill = new HemisphereLight(0xffffff, 0x1a202c, 0.55);
+  scene3.add(fill);
   const key = new DirectionalLight(0xffffff, 2.1);
   key.position.set(1.4, 2.2, 1.6);
   key.castShadow = true;
@@ -336,9 +459,9 @@ export function mountCellScene(
   key.shadow.normalBias = 0.012;
   key.shadow.radius = 2.5;
   scene3.add(key);
-  const rim = new DirectionalLight(0x63b3ed, 0.55);
-  rim.position.set(-1.6, -0.4, -1.2);
-  scene3.add(rim);
+  const rimLight = new DirectionalLight(0x63b3ed, 0.55);
+  rimLight.position.set(-1.6, -0.4, -1.2);
+  scene3.add(rimLight);
 
   /**
    * The framing a fresh view wants: the cell's bounding sphere seen from the
@@ -429,20 +552,27 @@ export function mountCellScene(
   }
 
   /** Paint (or repaint) everything a build carries. Called from update(). */
-  function paint(built: BuiltScene, spec_: CellSceneSpec): void {
+  function paint(built: BuiltScene): void {
     scene = built;
-    // Background and stage furniture first: they are host tokens, not data.
-    scene3.background = new Color(spec_.theme.background);
+    // Background, lighting, backdrop and chrome come from the ACTIVE PALETTE
+    // rather than the document's default theme, so they repaint when the
+    // reader switches — and the cheap facts (scalars, one colour) run every
+    // paint while the expensive strings (grain canvas, chrome SVG) only
+    // rebuild when the palette, its colours or the stage size changed.
+    applyStageStyle();
 
     lastBounds = built.bounds;
     if (!floorMesh) {
-      floorMesh = new Mesh(toBuffer(built.chrome.floor), new MeshStandardMaterial({ color: new Color(spec_.theme.grid), roughness: 0.95, metalness: 0.05 }));
+      floorMesh = new Mesh(toBuffer(built.chrome.floor), new MeshStandardMaterial({ color: new Color(activePalette().grid), roughness: 0.95, metalness: 0.05 }));
       // The stage catches the cell's shadow; the painted contact-shadow disc
       // under it stays, because at this scale it does the ambient-occlusion job
       // a shadow map cannot.
       floorMesh.receiveShadow = true;
       stage.add(floorMesh);
     }
+    // The floor is stage furniture: it follows the palette's grid tone like
+    // every other chrome colour, or a light palette would sit on a dark disc.
+    (floorMesh.material as MeshStandardMaterial).color.set(activePalette().grid);
     if (!shadowMesh) {
       shadowMesh = new Mesh(toBuffer(built.chrome.shadow), new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 }));
       stage.add(shadowMesh);
@@ -465,9 +595,9 @@ export function mountCellScene(
         const rim = { value: 0 };
         material.onBeforeCompile = (shader) => {
           shader.uniforms.uRimStrength = rim;
-          shader.uniforms.uRimColor = {
-            value: new Color(currentSpec.theme.accent2 ?? currentSpec.theme.accent),
-          };
+          // The shared uniform: one object for all nineteen materials, so
+          // `applyStageStyle` recolours every rim with a single `.set()`.
+          shader.uniforms.uRimColor = rimColorUniform;
           shader.fragmentShader =
             "uniform float uRimStrength;\nuniform vec3 uRimColor;\n" +
             shader.fragmentShader.replace(
@@ -501,7 +631,7 @@ export function mountCellScene(
       object.material.emissiveIntensity = part.emissive;
       object.baseColor = part.color;
       object.baseOpacity = part.opacity;
-      const shading = materialFor(part.id);
+      const shading = materialFor(part.id, themeVariant);
       object.material.roughness = shading.roughness;
       object.material.metalness = shading.metalness;
       object.material.envMapIntensity = shading.envMapIntensity;
@@ -519,7 +649,7 @@ export function mountCellScene(
     }
 
     // The state gauge: a band on the casing, height = remaining capacity.
-    const gaugeGeometry = toBuffer(gaugeBandMesh(spec_, built.gauge.fraction));
+    const gaugeGeometry = toBuffer(gaugeBandMesh(currentSpec, built.gauge.fraction));
     if (!gaugeMesh) {
       gaugeMesh = new Mesh(gaugeGeometry, gaugeMaterial);
       stage.add(gaugeMesh);
@@ -607,7 +737,7 @@ export function mountCellScene(
       dossierCard.innerHTML = "";
       return;
     }
-    const theme = currentSpec.theme; // Task 11 swaps this for the active palette
+    const theme = activePalette(); // the reader's palette, not the document's default
     const row = (r: DossierSpecRow): string => `
       <div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0">
         <span style="color:${theme.muted}">${escapeHtml(r.label)}</span>
@@ -644,7 +774,7 @@ export function mountCellScene(
   let dossierKey = "|none";
   function syncDossier(): void {
     const active = pinned ?? hovered;
-    const theme = currentSpec.theme;
+    const theme = activePalette();
     const key =
       active === null
         ? "|none"
@@ -921,6 +1051,8 @@ export function mountCellScene(
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    // The chrome SVG is sized in pixels, so a resize re-draws it too.
+    applyStageStyle();
     updateLeaderLines();
   }
 
@@ -994,7 +1126,7 @@ export function mountCellScene(
 
   function rebuild(spec_: CellSceneSpec): void {
     const built = buildScene(spec_, build);
-    paint(built, spec_);
+    paint(built);
     // Frame the cell once per *document*, not once per frame: re-fitting on a
     // scrub or an explode would throw away the orbit the viewer just made, and
     // a new cell is the one moment the old framing is meaningless.
@@ -1010,9 +1142,13 @@ export function mountCellScene(
   const handle: CellSceneHandle = {
     update(spec_, opts = {}) {
       if (disposed) return;
-      currentSpec = spec_;
+      // A host re-render must not silently drop the reader's palette choice:
+      // the spec it passes is the document's own, so re-theme it (cached per
+      // source, which is also what keeps the camera's frame-once-per-document
+      // guard from mistaking a view toggle for a new cell).
+      currentSpec = themed(spec_);
       applyOptions(opts);
-      rebuild(spec_);
+      rebuild(currentSpec);
     },
     setCursor(index) {
       if (disposed || !scene) return;
@@ -1082,6 +1218,20 @@ export function mountCellScene(
       controls.maxDistance = pose.distance * 3.5;
       framePose(pose, 600);
     },
+    setTheme(name) {
+      themeName = name || null;
+      const next = themed(currentSpec);
+      // A palette swap is not a new document: hold `framedSpec` so repaint
+      // does not re-frame the camera and throw away the viewer's orbit.
+      framedSpec = next;
+      currentSpec = next;
+      applyStageStyle();
+      rebuild(currentSpec);
+      // The badges, dossier and cards read `currentSpec`/the active palette,
+      // so the next frame repaints them from the same swatch as the stage.
+      updateLeaderLines();
+      syncDossier();
+    },
     state: () => ({ ...state }),
     dispose() {
       if (disposed) return;
@@ -1113,7 +1263,8 @@ export function mountCellScene(
   // A host's options apply to the very first frame, not the second one: the
   // scene it asked for is the scene it gets.
   applyOptions(options);
-  rebuild(spec);
+  currentSpec = themed(currentSpec);
+  rebuild(currentSpec);
   raf = window.requestAnimationFrame(tick);
   return handle;
 }
