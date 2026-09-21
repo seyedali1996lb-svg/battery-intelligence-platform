@@ -33,6 +33,9 @@ export const ANATOMY_PART_IDS = [
   "electrolyte",
   "particles",
   "sei_film",
+  "gasket",
+  "cid_ptc",
+  "bottom_insulator",
 ] as const;
 
 export type PartId = (typeof ANATOMY_PART_IDS)[number];

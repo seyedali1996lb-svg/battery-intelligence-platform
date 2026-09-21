@@ -58,6 +58,12 @@ export const PART_MATERIALS: Record<string, PartMaterial> = {
   particles: { metalness: 0.2, roughness: 0.8, envMapIntensity: 0.35 },
   /** The SEI: a thin dielectric film, slightly glossy. */
   sei_film: { metalness: 0.0, roughness: 0.55, envMapIntensity: 0.6 },
+  /** Polypropylene sealing ring under the cap. */
+  gasket: { metalness: 0.0, roughness: 0.6, envMapIntensity: 0.35 },
+  /** The CID + PTC unit: passivated steel with a PTC bead. */
+  cid_ptc: { metalness: 0.75, roughness: 0.45, envMapIntensity: 0.8 },
+  /** Heat-treated polyethylene floor disc. */
+  bottom_insulator: { metalness: 0.0, roughness: 0.65, envMapIntensity: 0.3 },
 };
 
 /** What a part with no entry gets: a neutral dielectric, clearly not metal. */

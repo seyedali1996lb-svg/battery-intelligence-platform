@@ -3205,6 +3205,45 @@
       "series": null,
       "available": false,
       "unavailableReason": "This cell's data cannot separate the \u221an (SEI, lithium-inventory) fade from the linear (active-material) fade: the SEI (\u221an) coefficient fits below its own standard error (|\u03b2_sei|/\u03c3 = 5.4e-07, |\u03b2_lam|/\u03c3 = 32), and over a narrow cycle range the two regressors are strongly correlated. The combined fitted fade is still identified and is shown; the split between the two layers is not, so the scene does not draw one."
+    },
+    {
+      "id": "gasket",
+      "label": "Gasket",
+      "title": "The gasket \u2014 the seal that keeps the top leak-tight",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The cap's seal: an insulating ring the crimp compresses to keep the cell leak-tight.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
+    },
+    {
+      "id": "cid_ptc",
+      "label": "CID + PTC",
+      "title": "CID + PTC \u2014 the two resettable fuses",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The two resettable fuses: the CID opens on internal pressure, the PTC limits current on heat.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
+    },
+    {
+      "id": "bottom_insulator",
+      "label": "Bottom insulator",
+      "title": "Bottom insulator \u2014 the floor's plastic disc",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The floor's plastic disc: it keeps the winding's copper edge off the steel base.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no per-part measurement exists in this source's cycle summary \u2014 drawn as architecture"
     }
   ],
   "geometryScales": {

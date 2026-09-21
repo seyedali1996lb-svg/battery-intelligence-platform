@@ -934,7 +934,7 @@ def test_the_schematic_list_no_longer_names_the_cap():
 
 def test_every_part_card_carries_a_plain_language_title():
     spec = _spec()
-    assert len(spec["parts"]) == 16
+    assert len(spec["parts"]) == 19
     for part in spec["parts"]:
         assert part["title"], f"{part['id']} has no plain-language title"
         # The title answers "what am I looking at"; the label stays anatomical.

@@ -28,6 +28,9 @@ const LABELS: Record<PartId, string> = {
   electrolyte: "Electrolyte",
   particles: "Active material particles",
   sei_film: "SEI film on the anode",
+  gasket: "Gasket",
+  cid_ptc: "CID + PTC",
+  bottom_insulator: "Bottom insulator",
 };
 
 /** The plain-language line a card leads with — the producer carries the same map. */
@@ -48,6 +51,9 @@ const TITLES: Record<PartId, string> = {
   electrolyte: "Electrolyte — the liquid the lithium travels in",
   sei_film: "SEI film — the anode's skin, where fade first shows",
   particles: "Active material — the working powder on the sheets",
+  gasket: "The gasket — the seal that keeps the top leak-tight",
+  cid_ptc: "CID + PTC — the two resettable fuses",
+  bottom_insulator: "Bottom insulator — the floor's plastic disc",
 };
 
 export const THEME = {

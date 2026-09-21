@@ -465,6 +465,10 @@ export const CELL_GEOMETRY = {
     vent: 0.36,
     terminalPos: 0.44,
     terminalNeg: 0.3,
+    /** Axial lifts at `exploded = 1` for the three interior parts; zero at rest. */
+    gasket: 0.26,
+    cidPtc: 0.34,
+    bottomInsulator: 0.22,
     layerGap: 0.014,
     /**
      * The radial offset of each of the winding's five concentric members at
@@ -1413,6 +1417,41 @@ function _cylindricalPlacements(
       ),
       anchor: [-canRadius * 0.9, bottomTerminalY - top.terminalStudHeight, 0],
     },
+    gasket: {
+      // The cap's seal: a flat ring tucked under the cap plate at rest, lifting
+      // slightly less than the cap so the two visibly separate as they rise.
+      mesh: translateMesh(
+        extrudeClosed(ringPoints(canRadius * 0.96, 40), 0.007),
+        0,
+        0.5 - top.capThickness - 0.004 + explode.gasket * exploded,
+        0,
+      ),
+      anchor: [canRadius * 0.7, 0.5 - top.capThickness + explode.gasket * exploded, 0],
+    },
+    cid_ptc: {
+      // The CID scored disc and its PTC bead, in the boss cavity between the
+      // cap plate and the vent — grouped as one part, as the format groups them.
+      mesh: translateMesh(
+        mergeMeshes([
+          extrudeClosed(ringPoints(top.ventRadius * 0.75, 24), 0.006),
+          translateMesh(sphereMesh(0.011, 8, 6), top.ventRadius * 0.4, 0, 0),
+        ]),
+        0,
+        0.5 + top.capBossHeight * 0.35 + explode.cidPtc * exploded,
+        0,
+      ),
+      anchor: [-canRadius * 0.55, 0.5 + top.capBossHeight * 0.35 + explode.cidPtc * exploded, 0],
+    },
+    bottom_insulator: {
+      // The floor's insulating disc, lying between the can base and the roll.
+      mesh: translateMesh(
+        extrudeClosed(ringPoints(canRadius - canThickness, 48), 0.008),
+        0,
+        -0.484 - explode.bottomInsulator * exploded,
+        0,
+      ),
+      anchor: [(canRadius - canThickness) * 0.6, -0.484 - explode.bottomInsulator * exploded, 0],
+    },
     tab_pos: {
       mesh: tabStripMesh(rollTopRadius, roll.height / 2, tabTopPos, canRadius, THETA_POS, top.capThickness, -1),
       anchor: [
@@ -1521,6 +1560,14 @@ function _prismaticPlacements(
     terminal_neg: {
       mesh: translateMesh(extrudeClosed(ringPoints(0.03, 24), 0.04), -0.11, -0.53 - explode.terminalNeg * exploded, 0),
       anchor: [-halfWidth, -0.55 - explode.terminalNeg * exploded, 0],
+    },
+    gasket: {
+      mesh: translateMesh(boxMesh(width * 0.92, 0.008, depth * 0.92), 0, 0.485 + explode.gasket * exploded, 0),
+      anchor: [halfWidth, 0.485 + explode.gasket * exploded, 0],
+    },
+    bottom_insulator: {
+      mesh: translateMesh(boxMesh(width * 0.9, 0.01, depth * 0.9), 0, -0.48 - explode.bottomInsulator * exploded, 0),
+      anchor: [-halfWidth, -0.48 - explode.bottomInsulator * exploded, 0],
     },
     tab_pos: {
       mesh: translateMesh(boxMesh(0.02, 0.05, 0.006), -0.09, roll.height / 2 + 0.03, anodeZ),
@@ -1720,6 +1767,18 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
       case "separator":
         color = spec.theme.separatorColor;
         opacity = 0.35;
+        break;
+      case "gasket":
+      case "bottom_insulator":
+        // Polymer parts: shaded with the separator's own colour so every
+        // plastic in the cell reads as plastic at a glance.
+        color = spec.theme.separatorColor;
+        opacity = 0.9;
+        break;
+      case "cid_ptc":
+        color = spec.theme.metal;
+        emissive = 0.15;
+        opacity = 0.95;
         break;
       case "electrolyte":
         color = spec.theme.electrolyteColor;

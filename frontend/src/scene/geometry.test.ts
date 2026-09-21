@@ -299,7 +299,7 @@ test("an available projection extends the timeline and is flagged as projected t
 // The anatomy: bijection, form factors, explode
 // ---------------------------------------------------------------------------
 
-test("the scene draws all sixteen parts and every part has sane geometry", () => {
+test("the scene draws all nineteen parts and every part has sane geometry", () => {
   const scene = buildScene(makeSpec({ projection: "available" }), { cursor: 10 });
   assert.equal(scene.parts.length, ANATOMY_PART_IDS.length);
   assert.deepEqual(
@@ -310,6 +310,47 @@ test("the scene draws all sixteen parts and every part has sane geometry", () =>
     assert.equal(part.drawn, true, `${part.id} has no geometry`);
     assertMeshSane(part.mesh, part.id);
     assert.ok(part.anchor.every(Number.isFinite), `${part.id} has a non-finite label anchor`);
+  }
+});
+
+test("the top plate carries a gasket, CID and PTC as declared parts", () => {
+  const scene = buildScene(makeSpec({ projection: "available" }), { cursor: 0 });
+  assert.equal(scene.parts.length, 19, "three parts were added; the count is a contract");
+  const gasket = partOf(scene, "gasket");
+  const cidPtc = partOf(scene, "cid_ptc");
+  // The gasket seals under the cap; the CID+PTC group sits on the top plate.
+  // All three live outside the jelly roll: the roll's own y-anchors bound it.
+  const rollTop = Math.max(
+    ...(["cathode_sheet", "anode_sheet", "separator"] as const).map((id) => partOf(scene, id).anchor[1]),
+  );
+  const rollBottom = Math.min(
+    ...(["cathode_sheet", "anode_sheet", "separator"] as const).map((id) => partOf(scene, id).anchor[1]),
+  );
+  for (const part of [gasket, cidPtc, partOf(scene, "bottom_insulator")]) {
+    assert.ok(part.drawn, `${part.id} has no geometry`);
+    assertMeshSane(part.mesh, part.id);
+    assert.ok(
+      part.anchor.every(Number.isFinite),
+      `${part.id} has a non-finite label anchor`,
+    );
+  }
+  assert.ok(gasket.anchor[1] > rollTop, "the gasket sits above the roll, not inside it");
+  assert.ok(cidPtc.anchor[1] > rollTop, "the CID/PTC group sits on the top plate");
+  assert.ok(
+    partOf(scene, "bottom_insulator").anchor[1] < rollBottom,
+    "the bottom insulator sits under the roll",
+  );
+});
+
+test("every added part explodes with a key of its own", () => {
+  const assembled = buildScene(makeSpec(), { exploded: 0 });
+  const apart = buildScene(makeSpec(), { exploded: 1 });
+  for (const id of ["gasket", "cid_ptc", "bottom_insulator"] as const) {
+    assert.notDeepEqual(
+      Array.from(partOf(apart, id).mesh.positions),
+      Array.from(partOf(assembled, id).mesh.positions),
+      `${id} never exploded — no explode key`,
+    );
   }
 });
 

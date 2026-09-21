@@ -1,21 +1,21 @@
 {
   "builtBy": "cd frontend && npm run build:scene (frontend/vite.scene.config.ts)",
   "bundle": "cell_scene.js",
-  "bundleBytes": 595487,
-  "bundleSha256": "de1907bc3fd3e9301ab97031c759b20d05efd35f7c535034993ed0bce06efefc",
+  "bundleBytes": 596460,
+  "bundleSha256": "57adbb21876a0bd58405975b96b1d01f653c976d4aaa1f73f39e497110e89d8f",
   "sampleScene": "sample_scene.json",
   "sampleSceneCell": "B0005",
-  "sampleSceneSha256": "779228eea6fea55ea92fb69b9a8fb050e7884277adf797038f12599d8bd74662",
+  "sampleSceneSha256": "00ea2a9d989d4f8c7d954af44d42df82c4000a54f7865930a8728d2290d67d64",
   "schemaVersion": 1,
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
     "src/scene/engine.ts": "56c7f89955d105db7b2ce331d3cff574b9cba4f71834ef0df09d2bd3d90da764",
-    "src/scene/geometry.ts": "5524b595b62e117f743c243aa2b719864211365b587cc3600724aa987cda10f1",
+    "src/scene/geometry.ts": "fd5c36f4960fd0c159e00470554d8c4919dfa38f5c84e600f65be53018d50df1",
     "src/scene/index.ts": "ed3232f77c43f79d7a7a1ead2716155c1d56cf8cb87f415652bce2efcf170026",
-    "src/scene/materials.ts": "0decdf9076da53ef9a4e53777b15951e062721af3f7f88d479d69527d9c601c4",
+    "src/scene/materials.ts": "2be6916043b0580896485a9b5112e962cf8ad6aa9c5e6af4a6f18b7b995db85a",
     "src/scene/standalone.ts": "84ca28a92bc210b37e5d47d46771b38cc0b234506e09277e8305ccb962227987",
     "src/scene/theme.ts": "b3d0547e91696d93063fa09e171b3d38cf0c2e34629f6931bcef56e24efa1b39",
-    "src/scene/types.ts": "f278d36d8ace1aa36e96df9afe48de6c858092cfb39dab5a4c2ec8d9c2dc1d6a",
+    "src/scene/types.ts": "2d454aefe16d8043f72fe85ed26ce4b2cdecfec5cb06344cbb006e030df245b0",
     "vite.scene.config.ts": "b5fdc9dbeb9aa740acf308b815796d5b918dfa4a293a9f1fe062340e31000791"
   },
   "threeVersion": "^0.186.0"

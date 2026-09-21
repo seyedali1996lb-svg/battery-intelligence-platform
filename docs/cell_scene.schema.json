@@ -533,8 +533,8 @@
     },
     "parts": {
       "type": "array",
-      "minItems": 16,
-      "maxItems": 16,
+      "minItems": 19,
+      "maxItems": 19,
       "description": "Exactly one card per anatomy mesh, in the renderer's own order \u2014 a bijection the tests assert on both sides.",
       "items": {
         "type": "object",
@@ -569,7 +569,10 @@
             "particles",
             "sei_film",
             "wrap",
-            "crimp"
+            "crimp",
+            "gasket",
+            "cid_ptc",
+            "bottom_insulator"
           ]
         },
         "label": {

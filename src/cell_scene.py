@@ -90,6 +90,7 @@ MESH_PART_IDS: tuple[str, ...] = (
     "tab_pos", "tab_neg", "mandrel",
     "cathode_sheet", "anode_sheet", "separator",
     "electrolyte", "particles", "sei_film",
+    "gasket", "cid_ptc", "bottom_insulator",
 )
 
 #: Provenance vocabulary for a part's value. Deliberately the same words the
@@ -528,6 +529,9 @@ _PLAIN_TITLE = {
     "particles": "Active material — the working powder on the sheets",
     "wrap": "Heat-shrink jacket — the printed skin of the cell",
     "crimp": "Crimp rim — where the can was rolled shut",
+    "gasket": "The gasket — the seal that keeps the top leak-tight",
+    "cid_ptc": "CID + PTC — the two resettable fuses",
+    "bottom_insulator": "Bottom insulator — the floor's plastic disc",
 }
 
 
@@ -561,7 +565,7 @@ def _unavailable(part_id: str, label: str, reason: str, meaning: str) -> dict:
 
 def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
                  film: "dict | None" = None) -> list[dict]:
-    """The 16 anatomy cards, each wired to the most specific signal that exists."""
+    """The 19 anatomy cards, each wired to the most specific signal that exists."""
     def _last(col: str):
         return last_row.get(col) if last_row is not None else None
 
@@ -817,6 +821,23 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
         reason=None if (split_ok and (film_derivable or sei_last is not None))
         else (split_reason if not split_ok else _fit_reason),
     ))
+
+    # Architecture without a claim: these three carry no per-part measurement in
+    # any cycle summary, so they are reported unavailable WITH a reason and the
+    # renderer still draws them — see geometry.test "architecture without a claim".
+    for _pid, _label, _meaning in (
+        ("gasket", "Gasket",
+         "The cap's seal: an insulating ring the crimp compresses to keep the cell leak-tight."),
+        ("cid_ptc", "CID + PTC",
+         "The two resettable fuses: the CID opens on internal pressure, the PTC limits current on heat."),
+        ("bottom_insulator", "Bottom insulator",
+         "The floor's plastic disc: it keeps the winding's copper edge off the steel base."),
+    ):
+        parts.append(_unavailable(
+            _pid, _label,
+            "no per-part measurement exists in this source's cycle summary — drawn as architecture",
+            _meaning,
+        ))
 
     return parts
 
