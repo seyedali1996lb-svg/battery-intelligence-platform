@@ -32,6 +32,7 @@ import {
   buildScene,
   filmBand,
   buildTimeline,
+  drawnRoll,
   ensureCounterClockwise,
   extrudeClosed,
   extrudeOpen,
@@ -296,9 +297,9 @@ test("an available projection extends the timeline and is flagged as projected t
 // The anatomy: bijection, form factors, explode
 // ---------------------------------------------------------------------------
 
-test("the scene draws all thirteen parts and every part has sane geometry", () => {
+test("the scene draws all sixteen parts and every part has sane geometry", () => {
   const scene = buildScene(makeSpec({ projection: "available" }), { cursor: 10 });
-  assert.equal(scene.parts.length, 13);
+  assert.equal(scene.parts.length, ANATOMY_PART_IDS.length);
   assert.deepEqual(
     [...new Set(scene.parts.map((p) => p.id))].sort(),
     [...ANATOMY_PART_IDS].sort(),
@@ -353,6 +354,74 @@ test("the roll is wound, not stacked: each ribbon has its own lane in every turn
   assert.ok(
     Math.abs(cathode.max * unitMm - scene.roll.outerRadiusMm) < 0.2,
     `the drawn cathode reaches ${(cathode.max * unitMm).toFixed(2)} mm, the model says ${scene.roll.outerRadiusMm.toFixed(2)} mm`,
+  );
+});
+
+test("the five members are drawn as one concentric core, not as a stack of lanes", () => {
+  const spec = makeSpec();
+  const model = rollModel(spec);
+  const unitMm = model.unitMm;
+
+  // At rest every member sits where the document's own winding puts it: no
+  // air anywhere, and the first ribbon starts on the mandrel's surface. This
+  // is the assembled cell being exactly the declared stack, asserted rather
+  // than assumed, because every other state is a multiple of this one.
+  const atRest = drawnRoll(model, 0);
+  assert.deepEqual(atRest.offsets, { casing: 0, mandrel: 0, anode: 0, separator: 0, cathode: 0 });
+  assert.equal(atRest.base, model.mandrelRadius);
+
+  // At full explode each member has moved by its own declared figure, and the
+  // order in the table is the order drawn: core, then anode, separator,
+  // cathode outwards — the lanes are the differences of those figures.
+  const open = drawnRoll(model, 1);
+  const table = CELL_GEOMETRY.explode.radial;
+  assert.ok(Math.abs(open.offsets.mandrel * unitMm - table.mandrel) < 1e-9, "the mandrel did not take its own offset");
+  assert.ok(Math.abs(open.offsets.casing * unitMm - table.casing) < 1e-9, "the casing did not take its own offset");
+  assert.ok(Math.abs(open.offsets.cathode * unitMm - table.cathode) < 1e-9, "the cathode did not take its own offset");
+  assert.ok(
+    open.offsets.mandrel <= open.offsets.anode &&
+      open.offsets.anode < open.offsets.separator &&
+      open.offsets.separator < open.offsets.cathode,
+    "the radial table does not open outwards from the core",
+  );
+  assert.ok(open.base > atRest.base, "the air between the core and the first ribbon never opened");
+
+  // The meshes obey that arithmetic. At full explode there is a visible air
+  // annulus between the mandrel and the winding it carries, and a lane
+  // between each pair of ribbons — five surfaces a viewer can count.
+  const scene = buildScene(spec, { cursor: 12, exploded: 1 });
+  const core = radialExtent(partOf(scene, "mandrel").mesh);
+  const anode = radialExtent(partOf(scene, "anode_sheet").mesh);
+  const separator = radialExtent(partOf(scene, "separator").mesh);
+  const cathode = radialExtent(partOf(scene, "cathode_sheet").mesh);
+  assert.ok(core.max < anode.min, "the anode is wound onto the mandrel with no air between them");
+  assert.ok(anode.min < separator.min, "the separator's lane is inside the anode's");
+  assert.ok(separator.min < cathode.min, "the cathode's lane is inside the separator's");
+  // Paying for that air out of the turn count is what keeps it inside the
+  // bore: the roll still ends where the can's bore ends.
+  const envelope = 9.45 / 65;
+  assert.ok(cathode.max <= envelope + 1e-7, `the exploded roll reaches ${cathode.max}, past the envelope`);
+});
+
+test("the mandrel is the document's declared core, drawn where the winding starts", () => {
+  const spec = makeSpec();
+  const model = rollModel(spec);
+  const part = partOf(buildScene(spec, { cursor: 4 }), "mandrel");
+  assert.equal(part.drawn, true, "the core of the winding is not drawn");
+  const declaredRadiusMm = (makePhysical().cylindrical?.mandrelDiameterMm ?? 0) / 2;
+  const drawn = radialExtent(part.mesh);
+  assert.ok(
+    Math.abs(drawn.max * model.unitMm - declaredRadiusMm) < 1e-4,
+    `the mandrel is drawn ${ (drawn.max * model.unitMm).toFixed(3) } mm across its radius, the document declares ${declaredRadiusMm} mm`,
+  );
+  assert.ok(
+    Math.abs(drawn.min * model.unitMm - declaredRadiusMm) < 1e-4,
+    "the mandrel is drawn as a rod, not as a ring",
+  );
+  const height = bounds(part.mesh);
+  assert.ok(
+    Math.abs(height.maxY - height.minY - CELL_GEOMETRY.roll.height) < 1e-6,
+    "the core does not span the winding it carries",
   );
 });
 
@@ -848,4 +917,111 @@ test("a refused split draws no film growth, whatever the thickness series says",
     radialExtent(partOf(anatomical, "sei_film").mesh).max,
     "a refused split drew a film growth",
   );
+});
+
+// ---------------------------------------------------------------------------
+// The formed top: wrap, crimp, and the declared top assembly
+// ---------------------------------------------------------------------------
+
+test("the wrap and the crimp are drawn where a real cell has them", () => {
+  const scene = buildScene(makeSpec(), { cursor: 6 });
+  const wrap = radialExtent(partOf(scene, "wrap").mesh);
+  const crimp = radialExtent(partOf(scene, "crimp").mesh);
+  const casing = radialExtent(partOf(scene, "can").mesh);
+  assert.ok(
+    wrap.max > casing.max - 1e-9,
+    "the jacket must sit outside the can wall",
+  );
+  assert.ok(
+    crimp.max > casing.max,
+    "the crimp bead must stand proud of the can wall — that is what a rolled bead is",
+  );
+  assert.ok(
+    crimp.max < 9.2 / 65 + 0.005,
+    "the bead is a lip, not a flange",
+  );
+  const wrapY = bounds(partOf(scene, "wrap").mesh);
+  assert.ok(wrapY.maxY < 0.5 && wrapY.minY > -0.5, "the jacket stops short of both ends, as declared");
+});
+
+test("the top assembly's declared sizes drive the drawn cap, vent and terminal", () => {
+  // 5.5 mm terminal on a 65 mm cell: radius 2.75/65 ≈ 0.0423 in cell units.
+  const scene = buildScene(makeSpec(), { cursor: 6 });
+  const terminal = radialExtent(partOf(scene, "terminal_pos").mesh);
+  assert.ok(
+    Math.abs(terminal.max - 5.5 / 2 / 65) < 1e-6,
+    `the drawn terminal is not the declared 5.5 mm button: ${terminal.max}`,
+  );
+  const vent = radialExtent(partOf(scene, "vent").mesh);
+  assert.ok(
+    Math.abs(vent.max - 4.5 / 2 / 65) < 1e-6,
+    `the drawn vent is not the declared 4.5 mm disc: ${vent.max}`,
+  );
+  const cap = bounds(partOf(scene, "cap").mesh);
+  assert.ok(
+    cap.maxY > 0.5 && cap.minY < 0.5,
+    "the cap plate should straddle the can rim, formed over it",
+  );
+});
+
+test("the tabs are attached: each runs from the roll's own end to the cap it feeds", () => {
+  const scene = buildScene(makeSpec(), { cursor: 6 });
+  const rollHalf = CELL_GEOMETRY.roll.height / 2;
+  const pos = bounds(partOf(scene, "tab_pos").mesh);
+  assert.ok(
+    Math.abs(pos.minY - rollHalf) < 0.02,
+    `the positive tab starts at y=${pos.minY}, not at the roll's top turn`,
+  );
+  assert.ok(
+    pos.maxY > 0.47,
+    "the positive tab never reaches the cap underside",
+  );
+  const neg = bounds(partOf(scene, "tab_neg").mesh);
+  assert.ok(
+    Math.abs(neg.maxY + rollHalf) < 0.02,
+    `the negative tab starts at y=${neg.maxY}, not at the roll's bottom turn`,
+  );
+  assert.ok(
+    neg.minY < -0.47,
+    "the negative tab never reaches the negative end",
+  );
+});
+
+test("an exploded top never leaves the cell's own envelope", () => {
+  const spec = makeSpec();
+  // The crimp bead is the outermost surface a real cell has (9.2 mm can,
+  // 0.15 mm jacket, 0.05 mm bead proud of it); nothing drawn may exceed it,
+  // at any explode position.
+  const envelope = 9.45 / 65;
+  for (const exploded of [0, 0.5, 1]) {
+    const scene = buildScene(spec, { cursor: 12, exploded });
+    for (const part of scene.parts) {
+      const r = radialExtent(part.mesh).max;
+      // Positions live in a Float32Array, so the comparison carries float32
+      // quantisation (~1e-8 at these radii) — not exactness.
+      assert.ok(
+        r <= envelope + 1e-7,
+        `exploded=${exploded}: ${part.id} reaches r=${r.toFixed(4)}, past the envelope`,
+      );
+    }
+  }
+  const assembled = buildScene(spec, { cursor: 12, exploded: 0 });
+  const order = [
+    radialExtent(partOf(assembled, "crimp").mesh).max,
+    radialExtent(partOf(assembled, "wrap").mesh).max,
+    radialExtent(partOf(assembled, "can").mesh).max,
+  ];
+  assert.ok(
+    order[0] > order[1] && order[1] > order[2],
+    "the surfaces stack in the wrong order: bead, jacket, then can",
+  );
+});
+
+test("a prismatic scene draws its wrap and crimp as a flat stack does", () => {
+  const scene = buildScene(makeSpec({ formFactor: "prismatic" }), { cursor: 4 });
+  for (const id of ["wrap", "crimp"] as const) {
+    const part = partOf(scene, id);
+    assert.ok(vertexCount(part.mesh) > 0, `${id} has no geometry in a prismatic scene`);
+    assertMeshSane(part.mesh, id);
+  }
 });

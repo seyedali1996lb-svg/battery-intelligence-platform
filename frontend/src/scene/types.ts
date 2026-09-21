@@ -18,12 +18,15 @@ export type Provenance = "measured" | "derived" | "fitted" | "projected" | "";
 /** The canonical anatomy parts: exactly one mesh and exactly one card each. */
 export const ANATOMY_PART_IDS = [
   "can",
+  "wrap",
   "cap",
   "vent",
+  "crimp",
   "terminal_pos",
   "terminal_neg",
   "tab_pos",
   "tab_neg",
+  "mandrel",
   "cathode_sheet",
   "anode_sheet",
   "separator",
@@ -36,6 +39,25 @@ export type PartId = (typeof ANATOMY_PART_IDS)[number];
 
 /** A per-cycle series: a null entry means "no measurement at this cycle". */
 export type Series = (number | null)[];
+
+/**
+ * The top of the cell, declared rather than guessed. Every field is a real
+ * millimetre size a renderer derives its cap, vent, terminal, crimp and wrap
+ * geometry from — the alternative was hand-picked renderer constants, which is
+ * how the top of the cell stayed schematic while the winding went physical.
+ */
+export interface TopAssemblyModel {
+  capThicknessMm: number;
+  capBossDiameterMm: number;
+  capBossHeightMm: number;
+  ventDiameterMm: number;
+  terminalDiameterMm: number;
+  terminalStudHeightMm: number;
+  crimpHeightMm: number;
+  wrapThicknessMm: number;
+  wrapTopSkipMm: number;
+  wrapBottomSkipMm: number;
+}
 
 /**
  * The cell's declared dimensions, in millimetres, with where each came from.
@@ -63,6 +85,14 @@ export interface PhysicalModel {
     heightMm: number;
     wallMm: number;
   } | null;
+  /**
+   * The top of the cell in millimetres: cap plate and boss, vent disc, the
+   * positive terminal, the crimped bead where the can was rolled shut, and the
+   * heat-shrink jacket's thickness and how far it stops short of each rim.
+   * Cylindrical cells declare these; a stacked prismatic cell carries null and
+   * the renderer falls back to the same figures while saying so.
+   */
+  topAssembly: TopAssemblyModel | null;
   roll: {
     stackMm: {
       copperFoil: number;
@@ -140,6 +170,8 @@ export interface FilmModel {
 export interface ScenePart {
   id: PartId;
   label: string;
+  /** Plain-language answer to "what am I looking at", shown before the label. */
+  title: string;
   value: number | null;
   unit: string;
   provenance: Provenance;

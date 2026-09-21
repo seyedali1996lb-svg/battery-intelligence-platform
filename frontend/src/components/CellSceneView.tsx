@@ -25,6 +25,105 @@ type SceneModule = typeof import("../scene");
  * them is reading a different document, which is exactly the failure the shared
  * spec exists to make impossible.
  */
+const PART_DOSSIERS: Record<string, { latinTitle: string; subsystem: string; material: string; degradation: string }> = {
+  can: {
+    latinTitle: "THORAX METALLICUS",
+    subsystem: "Deep-Drawn Can & Structural Pressure Shell",
+    material: "Nickel-plated cold-rolled steel (0.25 mm wall)",
+    degradation: "Mechanical deformation, internal pressure bulging, atmospheric corrosion.",
+  },
+  wrap: {
+    latinTitle: "TUNICA CONTRACTA",
+    subsystem: "Heat-Shrink Electrical Isolation Jacket",
+    material: "Polyethylene terephthalate (PET) film (0.15 mm)",
+    degradation: "Thermal abrasion, chemical puncture, dielectric breakdown.",
+  },
+  cap: {
+    latinTitle: "GALEA TERMINALIS",
+    subsystem: "Lathed Cap Plate, Boss & Crimp Groove",
+    material: "Aluminium / Nickel-plated steel formed assembly",
+    degradation: "Mechanical stress relaxation of crimp seal, micro-fissuring under thermal cycling.",
+  },
+  vent: {
+    latinTitle: "VALVULA SALUTIS",
+    subsystem: "Laser-Scored Overpressure Safety Vent Disc",
+    material: "Embossed aluminum rupture foil (4.5 mm diameter)",
+    degradation: "Fatigue from cyclic gas accumulation; engineered rupture at 1.5–2.0 MPa.",
+  },
+  crimp: {
+    latinTitle: "CORONA COMPRESSA",
+    subsystem: "Mechanical Crimp Seal & Radial Compression Bead",
+    material: "Rolled steel rim over polypropylene (PP) gasket",
+    degradation: "Polymer creep under thermal loads, micro-leakage of volatile carbonate solvent.",
+  },
+  terminal_pos: {
+    latinTitle: "POLUS POSITIVUS",
+    subsystem: "Positive Current Collector Stud & Button",
+    material: "Cold-forged nickel-plated copper/steel stud",
+    degradation: "Surface oxidation, contact resistance rise, ultrasonic weld degradation.",
+  },
+  terminal_neg: {
+    latinTitle: "POLUS NEGATIVUS",
+    subsystem: "Negative Cell Floor Current Collector Contact",
+    material: "Direct steel can base (18.4 mm OD)",
+    degradation: "Fretting wear, interfacial contact oxidation and impedance rise.",
+  },
+  tab_pos: {
+    latinTitle: "LIGAMENTUM ALUMINII",
+    subsystem: "Positive Electrode Current Lead & Ultrasonic Weld",
+    material: "High-purity aluminium foil ribbon (0.1 mm)",
+    degradation: "Ultrasonic weld fatigue, localized Joule heating, vibration detachment.",
+  },
+  tab_neg: {
+    latinTitle: "LIGAMENTUM CUPRI",
+    subsystem: "Negative Electrode Current Lead & Bottom Spot Weld",
+    material: "High-conductivity annealed copper ribbon",
+    degradation: "Localized overcurrent stress, micro-cracking at sharp bend radii.",
+  },
+  mandrel: {
+    latinTitle: "AXIS WINDING",
+    subsystem: "Removable Steel Winding Core & Jelly-Roll Datum",
+    material: "Hardened steel mandrel (4.0 mm diameter, withdrawn after winding)",
+    degradation: "None — it is not electrochemically active; concentricity loss shows up as uneven electrode tension.",
+  },
+  cathode_sheet: {
+    latinTitle: "STRATUM CATHODICUM",
+    subsystem: "Lithiated Transition Metal Intercalation Matrix",
+    material: "Active oxide (e.g. LiCoO2 / NMC) on 15 µm aluminium foil",
+    degradation: "Transition metal dissolution, micro-cracking, lattice distortion, impedance rise.",
+  },
+  anode_sheet: {
+    latinTitle: "STRATUM ANODICUM",
+    subsystem: "Graphite / Silicon Intercalation Host & Current Collector",
+    material: "MCMB graphite / Si blend on 10 µm copper foil",
+    degradation: "Lithium plating under low temp/fast charge, particle pulverization, exfoliation.",
+  },
+  separator: {
+    latinTitle: "SEPTUM SEPARANS",
+    subsystem: "Microporous Polymeric Electronic Barrier",
+    material: "Trilayer PE/PP ceramic-coated microporous film (20 µm)",
+    degradation: "Pore clogging by decomposed species, dendrite penetration, thermal shrinkage.",
+  },
+  electrolyte: {
+    latinTitle: "LIQUIDUM CONDUCTOR",
+    subsystem: "Non-Aqueous Lithium Salt & Alkyl Carbonate Solution",
+    material: "1.0–1.2 M LiPF6 in EC/DMC/EMC organic solvent",
+    degradation: "Parasitic solvent oxidation, salt consumption, HF formation, gassing.",
+  },
+  particles: {
+    latinTitle: "PARTICULAE MOBILES",
+    subsystem: "Active Insertion Material Volume & Cycling Kinetics",
+    material: "Intercalation micro-crystallites (2–15 µm particles)",
+    degradation: "Loss of active material (LAM) via particle isolation, lattice strain, crack networks.",
+  },
+  sei_film: {
+    latinTitle: "MEMBRANA SEI",
+    subsystem: "Solid Electrolyte Interphase Passivation Layer",
+    material: "Li2CO3, LiF, lithium alkyl carbonates (compact inner + porous outer)",
+    degradation: "Continuous parasitic reduction consumes cyclable lithium inventory (LLI).",
+  },
+};
+
 export default function CellSceneView() {
   const [cells, setCells] = useState<string[]>([]);
   const [cellId, setCellId] = useState<string>("");
@@ -36,6 +135,15 @@ export default function CellSceneView() {
   const [annotations, setAnnotations] = useState(true);
   const [stripCasing, setStripCasing] = useState(false);
   const [playing, setPlaying] = useState(false);
+  /**
+   * The part the scene is showing a dossier for.
+   *
+   * Set from the engine's `onInspect`, which reports every change to the
+   * effective selection — a hover in the canvas, a click on a badge, or a pick
+   * in the quick list — so the panel and the scene cannot disagree about what
+   * is being inspected.
+   */
+  const [inspected, setInspected] = useState<string | null>(null);
   /** The engine's part readings at the cursor; null until the scene is up. */
   const [readings, setReadings] = useState<PartReading[] | null>(null);
 
@@ -68,6 +176,7 @@ export default function CellSceneView() {
     const stage = stageRef.current;
     if (!spec || !stage) return;
     setReadings(null); // the previous cell's numbers must not survive a switch
+    setInspected(null); // …and neither must the previous cell's inspection
     let disposed = false;
     let handle: CellSceneHandle | null = null;
 
@@ -92,6 +201,10 @@ export default function CellSceneView() {
         // Playback stops at the end of the timeline on its own, so the button
         // has to be told — otherwise it sits on "Pause" over a still scene.
         onPlaybackEnd: () => setPlaying(false),
+        // The dossier follows the scene, not the other way round: the engine
+        // owns which part is selected (hover or pin), and this is it handing
+        // that choice over.
+        onInspect: setInspected,
       });
       if (!mounted.handle) {
         setError(mounted.error ?? "The 3D view could not start.");
@@ -141,6 +254,10 @@ export default function CellSceneView() {
       (part.carried ? " (last measured)" : "");
   };
 
+  const activePartId = inspected;
+  const inspectedPart = cards.find((c) => c.id === activePartId) ?? null;
+  const dossier = activePartId ? PART_DOSSIERS[activePartId] : null;
+
   if (error) return <div className="error-text">{error}</div>;
 
   return (
@@ -167,7 +284,7 @@ export default function CellSceneView() {
         </span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "220px minmax(340px, 1fr) 280px", gap: 14, alignItems: "start" }}>
         <div className="card">
           <div className="kpi-label">Controls</div>
           <label style={{ display: "block", fontSize: 12, marginBottom: 10 }}>
@@ -264,21 +381,99 @@ export default function CellSceneView() {
               "Anatomical proportions. Data-scaled geometry is opt-in, and prints the mapping it uses when on."}
           </p>
         </div>
-      </div>
 
-      <div className="kpi-grid" style={{ marginTop: 18 }}>
-        {spec && cards.map((part) => (
-          <div className="card" key={part.id} style={{ borderLeft: `2px solid ${spec.theme.provenanceColors[part.provenance] ?? "#718096"}` }}>
-            <div className="kpi-label">{part.label}</div>
-            <div className="kpi-value" style={{ fontSize: 17 }}>
-              {partValue(part)}
-            </div>
-            <div className="kpi-sub">
-              {(part.provenance || "not measured").toUpperCase()}
-              {!part.available && part.reason ? ` — ${part.reason}` : ""}
-            </div>
+        <div className="card" style={{ borderLeft: inspectedPart ? `3px solid ${spec?.theme.provenanceColors[inspectedPart.provenance] ?? "var(--c-accent, #63b3ed)"}` : "1px solid var(--c-border, #1f2937)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+            <span style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--c-muted, #94a3b8)", fontWeight: 700 }}>
+              Inspected Component
+            </span>
+            {inspectedPart && (
+              <button
+                className="btn-outline"
+                style={{ padding: "1px 6px", fontSize: 11, lineHeight: "1.2" }}
+                onClick={() => handleRef.current?.inspect(null)}
+                title="Clear inspection"
+              >
+                ✕
+              </button>
+            )}
           </div>
-        ))}
+
+          {inspectedPart && dossier ? (
+            <div>
+              <div style={{ fontFamily: "serif", fontSize: 16, fontWeight: 700, color: "#f8fafc", letterSpacing: "0.02em" }}>
+                {dossier.latinTitle}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--c-accent, #63b3ed)", fontWeight: 600, marginBottom: 10 }}>
+                // {inspectedPart.label.toUpperCase()}
+              </div>
+
+              <div style={{ background: "rgba(15, 23, 42, 0.6)", padding: "8px 10px", borderRadius: 6, marginBottom: 12, border: "1px solid rgba(51, 65, 85, 0.5)" }}>
+                <div style={{ fontSize: 10, color: "var(--c-muted, #94a3b8)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  Current Reading
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "#f1f5f9" }}>
+                  {partValue(inspectedPart)}
+                </div>
+                <div style={{ fontSize: 10.5, color: spec?.theme.provenanceColors[inspectedPart.provenance] ?? "#94a3b8", fontWeight: 600, marginTop: 2 }}>
+                  {inspectedPart.provenance.toUpperCase()}
+                  {inspectedPart.carried ? " · LAST MEASURED" : ""}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 11.5 }}>
+                <div>
+                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Subsystem</span>
+                  <span style={{ color: "#e2e8f0" }}>{dossier.subsystem}</span>
+                </div>
+                <div>
+                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Material Spec</span>
+                  <span style={{ color: "#cbd5e0" }}>{dossier.material}</span>
+                </div>
+                <div>
+                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Degradation Mode</span>
+                  <span style={{ color: "#fca5a5" }}>{dossier.degradation}</span>
+                </div>
+                <div>
+                  <span style={{ color: "var(--c-muted, #94a3b8)", fontWeight: 600, fontSize: 10, display: "block", textTransform: "uppercase" }}>Diagnostic Significance</span>
+                  <span style={{ color: "var(--c-muted, #94a3b8)" }}>{inspectedPart.meaning || inspectedPart.reason || "No specific note."}</span>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <button
+                  className="btn-outline"
+                  style={{ width: "100%", fontSize: 11, padding: "5px 8px" }}
+                  onClick={() => handleRef.current?.inspect(inspectedPart.id)}
+                >
+                  🎯 Frame Camera
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: "var(--c-muted, #94a3b8)", fontSize: 12 }}>
+              <p style={{ marginTop: 4, marginBottom: 10 }}>
+                Hover or click any component in 3D or in the annotations to inspect its technical codex specifications.
+              </p>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", marginBottom: 6, color: "var(--c-muted, #94a3b8)" }}>
+                Quick Inspect
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {cards.slice(0, 7).map((p) => (
+                  <button
+                    key={p.id}
+                    className="btn-outline"
+                    style={{ textAlign: "left", fontSize: 11, padding: "4px 8px", display: "flex", justifyContent: "space-between" }}
+                    onClick={() => handleRef.current?.inspect(p.id)}
+                  >
+                    <span>{p.label}</span>
+                    <span style={{ color: spec?.theme.provenanceColors[p.provenance] ?? "inherit", fontSize: 10 }}>{p.provenance}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {spec && (

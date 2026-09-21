@@ -29,8 +29,12 @@ export interface PartMaterial {
 export const PART_MATERIALS: Record<string, PartMaterial> = {
   /** Nickel-plated stainless can. */
   can: { metalness: 0.85, roughness: 0.34, envMapIntensity: 1.0 },
+  /** PVC heat-shrink: a printed dielectric jacket, slightly glossy. */
+  wrap: { metalness: 0.0, roughness: 0.45, envMapIntensity: 0.5 },
   /** The top cap assembly, same steel, a coarser finish. */
   cap: { metalness: 0.85, roughness: 0.42, envMapIntensity: 0.9 },
+  /** Rolled can bead: the same plated steel, work-hardened by the crimping die. */
+  crimp: { metalness: 0.85, roughness: 0.3, envMapIntensity: 1.0 },
   /** Machined aluminium burst disc. */
   vent: { metalness: 0.8, roughness: 0.35, envMapIntensity: 0.9 },
   /** The button and base, polished where a contact lands. */
@@ -40,6 +44,8 @@ export const PART_MATERIALS: Record<string, PartMaterial> = {
   tab_pos: { metalness: 0.75, roughness: 0.3, envMapIntensity: 0.9 },
   /** Copper anode tab. */
   tab_neg: { metalness: 0.9, roughness: 0.28, envMapIntensity: 1.0 },
+  /** The steel core the winding is wrapped on: machined, lightly finished. */
+  mandrel: { metalness: 0.8, roughness: 0.4, envMapIntensity: 0.85 },
   /** Aluminium foil under a cathode coating. */
   cathode_sheet: { metalness: 0.5, roughness: 0.45, envMapIntensity: 0.7 },
   /** Copper foil under a graphite anode coating — the coating is what shows. */

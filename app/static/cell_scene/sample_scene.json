@@ -21,6 +21,18 @@
       "mandrelDiameterMm": 4.0
     },
     "prismatic": null,
+    "topAssembly": {
+      "capThicknessMm": 0.8,
+      "capBossDiameterMm": 8.0,
+      "capBossHeightMm": 0.5,
+      "ventDiameterMm": 4.5,
+      "terminalDiameterMm": 5.5,
+      "terminalStudHeightMm": 0.8,
+      "crimpHeightMm": 0.6,
+      "wrapThicknessMm": 0.15,
+      "wrapTopSkipMm": 1.2,
+      "wrapBottomSkipMm": 1.2
+    },
     "roll": {
       "stackMm": {
         "copperFoil": 0.01,
@@ -95,6 +107,7 @@
       "wallMm": "typical for the format, not a datasheet figure",
       "rollClearanceMm": "assumed",
       "mandrelDiameterMm": "assumed",
+      "topAssembly": "typical for the format, not a datasheet figure for this cell \u2014 declared so the renderer derives every top-of-cell size from it",
       "stackMm": "typical for a 18650-class cell, not measured for this cell",
       "pitchMm": "derived",
       "turns": "derived",
@@ -103,9 +116,8 @@
       "drawnRibbonsMm": "derived",
       "electrodeLengthM": "derived"
     },
-    "note": "The winding is drawn to these millimetres: the stack thickness sets the pitch, the pitch and the space between the mandrel and the roll's envelope set the turn count, and the three drawn ribbons are the anode coating on its copper foil, the separator, and the cathode coating on its aluminium foil \u2014 together they tile one turn's advance exactly. Each ribbon therefore includes its current collector. Cap, vent and terminal sizes are not drawn to a datasheet, and the SEI film is drawn at a magnification its `film` block states \u2014 but the film's *thickness* is derived from the fitted lithium-inventory loss rather than chosen.",
+    "note": "The winding is drawn to these millimetres: the stack thickness sets the pitch, the pitch and the space between the mandrel and the roll's envelope set the turn count, and the three drawn ribbons are the anode coating on its copper foil, the separator, and the cathode coating on its aluminium foil \u2014 together they tile one turn's advance exactly. Each ribbon therefore includes its current collector. The top of the cell \u2014 cap, boss, vent, terminal, crimp and heat-shrink wrap \u2014 is drawn from the declared `topAssembly` block, whose figures are typical for the format rather than this cell's datasheet, and the SEI film is drawn at a magnification its `film` block states \u2014 but the film's *thickness* is derived from the fitted lithium-inventory loss rather than chosen.",
     "schematic": [
-      "the cap, vent and terminal sizes",
       "the particle cloud's count and size",
       "the drawn thickness of the SEI film (magnified: see `film.display`)"
     ]
@@ -2214,6 +2226,7 @@
     {
       "id": "can",
       "label": "Cell casing",
+      "title": "The steel case",
       "value": 33.87,
       "unit": "\u00b0C",
       "provenance": "measured",
@@ -2379,8 +2392,22 @@
       "unavailableReason": null
     },
     {
+      "id": "wrap",
+      "label": "Heat-shrink jacket",
+      "title": "Heat-shrink jacket \u2014 the printed skin of the cell",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The jacket is the cell's printed skin: its colour says the chemistry and its printing says the datasheet. It is drawn from the declared millimetres so the cell reads as the object on a workbench; nothing in this dataset measures it, so it carries no number.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no measurement in the cycle-summary data"
+    },
+    {
       "id": "cap",
       "label": "Top cap assembly",
+      "title": "The sealed top plate",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -2393,6 +2420,7 @@
     {
       "id": "vent",
       "label": "Vent disc",
+      "title": "The vent \u2014 the cell's safety valve",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -2403,8 +2431,22 @@
       "unavailableReason": "no measurement in the cycle-summary data"
     },
     {
+      "id": "crimp",
+      "label": "Crimp rim",
+      "title": "Crimp rim \u2014 where the can was rolled shut",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The bead where the can was rolled shut over the cap \u2014 how every cylindrical cell closes. It is drawn as architecture; the platform measures nothing about it.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no measurement in the cycle-summary data"
+    },
+    {
       "id": "terminal_pos",
       "label": "Positive terminal",
+      "title": "The positive button",
       "value": 0.05868,
       "unit": "\u03a9",
       "provenance": "measured",
@@ -2572,6 +2614,7 @@
     {
       "id": "terminal_neg",
       "label": "Negative terminal",
+      "title": "The flat negative end",
       "value": 0.05868,
       "unit": "\u03a9",
       "provenance": "measured",
@@ -2739,6 +2782,7 @@
     {
       "id": "tab_pos",
       "label": "Positive tab",
+      "title": "Positive tab \u2014 the cathode's wire",
       "value": 1.3136333109469442,
       "unit": "\u00d7 initial",
       "provenance": "derived",
@@ -2906,6 +2950,7 @@
     {
       "id": "tab_neg",
       "label": "Negative tab",
+      "title": "Negative tab \u2014 the anode's wire",
       "value": 76.12474437627812,
       "unit": "% of initial power",
       "provenance": "derived",
@@ -3071,8 +3116,22 @@
       "unavailableReason": null
     },
     {
+      "id": "mandrel",
+      "label": "Winding mandrel",
+      "title": "Mandrel \u2014 the steel core the roll is wound around",
+      "value": null,
+      "unit": "",
+      "provenance": "",
+      "meaning": "The mandrel is the steel core the jelly roll is wound around and withdrawn from \u2014 the hole in the middle of the winding is where it lived. Its diameter comes from the format's declared block (assumed for this cell, as the card's provenance says), and nothing in a cycle summary measures it, so it is drawn as architecture and carries no number.",
+      "law": "",
+      "series": null,
+      "available": false,
+      "unavailableReason": "no measurement in the cycle-summary data"
+    },
+    {
       "id": "cathode_sheet",
       "label": "Cathode coating",
+      "title": "Cathode \u2014 the lithium's source",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -3085,6 +3144,7 @@
     {
       "id": "anode_sheet",
       "label": "Anode coating",
+      "title": "Anode \u2014 where the lithium waits",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -3097,6 +3157,7 @@
     {
       "id": "separator",
       "label": "Separator",
+      "title": "Separator \u2014 the plastic film keeping the electrodes apart",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -3109,6 +3170,7 @@
     {
       "id": "electrolyte",
       "label": "Electrolyte",
+      "title": "Electrolyte \u2014 the liquid the lithium travels in",
       "value": null,
       "unit": "",
       "provenance": "",
@@ -3121,6 +3183,7 @@
     {
       "id": "particles",
       "label": "Active material particles",
+      "title": "Active material \u2014 the working powder on the sheets",
       "value": null,
       "unit": "% of initial capacity (fitted)",
       "provenance": "fitted",
@@ -3133,6 +3196,7 @@
     {
       "id": "sei_film",
       "label": "SEI film on the anode",
+      "title": "SEI film \u2014 the anode's skin, where fade first shows",
       "value": null,
       "unit": "% of initial capacity (fitted)",
       "provenance": "fitted",

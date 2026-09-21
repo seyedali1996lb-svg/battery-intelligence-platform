@@ -55,6 +55,8 @@ nav:
       - Data leakage: notebooks/02_data_leakage.ipynb
       - Knee detection: notebooks/03_knee_detection.ipynb
       - Bring your own data: notebooks/04_bring_your_own_data.ipynb
+  - 3D cell view:
+      - The scene's standing prompt: scene_prompt.md
   - Project history: history.md
 
 plugins:

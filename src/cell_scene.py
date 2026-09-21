@@ -85,9 +85,9 @@ SCENE_SCHEMA_VERSION = 1
 #: and the spec carries exactly one card per id — a bijection asserted by tests
 #: on both sides, so geometry can never quietly stop matching the data.
 MESH_PART_IDS: tuple[str, ...] = (
-    "can", "cap", "vent",
+    "can", "wrap", "cap", "vent", "crimp",
     "terminal_pos", "terminal_neg",
-    "tab_pos", "tab_neg",
+    "tab_pos", "tab_neg", "mandrel",
     "cathode_sheet", "anode_sheet", "separator",
     "electrolyte", "particles", "sei_film",
 )
@@ -508,12 +508,36 @@ def form_factor_for(profile) -> "tuple[str, str]":
 # The anatomy: one card per part, each pointing at a real number
 # ---------------------------------------------------------------------------
 
+# A one-phrase answer to "what am I looking at", for someone who has never
+# opened a cell. The renderer prints it as the card's first line; `label` keeps
+# the anatomical vocabulary for people who already have it.
+_PLAIN_TITLE = {
+    "can": "The steel case",
+    "cap": "The sealed top plate",
+    "vent": "The vent — the cell's safety valve",
+    "terminal_pos": "The positive button",
+    "terminal_neg": "The flat negative end",
+    "tab_pos": "Positive tab — the cathode's wire",
+    "tab_neg": "Negative tab — the anode's wire",
+    "mandrel": "Mandrel — the steel core the roll is wound around",
+    "cathode_sheet": "Cathode — the lithium's source",
+    "anode_sheet": "Anode — where the lithium waits",
+    "separator": "Separator — the plastic film keeping the electrodes apart",
+    "electrolyte": "Electrolyte — the liquid the lithium travels in",
+    "sei_film": "SEI film — the anode's skin, where fade first shows",
+    "particles": "Active material — the working powder on the sheets",
+    "wrap": "Heat-shrink jacket — the printed skin of the cell",
+    "crimp": "Crimp rim — where the can was rolled shut",
+}
+
+
 def _part(part_id: str, label: str, *, value=None, unit: str = "", provenance: str = "",
           meaning: str = "", law: str = "", series: "list | None" = None,
           available: bool = True, reason: "str | None" = None) -> dict:
     return {
         "id": part_id,
         "label": label,
+        "title": _PLAIN_TITLE.get(part_id, label),
         "value": _opt(value) if value is not None else None,
         "unit": unit,
         "provenance": provenance,
@@ -537,7 +561,7 @@ def _unavailable(part_id: str, label: str, reason: str, meaning: str) -> dict:
 
 def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
                  film: "dict | None" = None) -> list[dict]:
-    """The 13 anatomy cards, each wired to the most specific signal that exists."""
+    """The 16 anatomy cards, each wired to the most specific signal that exists."""
     def _last(col: str):
         return last_row.get(col) if last_row is not None else None
 
@@ -579,6 +603,13 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
     ))
 
     parts.append(_unavailable(
+        "wrap", "Heat-shrink jacket",
+        "no measurement in the cycle-summary data",
+        "The jacket is the cell's printed skin: its colour says the chemistry and its printing says "
+        "the datasheet. It is drawn from the declared millimetres so the cell reads as the object on "
+        "a workbench; nothing in this dataset measures it, so it carries no number.",
+    ))
+    parts.append(_unavailable(
         "cap", "Top cap assembly",
         "no measurement in the cycle-summary data separates the cap from the rest of the cell",
         "The cap carries the vent and the positive terminal; it is drawn so the cell reads as a real "
@@ -589,6 +620,12 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
         "no measurement in the cycle-summary data",
         "The vent is a safety device. This platform has no pressure, vent or abuse-test channel, so it "
         "is drawn as architecture and deliberately carries no number.",
+    ))
+    parts.append(_unavailable(
+        "crimp", "Crimp rim",
+        "no measurement in the cycle-summary data",
+        "The bead where the can was rolled shut over the cap — how every cylindrical cell closes. It "
+        "is drawn as architecture; the platform measures nothing about it.",
     ))
 
     parts.append(_part(
@@ -643,6 +680,15 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
         series=[_opt(v) for v in _column(df, "sop_pct")],
         available=_is_finite(sop),
         reason=None if _is_finite(sop) else "no resistance history to derive power capability from",
+    ))
+
+    parts.append(_unavailable(
+        "mandrel", "Winding mandrel",
+        "no measurement in the cycle-summary data",
+        "The mandrel is the steel core the jelly roll is wound around and withdrawn from — the "
+        "hole in the middle of the winding is where it lived. Its diameter comes from the format's "
+        "declared block (assumed for this cell, as the card's provenance says), and nothing in a "
+        "cycle summary measures it, so it is drawn as architecture and carries no number.",
     ))
 
     if has_dqdv:
@@ -1425,6 +1471,25 @@ _CYLINDRICAL_FORMAT = {
     "mandrelDiameterMm": 4.0,
 }
 
+# The top of the cell, declared rather than guessed: a 18650's cap, vent and
+# terminal are an assembly with real sizes (the stamped cap plate, the boss
+# raised around the vent, the positive button and its stud, the crimped bead
+# where the can was rolled closed, and the heat-shrink jacket that stops short
+# of both rims). None of these figures is a datasheet row for this cell — they
+# are typical for the format, which the provenance block states field by field.
+_TOP_ASSEMBLY_MM = {
+    "capThicknessMm": 0.8,
+    "capBossDiameterMm": 8.0,
+    "capBossHeightMm": 0.5,
+    "ventDiameterMm": 4.5,
+    "terminalDiameterMm": 5.5,
+    "terminalStudHeightMm": 0.8,
+    "crimpHeightMm": 0.6,
+    "wrapThicknessMm": 0.15,
+    "wrapTopSkipMm": 1.2,
+    "wrapBottomSkipMm": 1.2,
+}
+
 _PRISMATIC_FORMAT = {
     "format": "prismatic — 20.5 mm x 5.4 mm x 64 mm (CALCE 1.1 Ah-class pouch)",
     "widthMm": 20.5,
@@ -1773,6 +1838,7 @@ class PhysicalModel:
                 "mandrelDiameterMm": fmt["mandrelDiameterMm"],
             },
             "prismatic": None,
+            "topAssembly": dict(_TOP_ASSEMBLY_MM),
             "roll": {
                 "stackMm": stack,
                 "pitchMm": pitch,
@@ -1792,6 +1858,10 @@ class PhysicalModel:
                 "wallMm": "typical for the format, not a datasheet figure",
                 "rollClearanceMm": "assumed",
                 "mandrelDiameterMm": "assumed",
+                "topAssembly": (
+                    "typical for the format, not a datasheet figure for this cell "
+                    "— declared so the renderer derives every top-of-cell size from it"
+                ),
                 "stackMm": "typical for a 18650-class cell, not measured for this cell",
                 "pitchMm": "derived",
                 "turns": "derived",
@@ -1805,13 +1875,14 @@ class PhysicalModel:
                 "pitch and the space between the mandrel and the roll's envelope set the turn count, "
                 "and the three drawn ribbons are the anode coating on its copper foil, the separator, "
                 "and the cathode coating on its aluminium foil — together they tile one turn's "
-                "advance exactly. Each ribbon therefore includes its current collector. Cap, vent "
-                "and terminal sizes are not drawn to a datasheet, and the SEI film is drawn at a "
+                "advance exactly. Each ribbon therefore includes its current collector. The top of "
+                "the cell — cap, boss, vent, terminal, crimp and heat-shrink wrap — is drawn from "
+                "the declared `topAssembly` block, whose figures are typical for the format rather "
+                "than this cell's datasheet, and the SEI film is drawn at a "
                 "magnification its `film` block states — but the film's *thickness* is derived from "
                 "the fitted lithium-inventory loss rather than chosen."
             ),
             "schematic": [
-                "the cap, vent and terminal sizes",
                 "the particle cloud's count and size",
                 "the drawn thickness of the SEI film (magnified: see `film.display`)",
             ],

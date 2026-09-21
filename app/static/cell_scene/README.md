@@ -7,7 +7,7 @@ Neither host can run Node, so the renderer has to already exist here.
 
 | File | What it is |
 | --- | --- |
-| `cell_scene.js` | The whole scene engine, minified, three.js included (~591 kB, ~150 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
+| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~595 kB, ~149 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
 | `index.html` | The standalone host: no framework, no build step. Loads the bundle above and a scene document, and does everything the Streamlit page and the React SPA do. |
 | `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document — including the `physical` block, whose derivations (turn count, pitch, implied electrode length) are recomputed by the renderer and compared against the producer's, and the film's chain, whose nm-per-%-lithium-inventory factor the test re-derives from the tagged assumptions and whose **drawn band the renderer reads out of the document** rather than choosing for itself. |
 | `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit. |
@@ -80,12 +80,15 @@ page with `?cell=B0005` (or another real cell) and check:
 2. **The roll reads as a roll.** At rest it is a *dense* winding — 38 laps of a
    0.175 mm stack, each layer a fraction of a pixel wide, so it should look like
    the tight spiral a jelly roll is and not like a spring with air in it. As you
-   drag "Exploded view" the stack magnifies and the lanes open between the three
-   ribbons, so with the slider at 100% you can count the layers. Nothing may
-   touch or pass through the casing at any explode position — that is arithmetic
-   in the model, not a clamp, so if it happens the model is wrong.
+   drag "Exploded view" the stack magnifies and the lanes open between the five
+   concentric members (casing, mandrel, anode, separator, cathode), so with the
+   slider at 100% you can count the layers. Nothing may touch or pass through
+   the casing at any explode position — that is arithmetic in the model, not a
+   clamp, so if it happens the model is wrong.
 3. **Drag "Exploded view" to 100%.** The cap, vent and positive terminal lift in
-   order, the coils separate radially, and everything stays inside the can.
+   order; the can and the mandrel core *hold* while the anode, separator and
+   cathode peel outward on their own radial offsets; and everything stays inside
+   the can.
 4. **Scrub the life cursor.** The state gauge on the casing fills as SOH falls;
    the part values and their colours change; particles do **not** teleport. The
    **Anatomy list on the right must move with the scene** — those rows come from
@@ -101,9 +104,11 @@ page with `?cell=B0005` (or another real cell) and check:
 6. **Past "today".** On a cell whose forecast routing allows a projection the
    gauge keeps moving and the cycle label says "projected"; on a cell it refuses,
    the timeline simply ends and the note in the disclosures explains why.
-7. **Hover a part.** It lights up and its label stays legible over the meshes.
-   Clicking a row in the "Anatomy" list turns the camera to that part's side and
-   dims the rest.
+7. **Hover a part.** Its badge and leader line light up at the stage margin and
+   every other annotation dims — no label is ever drawn over the meshes. The
+   badge's tooltip carries the label, provenance and unit; clicking it (or the
+   mesh) inspects the part. Clicking a row in the "Anatomy" list turns the
+   camera to that part's side and dims the rest.
 8. **Toggle "Data-scaled geometry".** The caption under the canvas prints the
    mapping in use. For the film that means the whole chain and its magnification:
    the nm-per-%-LLI factor, the drawn band, the share of initial capacity the
@@ -132,3 +137,20 @@ page with `?cell=B0005` (or another real cell) and check:
     versions while still exporting their constants, so a warning here is a real
     defect and there is a test (`src/scene/render.test.ts`) pinning the ones the
     renderer is allowed to name.
+13. **The top of the cell is a formed part.** At the rim you should see the
+    crimp bead standing slightly proud of the jacket, the cap plate seated over
+    the can with its boss raised around the vent, and the button on top of the
+    boss — not a stack of flat discs. The two tabs leave the coil's outermost
+    turn and bend over the cap to the terminals they feed; at full explode they
+    stay attached to both ends. A defect looks like: a jacket covering the
+    cut-away, a bead floating free of the can, or a tab that hangs in space.
+14. **The annotations live at the margins, in two columns.** Every badge sits
+    12 px from its stage edge, 158 px wide, and every leader line terminates on
+    the badge's inner border — so the left flank and the right flank each read
+    as one column whatever the camera does. Orbit the cell: the line should
+    follow its part's anchor with a single dog-leg, never cross the drawing, and
+    never end in mid-air. Selecting a part fills the host's dossier panel (the
+    SPA's right panel) with its Latin name, subsystem, material and failure
+    mode; a badge whose value is refused shows the reason instead of a zero. A
+    defect looks like: a badge floating over the can, two badges at the same
+    height, or a dossier that stays blank after a click.

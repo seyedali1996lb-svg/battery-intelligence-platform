@@ -13,18 +13,41 @@ import type { CellSceneSpec, FilmModel, PartId, PhysicalModel, ScenePart, Series
 
 const LABELS: Record<PartId, string> = {
   can: "Cell casing",
+  wrap: "Heat-shrink jacket",
   cap: "Top cap assembly",
   vent: "Vent disc",
+  crimp: "Crimp rim",
   terminal_pos: "Positive terminal",
   terminal_neg: "Negative terminal",
   tab_pos: "Positive tab",
   tab_neg: "Negative tab",
+  mandrel: "Winding mandrel",
   cathode_sheet: "Cathode coating",
   anode_sheet: "Anode coating",
   separator: "Separator",
   electrolyte: "Electrolyte",
   particles: "Active material particles",
   sei_film: "SEI film on the anode",
+};
+
+/** The plain-language line a card leads with — the producer carries the same map. */
+const TITLES: Record<PartId, string> = {
+  can: "The steel case",
+  wrap: "Heat-shrink jacket — the printed skin of the cell",
+  cap: "The sealed top plate",
+  vent: "The vent — the cell's safety valve",
+  crimp: "Crimp rim — where the can was rolled shut",
+  terminal_pos: "The positive button",
+  terminal_neg: "The flat negative end",
+  tab_pos: "Positive tab — the cathode's wire",
+  tab_neg: "Negative tab — the anode's wire",
+  mandrel: "Mandrel — the steel core the roll is wound around",
+  cathode_sheet: "Cathode — the lithium's source",
+  anode_sheet: "Anode — where the lithium waits",
+  separator: "Separator — the plastic film keeping the electrodes apart",
+  electrolyte: "Electrolyte — the liquid the lithium travels in",
+  sei_film: "SEI film — the anode's skin, where fade first shows",
+  particles: "Active material — the working powder on the sheets",
 };
 
 export const THEME = {
@@ -103,6 +126,8 @@ export function makePhysical(formFactor: "cylindrical" | "prismatic" | "unknown"
     formFactor,
     format: "18650 — 18.4 mm x 65.0 mm, the format's published envelope",
     unitsMmPerCellUnit: unitMm,
+    // Same rule as the producer: a cylindrical cell declares its top
+    // assembly, a prismatic one carries null and the renderer falls back.
     // Only the envelope this cell actually has is declared — the producer
     // nulls the other, and a fixture that kept both would stop matching the
     // real document's shape.
@@ -119,6 +144,21 @@ export function makePhysical(formFactor: "cylindrical" | "prismatic" | "unknown"
             wallMm,
             rollClearanceMm: clearanceMm,
             mandrelDiameterMm,
+          },
+    topAssembly:
+      formFactor === "prismatic"
+        ? null
+        : {
+            capThicknessMm: 0.8,
+            capBossDiameterMm: 8.0,
+            capBossHeightMm: 0.5,
+            ventDiameterMm: 4.5,
+            terminalDiameterMm: 5.5,
+            terminalStudHeightMm: 0.8,
+            crimpHeightMm: 0.6,
+            wrapThicknessMm: 0.15,
+            wrapTopSkipMm: 1.2,
+            wrapBottomSkipMm: 1.2,
           },
     roll: {
       stackMm,
@@ -137,12 +177,13 @@ export function makePhysical(formFactor: "cylindrical" | "prismatic" | "unknown"
     provenance: {
       diameterMm: "format-standard",
       heightMm: "format-standard",
+      topAssembly: "typical for the format, not a datasheet figure for this cell",
       stackMm: "typical for a 18650-class cell, not measured for this cell",
       turns: "derived",
       electrodeLengthM: "derived",
     },
     note: "The winding is drawn to these millimetres.",
-    schematic: ["the cap, vent and terminal sizes"],
+    schematic: ["the particle cloud's count and size"],
     // The film, in nanometres, as the producer derives it — with the drawn band
     // and the magnification it implies. Kept on the fixture so the renderer's
     // band, its endpoints and the geometry are all exercised against the same
@@ -262,6 +303,7 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
     return {
       id,
       label: LABELS[id],
+      title: TITLES[id],
       value: id === "sei_film" ? seiThicknessNm[n - 1] : id === "particles" ? lamPct[n - 1] : last,
       unit:
         id === "sei_film"

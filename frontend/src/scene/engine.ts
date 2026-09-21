@@ -36,11 +36,11 @@ import {
   Raycaster,
   Scene,
   Vector2,
+  Vector3,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
-import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { materialFor } from "./materials.ts";
 
 import {
@@ -62,6 +62,20 @@ import type { CellSceneSpec } from "./types.ts";
  * looks the same whichever way the viewer made it.
  */
 const DIM_OPACITY = 0.3;
+
+/**
+ * Where the annotation badges live, in pixels, relative to the stage's own
+ * edges.
+ *
+ * The badges are pinned to these two margins and the leader lines are drawn
+ * *to* them, so the annotation layer reads as a fixed legend beside the cell
+ * rather than as labels floating over whatever part happens to be nearest. The
+ * line's terminus is `margin + width` from each edge — the badge's inner
+ * border — and it is one constant on both sides because a badge that stopped
+ * at a different distance on the left than on the right would look mis-set.
+ */
+const BADGE_MARGIN = 12;
+const BADGE_WIDTH = 158;
 
 /** What the host is told on every frame the cursor or a hover changes. */
 export interface FrameState {
@@ -100,7 +114,7 @@ export interface CellSceneHandle {
   setCursor(index: number): void;
   /** Highlight one part and turn the camera to its side (`null` clears it). */
   inspect(partId: string | null): void;
-  /** Show or hide the floating part labels. */
+  /** Show or hide the annotation layer (the badges and their leader lines). */
   setAnnotations(visible: boolean): void;
   /**
    * Every part's reading at the current cursor — what a host needs to print a
@@ -123,7 +137,6 @@ interface PartObject {
   group: Group;
   mesh: Mesh;
   material: MeshStandardMaterial;
-  label: CSS2DObject;
   /** Emissive intensity the current build asked for, before hover highlight. */
   baseEmissive: number;
 }
@@ -201,13 +214,41 @@ export function mountCellScene(
   renderer.domElement.style.borderRadius = "10px";
   container.appendChild(renderer.domElement);
 
-  const labelRenderer = new CSS2DRenderer();
-  labelRenderer.setSize(container.clientWidth || 640, container.clientHeight || 480);
-  labelRenderer.domElement.style.position = "absolute";
-  labelRenderer.domElement.style.top = "0";
-  labelRenderer.domElement.style.left = "0";
-  labelRenderer.domElement.style.pointerEvents = "none";
-  container.appendChild(labelRenderer.domElement);
+  if (getComputedStyle(container).position === "static") {
+    container.style.position = "relative";
+  }
+
+  const overlayContainer = document.createElement("div");
+  overlayContainer.className = "cell-scene-overlay";
+  overlayContainer.style.position = "absolute";
+  overlayContainer.style.top = "0";
+  overlayContainer.style.left = "0";
+  overlayContainer.style.width = "100%";
+  overlayContainer.style.height = "100%";
+  overlayContainer.style.pointerEvents = "none";
+  overlayContainer.style.overflow = "hidden";
+  container.appendChild(overlayContainer);
+
+  const svgNamespace = "http://www.w3.org/2000/svg";
+  const svgOverlay = document.createElementNS(svgNamespace, "svg");
+  svgOverlay.setAttribute("class", "cell-scene-leader-svg");
+  svgOverlay.style.position = "absolute";
+  svgOverlay.style.top = "0";
+  svgOverlay.style.left = "0";
+  svgOverlay.style.width = "100%";
+  svgOverlay.style.height = "100%";
+  svgOverlay.style.pointerEvents = "none";
+  overlayContainer.appendChild(svgOverlay);
+
+  const badgeOverlay = document.createElement("div");
+  badgeOverlay.setAttribute("class", "cell-scene-badge-overlay");
+  badgeOverlay.style.position = "absolute";
+  badgeOverlay.style.top = "0";
+  badgeOverlay.style.left = "0";
+  badgeOverlay.style.width = "100%";
+  badgeOverlay.style.height = "100%";
+  badgeOverlay.style.pointerEvents = "none";
+  overlayContainer.appendChild(badgeOverlay);
 
   const scene3 = new Scene();
   // An environment map, not extra lamps: metals need something to reflect, and
@@ -297,24 +338,24 @@ export function mountCellScene(
     return geometry;
   }
 
-  function labelElement(label: string, value: string, provenance: string, color: string): HTMLDivElement {
-    const el = document.createElement("div");
-    el.className = "cell-scene-label";
-    el.style.cssText =
-      "font:500 11px/1.25 ui-sans-serif,system-ui,'Segoe UI',sans-serif;color:#e2e8f0;" +
-      `border-left:2px solid ${color};padding:2px 6px;background:rgba(11,17,32,0.72);` +
-      "border-radius:4px;white-space:nowrap;backdrop-filter:blur(2px);";
-    el.dataset.part = label;
-    el.dataset.provenance = provenance;
-    el.textContent = value ? `${label} · ${value}` : label;
-    return el;
-  }
-
   function formatValue(part: { value: number | null; unit: string; carried: boolean }): string {
     if (part.value === null || !Number.isFinite(part.value)) return "no reading";
     const decimals = Math.abs(part.value) >= 100 ? 1 : Math.abs(part.value) >= 10 ? 2 : 3;
     const unit = part.unit.length > 18 ? part.unit.slice(0, 16) + "…" : part.unit;
     return `${part.value.toFixed(decimals)}${unit ? " " + unit : ""}${part.carried ? " (carried)" : ""}`;
+  }
+
+  /**
+   * Text into markup: the labels come from a producer's document, so a part
+   * called `Foo "bar" <baz>` must not be able to close an attribute the scene
+   * just opened for it.
+   */
+  function escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   /** Paint (or repaint) everything a build carries. Called from update(). */
@@ -350,10 +391,8 @@ export function mountCellScene(
         mesh.userData.partId = part.id;
         const group = new Group();
         group.add(mesh);
-        const label = new CSS2DObject(labelElement(part.label, "", part.provenance, spec_.theme.muted));
-        group.add(label);
         partsRoot.add(group);
-        object = { id: part.id, group, mesh, material, label, baseEmissive: part.emissive };
+        object = { id: part.id, group, mesh, material, baseEmissive: part.emissive };
         objects.set(part.id, object);
       }
       object.mesh.geometry.dispose();
@@ -373,20 +412,6 @@ export function mountCellScene(
       object.mesh.receiveShadow = true;
       object.group.position.set(0, 0, 0);
       object.group.visible = true;
-
-      const el = object.label.element as HTMLDivElement;
-      el.textContent = `${part.label} · ${formatValue(part)}`;
-      const border = provenanceColor(part.provenance, spec_.theme);
-      el.style.borderLeftColor = border;
-      el.style.opacity = part.available ? "1" : "0.62";
-      el.dataset.part = part.id;
-      el.dataset.provenance = part.provenance;
-      el.dataset.available = String(part.available);
-      el.title = part.available
-        ? `${part.label} — ${part.provenance || "unmeasured"}${part.unit ? ` (${part.unit})` : ""}`
-        : `${part.label} — no measurement: ${part.reason ?? "not measured"}`;
-      object.label.position.set(part.anchor[0], part.anchor[1], part.anchor[2]);
-      object.label.visible = annotationsVisible;
     }
 
     for (const [id, object] of objects) {
@@ -421,11 +446,9 @@ export function mountCellScene(
         const isTarget = partId === id;
         // Highlight is an offset from the value the build asked for, never a
         // mutation of it — otherwise hovering would permanently brighten a part
-        // until the next rebuild.
+        // until the next rebuild. The annotation badges dim the same way, from
+        // the same number, in `updateLeaderLines`.
         object.material.emissiveIntensity = isTarget ? object.baseEmissive + 0.6 : object.baseEmissive;
-        const el = object.label.element as HTMLDivElement;
-        const dimmed = id !== null && !isTarget;
-        el.style.opacity = dimmed && el.dataset.available === "true" ? String(DIM_OPACITY) : "1";
       }
       options.onInspect?.(id);
     }
@@ -433,6 +456,7 @@ export function mountCellScene(
     // about is a hover it cannot show: the part list and the scene must agree
     // about which part is lit at all times, not only after a click.
     emit();
+    updateLeaderLines();
   }
 
   function onPointerMove(event: PointerEvent): void {
@@ -453,17 +477,210 @@ export function mountCellScene(
     setHovered(null);
   }
 
+  function onPointerClick(): void {
+    if (hovered) {
+      handle.inspect(pinned === hovered ? null : hovered);
+    }
+  }
+
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+  renderer.domElement.addEventListener("click", onPointerClick);
+
+  badgeOverlay.addEventListener("pointerover", (event) => {
+    const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
+    if (target?.dataset.part) {
+      setHovered(target.dataset.part);
+    }
+  });
+
+  badgeOverlay.addEventListener("pointerout", (event) => {
+    const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
+    if (target?.dataset.part) {
+      setHovered(null);
+    }
+  });
+
+  badgeOverlay.addEventListener("click", (event) => {
+    const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
+    if (target?.dataset.part) {
+      handle.inspect(pinned === target.dataset.part ? null : target.dataset.part);
+    }
+  });
+
+  const projVec = new Vector3();
+
+  /**
+   * Text put into the badge: the value string, and what the old floating
+   * labels said in their tooltips (provenance, unit, or why there is no
+   * number). Kept on the item so the badge can be rebuilt from the scene
+   * alone, every frame.
+   */
+  interface LeaderItem {
+    id: string;
+    label: string;
+    valueStr: string;
+    title: string;
+    color: string;
+    sx: number;
+    sy: number;
+    targetY: number;
+    available: boolean;
+  }
+
+  function updateLeaderLines(): void {
+    if (!annotationsVisible || !scene) {
+      svgOverlay.innerHTML = "";
+      badgeOverlay.innerHTML = "";
+      return;
+    }
+
+    const width = container.clientWidth || 640;
+    const height = container.clientHeight || 480;
+
+    const visibleItems: LeaderItem[] = [];
+
+    for (const [id, object] of objects) {
+      if (!object.group.visible) continue;
+      const partSpec = scene.parts.find((p) => p.id === id);
+      if (!partSpec || !partSpec.drawn) continue;
+
+      projVec.set(partSpec.anchor[0], partSpec.anchor[1], partSpec.anchor[2]);
+      projVec.project(camera);
+
+      // Occluded behind camera
+      if (projVec.z > 1.0) continue;
+
+      const sx = (projVec.x * 0.5 + 0.5) * width;
+      const sy = (-projVec.y * 0.5 + 0.5) * height;
+
+      if (sx < -30 || sx > width + 30 || sy < -30 || sy > height + 30) continue;
+
+      const color = provenanceColor(partSpec.provenance, currentSpec.theme);
+      visibleItems.push({
+        id,
+        label: partSpec.label,
+        valueStr: formatValue(partSpec),
+        title: partSpec.available
+          ? `${partSpec.label} — ${partSpec.provenance || "unmeasured"}${partSpec.unit ? ` (${partSpec.unit})` : ""}`
+          : `${partSpec.label} — no measurement: ${partSpec.reason ?? "not measured"}`,
+        color,
+        sx,
+        sy,
+        targetY: sy,
+        available: partSpec.available,
+      });
+    }
+
+    if (visibleItems.length === 0) {
+      svgOverlay.innerHTML = "";
+      badgeOverlay.innerHTML = "";
+      return;
+    }
+
+    // Partition into left and right flanks based on projected 3D anchor X
+    const leftItems = visibleItems.filter((item) => item.sx < width * 0.5);
+    const rightItems = visibleItems.filter((item) => item.sx >= width * 0.5);
+
+    leftItems.sort((a, b) => a.sy - b.sy);
+    rightItems.sort((a, b) => a.sy - b.sy);
+
+    function layoutFlank(items: LeaderItem[]): void {
+      if (items.length === 0) return;
+      const minGap = 26;
+      const totalSpan = items.length * minGap;
+      const startY = Math.max(22, Math.min(height - totalSpan - 18, (height - totalSpan) / 2));
+      let curY = startY;
+      for (const item of items) {
+        item.targetY = Math.max(item.sy - 16, Math.min(height - 24, Math.max(18, curY)));
+        curY = item.targetY + minGap;
+      }
+    }
+
+    layoutFlank(leftItems);
+    layoutFlank(rightItems);
+
+    const activeId = pinned ?? hovered;
+
+    let svgContent = "";
+    let badgesContent = "";
+
+    const renderItem = (item: LeaderItem, onLeft: boolean) => {
+      const isTarget = item.id === activeId;
+      const hasActive = activeId !== null;
+      const opacity = isTarget ? 1.0 : hasActive ? DIM_OPACITY : 0.85;
+      const strokeWidth = isTarget ? 1.75 : 1;
+      const strokeDash = isTarget ? "none" : "2 2";
+      const lineColor = isTarget ? currentSpec.theme.accent : item.color;
+
+      // The line ends on the badge's *inner* border — the edge facing the cell
+      // — at a fixed distance from the stage edge, so the badges line up into
+      // two columns whatever the parts do. The elbow is the midpoint of the
+      // anchor and that terminus: one dog-leg, drawn the same way on both
+      // flanks.
+      const badgeEdgeX = onLeft ? BADGE_MARGIN + BADGE_WIDTH : width - BADGE_MARGIN - BADGE_WIDTH;
+      const elbowX = (item.sx + badgeEdgeX) / 2;
+
+      svgContent += `
+        <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="2.5" fill="${item.color}" opacity="${opacity}" />
+        <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${isTarget ? 6.5 : 5}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="2 2" opacity="${opacity}" />
+        <polyline points="${item.sx.toFixed(1)},${item.sy.toFixed(1)} ${elbowX.toFixed(1)},${item.targetY.toFixed(1)} ${badgeEdgeX.toFixed(1)},${item.targetY.toFixed(1)}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" opacity="${opacity}" />
+      `;
+
+      // `box-sizing: border-box` is what makes `width` the *whole* badge, so
+      // the border the line meets is exactly at `badgeEdgeX` above rather than
+      // a padding-and-border's width past it.
+      const badgeStyle = `
+        position: absolute;
+        top: ${(item.targetY - 10).toFixed(1)}px;
+        ${onLeft ? `left: ${BADGE_MARGIN}px;` : `right: ${BADGE_MARGIN}px;`}
+        box-sizing: border-box;
+        width: ${BADGE_WIDTH}px;
+        pointer-events: auto;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        padding: 2px 7px;
+        font: 500 10.5px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        background: ${isTarget ? "rgba(22, 33, 58, 0.95)" : "rgba(11, 17, 32, 0.82)"};
+        border: 1px solid ${isTarget ? currentSpec.theme.accent : "rgba(51, 65, 85, 0.55)"};
+        ${onLeft ? `border-left: 2.5px solid ${item.color};` : `border-right: 2.5px solid ${item.color};`}
+        border-radius: 4px;
+        color: #e2e8f0;
+        backdrop-filter: blur(4px);
+        box-shadow: ${isTarget ? "0 0 10px rgba(99, 179, 237, 0.35)" : "0 2px 5px rgba(0,0,0,0.35)"};
+        opacity: ${opacity};
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transition: opacity 0.12s ease, border-color 0.12s ease;
+      `;
+
+      badgesContent += `
+        <div class="cell-scene-callout" data-part="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}" style="${badgeStyle}">
+          <span style="font-weight: 600; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; min-width: 0;">${escapeHtml(item.label)}</span>
+          <span style="color: ${item.available ? "#94a3b8" : "#64748b"}; font-size: 10px; flex-shrink: 0;">${escapeHtml(item.valueStr)}</span>
+        </div>
+      `;
+    };
+
+    for (const item of leftItems) renderItem(item, true);
+    for (const item of rightItems) renderItem(item, false);
+
+    svgOverlay.innerHTML = svgContent;
+    badgeOverlay.innerHTML = badgesContent;
+  }
 
   // ── Resize ────────────────────────────────────────────────────────────
   function resize(): void {
     const width = container.clientWidth || 640;
     const height = container.clientHeight || 480;
     renderer.setSize(width, height, false);
-    labelRenderer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    updateLeaderLines();
   }
 
   let observer: ResizeObserver | null = null;
@@ -481,7 +698,7 @@ export function mountCellScene(
     raf = window.requestAnimationFrame(tick);
     controls.update();
     renderer.render(scene3, camera);
-    labelRenderer.render(scene3, camera);
+    updateLeaderLines();
     if (pointerInside) {
       // A hover highlight decays once the pointer stops moving; refresh it so
       // the lit part stays lit while the camera orbits around it.
@@ -546,8 +763,6 @@ export function mountCellScene(
       for (const [id, object] of objects) {
         const isTarget = id === partId;
         object.material.emissiveIntensity = isTarget ? object.baseEmissive + 0.6 : object.baseEmissive;
-        const element = object.label.element as HTMLDivElement;
-        element.style.opacity = partId === null || isTarget ? "1" : String(DIM_OPACITY);
       }
       // Turn the camera to the inspected part's own side, keeping the distance
       // and height the viewer chose — a click in a list should not throw away
@@ -567,10 +782,11 @@ export function mountCellScene(
       }
       options.onInspect?.(partId);
       emit();
+      updateLeaderLines();
     },
     setAnnotations(visible) {
       annotationsVisible = visible;
-      for (const object of objects.values()) object.label.visible = visible;
+      updateLeaderLines();
     },
     parts: () => (scene ? partReadings(currentSpec, scene) : []),
     play(intervalMs = 120) {
@@ -617,12 +833,12 @@ export function mountCellScene(
       window.cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("click", onPointerClick);
       observer?.disconnect();
       window.removeEventListener("resize", resize);
       for (const object of objects.values()) {
         object.mesh.geometry.dispose();
         object.material.dispose();
-        object.label.element.remove();
       }
       objects.clear();
       floorMesh?.geometry.dispose();
@@ -630,11 +846,11 @@ export function mountCellScene(
       gaugeMesh?.geometry.dispose();
       gaugeMaterial.dispose();
       controls.dispose();
-    environment.dispose();
-    renderer.dispose();
-    renderer.domElement.remove();
-    labelRenderer.domElement.remove();
-  },
+      environment.dispose();
+      renderer.dispose();
+      renderer.domElement.remove();
+      overlayContainer.remove();
+    },
   };
 
   // A host's options apply to the very first frame, not the second one: the

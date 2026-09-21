@@ -906,3 +906,54 @@ def test_a_missing_capacity_is_a_refusal_not_a_thickness():
     assert "capacity" in film["reason"]
     # …and the same is true of a document carrying no physical block at all.
     assert cell_scene.film_model(None, 2.0, 20.0)["available"] is False
+
+
+# ---------------------------------------------------------------------------
+# The top of the cell: declared millimetres, plain-language titles, two new parts
+# ---------------------------------------------------------------------------
+
+def test_the_top_assembly_is_declared_with_provenance():
+    physical = PhysicalModel(FORM_FACTOR_CYLINDRICAL, "x").block()
+    top = physical["topAssembly"]
+    assert top is not None and len(top) == 10
+    # Every figure is a positive millimetre size and every one is stated to be
+    # typical for the format, not a datasheet row for this cell.
+    assert all(isinstance(v, (int, float)) and v > 0 for v in top.values())
+    assert "typical for the format" in physical["provenance"]["topAssembly"]
+    # A prismatic cell carries no cylindrical top assembly.
+    assert PhysicalModel(FORM_FACTOR_PRISMATIC, "x").block().get("topAssembly") is None
+
+
+def test_the_schematic_list_no_longer_names_the_cap():
+    """The cap/vent/terminal sizes used to be the renderer's guess; now they are
+    the document's own declared millimetres, so they leave the schematic list."""
+    physical = PhysicalModel(FORM_FACTOR_CYLINDRICAL, "x").block()
+    assert not any("cap" in item for item in physical["schematic"])
+    assert any("film" in item for item in physical["schematic"])
+
+
+def test_every_part_card_carries_a_plain_language_title():
+    spec = _spec()
+    assert len(spec["parts"]) == 16
+    for part in spec["parts"]:
+        assert part["title"], f"{part['id']} has no plain-language title"
+        # The title answers "what am I looking at"; the label stays anatomical.
+        assert part["title"] != part["label"] or part["id"] == "can"
+
+
+def test_the_two_new_parts_are_declared_unavailable_not_zero():
+    spec = _spec()
+    by_id = {p["id"]: p for p in spec["parts"]}
+    for part_id in ("wrap", "crimp"):
+        part = by_id[part_id]
+        assert part["available"] is False
+        assert part["value"] is None
+        assert "no measurement" in part["unavailableReason"]
+
+
+def test_the_mesh_part_registry_and_the_cards_stay_a_bijection():
+    spec = _spec()
+    assert tuple(p["id"] for p in spec["parts"]) == MESH_PART_IDS
+    schema = json.load(open("docs/cell_scene.schema.json", encoding="utf-8"))
+    enum = set(schema["properties"]["parts"]["items"]["properties"]["id"]["enum"])
+    assert enum == set(MESH_PART_IDS)

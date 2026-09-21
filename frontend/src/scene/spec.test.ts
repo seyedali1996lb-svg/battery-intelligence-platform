@@ -53,7 +53,7 @@ test("the version in the Python producer, the JSON Schema and the renderer are o
 });
 
 test("the committed sample is the document the renderer expects", () => {
-  assert.equal(sample.parts.length, 13);
+  assert.equal(sample.parts.length, ANATOMY_PART_IDS.length);
   assert.deepEqual(
     sample.parts.map((part) => part.id),
     [...ANATOMY_PART_IDS],
@@ -139,7 +139,7 @@ test("the renderer mounts the real sample and can scrub its whole timeline", () 
     assert.equal(timeline.hasProjection, false);
   }
   const scene = buildScene(sample, { cursor: todayCursor(timeline) });
-  assert.equal(scene.parts.length, 13);
+  assert.equal(scene.parts.length, ANATOMY_PART_IDS.length);
   assert.equal(scene.gauge.soh, sample.record.lastSohPct);
   for (const part of scene.parts) {
     assert.ok(Number.isFinite(part.anchor[0] + part.anchor[1] + part.anchor[2]));

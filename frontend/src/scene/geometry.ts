@@ -278,6 +278,81 @@ export function extrudeOpen(path: Outline, height: number): Mesh {
   return finalize(positions, indices);
 }
 
+/**
+ * Revolve a profile around the Y axis.
+ *
+ * A `profile` point is `(radius, y)` in cell units; segments sweep the full
+ * circle. Every top-of-cell part is a surface of revolution — a cap plate is
+ * a disc with a step in it, a crimp is a groove — and a lathe draws that
+ * honestly: one profile, one revolution, no stacked discs pretending to be a
+ * formed part. Profiles are traced counter-clockwise in (radius, y) so the
+ * outward normal faces the camera, the same convention `extrudeClosed` pins.
+ */
+export function latheMesh(profile: Array<[number, number]>, segments = 48): Mesh {
+  const n = profile.length;
+  if (n < 2 || segments < 3) return emptyMesh();
+  const positions: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const [r, y] = profile[i];
+    for (let s = 0; s < segments; s++) {
+      const theta = (s / segments) * Math.PI * 2;
+      positions.push(r * Math.cos(theta), y, r * Math.sin(theta));
+    }
+  }
+  for (let i = 0; i < n - 1; i++) {
+    for (let s = 0; s < segments; s++) {
+      const s1 = (s + 1) % segments;
+      const a = i * segments + s;
+      const b = i * segments + s1;
+      const c = (i + 1) * segments + s;
+      const d = (i + 1) * segments + s1;
+      indices.push(a, c, d, a, d, b);
+    }
+  }
+  return finalize(positions, indices);
+}
+
+/**
+ * A tab as it is really made: a foil lead peeled off the coil's edge.
+ *
+ * A vertical strip standing on the roll's outermost turn at one angular
+ * position, bending radially outward over the cap's thickness to meet the
+ * terminal it feeds — the alternative was a small box floating beside the
+ * roll, attached to nothing.
+ */
+function tabStripMesh(
+  rollRadius: number,
+  yBottom: number,
+  yTop: number,
+  canRadius: number,
+  theta: number,
+  capThickness: number,
+  /** ±1: the direction from the terminal end back toward the roll. */
+  bendToward: number,
+): Mesh {
+  const inner: [number, number] = [rollRadius * Math.cos(theta), rollRadius * Math.sin(theta)];
+  const outer: [number, number] = [canRadius * Math.cos(theta), canRadius * Math.sin(theta)];
+  const halfW = 0.02;
+  const nx = -Math.sin(theta) * halfW;
+  const nz = Math.cos(theta) * halfW;
+  const yBend = yTop + bendToward * capThickness * 0.8;
+  const positions: number[] = [
+    inner[0] - nx, yBottom, inner[1] - nz,
+    inner[0] + nx, yBottom, inner[1] + nz,
+    inner[0] - nx, yBend, inner[1] - nz,
+    inner[0] + nx, yBend, inner[1] + nz,
+    outer[0] - nx, yTop, outer[1] - nz,
+    outer[0] + nx, yTop, outer[1] + nz,
+  ];
+  const indices: number[] = [
+    0, 1, 2, 1, 3, 2,
+    2, 3, 4, 3, 5, 4,
+    2, 4, 0, 3, 5, 1,
+  ];
+  return finalize(positions, indices);
+}
+
 export function boxMesh(width: number, height: number, depth: number): Mesh {
   const w = width / 2;
   const h = height / 2;
@@ -366,7 +441,38 @@ export const CELL_GEOMETRY = {
    * casing (a test asserts exactly that): a cutaway that flings the cathode
    * through the can wall teaches the wrong thing about where it lives.
    */
-  explode: { cap: 0.3, vent: 0.36, terminalPos: 0.44, terminalNeg: 0.3, layerGap: 0.014 },
+  explode: {
+    cap: 0.3,
+    vent: 0.36,
+    terminalPos: 0.44,
+    terminalNeg: 0.3,
+    layerGap: 0.014,
+    /**
+     * The radial offset of each of the winding's five concentric members at
+     * `exploded = 1`, in millimetres — the casing, the mandrel, and the three
+     * ribbons, each with a number of its own rather than sharing one.
+     *
+     *   * `casing` and `mandrel` are the two *datums*: the can already sits on
+     *     the cell's declared diameter and the core already sits where the
+     *     winding starts, so neither has room to move without leaving the
+     *     envelope the document declares. They are listed anyway — a table that
+     *     names three of five members would make the other two an omission
+     *     rather than a decision — and both are still multiplied by `exploded`,
+     *     so a host that widens either one gets the motion it asked for.
+     *   * `anode` is the air opened between the core and the first ribbon.
+     *   * `separator` and `cathode` are measured *cumulatively* from the core,
+     *     so the lane gaps are the differences (separator − anode, cathode −
+     *     separator). Taking them cumulatively is what keeps the three ribbons
+     *     tiling one turn's advance exactly: the air is part of the advance,
+     *     not a fudge beside it, and the turn count falls to pay for it — so
+     *     the exploded roll still cannot leave its envelope.
+     *
+     * A view control, like every other field of `exploded`: at rest all five
+     * are zero, so the assembled cell is exactly the winding the document
+     * declares, and no measurement anywhere depends on these figures.
+     */
+    radial: { casing: 0, mandrel: 0, anode: 0.25, separator: 0.7, cathode: 0.95 },
+  },
   /** Draw-call economy: the whole particle cloud is one merged mesh. */
   particles: { count: 240, radius: 0.0055, anodeShare: 0.5 },
   /**
@@ -385,6 +491,36 @@ export const CELL_GEOMETRY = {
 // ---------------------------------------------------------------------------
 // The physical roll: the winding is drawn from the document's own millimetres
 // ---------------------------------------------------------------------------
+
+/**
+ * The top assembly, in cell units, as the renderer draws it.
+ *
+ * Every field is derived from the document's declared millimetres — the
+ * derivation lives in `topAssemblyModel()`, and the document's `schematic`
+ * list no longer contains the cap, vent or terminal because of it.
+ */
+export interface TopAssembly {
+  /** Total cell height in cell units (the document's own ruler). */
+  height: number;
+  /** The can's inner bore radius, the space the windings actually live in. */
+  boreRadius: number;
+  /** Cap plate: its thickness, and the boss raised around the vent. */
+  capThickness: number;
+  capBossRadius: number;
+  capBossHeight: number;
+  ventRadius: number;
+  terminalRadius: number;
+  terminalStudHeight: number;
+  /** The crimped bead: where it starts, and how tall it is. */
+  crimpBottom: number;
+  crimpTop: number;
+  /** The heat-shrink jacket: outer radius, and where it stops. */
+  wrapOuterRadius: number;
+  wrapTop: number;
+  wrapBottom: number;
+  /** True when these came from the document rather than the fallback. */
+  declared: boolean;
+}
 
 /** A 18650-class stack, foil to foil, in millimetres. Fallback only. */
 const DEFAULT_STACK_MM = {
@@ -407,9 +543,6 @@ const DEFAULT_STACK_MM = {
  */
 export const EXPLODE_STACK_GAIN = 7;
 
-/** Air drawn between the three ribbons at full explode, in millimetres. */
-const EXPLODE_LANE_GAP_MM = 0.02;
-
 /** The winding, in cell units, derived from the document's declared millimetres. */
 export interface RollModel {
   /** Millimetres per cell unit — the cell's own declared height. */
@@ -430,6 +563,13 @@ export interface RollModel {
   electrodeLengthM: number;
   /** The projected area of the wound layers, in cm² — the cross-check number. */
   woundAreaCm2: number;
+  /**
+   * The top of the cell, derived from the document's `topAssembly` millimetres
+   * (or the fallback when the document predates the block) and converted to
+   * cell units. Every size the renderer draws above or below the windings
+   * comes from here — no part of the casing is picked by eye.
+   */
+  top: TopAssembly;
   /**
    * False when the document carried no `physical` block, so these are the
    * renderer's fallback 18650 figures rather than the cell's own.
@@ -458,6 +598,19 @@ export interface DrawnRoll {
   advance: number;
   gain: number;
   ribbons: DrawnRibbon[];
+  /**
+   * The air each of the five concentric members has been given at this explode
+   * position, in cell units — zero for all of them at rest.
+   */
+  offsets: RadialOffsets;
+  /**
+   * The radius the winding's first ribbon starts from: the drawn core surface
+   * (the mandrel, wherever the explode has put it) plus the air opened between
+   * that core and the anode. Every ribbon's `offset` is measured *from* here,
+   * so the bundle's base, the lanes and the air between them stay one
+   * arithmetic rather than three that have to be kept in step.
+   */
+  base: number;
   /** The outermost edge of the wound layers. Never past the envelope. */
   outerRadius: number;
   anodeOuterRadius: number;
@@ -508,6 +661,8 @@ export function rollModel(spec: CellSceneSpec): RollModel {
   const woundAreaCm2 =
     (Math.PI * (Math.pow(envelopeRadius * unitMm, 2) - Math.pow(mandrelRadius * unitMm, 2))) / 100;
 
+  const top = topAssemblyModel(spec);
+
   return {
     unitMm,
     canRadius: toUnits(diameterMm / 2),
@@ -522,6 +677,7 @@ export function rollModel(spec: CellSceneSpec): RollModel {
     pitchMm,
     electrodeLengthM: lengthMm / 1000,
     woundAreaCm2,
+    top,
     declared: physical !== null && physical !== undefined,
   };
 }
@@ -532,20 +688,123 @@ function positive(value: number | null | undefined, fallback: number): number {
 }
 
 /**
+ * Derive the drawn top of the cell from the document's declared millimetres.
+ *
+ * The old renderer hard-picked cap, vent and terminal sizes by eye; this
+ * function is the replacement. Each figure is the declared millimetre size
+ * converted to cell units — cap plate and boss, vent disc, terminal, the
+ * crimp bead's place and height, the wrap's outer radius and where it stops —
+ * and when the document predates the block the same fallback figures are used
+ * while `declared` says so.
+ */
+export function topAssemblyModel(spec: CellSceneSpec): TopAssembly {
+  const physical = spec.physical ?? null;
+  const unitMm = positive(physical?.unitsMmPerCellUnit, 65.0);
+  const cyl = physical?.cylindrical ?? null;
+  const toUnits = (mm: number) => mm / unitMm;
+  const diameterMm = positive(cyl?.diameterMm, 18.4);
+  const wallMm = positive(cyl?.wallMm, 0.25);
+  const canRadius = toUnits(diameterMm / 2);
+  const boreRadius = toUnits(diameterMm / 2 - wallMm);
+  const height = toUnits(positive(cyl?.heightMm, 65.0));
+  const top = physical?.topAssembly ?? null;
+  const declared = top !== null && top !== undefined;
+  const capThickness = toUnits(positive(top?.capThicknessMm, 0.8));
+  const capBossRadius = toUnits(positive(top?.capBossDiameterMm, 8.0) / 2);
+  const capBossHeight = toUnits(positive(top?.capBossHeightMm, 0.5));
+  const ventRadius = toUnits(positive(top?.ventDiameterMm, 4.5) / 2);
+  const terminalRadius = toUnits(positive(top?.terminalDiameterMm, 5.5) / 2);
+  const terminalStudHeight = toUnits(positive(top?.terminalStudHeightMm, 0.8));
+  const crimpHeight = toUnits(positive(top?.crimpHeightMm, 0.6));
+  const wrapThickness = toUnits(positive(top?.wrapThicknessMm, 0.15));
+  const wrapTopSkip = toUnits(positive(top?.wrapTopSkipMm, 1.2));
+  const wrapBottomSkip = toUnits(positive(top?.wrapBottomSkipMm, 1.2));
+  return {
+    height,
+    boreRadius,
+    capThickness,
+    capBossRadius,
+    capBossHeight,
+    ventRadius,
+    terminalRadius,
+    terminalStudHeight,
+    crimpBottom: 0.5 - crimpHeight,
+    crimpTop: 0.5,
+    wrapOuterRadius: canRadius + wrapThickness,
+    wrapTop: 0.5 - wrapTopSkip,
+    wrapBottom: -0.5 + wrapBottomSkip,
+    declared,
+  };
+}
+
+/**
+ * The radial offset of one concentric member of the winding, in cell units:
+ * the air opened outwards from where the assembled cell has it.
+ *
+ * The five members the roll is drawn as, kept in one object because they are
+ * meaningless apart — a casing that knows nothing about where the mandrel sits
+ * cannot say whether the roll between them still fits.
+ */
+export interface RadialOffsets {
+  casing: number;
+  mandrel: number;
+  anode: number;
+  separator: number;
+  cathode: number;
+}
+
+/**
+ * The five members' offsets at one explode position.
+ *
+ * At rest every value is zero, which is the assembled cell drawn as the
+ * document's own winding. As `exploded` rises each member moves by its own
+ * declared amount (`CELL_GEOMETRY.explode.radial`), and that is what turns the
+ * dense roll — a fraction of a pixel per layer — into five concentric surfaces
+ * a viewer can count.
+ */
+export function radialOffsets(model: RollModel, exploded: number): RadialOffsets {
+  const e = Math.max(0, Math.min(1, Number.isFinite(exploded) ? exploded : 0));
+  const table = CELL_GEOMETRY.explode.radial;
+  const at = (mm: number) => (mm / model.unitMm) * e;
+  return {
+    casing: at(table.casing),
+    mandrel: at(table.mandrel),
+    anode: at(table.anode),
+    separator: at(table.separator),
+    cathode: at(table.cathode),
+  };
+}
+
+/**
  * The roll as drawn at an explode position.
  *
  * At rest this is the real winding: the declared stack as the pitch, the turn
  * count the envelope gives it, each ribbon including its current collector.
- * Exploding magnifies the stack and opens a lane between the ribbons, and the
- * turn count falls to pay for it — so the roll never grows past the bore, at
- * any explode position, by construction rather than by a clamp.
+ * Exploding magnifies the stack, opens air between the core and the first
+ * ribbon and lanes between the three, and the turn count falls to pay for it —
+ * so the roll never grows past the bore, at any explode position, by
+ * construction rather than by a clamp.
  */
 export function drawnRoll(model: RollModel, exploded: number): DrawnRoll {
+  const offsets = radialOffsets(model, exploded);
   const e = Math.max(0, Math.min(1, Number.isFinite(exploded) ? exploded : 0));
   const gain = 1 + EXPLODE_STACK_GAIN * e;
-  const gap = (EXPLODE_LANE_GAP_MM / model.unitMm) * e;
-  const span = model.envelopeRadius - model.mandrelRadius;
-  const advance = model.pitch * gain + 2 * gap;
+  // Where the winding begins: the drawn core, plus the air the explode opened
+  // between that core and the first ribbon. Both datums in the radial table
+  // (casing, mandrel) are zero at rest, so this is the declared mandrel radius
+  // until a host deliberately moves it.
+  const base = model.mandrelRadius + offsets.mandrel + offsets.anode;
+  // The air between the ribbons is the *difference* of the two cumulative
+  // offsets — separator − anode, cathode − separator — so the table is read
+  // once here instead of being restated as three unrelated gaps.
+  const gap1 = Math.max(0, offsets.separator - offsets.anode);
+  const gap2 = Math.max(0, offsets.cathode - offsets.separator);
+  const span = model.envelopeRadius - base;
+  // The air is part of the advance, not a fudge beside it: it is added into
+  // every turn's pitch, and the turn count below falls to pay for it. That is
+  // what keeps the exploded roll inside the bore by construction rather than
+  // by a clamp — the envelope test only guards what this arithmetic guarantees.
+  const advance = model.pitch * gain + gap1 + gap2;
   const turns = Math.max(2, Math.min(model.turns, Math.floor(span / advance + 1e-9)));
   const spiralTurns = Math.max(1, turns - 1);
   const anode = model.anodeThickness * gain;
@@ -555,18 +814,20 @@ export function drawnRoll(model: RollModel, exploded: number): DrawnRoll {
   // position — which is what keeps the drawn roll a filled roll.
   const ribbons: DrawnRibbon[] = [
     { id: "anode_sheet", offset: 0, thickness: anode },
-    { id: "separator", offset: anode + gap, thickness: separator },
-    { id: "cathode_sheet", offset: anode + gap + separator + gap, thickness: cathode },
+    { id: "separator", offset: anode + gap1, thickness: separator },
+    { id: "cathode_sheet", offset: anode + gap1 + separator + gap2, thickness: cathode },
   ];
-  const outerRadius = Math.min(model.mandrelRadius + turns * advance, model.envelopeRadius);
+  const outerRadius = Math.min(base + turns * advance, model.envelopeRadius);
   return {
     turns,
     spiralTurns,
     advance,
     gain,
     ribbons,
+    offsets,
+    base,
     outerRadius,
-    anodeOuterRadius: model.mandrelRadius + (turns - 1) * advance + anode,
+    anodeOuterRadius: base + (turns - 1) * advance + anode,
     declared: model.declared,
   };
 }
@@ -923,7 +1184,6 @@ function _rollRibbon(
  */
 function _particlePositions(
   count: number,
-  model: RollModel,
   drawn: DrawnRoll,
 ): Array<[number, number, number]> {
   let state = 0x2f6e2b1;
@@ -943,7 +1203,7 @@ function _particlePositions(
     // never drifts off the layers it belongs to as the stack is exploded.
     const turn = Math.min(drawn.turns - 1, Math.floor(rand() * drawn.turns));
     const radius =
-      model.mandrelRadius +
+      drawn.base +
       turn * drawn.advance +
       lane.offset +
       lane.thickness * (0.25 + 0.5 * rand());
@@ -957,15 +1217,27 @@ function _particlePositions(
 function _cylindricalPlacements(
   exploded: number,
   filmThickness: number,
+  spec: CellSceneSpec,
   model: RollModel,
   drawn: DrawnRoll,
 ): Record<string, Placement> {
   const { canSweep, roll, explode } = CELL_GEOMETRY;
-  const canRadius = model.canRadius;
+  // The casing is a datum, so it sits on the declared diameter — but its offset
+  // is still read from the radial table, so a host that gives the can room to
+  // move gets the motion it asked for and everything measured *inside* the can
+  // (the bore, the wrap, the cap that closes it) moves with it.
+  const canRadius = model.canRadius + drawn.offsets.casing;
   const canThickness = model.canThickness;
   const casing = extrudeOpen(arcPoints(canRadius, canSweep, 64, Math.PI * 0.6), 1.0);
   const floorDisc = extrudeClosed(ringPoints(canRadius, 64), 0.012);
   const canMesh = mergeMeshes([casing, translateMesh(floorDisc, 0, -0.494, 0)]);
+
+  // The winding's core: the mandrel, drawn where the document's stack starts
+  // it and moved by its own declared offset — the datum the three ribbons are
+  // wound around, which is why it is drawn as a part rather than implied by
+  // the hole in the roll.
+  const mandrelRadius = model.mandrelRadius + drawn.offsets.mandrel;
+  const mandrel = extrudeClosed(ringPoints(mandrelRadius, 32), roll.height);
 
   // One ribbon per drawn layer, each starting at its own place inside the turn
   // and wound at the drawn advance — so the roll is the document's stack, not
@@ -974,7 +1246,7 @@ function _cylindricalPlacements(
     const lane = drawn.ribbons.find((candidate) => candidate.id === id) as DrawnRibbon;
     return _rollRibbon(
       {
-        innerRadius: model.mandrelRadius + lane.offset,
+        innerRadius: drawn.base + lane.offset,
         turns: drawn.spiralTurns,
         pitch: drawn.advance,
         thickness: lane.thickness,
@@ -988,52 +1260,173 @@ function _cylindricalPlacements(
   const film = filmThickness * drawn.gain;
   const anodeOuter = drawn.anodeOuterRadius;
 
+  // The top of the cell, formed rather than stacked: every size below is a
+  // declared millimetre from the document's `topAssembly`, lathed into the
+  // surface of revolution the real part is. With no declared block the same
+  // derivation runs on the 18650 fallbacks and `top.declared` says so.
+  const top = topAssemblyModel(spec);
+  const topCapY = 0.5 + explode.cap * exploded;
+  // The stack above the rim is flush by construction: the boss tops the plate,
+  // the vent sits in the boss, the button stands on the boss. `extrudeClosed`
+  // centres its extrusion, so discs and buttons are translated to their *mid*
+  // height and every span below is written out to keep them honest.
+  const ventY = topCapY + top.capBossHeight + explode.vent * exploded;
+  const terminalPosTopY = ventY + top.terminalStudHeight;
+  const bottomTerminalY = -0.5 - explode.terminalNeg * exploded;
+  const tabTopPos = topCapY - top.capThickness;
+  const tabTopNeg = bottomTerminalY;
+  const rollTopRadius = drawn.anodeOuterRadius;
+  // The tabs leave the coil at two angular positions and rise to the
+  // terminals they feed — the assembled cell's current path, drawn attached.
+  const THETA_POS = Math.PI * 0.1;
+  const THETA_NEG = Math.PI * 1.1;
+
+  const anodeLane = drawn.ribbons.find((r) => r.id === "anode_sheet") ?? drawn.ribbons[0];
+  const sepLane = drawn.ribbons.find((r) => r.id === "separator") ?? drawn.ribbons[1];
+  const cathodeLane = drawn.ribbons.find((r) => r.id === "cathode_sheet") ?? drawn.ribbons[2];
+  const midTurn = Math.max(0, Math.floor(drawn.turns / 2));
+  const anodeR = drawn.base + midTurn * drawn.advance + anodeLane.offset + anodeLane.thickness * 0.5;
+  const sepR = drawn.base + midTurn * drawn.advance + sepLane.offset + sepLane.thickness * 0.5;
+  const cathodeR = drawn.base + midTurn * drawn.advance + cathodeLane.offset + cathodeLane.thickness * 0.5;
+  const THETA_ANODE = Math.PI * 0.45;
+  const THETA_SEP = Math.PI * 0.85;
+  const THETA_CATHODE = Math.PI * 1.35;
+  const THETA_SEI = Math.PI * 1.75;
+  const THETA_MANDREL = Math.PI * 0.3;
+
   return {
     can: { mesh: canMesh, anchor: [canRadius * 0.98, 0.34, canRadius * 0.2] },
+    mandrel: {
+      // Anchored inside the cut-away sector, so "frame this part" turns the
+      // camera to look *into* the cell at the core rather than at the can.
+      mesh: mandrel,
+      anchor: [
+        mandrelRadius * Math.cos(THETA_MANDREL),
+        -roll.height * 0.3,
+        mandrelRadius * Math.sin(THETA_MANDREL),
+      ],
+    },
+    wrap: {
+      // The jacket is part of the casing, so the cut-away opens it too —
+      // a full tube would hide the wound stack behind a printed skin.
+      // Translated because `extrudeOpen` centres: the declared skips are
+      // measured from the ends, not from the middle.
+      mesh: translateMesh(
+        extrudeOpen(arcPoints(top.wrapOuterRadius + drawn.offsets.casing, canSweep, 64, Math.PI * 0.6), top.wrapTop - top.wrapBottom),
+        0,
+        (top.wrapTop + top.wrapBottom) / 2,
+        0,
+      ),
+      anchor: [
+        (top.wrapOuterRadius + drawn.offsets.casing) * Math.cos(Math.PI * 1.5),
+        0,
+        (top.wrapOuterRadius + drawn.offsets.casing) * Math.sin(Math.PI * 1.5),
+      ],
+    },
     cap: {
-      mesh: translateMesh(extrudeClosed(ringPoints(canRadius, 64), 0.022), 0, 0.5 + explode.cap * exploded, 0),
-      anchor: [canRadius * 0.8, 0.5 + explode.cap * exploded, 0],
+      // Plate, boss and the groove the crimping die rolled the can wall into:
+      // one profile, one revolution — a formed part, not stacked discs.
+      mesh: translateMesh(
+        latheMesh(
+          [
+            [canRadius, -top.capThickness],
+            [canRadius, 0],
+            [top.capBossRadius, 0],
+            [top.capBossRadius, top.capBossHeight],
+            [top.ventRadius, top.capBossHeight],
+            [top.ventRadius, 0],
+            [0, 0],
+            [0, -top.capThickness],
+          ],
+          48,
+        ),
+        0,
+        topCapY,
+        0,
+      ),
+      anchor: [canRadius * 0.8, topCapY, 0],
     },
     vent: {
-      mesh: translateMesh(extrudeClosed(ringPoints(0.03, 24), 0.008), 0, 0.511 + explode.vent * exploded, 0),
-      anchor: [-canRadius * 0.85, 0.511 + explode.vent * exploded, 0],
+      mesh: translateMesh(extrudeClosed(ringPoints(top.ventRadius, 24), 0.008), 0, ventY, 0),
+      anchor: [-canRadius * 0.85, ventY + 0.004, 0],
+    },
+    crimp: {
+      mesh: translateMesh(
+        latheMesh(
+          [
+            [canRadius, top.crimpBottom],
+            [canRadius + canThickness, top.crimpBottom + canThickness],
+            [canRadius + canThickness, top.crimpTop],
+            [canRadius, top.crimpTop],
+          ],
+          48,
+        ),
+        0,
+        0,
+        0,
+      ),
+      anchor: [canRadius * 1.1, (top.crimpBottom + top.crimpTop) / 2, 0],
     },
     terminal_pos: {
-      mesh: translateMesh(extrudeClosed(ringPoints(0.038, 28), 0.05), 0, 0.53 + explode.terminalPos * exploded, 0),
-      anchor: [canRadius * 0.9, 0.555 + explode.terminalPos * exploded, 0],
+      mesh: translateMesh(
+        extrudeClosed(ringPoints(top.terminalRadius, 28), top.terminalStudHeight),
+        0,
+        ventY + top.terminalStudHeight / 2,
+        0,
+      ),
+      anchor: [canRadius * 0.9, terminalPosTopY, 0],
     },
     terminal_neg: {
-      mesh: translateMesh(extrudeClosed(ringPoints(0.05, 28), 0.05), 0, -0.53 - explode.terminalNeg * exploded, 0),
-      anchor: [-canRadius * 0.9, -0.555 - explode.terminalNeg * exploded, 0],
+      mesh: translateMesh(
+        extrudeClosed(ringPoints(top.terminalRadius, 28), top.terminalStudHeight),
+        0,
+        bottomTerminalY - top.terminalStudHeight / 2,
+        0,
+      ),
+      anchor: [-canRadius * 0.9, bottomTerminalY - top.terminalStudHeight, 0],
     },
     tab_pos: {
-      mesh: translateMesh(boxMesh(0.05, 0.006, 0.02), 0.055, roll.height / 2 + 0.012, 0),
-      anchor: [0.06, roll.height / 2 + 0.05, 0],
+      mesh: tabStripMesh(rollTopRadius, roll.height / 2, tabTopPos, canRadius, THETA_POS, top.capThickness, -1),
+      anchor: [
+        rollTopRadius * 0.7 * Math.cos(THETA_POS),
+        roll.height / 2 + 0.05,
+        rollTopRadius * 0.7 * Math.sin(THETA_POS),
+      ],
     },
     tab_neg: {
-      mesh: translateMesh(boxMesh(0.05, 0.006, 0.02), 0.055, -roll.height / 2 - 0.012, 0),
-      anchor: [-0.06, -roll.height / 2 - 0.05, 0],
+      mesh: tabStripMesh(rollTopRadius, -roll.height / 2, tabTopNeg, canRadius, THETA_NEG, top.capThickness, 1),
+      anchor: [
+        rollTopRadius * 0.7 * Math.cos(THETA_NEG),
+        -roll.height / 2 - 0.05,
+        rollTopRadius * 0.7 * Math.sin(THETA_NEG),
+      ],
     },
-    anode_sheet: { mesh: ribbon("anode_sheet", roll.height), anchor: [0, roll.height / 2 + 0.06, 0] },
+    anode_sheet: {
+      mesh: ribbon("anode_sheet", roll.height),
+      anchor: [anodeR * Math.cos(THETA_ANODE), roll.height * 0.15, anodeR * Math.sin(THETA_ANODE)],
+    },
     separator: {
       mesh: ribbon("separator", roll.height),
-      anchor: [0, -roll.height / 2 - 0.06, 0],
+      anchor: [sepR * Math.cos(THETA_SEP), -roll.height * 0.12, sepR * Math.sin(THETA_SEP)],
     },
     cathode_sheet: {
       mesh: ribbon("cathode_sheet", roll.height),
-      anchor: [0, roll.height / 2 + 0.14, 0],
+      anchor: [cathodeR * Math.cos(THETA_CATHODE), roll.height * 0.28, cathodeR * Math.sin(THETA_CATHODE)],
     },
     electrolyte: {
       mesh: extrudeClosed(ringPoints(canRadius - canThickness, 48), roll.height * 0.98),
-      anchor: [0, -0.1, 0],
+      anchor: [(canRadius - canThickness) * 0.75 * Math.cos(Math.PI * 0.2), -0.15, (canRadius - canThickness) * 0.75 * Math.sin(Math.PI * 0.2)],
     },
     sei_film: {
       // The film is drawn where the SEI actually forms: on the anode's own
       // surface, at the anode–separator boundary.
       mesh: extrudeClosed(ringPoints(anodeOuter + film / 2, 48), roll.height * 0.98),
-      anchor: [-0.05, 0.2, 0],
+      anchor: [(anodeOuter + film / 2) * Math.cos(THETA_SEI), 0.18, (anodeOuter + film / 2) * Math.sin(THETA_SEI)],
     },
-    particles: { mesh: emptyMesh(), anchor: [0, -0.24, 0] },
+    particles: {
+      mesh: emptyMesh(),
+      anchor: [cathodeR * Math.cos(Math.PI * 0.6), -0.22, cathodeR * Math.sin(Math.PI * 0.6)],
+    },
   };
 }
 
@@ -1041,6 +1434,7 @@ function _prismaticPlacements(
   exploded: number,
   filmThickness: number,
   prism: { width: number; thickness: number; wallThickness: number },
+  top: TopAssembly,
 ): Record<string, Placement> {
   const { roll, explode } = CELL_GEOMETRY;
   const width = prism.width;
@@ -1070,6 +1464,20 @@ function _prismaticPlacements(
   const cathodeZ = spread(Math.min(0.028, zLimit * 0.8));
   return {
     can: { mesh: walls, anchor: [halfWidth, 0.3, halfDepth] },
+    wrap: {
+      // A prismatic jacket is a printed sleeve on the flat, not a shrink tube:
+      // two skinned faces, and skipped at the ends like the cylindrical one.
+      mesh: mergeMeshes([
+        translateMesh(boxMesh(width + 0.012, top.wrapTop - top.wrapBottom, 0.006), 0, (top.wrapTop + top.wrapBottom) / 2, halfDepth + 0.004),
+        translateMesh(boxMesh(width + 0.012, top.wrapTop - top.wrapBottom, 0.006), 0, (top.wrapTop + top.wrapBottom) / 2, -halfDepth - 0.004),
+      ]),
+      anchor: [halfWidth, 0.3, halfDepth + 0.01],
+    },
+    crimp: {
+      // The laser-welded rim: a lip around the open top, reading as a bead.
+      mesh: translateMesh(boxMesh(width + 0.01, 0.014, depth + 0.01), 0, 0.493, 0),
+      anchor: [halfWidth, 0.493, halfDepth],
+    },
     cap: {
       mesh: translateMesh(boxMesh(width, 0.02, depth), 0, 0.5 + explode.cap * exploded, 0),
       anchor: [halfWidth, 0.5 + explode.cap * exploded, 0],
@@ -1166,8 +1574,8 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   const prism = prismaticModel(spec);
   const placements =
     spec.cell.formFactor === "prismatic"
-      ? _prismaticPlacements(exploded, filmThickness, prism)
-      : _cylindricalPlacements(exploded, filmThickness, model, drawn);
+      ? _prismaticPlacements(exploded, filmThickness, prism, topAssemblyModel(spec))
+      : _cylindricalPlacements(exploded, filmThickness, spec, model, drawn);
 
   // The particle cloud: a legibility-limited sample of the coating volume. The
   // *lost* fraction follows the fitted linear term only when the split is
@@ -1179,7 +1587,7 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   // "3.0 %/cycle" is not a fraction of anything.
   const lostFraction =
     splitIdentified && opts.dataScaled && seiShare !== null ? normalize(100 - seiShare, 0, 100, 0) : 0;
-  const cloud = _particlePositions(CELL_GEOMETRY.particles.count, model, drawn);
+  const cloud = _particlePositions(CELL_GEOMETRY.particles.count, drawn);
   const liveCount = Math.round(cloud.length * (1 - lostFraction));
   if (placements.particles) {
     placements.particles.mesh = mergeMeshes(
@@ -1228,6 +1636,22 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
         opacity = opts.casing === "hidden" ? 0 : 0.22;
         drawn = opts.casing !== "hidden" && vertexCount(mesh) > 0;
         if (opts.casing === "hidden") mesh = emptyMesh();
+        break;
+      case "mandrel":
+        // The steel winding core: opaque, because unlike the can it is not a
+        // shell the viewer is meant to see through.
+        color = spec.theme.metal;
+        opacity = 0.95;
+        break;
+      case "wrap":
+        // The heat-shrink jacket: deliberately not the can's metal colour, so
+        // the skin and the steel read as two materials at a glance.
+        color = spec.theme.accent;
+        opacity = 0.55;
+        break;
+      case "crimp":
+        color = spec.theme.metal;
+        opacity = 0.95;
         break;
       case "cap":
       case "vent":

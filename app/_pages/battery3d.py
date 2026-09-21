@@ -17,7 +17,7 @@ What is on the page
   app/static/cell_scene/ that the React SPA and the standalone page load too).
 * **Vitals** — the five numbers that decide how the cell reads, in the app's own
   tokens, above the canvas.
-* **Part cards** — all thirteen parts, each tagged measured / derived / fitted /
+* **Part cards** — all sixteen parts, each tagged measured / derived / fitted /
   projected, with the value it carries today, what it means, and the law it came
   from. A part with no measurement says why instead of showing a zero.
 * **Fit quality** — the reconciliation between the fitted two-term law and the

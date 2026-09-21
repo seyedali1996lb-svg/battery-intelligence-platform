@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import api  # noqa: E402
 from api import _create_access_token  # noqa: E402
-from cell_scene import SCENE_SCHEMA_VERSION, build_cell_scene  # noqa: E402
+from cell_scene import MESH_PART_IDS, SCENE_SCHEMA_VERSION, build_cell_scene  # noqa: E402
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCENE_DIR = REPO_ROOT / "app" / "static" / "cell_scene"
@@ -79,7 +79,7 @@ def test_the_scene_endpoint_serves_a_spec_any_renderer_can_draw(client, auth_hea
 
     assert spec["schemaVersion"] == SCENE_SCHEMA_VERSION
     assert spec["cell"]["id"] == CELL
-    assert len(spec["parts"]) == 13
+    assert len(spec["parts"]) == len(MESH_PART_IDS)
     assert spec["disclosures"]
     assert spec["record"]["nCycles"] == len(spec["series"]["cycles"]) == 160
 

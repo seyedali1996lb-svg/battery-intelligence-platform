@@ -39,7 +39,7 @@ BUNDLE = SCENE_DIR / "cell_scene.js"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 import export_scene_sample  # noqa: E402  (the single implementation of the hashing)
-from cell_scene import SCENE_SCHEMA_VERSION  # noqa: E402
+from cell_scene import MESH_PART_IDS, SCENE_SCHEMA_VERSION  # noqa: E402
 
 
 def test_every_committed_artifact_hash_matches_its_sources():
@@ -101,7 +101,7 @@ def test_the_sample_is_the_current_schema_version_and_carries_its_sources():
     assert sample["schemaVersion"] == SCENE_SCHEMA_VERSION
     assert sample["cell"]["id"] == json.loads(MANIFEST.read_text(encoding="utf-8"))["sampleSceneCell"]
     assert sample["record"]["nCycles"] == len(sample["series"]["cycles"])
-    assert len(sample["parts"]) == 13
+    assert len(sample["parts"]) == len(MESH_PART_IDS)
     assert sample["disclosures"]
 
 

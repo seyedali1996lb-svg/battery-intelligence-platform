@@ -533,14 +533,15 @@
     },
     "parts": {
       "type": "array",
-      "minItems": 13,
-      "maxItems": 13,
+      "minItems": 16,
+      "maxItems": 16,
       "description": "Exactly one card per anatomy mesh, in the renderer's own order \u2014 a bijection the tests assert on both sides.",
       "items": {
         "type": "object",
         "required": [
           "id",
           "label",
+          "title",
           "value",
           "unit",
           "provenance",
@@ -560,17 +561,24 @@
               "terminal_neg",
               "tab_pos",
               "tab_neg",
+              "mandrel",
               "cathode_sheet",
               "anode_sheet",
               "separator",
-              "electrolyte",
-              "particles",
-              "sei_film"
-            ]
-          },
-          "label": {
-            "type": "string"
-          },
+            "electrolyte",
+            "particles",
+            "sei_film",
+            "wrap",
+            "crimp"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string",
+          "description": "A one-phrase plain-language answer to 'what am I looking at', shown before the anatomical label."
+        },
           "value": {
             "type": [
               "number",
@@ -685,6 +693,7 @@
         "unitsMmPerCellUnit",
         "cylindrical",
         "prismatic",
+        "topAssembly",
         "roll",
         "film",
         "provenance",
@@ -742,6 +751,68 @@
               "description": "Assembly clearance between the roll and the can wall, per side."
             },
             "mandrelDiameterMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "topAssembly": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "capThicknessMm",
+            "capBossDiameterMm",
+            "capBossHeightMm",
+            "ventDiameterMm",
+            "terminalDiameterMm",
+            "terminalStudHeightMm",
+            "crimpHeightMm",
+            "wrapThicknessMm",
+            "wrapTopSkipMm",
+            "wrapBottomSkipMm"
+          ],
+          "description": "The top of the cell in millimetres: cap plate and boss, vent disc, positive terminal, the crimped bead where the can was rolled shut, and the heat-shrink jacket's thickness and how far it stops short of each rim. Cylindrical cells carry the figures; a stacked prismatic cell carries null.",
+          "properties": {
+            "capThicknessMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "capBossDiameterMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "capBossHeightMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "ventDiameterMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "terminalDiameterMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "terminalStudHeightMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "crimpHeightMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "wrapThicknessMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "wrapTopSkipMm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "wrapBottomSkipMm": {
               "type": "number",
               "exclusiveMinimum": 0
             }

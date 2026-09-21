@@ -14,8 +14,32 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
-### Added
-
+- **Museum-grade dynamic SVG leader-line annotation overlay and technical component dossier.** Replaces cluttered
+  on-mesh floating tags with an architectural drafting annotation system. Each drawn component's anchor is projected
+  into viewport space with a precision concentric target reticle (`<circle>`), connecting via orthogonal/elbow dashed
+  leader lines (`<polyline>`) to neatly stacked callout badges placed along the left and right viewport flanks with
+  vertical collision avoidance. Hovering or clicking a badge or mesh highlights the active leader line and target
+  reticle with accent glow, dims non-selected callouts, and opens an engineering **Inspected Component Technical Dossier**
+  in `CellSceneView.tsx` featuring Latin/engineering dual naming (e.g. *STRATUM CATHODICUM*, *VALVULA SALUTIS*,
+  *MEMBRANA SEI*), subsystem classifications, material specifications, failure modes, telemetry values with provenance
+  tags, and camera focus controls. The badges are pinned at the stage's own left/right margins (`BADGE_MARGIN` +
+  `BADGE_WIDTH`), so every leader line terminates at the same fixed column edge whatever the camera does, and the
+  dossier in the right panel is now the *only* place a part is read about — the SPA's bottom row of part cards is
+  gone with the labels it used to sit next to. Internal winding anchors now reside on their true physical layer
+  surfaces.
+- **The winding is concentric, and it has a core.** `CELL_GEOMETRY.explode.radial` now declares an independent
+  radial offset per drawn member (`casing 0, mandrel 0, anode 0.25, separator 0.70, cathode 0.95` mm at full
+  explode), so the exploded view separates the stack as concentric shells instead of one pushed bundle: the can and
+  mandrel hold their datum while the foils peel outward, each lane's gap is the difference between cumulative
+  offsets with the air folded into one turn's advance (so the three ribbons still tile a lap exactly), and the
+  drawn outer radius stays inside the 18650 envelope by construction at every explode position — 38 → 3 laps,
+  ≈8.55 mm against the 8.75 mm envelope — while the assembled state (`exploded = 0`) is exactly the document's
+  declared winding. The core is anatomy now: a sixteenth part, `mandrel`, drawn at the declared 4.0 mm diameter
+  over the roll's own height, with its mesh, its plain-language card, its material entry and its dossier — the
+  mesh/card/schema-enum bijection held at 16 on every side. Node tests 74 → 76 (five concentric members, offsets
+  ordered at explode and zero at rest, air between mandrel and anode, the mandrel's declared diameter); Python 101
+  across the four scene suites (67 scene / 13 API / 9 bundle / 12 page) after the schema's `parts` array moved to
+  `minItems`/`maxItems` 16; bundle 593.4 → 595.4 kB, sample and manifest re-hashed.
 - **A 3D cell scene, as a portable capability rather than a widget.** One framework-free renderer plus one versioned
   JSON document (`docs/cell_scene.schema.json`, built by `src/cell_scene.py`), consumed unchanged by four hosts: the
   Streamlit page *Analyse → Battery 3D*, the React SPA's *Cell 3D* tab, a standalone HTML page served at
@@ -26,11 +50,23 @@ those changes live in the docs they affect; this file records interface changes.
   **thickness** in nanometres and particle loss as the linear term's share of fade, and both are drawn only when the two
   fitted fade channels are separable; the timeline's future half is the platform's own hierarchical forecast gated by its
   existing per-cell routing — a refused route yields no future at all. The renderer's geometry is DOM-free and
-  unit-tested by Node's own runner (`npm run test:scene`, 69 tests); the renderer bundle is
+  unit-tested by Node's own runner (`npm run test:scene`, 76 tests); the renderer bundle is
   built by `npm run build:scene` into `app/static/cell_scene/` and committed, because Streamlit serves it to a browser
   that has no Node — so a manifest records the digest of the bundle and of every source file it was built from, and
   `tests/test_cell_scene_bundle.py` fails on a stale or hand-edited artifact instead of shipping a scene that
   disagrees with its own source.
+- **The top of the cell is formed, not stacked.** A new declared `topAssembly` block (cap plate and boss, vent disc,
+  terminal button and stud, crimp bead, heat-shrink wrap — every figure millimetres with stated provenance, typical for
+  the format rather than this cell's datasheet and declared so) drives the drawn top: the cap is one lathed profile
+  (plate, boss and the groove the crimping die rolls the wall into), the vent sits *in* the boss, the button stands on
+  it, the crimp bead is a lip rolled proud of the can wall, and the jacket wraps to within 1.2 mm of each end — opened
+  by the same cut-away that opens the can, so it cannot hide the winding it protects. The tabs are leads now: each
+  leaves the coil's own outermost turn and rises, bent over the cap's thickness, to the terminal it feeds, instead of a
+  box floating beside the roll. Two new anatomy parts (`wrap`, `crimp`, taking the scene to 15, with plain-language
+  titles on every card), material entries for both, and shape tests pinning that the drawn terminal and vent *equal* the declared
+  millimetres, that bead/jacket/can stack outward in that order, that nothing drawn leaves the cell's envelope at any
+  explode position, and that a prismatic scene draws its own flat wrap and welded-rim crimp. Node tests 69 → 74;
+  bundle 590.5 → 593.4 kB (149.7 → 150.6 kB gzipped), manifest re-hashed.
 - **The SEI film is a derived thickness in nanometres, with its display magnification disclosed separately.** The film
   used to be the one drawn *size* that was not a size — a band of the roll's clearance scaled for legibility and
   disclosed as a metaphor. The quantity behind it is fitted, so it is now converted: the lithium the fitted $\sqrt{n}$
