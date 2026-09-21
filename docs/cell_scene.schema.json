@@ -629,6 +629,33 @@
             "type": "string",
             "enum": ["SHELL", "INSULATION", "SEAL", "SAFETY", "TERMINAL", "WINDING", "ELECTRODE", "SEPARATOR", "ELECTROLYTE", "DEGRADATION"],
             "description": "Editorial grouping for the annotation layer. Optional: documents from before it existed render cards without a second row."
+          },
+          "dossier": {
+            "type": "object",
+            "description": "The part's technical dossier: dual Latin/engineering title, subsystem prose, and a two-tier spec table. Rows tagged 'typical' are format-level figures, not this cell's datasheet (say so in disclosures); rows tagged 'refusal' answer a question the platform does not measure per part, with words instead of a number. Optional — documents from before it exist render the older panel.",
+            "required": ["latinTitle", "subsystem", "material"],
+            "additionalProperties": false,
+            "properties": {
+              "latinTitle": { "type": "string", "minLength": 1 },
+              "subsystem": { "type": "string", "minLength": 1 },
+              "material": { "type": "string", "minLength": 1 },
+              "degradation": { "type": "string" },
+              "insight": { "type": "string" },
+              "specs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["label", "value", "tag"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "label": { "type": "string", "minLength": 1 },
+                    "value": { "type": "string", "minLength": 1 },
+                    "unit": { "type": "string" },
+                    "tag": { "enum": ["typical", "measured", "derived", "fitted", "refusal"] }
+                  }
+                }
+              }
+            }
           }
         }
       }

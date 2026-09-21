@@ -552,10 +552,279 @@ _CATEGORY = {
 }
 
 
+#: Every part's technical dossier, carried in the document so any host renders
+#: the same words. The 16 cylindrical entries' latinTitle/subsystem/material/
+#: degradation strings are migrated VERBATIM from the React panel they replace
+#: (`CellSceneView.PART_DOSSIERS`) — prose that already shipped is not
+#: re-authored; `insight` is new for all parts, spec rows are new for all parts.
+#:
+#: Two-tier honesty in every table: rows tagged `typical` are format-level
+#: figures for cells of this format (disclosed in `_disclosures`), never this
+#: cell's datasheet; platform-computed values are tagged measured/derived/
+#: fitted; everything else is a `refusal` in words, not an invented number.
+_DOSSIER_TABLE: dict[str, dict] = {
+    "can": {
+        "latinTitle": "THORAX METALLICUS",
+        "subsystem": "Deep-Drawn Can & Structural Pressure Shell",
+        "material": "Nickel-plated cold-rolled steel (0.25 mm wall)",
+        "degradation": "Mechanical deformation, internal pressure bulging, atmospheric corrosion.",
+        "insight": "The pressure shell is the cell's last structural defence: everything that keeps a failing cell from becoming a projectile is drawn from this 0.25 mm of steel.",
+        "specs": [
+            {"label": "Wall", "value": "0.25", "unit": "mm", "tag": "typical"},
+            {"label": "Material", "value": "nickel-plated cold-rolled steel", "unit": "", "tag": "typical"},
+            {"label": "Integrity check", "value": "visual / pressure check, not instrumented per part", "unit": "", "tag": "refusal"},
+            {"label": "Corrosion rate", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "wrap": {
+        "latinTitle": "TUNICA CONTRACTA",
+        "subsystem": "Heat-Shrink Electrical Isolation Jacket",
+        "material": "Polyethylene terephthalate (PET) film (0.15 mm)",
+        "degradation": "Thermal abrasion, chemical puncture, dielectric breakdown.",
+        "insight": "The jacket is the cell's insulation and its skin — it is what makes a bare steel can safe to handle in a pack, and where the printed data lives.",
+        "specs": [
+            {"label": "Shrink film", "value": "0.15", "unit": "mm PET", "tag": "typical"},
+            {"label": "Shrink ratio", "value": "2:1", "unit": "", "tag": "typical"},
+            {"label": "Flame class", "value": "UL94 VTM-2", "unit": "", "tag": "typical"},
+            {"label": "Dielectric strength", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "gasket": {
+        "latinTitle": "ANNULUS SIGILLANS",
+        "subsystem": "Cap Seal & Leak-Tight Closure",
+        "material": "Polypropylene / paper-composite flat gasket",
+        "degradation": "Compression set with age and heat; leak paths after deep crimp cycling.",
+        "insight": "The gasket is the only thing standing between the electrolyte and the atmosphere; it is why a swollen cell is a safety event and not a cosmetic one.",
+        "specs": [
+            {"label": "Thickness", "value": "0.5", "unit": "mm", "tag": "typical"},
+            {"label": "Material", "value": "PP / paper-composite", "unit": "", "tag": "typical"},
+            {"label": "Hardness", "value": "55–75", "unit": "Shore D", "tag": "typical"},
+            {"label": "Compression set", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "crimp": {
+        "latinTitle": "CORONA COMPRESSA",
+        "subsystem": "Mechanical Crimp Seal & Radial Compression Bead",
+        "material": "Rolled steel rim over polypropylene (PP) gasket",
+        "degradation": "Polymer creep under thermal loads, micro-leakage of volatile carbonate solvent.",
+        "insight": "The crimp is a cold-worked seal: it holds cap to can with mechanical force alone, and it is the joint that ages first under heat.",
+        "specs": [
+            {"label": "Roll height", "value": "1.2", "unit": "mm", "tag": "typical"},
+            {"label": "Material", "value": "rolled steel over PP gasket", "unit": "", "tag": "typical"},
+            {"label": "Hermeticity", "value": "leak-rate check, not instrumented per part", "unit": "", "tag": "refusal"},
+            {"label": "Crimp force", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "cap": {
+        "latinTitle": "GALEA TERMINALIS",
+        "subsystem": "Lathed Cap Plate, Boss & Crimp Groove",
+        "material": "Aluminium / Nickel-plated steel formed assembly",
+        "degradation": "Mechanical stress relaxation of crimp seal, micro-fissuring under thermal cycling.",
+        "insight": "The cap plate is where the winding's current leaves the cell — boss, vent and crimp above the roll are one formed assembly, sized together.",
+        "specs": [
+            {"label": "Plate thickness", "value": "0.3", "unit": "mm", "tag": "typical"},
+            {"label": "Boss diameter", "value": "from the document's topAssembly", "unit": "", "tag": "typical"},
+            {"label": "Material", "value": "aluminium / nickel-plated steel", "unit": "", "tag": "typical"},
+            {"label": "Exhaust slots", "value": "scored geometry — a cap detail, not a card", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "vent": {
+        "latinTitle": "VALVULA SALUTIS",
+        "subsystem": "Laser-Scored Overpressure Safety Vent Disc",
+        "material": "Embossed aluminum rupture foil (4.5 mm diameter)",
+        "degradation": "Fatigue from cyclic gas accumulation; engineered rupture at 1.5–2.0 MPa.",
+        "insight": "The vent is the cell's designed weak point: it opens before the can does, at a pressure the format chose on purpose.",
+        "specs": [
+            {"label": "Opening pressure", "value": "1.0–1.5", "unit": "MPa", "tag": "typical"},
+            {"label": "Burst pressure", "value": "1.5–2.0", "unit": "MPa", "tag": "typical"},
+            {"label": "Material", "value": "embossed aluminium rupture foil", "unit": "", "tag": "typical"},
+            {"label": "Spring rate", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "cid_ptc": {
+        "latinTitle": "CUSTOS INTERRUPTOR",
+        "subsystem": "Current-Interrupt Device & Positive-Temperature-Coefficient Protector",
+        "material": "Passivated steel CID disc with a PTC polymer bead",
+        "degradation": "CID trip is one-shot; the PTC's resistance drifts with age and repeated tripping.",
+        "insight": "The CID and PTC are the two independent ways a cell disconnects itself — pressure from inside, heat from outside — and only one of them ever comes back.",
+        "specs": [
+            {"label": "CID trip pressure", "value": "1.0–1.6", "unit": "MPa", "tag": "typical"},
+            {"label": "PTC resistance at 25 °C", "value": "0.05–0.5", "unit": "Ω", "tag": "typical"},
+            {"label": "Reset behaviour", "value": "PTC recovers on cooling — CID is one-shot", "unit": "", "tag": "typical"},
+            {"label": "Trip current", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "terminal_pos": {
+        "latinTitle": "POLUS POSITIVUS",
+        "subsystem": "Positive Current Collector Stud & Button",
+        "material": "Cold-forged nickel-plated copper/steel stud",
+        "degradation": "Surface oxidation, contact resistance rise, ultrasonic weld degradation.",
+        "insight": "The button is the cell's only external positive contact — its contact resistance sits directly inside every resistance measurement taken of this cell.",
+        "specs": [
+            {"label": "Stud diameter", "value": "from the document's topAssembly", "unit": "", "tag": "typical"},
+            {"label": "Material", "value": "cold-forged nickel-plated copper/steel stud", "unit": "", "tag": "typical"},
+            {"label": "Contact resistance growth", "value": "see this cell's resistance series", "unit": "", "tag": "derived"},
+            {"label": "Current rating", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "terminal_neg": {
+        "latinTitle": "POLUS NEGATIVUS",
+        "subsystem": "Negative Cell Floor Current Collector Contact",
+        "material": "Direct steel can base (18.4 mm OD)",
+        "degradation": "Fretting wear, interfacial contact oxidation and impedance rise.",
+        "insight": "The negative terminal is the can floor itself: the return current path runs through the same steel that holds the cell together.",
+        "specs": [
+            {"label": "Base", "value": "direct steel can base, same wall as the can", "unit": "", "tag": "typical"},
+            {"label": "Material", "value": "nickel-plated steel", "unit": "", "tag": "typical"},
+            {"label": "Contact resistance growth", "value": "see this cell's resistance series", "unit": "", "tag": "derived"},
+            {"label": "Fretting life", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "tab_pos": {
+        "latinTitle": "LIGAMENTUM ALUMINII",
+        "subsystem": "Positive Electrode Current Lead & Ultrasonic Weld",
+        "material": "High-purity aluminium foil ribbon (0.1 mm)",
+        "degradation": "Ultrasonic weld fatigue, localized Joule heating, vibration detachment.",
+        "insight": "The aluminium tab carries the cathode's current out of the roll; its weld is one of the few connections inside the sealed cell a fade model only sees as resistance.",
+        "specs": [
+            {"label": "Foil tab", "value": "6 × 0.1", "unit": "mm Al", "tag": "typical"},
+            {"label": "Material", "value": "high-purity aluminium ribbon", "unit": "", "tag": "typical"},
+            {"label": "Weld resistance", "value": "see this cell's resistance series", "unit": "", "tag": "derived"},
+            {"label": "Weld integrity", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "tab_neg": {
+        "latinTitle": "LIGAMENTUM CUPRI",
+        "subsystem": "Negative Electrode Current Lead & Bottom Spot Weld",
+        "material": "High-conductivity annealed copper ribbon",
+        "degradation": "Localized overcurrent stress, micro-cracking at sharp bend radii.",
+        "insight": "The copper tab carries the anode's current down to the floor; its spot weld is a joint no external measurement can isolate.",
+        "specs": [
+            {"label": "Foil tab", "value": "6 × 0.1", "unit": "mm Cu", "tag": "typical"},
+            {"label": "Material", "value": "annealed copper ribbon", "unit": "", "tag": "typical"},
+            {"label": "Weld resistance", "value": "see this cell's resistance series", "unit": "", "tag": "derived"},
+            {"label": "Weld integrity", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "mandrel": {
+        "latinTitle": "AXIS WINDING",
+        "subsystem": "Removable Steel Winding Core & Jelly-Roll Datum",
+        "material": "Hardened steel mandrel (4.0 mm diameter, withdrawn after winding)",
+        "degradation": "None — it is not electrochemically active; concentricity loss shows up as uneven electrode tension.",
+        "insight": "The mandrel is the datum the whole winding is measured from — drawn where the document's stack says the roll begins.",
+        "specs": [
+            {"label": "Diameter", "value": "from physical.cylindrical.mandrelDiameterMm", "unit": "", "tag": "measured"},
+            {"label": "Material", "value": "hardened steel — withdrawn after winding", "unit": "", "tag": "typical"},
+            {"label": "Surface", "value": "drawn smooth", "unit": "", "tag": "typical"},
+            {"label": "Runout", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "cathode_sheet": {
+        "latinTitle": "STRATUM CATHODICUM",
+        "subsystem": "Lithiated Transition Metal Intercalation Matrix",
+        "material": "Active oxide (e.g. LiCoO2 / NMC) on 15 µm aluminium foil",
+        "degradation": "Transition metal dissolution, micro-cracking, lattice distortion, impedance rise.",
+        "insight": "The cathode is where lithium lives when the cell is empty: its coating's thickness and porosity set how fast the cell can give that lithium back.",
+        "specs": [
+            {"label": "Coating thickness", "value": "60–80", "unit": "µm per side", "tag": "typical"},
+            {"label": "Loading", "value": "15–20", "unit": "mg/cm²", "tag": "typical"},
+            {"label": "Porosity", "value": "30–35", "unit": "%", "tag": "typical"},
+            {"label": "Tortuosity", "value": "2.5–4", "unit": "τ", "tag": "typical"},
+        ],
+    },
+    "anode_sheet": {
+        "latinTitle": "STRATUM ANODICUM",
+        "subsystem": "Graphite / Silicon Intercalation Host & Current Collector",
+        "material": "MCMB graphite / Si blend on 10 µm copper foil",
+        "degradation": "Lithium plating under low temp/fast charge, particle pulverization, exfoliation.",
+        "insight": "The anode is where lithium waits — and where it plates when charging outruns diffusion, the failure this platform's fade model watches for.",
+        "specs": [
+            {"label": "Coating thickness", "value": "70", "unit": "µm", "tag": "typical"},
+            {"label": "Cu foil", "value": "10", "unit": "µm", "tag": "typical"},
+            {"label": "Loading", "value": "3.5–4.0", "unit": "mg/cm²", "tag": "typical"},
+            {"label": "Porosity", "value": "25–30", "unit": "%", "tag": "typical"},
+            {"label": "Tortuosity", "value": "2–3", "unit": "τ", "tag": "typical"},
+            {"label": "Impedance contribution", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "separator": {
+        "latinTitle": "SEPTUM SEPARANS",
+        "subsystem": "Microporous Polymeric Electronic Barrier",
+        "material": "Trilayer PE/PP ceramic-coated microporous film (20 µm)",
+        "degradation": "Pore clogging by decomposed species, dendrite penetration, thermal shrinkage.",
+        "insight": "The separator is the thinnest thing in the cell and the one that must never fail: every other layer is sized around its ~20 µm.",
+        "specs": [
+            {"label": "Thickness", "value": "16–25", "unit": "µm", "tag": "typical"},
+            {"label": "Porosity", "value": "38–45", "unit": "%", "tag": "typical"},
+            {"label": "Tortuosity", "value": "3–5", "unit": "τ", "tag": "typical"},
+            {"label": "Shutdown temperature", "value": "135", "unit": "°C", "tag": "typical"},
+        ],
+    },
+    "electrolyte": {
+        "latinTitle": "LIQUIDUM CONDUCTOR",
+        "subsystem": "Non-Aqueous Lithium Salt & Alkyl Carbonate Solution",
+        "material": "1.0–1.2 M LiPF6 in EC/DMC/EMC organic solvent",
+        "degradation": "Parasitic solvent oxidation, salt consumption, HF formation, gassing.",
+        "insight": "The electrolyte is the only part consumed by ordinary operation: every SEI growth cycle spends some of it and some of the lithium dissolved in it.",
+        "specs": [
+            {"label": "Salt", "value": "1.0–1.2 M LiPF6 in EC/DMC/EMC", "unit": "", "tag": "typical"},
+            {"label": "Ionic conductivity", "value": "10", "unit": "mS/cm at 25 °C", "tag": "typical"},
+            {"label": "Consumption rate", "value": "inferred from this cell's SEI fit", "unit": "", "tag": "fitted"},
+            {"label": "Fill amount", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "particles": {
+        "latinTitle": "PARTICULAE MOBILES",
+        "subsystem": "Active Insertion Material Volume & Cycling Kinetics",
+        "material": "Intercalation micro-crystallites (2–15 µm particles)",
+        "degradation": "Loss of active material (LAM) via particle isolation, lattice strain, crack networks.",
+        "insight": "These are the working grains of the electrodes: the card's number is the share of them that has stopped participating, fitted from this cell's own fade.",
+        "specs": [
+            {"label": "D50", "value": "4–8", "unit": "µm", "tag": "typical"},
+            {"label": "Tap density", "value": "2.0–3.0", "unit": "g/cm³", "tag": "typical"},
+            {"label": "Fraction lost", "value": "fitted LAM share — the card's own value at this cursor", "unit": "", "tag": "fitted"},
+            {"label": "Per-particle count", "value": "not measured per part — drawn as architecture", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "sei_film": {
+        "latinTitle": "MEMBRANA SEI",
+        "subsystem": "Solid Electrolyte Interphase Passivation Layer",
+        "material": "Li2CO3, LiF, lithium alkyl carbonates (compact inner + porous outer)",
+        "degradation": "Continuous parasitic reduction consumes cyclable lithium inventory (LLI).",
+        "insight": "SEI growth consumes cyclable lithium under high C-rate cycling; the film's own thickness series is the platform's √n fit, drawn only when the channel split is identified.",
+        "specs": [
+            {"label": "Growth law", "value": "√n of cycle count", "unit": "", "tag": "fitted"},
+            {"label": "Thickness at this cursor", "value": "derived from the fitted lithium-inventory loss", "unit": "", "tag": "derived"},
+            {"label": "Model compound", "value": "Li₂CO₃-equivalent — an estimate", "unit": "", "tag": "typical"},
+            {"label": "Local overpotential", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+    "bottom_insulator": {
+        "latinTitle": "FUNDUM INSULATUM",
+        "subsystem": "Floor Insulating Disc & Electrical Stand-Off",
+        "material": "Heat-treated polyethylene film disc",
+        "degradation": "Compression set, puncture by the winding's copper edge, thermal shrinkage.",
+        "insight": "It is the last line between the anode's copper and the steel floor — the short-circuit path a crushed cell travels.",
+        "specs": [
+            {"label": "Thickness", "value": "0.05–0.1", "unit": "mm", "tag": "typical"},
+            {"label": "Material", "value": "heat-treated polyethylene film", "unit": "", "tag": "typical"},
+            {"label": "Insulation resistance", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+            {"label": "Breakdown voltage", "value": "not measured per part on this platform", "unit": "", "tag": "refusal"},
+        ],
+    },
+}
+
+
 def _editorial(part_id: str) -> dict:
-    """The part's category (and, in later tasks, its dossier) — absent when unknown."""
+    """The part's editorial furniture — category and dossier — absent when unknown."""
+    out = {}
     cat = _CATEGORY.get(part_id)
-    return {"category": cat} if cat else {}
+    if cat:
+        out["category"] = cat
+    dossier = _DOSSIER_TABLE.get(part_id)
+    if dossier:
+        out["dossier"] = dossier
+    return out
 
 
 def _part(part_id: str, label: str, *, value=None, unit: str = "", provenance: str = "",
@@ -1949,6 +2218,9 @@ def _disclosures(form_factor: str, form_factor_note: str, mechanism: dict,
         "on the scene prints the mapping it used.",
         "Every part card is tagged measured, derived, fitted or projected. A part this source cannot "
         "speak to says so instead of showing a zero.",
+        "Rows tagged 'typical' on part dossiers are format-level figures for cells "
+        "of this format, not measurements of this cell; rows tagged 'refusal' are "
+        "questions this platform does not measure per part, answered in words.",
     ]
     prismatic = (physical or {}).get("prismatic")
     roll = (physical or {}).get("roll")

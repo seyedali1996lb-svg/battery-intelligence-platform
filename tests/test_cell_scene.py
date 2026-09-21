@@ -968,3 +968,32 @@ def test_every_part_carries_a_category_from_the_declared_taxonomy():
     for part in spec["parts"]:
         assert part["category"] in taxonomy, part["id"]
         assert part["category"] == _CATEGORY[part["id"]]
+
+
+def test_every_part_carries_a_dossier_with_dual_title_and_prose():
+    spec = _spec()
+    for part in spec["parts"]:
+        d = part.get("dossier")
+        assert d, f"{part['id']} has no dossier"
+        assert d["latinTitle"].isupper(), part["id"]
+        assert d["subsystem"] and d["material"]
+        assert d.get("insight"), part["id"]
+
+
+def test_every_spec_row_carries_a_tag_from_the_declared_vocabulary():
+    spec = _spec()
+    vocab = {"typical", "measured", "derived", "fitted", "refusal"}
+    rows = [r for p in spec["parts"] for r in p["dossier"].get("specs", [])]
+    assert len(rows) >= 19 * 4, "every part declares at least its four spec rows"
+    for row in rows:
+        assert row["tag"] in vocab, row
+        assert row["label"] and row["value"] is not None
+
+
+def test_rows_the_platform_cannot_source_are_refusals_not_numbers():
+    spec = _spec()
+    refusals = [r for p in spec["parts"] for r in p["dossier"].get("specs", [])
+                if r["tag"] == "refusal"]
+    assert refusals, "the impedance/overpotential questions must be answered honestly"
+    for row in refusals:
+        assert not row["value"].strip().replace(".", "").replace(",", "").isdigit(), row

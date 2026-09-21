@@ -5,7 +5,7 @@
   "bundleSha256": "b4ca0569a4330a3655175a7d2f4b8d9a1d1d533916636a2bff30ab37e9865e63",
   "sampleScene": "sample_scene.json",
   "sampleSceneCell": "B0005",
-  "sampleSceneSha256": "a7b9a84da31d15938dad1f92b5db8704c74ba0035ac88c420e097332e106de70",
+  "sampleSceneSha256": "66ab0d1f1253c263ea8f438913aa01cb2e9400f0044be72e26b93dc05d79c9e8",
   "schemaVersion": 1,
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
