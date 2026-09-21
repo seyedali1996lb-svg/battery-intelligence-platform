@@ -19,6 +19,7 @@
 // three ships that this scene does not draw is payload with no purpose. The
 // named form is also what the module actually uses — one list, no wildcard.
 import {
+  ACESFilmicToneMapping,
   BufferAttribute,
   BufferGeometry,
   Color,
@@ -29,6 +30,8 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  PCFShadowMap,
+  PMREMGenerator,
   PerspectiveCamera,
   Raycaster,
   Scene,
@@ -36,7 +39,9 @@ import {
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { materialFor } from "./materials.ts";
 
 import {
   DEFAULT_BUILD_OPTIONS,
@@ -171,10 +176,24 @@ export function mountCellScene(
   /** A part the host pinned (a click in its own list), which outranks hover. */
   let pinned: string | null = null;
   let annotationsVisible = true;
+  /** The document the camera was framed for, so a scrub does not re-frame it. */
+  let framedSpec: CellSceneSpec | null = null;
+  let lastBounds = { radius: 0.5, height: 1 };
 
   // ── Renderer, scene, camera ────────────────────────────────────────────
   const renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+  // Filmic tone mapping, so a specular highlight rolls off instead of clipping
+  // to a white blob — the difference between "metal" and "shiny plastic" is
+  // mostly what happens at the top of the range.
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  // PCFShadowMap, not PCFSoftShadowMap: three r186 still exports the latter as
+  // a constant but has removed its implementation, so asking for it silently
+  // falls back to PCF and warns to a console nobody reads in CI. The softness
+  // comes from the filter radius instead.
+  renderer.shadowMap.type = PCFShadowMap;
   renderer.setSize(container.clientWidth || 640, container.clientHeight || 480, false);
   renderer.domElement.style.width = "100%";
   renderer.domElement.style.height = "100%";
@@ -191,6 +210,14 @@ export function mountCellScene(
   container.appendChild(labelRenderer.domElement);
 
   const scene3 = new Scene();
+  // An environment map, not extra lamps: metals need something to reflect, and
+  // a room-sized procedural environment gives the can and the foils a believable
+  // highlight without shipping an HDRI or reaching for the network.
+  const pmrem = new PMREMGenerator(renderer);
+  const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene3.environment = environment;
+  scene3.environmentIntensity = 0.55;
+  pmrem.dispose();
   const camera = new PerspectiveCamera(38, (container.clientWidth || 640) / (container.clientHeight || 480), 0.01, 100);
   camera.position.set(0.95, 0.55, 1.15);
 
@@ -202,13 +229,53 @@ export function mountCellScene(
   controls.target.set(0, 0, 0);
   controls.update();
 
-  scene3.add(new HemisphereLight(0xffffff, 0x1a202c, 1.1));
-  const key = new DirectionalLight(0xffffff, 1.6);
+  // A three-point rig over the environment: the hemisphere carries the fill (so
+  // nothing is ever pitch black), the key does the modelling and casts the
+  // shadow, and the rim separates the cell's far edge from the background.
+  scene3.add(new HemisphereLight(0xffffff, 0x1a202c, 0.55));
+  const key = new DirectionalLight(0xffffff, 2.1);
   key.position.set(1.4, 2.2, 1.6);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.bias = -0.0006;
+  key.shadow.normalBias = 0.012;
+  key.shadow.radius = 2.5;
   scene3.add(key);
-  const rim = new DirectionalLight(0x63b3ed, 0.7);
+  const rim = new DirectionalLight(0x63b3ed, 0.55);
   rim.position.set(-1.6, -0.4, -1.2);
   scene3.add(rim);
+
+  /**
+   * Frame the cell from its own bounds.
+   *
+   * The camera used to be a fixed position tuned for the 18650's tall aspect, so
+   * a prismatic cell — 20.5 mm wide over 5.4 mm thick — was framed by luck.
+   * Fitting the *distance* to the bounding sphere and keeping only the viewing
+   * direction fixed gives every form factor the same framing.
+   */
+  function fitView(radius: number, height: number): void {
+    const margin = height > radius * 2 ? 1.5 : 1.35;
+    const extent = Math.max(radius, height / 2) * margin;
+    const distance = extent / Math.sin(((camera.fov / 2) * Math.PI) / 180);
+    camera.position.set(0.62, 0.36, 0.72).normalize().multiplyScalar(distance);
+    controls.minDistance = distance * 0.5;
+    controls.maxDistance = distance * 3.5;
+    controls.target.set(0, 0, 0);
+    controls.update();
+  }
+
+  /** Keep the shadow camera just wide enough for whatever is being drawn. */
+  function fitShadow(radius: number): void {
+    const extent = Math.max(0.9, radius * 2.8);
+    const shadowCamera = key.shadow.camera;
+    shadowCamera.left = -extent;
+    shadowCamera.right = extent;
+    shadowCamera.top = extent;
+    shadowCamera.bottom = -extent;
+    shadowCamera.near = 0.4;
+    shadowCamera.far = 8;
+    shadowCamera.updateProjectionMatrix();
+  }
 
   const stage = new Group();
   scene3.add(stage);
@@ -256,8 +323,13 @@ export function mountCellScene(
     // Background and stage furniture first: they are host tokens, not data.
     scene3.background = new Color(spec_.theme.background);
 
+    lastBounds = built.bounds;
     if (!floorMesh) {
       floorMesh = new Mesh(toBuffer(built.chrome.floor), new MeshStandardMaterial({ color: new Color(spec_.theme.grid), roughness: 0.95, metalness: 0.05 }));
+      // The stage catches the cell's shadow; the painted contact-shadow disc
+      // under it stays, because at this scale it does the ambient-occlusion job
+      // a shadow map cannot.
+      floorMesh.receiveShadow = true;
       stage.add(floorMesh);
     }
     if (!shadowMesh) {
@@ -291,8 +363,14 @@ export function mountCellScene(
       object.material.emissive = new Color(part.color);
       object.baseEmissive = part.emissive;
       object.material.emissiveIntensity = part.emissive;
-      object.material.roughness = part.opacity < 0.5 ? 0.25 : 0.55;
-      object.material.metalness = part.id.startsWith("terminal") || part.id === "can" ? 0.55 : 0.2;
+      const shading = materialFor(part.id);
+      object.material.roughness = shading.roughness;
+      object.material.metalness = shading.metalness;
+      object.material.envMapIntensity = shading.envMapIntensity;
+      // Everything the anatomy draws can cast and receive, except the
+      // electrolyte, which fills the can and would simply darken it.
+      object.mesh.castShadow = part.id !== "electrolyte";
+      object.mesh.receiveShadow = true;
       object.group.position.set(0, 0, 0);
       object.group.visible = true;
 
@@ -438,6 +516,14 @@ export function mountCellScene(
   function rebuild(spec_: CellSceneSpec): void {
     const built = buildScene(spec_, build);
     paint(built, spec_);
+    // Frame the cell once per *document*, not once per frame: re-fitting on a
+    // scrub or an explode would throw away the orbit the viewer just made, and
+    // a new cell is the one moment the old framing is meaningless.
+    if (framedSpec !== spec_) {
+      framedSpec = spec_;
+      fitView(built.bounds.radius, built.bounds.height);
+    }
+    fitShadow(built.bounds.radius);
     emit();
   }
 
@@ -521,9 +607,7 @@ export function mountCellScene(
     },
     isPlaying: () => playTimer !== null,
     resetView() {
-      camera.position.set(0.95, 0.55, 1.15);
-      controls.target.set(0, 0, 0);
-      controls.update();
+      fitView(lastBounds.radius, lastBounds.height);
     },
     state: () => ({ ...state }),
     dispose() {
@@ -546,10 +630,11 @@ export function mountCellScene(
       gaugeMesh?.geometry.dispose();
       gaugeMaterial.dispose();
       controls.dispose();
-      renderer.dispose();
-      renderer.domElement.remove();
-      labelRenderer.domElement.remove();
-    },
+    environment.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+    labelRenderer.domElement.remove();
+  },
   };
 
   // A host's options apply to the very first frame, not the second one: the

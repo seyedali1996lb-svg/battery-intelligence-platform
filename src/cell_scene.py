@@ -535,7 +535,8 @@ def _unavailable(part_id: str, label: str, reason: str, meaning: str) -> dict:
     return _part(part_id, label, available=False, reason=reason, meaning=meaning)
 
 
-def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict) -> list[dict]:
+def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict,
+                 film: "dict | None" = None) -> list[dict]:
     """The 13 anatomy cards, each wired to the most specific signal that exists."""
     def _last(col: str):
         return last_row.get(col) if last_row is not None else None
@@ -551,6 +552,14 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict) -> list
     sei_series = phys["seiPct"]
     lam_series = phys["lamPct"]
     sei_last = next((v for v in reversed(sei_series) if v is not None), None)
+    # The same fitted term in the unit a film is actually measured in. The card
+    # carries the nanometres when the chain can be evaluated and the fitted
+    # percentage when it cannot, never a nanometre figure the derivation did not
+    # produce.
+    film = film or {}
+    nm_series = phys.get("seiThicknessNm") or []
+    nm_last = next((v for v in reversed(nm_series) if v is not None), None)
+    film_derivable = bool(film.get("available")) and nm_last is not None
     lam_last = next((v for v in reversed(lam_series) if v is not None), None)
     _fit_reason = fit.get("reason") or "the two-term fade fit is unavailable for this cell"
 
@@ -725,26 +734,42 @@ def _build_parts(df, last_row, profile, phys, has_dqdv: bool, fit: dict) -> list
         available=split_ok and lam_last is not None,
         reason=None if (split_ok and lam_last is not None) else (split_reason if not split_ok else _fit_reason),
     ))
+    # The film card carries a *thickness*, not a fade share: the fitted √n term
+    # says how much lithium the cell has lost irreversibly, and the film block's
+    # chain turns that quantity into nanometres over the anode's own coated area.
+    _film_unit_nm = "nm (derived from the fitted lithium-inventory loss)"
     parts.append(_part(
-        "sei_film", "SEI film on the anode", value=sei_last if split_ok else None,
-        unit="% of initial capacity (fitted)",
-        provenance=PROVENANCE_FITTED,
+        "sei_film", "SEI film on the anode",
+        value=(nm_last if film_derivable else sei_last) if split_ok else None,
+        unit=_film_unit_nm if (split_ok and film_derivable) else "% of initial capacity (fitted)",
+        provenance=PROVENANCE_DERIVED if (split_ok and film_derivable) else PROVENANCE_FITTED,
         meaning=(
-            "Loss of lithium inventory: growth of the passivating film on the anode, the diffusion-"
-            "limited √n term of the same fit. It is the single clearest visual statement of why a "
-            "battery ages at all — the film thickens, permanently, and the lithium it traps never cycles "
-            "again. On this scene the film's drawn thickness is this term, so the geometry *is* the "
-            "physics rather than an illustration of it."
-            if split_ok else
+            (
+                "Loss of lithium inventory, as a film thickness. The fitted √n term is a quantity of "
+                "lithium consumed irreversibly; the blocking layer that lithium sits in has a volume, "
+                "and that volume over the anode's own coated area is these nanometres. The chain is "
+                "stated in full in the film derivation beside this card — modelled as a compact "
+                f"{film.get('assumptions', {}).get('formulaUnit', 'Li₂CO₃')} film, which is an "
+                "estimate a real separator-facing, mixed-phase SEI can fall below. The *thickness* is "
+                "derived from this cell's own fit; the *drawn layer* is that thickness magnified "
+                "enough to be visible, and the magnification is printed with it."
+            ) if (split_ok and film_derivable) else
+            (
+                "Loss of lithium inventory: growth of the passivating film on the anode, the diffusion-"
+                "limited √n term of the same fit. On this scene the film's drawn thickness is this "
+                f"term, so the geometry *is* the physics rather than an illustration of it. {film.get('reason') or ''}"
+            ) if split_ok else
             "An SEI film exists on every aged cell, but this cell's capacity history cannot say how much "
             "of its fade it accounts for — √n and n are too alike over this many cycles. The scene draws "
             "the film as architecture and puts no number on it, rather than drawing a thickness the fit "
             "did not earn."
         ),
-        law=f"{_SEI_TERM}  (full-history fitted, see the fit-quality caveat below)",
-        series=sei_series if split_ok else None,
-        available=split_ok and sei_last is not None,
-        reason=None if (split_ok and sei_last is not None) else (split_reason if not split_ok else _fit_reason),
+        law=(str((film.get("derivation") or {}).get("chain") or "") if (split_ok and film_derivable)
+             else f"{_SEI_TERM}  (full-history fitted, see the fit-quality caveat below)"),
+        series=(nm_series if split_ok else None) if film_derivable else (sei_series if split_ok else None),
+        available=split_ok and (nm_last is not None if film_derivable else sei_last is not None),
+        reason=None if (split_ok and (film_derivable or sei_last is not None))
+        else (split_reason if not split_ok else _fit_reason),
     ))
 
     return parts
@@ -1057,6 +1082,10 @@ def build_cell_scene(
         profile = None
 
     form_factor, form_factor_note = form_factor_for(profile)
+    # The dimensions the geometry is drawn from, declared once and used by both
+    # the renderer and the disclosures, so a drawn size and the sentence
+    # describing it cannot come from two different models.
+    spec_physical = PhysicalModel(form_factor, form_factor_note).block()
     source_label = str(getattr(profile, "source_label", "") or "")
     provenance = str(getattr(profile, "provenance", "") or "")
     chemistry = str(getattr(profile, "passport_chemistry", "") or getattr(profile, "short_name", "") or "")
@@ -1100,6 +1129,18 @@ def build_cell_scene(
         for s, l in zip(phys_full["seiPct"], phys_full["lamPct"])
     ]
     phys["fadeModelPct"] = [fade_model[i] for i in idx]
+    # The film's thickness: derived once, here, so the part card, the series and
+    # the renderer's display mapping all read one block rather than three
+    # re-derivations of it.
+    capacity0 = next((v for v in col_capacity[:n_rows] if _is_finite(v)), None)
+    sei_max = max((v for v in phys_full["seiPct"] if _is_finite(v)), default=None)
+    film = film_model(
+        spec_physical, capacity0, sei_max,
+        split_identified=bool(fit.get("splitIdentified")),
+    )
+    spec_physical["film"] = film
+    nm_full = sei_thickness_nm(phys_full["seiPct"], film)
+    phys["seiThicknessNm"] = [nm_full[i] for i in idx]
 
     last_row = None
     try:
@@ -1116,7 +1157,7 @@ def build_cell_scene(
     # the case the profile flag exists to catch.
     has_dqdv = dqdv_applicable and any(_is_finite(v) for v in _column(df, "dqdv_sim_peak_value"))
 
-    parts = _build_parts(df, last_row, profile, phys, has_dqdv, fit)
+    parts = _build_parts(df, last_row, profile, phys, has_dqdv, fit, film)
 
     # Part series are sampled on the same index set as the top-level series, so
     # a renderer can index every array with the same cursor — and a test can
@@ -1140,7 +1181,17 @@ def build_cell_scene(
             # number every renderer can draw — assigning it here would quietly
             # turn that refusal back into a drawn film.
             if fit.get("splitIdentified"):
-                part["series"] = phys["seiPct" if part["id"] == "sei_film" else "lamPct"]
+                # The film's card carries a *thickness* when the chain could be
+                # evaluated, so its series is the nanometre one; overwriting it
+                # with the fitted share here would leave the card's number and
+                # the array behind it in different units.
+                if part["id"] == "particles":
+                    key = "lamPct"
+                elif part["series"] is phys.get("seiThicknessNm"):
+                    key = "seiThicknessNm"
+                else:
+                    key = "seiPct"
+                part["series"] = phys[key]
 
     mechanism = _mechanism(df, graph, cell_id, fit)
 
@@ -1193,6 +1244,7 @@ def build_cell_scene(
             "provenance": provenance,
             "dqdvApplicable": dqdv_applicable,
         },
+        "physical": spec_physical,
         "series": {
             "cycles": cycles,
             "sohPct": soh,
@@ -1205,6 +1257,9 @@ def build_cell_scene(
             "seiPct": phys["seiPct"],
             "lamPct": phys["lamPct"],
             "seiSharePct": phys["seiSharePct"],
+            # The same fitted term as a film thickness, in nanometres: the series
+            # the renderer draws and the part card reports.
+            "seiThicknessNm": phys["seiThicknessNm"],
             "fadeModelPct": phys["fadeModelPct"],
         },
         "record": {
@@ -1248,23 +1303,55 @@ def build_cell_scene(
         "knee": knee,
         "projection": projection,
         "parts": parts,
-        "geometryScales": _geometry_scales(),
+        "geometryScales": _geometry_scales(film),
         "disclosures": _disclosures(
             form_factor, form_factor_note, mechanism, projection, dqdv_applicable, provenance,
             bool(fit.get("splitIdentified")), str(fit.get("splitReason") or ""),
+            physical=spec_physical,
         ),
         "theme": {**default_theme(), **(theme or {})},
     }
     return _jsonify(spec)
 
 
-def _geometry_scales() -> dict:
+def _geometry_scales(film: "dict | None" = None) -> dict:
     """How the renderer turns each data series into drawn size — display, not physics.
 
     Kept explicit and in the spec so the renderer never invents a mapping, and
     so the part card can print the one it used. ``note`` is the sentence the
     scene shows when a user switches to data-scaled geometry.
+
+    ``film`` is the derived film block: the scale's endpoints are this cell's
+    own nanometres (the film it left formation with, and the largest the fit
+    puts on it), while the drawn band those nanometres map onto is a
+    magnification the film block states outright.
     """
+    derivation = (film or {}).get("derivation") or {}
+    film_available = (
+        bool((film or {}).get("available"))
+        and bool((film or {}).get("identified"))
+        and bool(derivation)
+        and derivation.get("maxNm") is not None
+        and derivation.get("displayMaxNm") is not None
+    )
+    film_scale: dict = {
+        "target": "shellThickness",
+        "from": "series.seiThicknessNm" if film_available else "series.seiPct",
+        "unit": ("nm (derived from the fitted lithium-inventory loss)" if film_available
+                 else "% of initial capacity (fitted)"),
+        "displayMin": (film or {}).get("assumptions", {}).get("initialNm") if film_available else 0.0,
+        # The top of the scale, not the top of the record: see _FILM_DISPLAY.
+        "displayMax": (derivation.get("displayMaxNm") if film_available else 20.0),
+        "note": (
+            (derivation.get("chain") or "") + ". " + ((film or {}).get("display", {}) or {}).get("note", "")
+            if film_available else
+            "The film's drawn thickness and its glow both track the fitted √n lithium-inventory "
+            "loss. This cell's film thickness could not be stated in nanometres — "
+            + ((film or {}).get("reason") or "see the film block for why")
+            + " So the mapping stays on the fitted share rather than on a thickness. The combined "
+            "fitted fade is on the state gauge instead."
+        ),
+    }
     return {
         "fade_model": {
             "target": "capacityLoss",
@@ -1279,18 +1366,7 @@ def _geometry_scales() -> dict:
                 "holds — and never as the size of a physical layer."
             ),
         },
-        "sei_film": {
-            "target": "shellThickness",
-            "from": "series.seiPct", "unit": "% of initial capacity (fitted)",
-            "displayMin": 0.0, "displayMax": 20.0,
-            "note": (
-                "The film's drawn thickness and its glow both track the fitted √n lithium-inventory "
-                "loss, from the anatomical minimum at zero to full thickness at 20% of initial capacity "
-                "lost to lithium inventory. It is a legibility-scaled metaphor, not a film thickness in "
-                "micrometres — no source here measures one — and it is drawn only when this cell's two "
-                "fade channels are separable. The combined fitted fade is on the state gauge instead."
-            ),
-        },
+        "sei_film": film_scale,
         "particles": {
             "target": "lostFraction",
             "from": "series.lamPct", "unit": "% of initial capacity (fitted)",
@@ -1326,9 +1402,426 @@ def _geometry_scales() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# The physical model the geometry is drawn from
+# ---------------------------------------------------------------------------
+
+# Every number below is either a published dimension of the cell *format* or an
+# assumption, and each one is tagged with which it is. This is what stops the
+# scene from drawing "roughly an 18650": it draws these millimetres, and a
+# reader can hold them next to a datasheet instead of next to a picture.
+
+# The cell-unit the renderer draws in: one unit is the cell's height, so every
+# other dimension is this height divided into millimetres.
+
+_CYLINDRICAL_FORMAT = {
+    "format": "18650 — 18.4 mm x 65.0 mm, the format's published envelope",
+    "diameterMm": 18.4,
+    "heightMm": 65.0,
+    "wallMm": 0.25,
+    # The wound roll cannot touch the can wall or it cannot be inserted; 0.2 mm
+    # per side is the assembly clearance this model assumes.
+    "rollClearanceMm": 0.2,
+    "mandrelDiameterMm": 4.0,
+}
+
+_PRISMATIC_FORMAT = {
+    "format": "prismatic — 20.5 mm x 5.4 mm x 64 mm (CALCE 1.1 Ah-class pouch)",
+    "widthMm": 20.5,
+    "thicknessMm": 5.4,
+    "heightMm": 64.0,
+    "wallMm": 0.4,
+}
+
+# A 18650-class stack, foil to foil. The two foils are drawn *inside* the two
+# coating ribbons (see `drawnRibbonsMm`) rather than as their own anatomy
+# parts, so the three rolled sheets still tile one turn's advance exactly.
+_STACK_MM = {
+    "copperFoil": 0.010,
+    "anodeCoating": 0.070,
+    "separator": 0.020,
+    "cathodeCoating": 0.060,
+    "aluminiumFoil": 0.015,
+}
+
+
+# ---------------------------------------------------------------------------
+# The SEI film: the fitted lithium-inventory loss, in nanometres
+# ---------------------------------------------------------------------------
+
+# The scene used to draw the film's thickness as a legibility-scaled metaphor —
+# a slice of the roll's radial clearance that grew with the fitted √n term. That
+# left the largest *diagnostic* object in the scene unable to answer "how thick
+# is it?", even though the quantity behind it (lithium consumed irreversibly)
+# is one the platform fits. A quantity of lithium has a volume, and a volume
+# spread over the anode's own coated area is a thickness, so the film is
+# derived:
+#
+#   charge lost to LLI (C) = Q₀ · (sei%/100) · 3600
+#   mol Li trapped         = charge / F
+#   mol SEI formed         = mol Li / (Li per formula unit)
+#   film volume (cm³)      = mol SEI · M/ρ          (the formula unit's molar volume)
+#   film thickness (nm)    = film volume / anode coated area · 1e7
+#
+# Every constant is tagged, because the step a reader is most likely to quarrel
+# with is the chemistry — and quarrelling with it is the point: the chain is
+# stated so it can be re-derived with other numbers instead of trusted.
+_FILM_MODEL = {
+    "formulaUnit": "Li₂CO₃",
+    "lithiumPerFormulaUnit": 2.0,
+    "molarMassGPerMol": 73.89,
+    "densityGPerCm3": 2.11,
+    # The coating does not span the whole roll height: the winding leaves an
+    # uncoated foil edge and the can's ends take their own space.
+    "coatedWidthMm": 58.0,
+    "anodeFaces": 2.0,
+    # A cell leaves formation with a film already on it; zero nanometres would
+    # be a claim no aged cell supports.
+    "initialNm": 5.0,
+}
+
+_FILM_PROVENANCE = {
+    "formulaUnit": (
+        "assumed — Li₂CO₃ is the crystalline phase most often reported for a carbonate-electrolyte "
+        "graphite anode; a real SEI is a mixed phase, and this is the single largest caveat on the "
+        "number below"
+    ),
+    "lithiumPerFormulaUnit": "derived — the formula unit's own stoicheiometry (2 Li per CO₃²⁻)",
+    "molarMassGPerMol": "material-datasheet (Li₂CO₃, 73.89 g/mol)",
+    "densityGPerCm3": "material-datasheet (Li₂CO₃, 2.11 g/cm³)",
+    "coatedWidthMm": "assumed — the coated width a 65 mm can's winding leaves",
+    "anodeFaces": "format-standard — a wound electrode is coated on both faces",
+    "initialNm": "typical for a formation SEI on graphite, not measured for this cell",
+}
+
+_FARADAY_C_PER_MOL = 96485.33212
+
+# The film's drawn band, in millimetres. Two constraints fix it and neither is
+# taste: it must stay inside the radial clearance the drawn roll leaves (so a
+# data-scaled film can never pierce a layer it does not sit inside), and it must
+# be visible at 65 mm scale (so it is necessarily far thicker than the film it
+# represents). The mapping is therefore a magnification, and the magnification
+# is printed with the number rather than left for a viewer to assume away.
+_FILM_DISPLAY = {
+    "drawnMinMm": 0.0975,
+    "drawnMaxMm": 0.312,
+    # The top of the *scale*, as the lithium-inventory loss it represents rather
+    # than as this cell's own record maximum. Normalising to the record's own
+    # maximum would make a 200 nm film and a 2,300 nm film draw identically — the
+    # one comparison a reader most wants to make — so the scale is fixed to a
+    # share of initial capacity and stays comparable across cells.
+    "scaleCeilingPctLli": 30.0,
+}
+
+
+def film_model(physical: "dict | None", capacity0: "float | None",
+                sei_pct_max: "float | None", split_identified: bool = True) -> dict:
+    """The anode film in nanometres, with every step that produced it.
+
+    Returns the model even when it cannot be evaluated, with ``available``
+    false and a ``reason`` — a refused derivation is a statement this scene can
+    make; a zero would be a fabricated one. Two things are needed for a
+    *thickness* rather than a scale factor: geometry to spread it over, and an
+    identified lithium-inventory channel to scale; either can be missing, and
+    each absence has its own sentence.
+    """
+    block: dict = {
+        "modelledAs": f"a compact {_FILM_MODEL['formulaUnit']} film on the anode",
+        "available": False,
+        "identified": bool(split_identified),
+        "assumptions": dict(_FILM_MODEL),
+        "provenance": dict(_FILM_PROVENANCE),
+        "derivation": None,
+        "display": None,
+        "reason": None,
+    }
+    roll = ((physical or {}).get("roll") or {})
+    electrode_m = _finite(roll.get("electrodeLengthM"), 0.0)
+    capacity0 = _finite(capacity0, 0.0)
+    if electrode_m <= 0 or capacity0 <= 0:
+        block["reason"] = (
+            "This cell's capacity or its wound electrode length is not available, so neither the "
+            "lithium the fit put in the film nor the area it spread over is known. A stacked prismatic "
+            "cell has no wound electrode length at all, so its film thickness is not derived here."
+        )
+        return block
+
+    unit_mm = _finite((physical or {}).get("unitsMmPerCellUnit"), 65.0)
+    molar_volume = _FILM_MODEL["molarMassGPerMol"] / _FILM_MODEL["densityGPerCm3"]
+    # Coated area, in cm²: both faces of the wound electrode. This is the same
+    # number the drawing implies, because the electrode length comes from the
+    # declared stack and envelope rather than from a guess about the winding.
+    area_cm2 = (
+        _FILM_MODEL["anodeFaces"]
+        * (electrode_m * 100.0)
+        * (_FILM_MODEL["coatedWidthMm"] / 10.0)
+    )
+    # Nanometres of film per 1 percentage point of initial capacity lost to
+    # lithium inventory — the single scale factor the whole chain reduces to, so
+    # the number on the card can be recomputed by hand.
+    charge_c = 0.01 * capacity0 * 3600.0
+    mol_li = charge_c / _FARADAY_C_PER_MOL
+    mol_film = mol_li / _FILM_MODEL["lithiumPerFormulaUnit"]
+    nm_per_pct = (mol_film * molar_volume / area_cm2) * 1e7
+
+    # The thickness is only a thickness when the LLI channel is identified: the
+    # constants below are this cell's either way, but on a cell whose √n channel
+    # sits below its own standard error they would be scaling noise. The scale
+    # factor is still reported (nmPerPctLli), because that is what the reader
+    # needs to see the chain — it is the *thickness* that is withheld.
+    max_nm = (
+        None if (not split_identified or not _is_finite(sei_pct_max))
+        else _FILM_MODEL["initialNm"] + _finite(sei_pct_max, 0.0) * nm_per_pct
+    )
+    block["available"] = True
+    block["derivation"] = {
+        "capacity0Ah": round(capacity0, 6),
+        "electrodeLengthM": round(electrode_m, 4),
+        "coatedWidthMm": _FILM_MODEL["coatedWidthMm"],
+        "anodeAreaCm2": round(area_cm2, 3),
+        "molarVolumeCm3PerMol": round(molar_volume, 4),
+        "nmPerPctLli": round(nm_per_pct, 4),
+        "maxPctLli": _opt(sei_pct_max),
+        "maxNm": None if max_nm is None else round(max_nm, 3),
+        "chain": (
+            "nm = (Q₀·(LLI%/100)·3600 / F) / (Li per Li₂CO₃) · (M/ρ) / coated area · 1e7"
+        ),
+        "unitMm": unit_mm,
+    }
+
+    # What the drawing is worth, stated as a magnification rather than as a
+    # thickness. The drawn band is affine in the derived *growth*, with an
+    # offset (the film a cell leaves formation with is drawn at `drawnMinMm`),
+    # so no single scale describes it — which is exactly why both endpoints and
+    # the growth factor are printed.
+    drawn_max_nm = _FILM_DISPLAY["drawnMaxMm"] * 1e6
+    drawn_min_nm = _FILM_DISPLAY["drawnMinMm"] * 1e6
+    if not split_identified:
+        block["reason"] = (
+            "The thickness is withheld because this cell's data does not identify the lithium-inventory "
+            "channel: the √n coefficient fits below its own standard error here, so the nm-per-% scale "
+            "below would be magnifying noise. The chain's constants are this cell's; the quantity they "
+            "scale is not identified."
+        )
+    ceiling_nm = _FILM_MODEL["initialNm"] + _FILM_DISPLAY["scaleCeilingPctLli"] * nm_per_pct
+    block["derivation"]["displayMaxNm"] = round(ceiling_nm, 3)
+    block["derivation"]["displayMaxPctLli"] = _FILM_DISPLAY["scaleCeilingPctLli"]
+    # A magnification of the *growth* is only a number worth printing when the
+    # record has growth to magnify: on a cell whose fit puts a fraction of a
+    # nanometre on the anode, the ratio is a division by nothing and would read
+    # as an enormous scale factor for a film that never thickened.
+    growth_x = None
+    if max_nm is not None and (max_nm - _FILM_MODEL["initialNm"]) >= 1.0:
+        growth_x = (drawn_max_nm - drawn_min_nm) / (max_nm - _FILM_MODEL["initialNm"])
+    drawn_band = (
+        f"The drawn band is {_FILM_DISPLAY['drawnMinMm']}–{_FILM_DISPLAY['drawnMaxMm']} mm thick, "
+        f"which is where the roll's radial clearance and a 65 mm cell's visible scale put it, and its "
+        f"top is the film this cell's capacity and area would carry at "
+        f"{_FILM_DISPLAY['scaleCeilingPctLli']:.0f}% of initial capacity lost to lithium inventory "
+        f"({round(ceiling_nm)} nm) — the same share for every cell, so two cells' films can be "
+        f"compared by eye."
+        + (
+            f" This cell's own record reaches {round(max_nm)} nm, past the top of the scale, so the "
+            f"layer draws at its full drawn thickness over the last part of the record."
+            if (max_nm is not None and max_nm > ceiling_nm) else ""
+        )
+    )
+    if max_nm is None:
+        magnified = (
+            "No magnification is stated for this cell, because the thickness it would magnify is the "
+            "one the identification above withholds."
+        )
+    else:
+        magnified = (
+            f"At the top of this cell's own scale the layer is drawn "
+            f"{_FILM_DISPLAY['drawnMaxMm']} mm thick where the derivation puts the film at "
+            f"{round(max_nm, 1)} nm — a magnification of about "
+            f"{drawn_max_nm / max_nm:,.0f}x."
+            + (
+                f" Measured on the film's *growth* it is about {growth_x:,.0f}x, because the film a "
+                f"cell leaves formation with is already drawn {_FILM_DISPLAY['drawnMinMm']} mm thick."
+                if growth_x else ""
+            )
+        )
+    block["display"] = {
+        "drawnMinMm": _FILM_DISPLAY["drawnMinMm"],
+        "drawnMaxMm": _FILM_DISPLAY["drawnMaxMm"],
+        "drawnMinNm": round(drawn_min_nm, 1),
+        "drawnMaxNm": round(drawn_max_nm, 1),
+        "magnificationAtMaxX": None if max_nm is None else round(drawn_max_nm / max_nm, 1),
+        "growthMagnificationX": None if growth_x is None else round(growth_x, 1),
+        "note": (
+            f"The drawn SEI layer is a magnification, not a thickness. {drawn_band} {magnified} The "
+            "nanometre figure beside a part card is the derived one; the layer on screen is that "
+            "number magnified enough to be visible at a whole cell's scale."
+        ),
+    }
+    block["note"] = (
+        "A real SEI is a mixed, patchy, organic-rich phase; this models it as one compact "
+        f"{_FILM_MODEL['formulaUnit']} film of the bulk density spread evenly over both coated faces of "
+        "the anode. Read the nanometres as an estimate whose assumptions bound it from above, not as a "
+        "measurement. The one thing it is not is a drawing constant: change a datum on the cell and "
+        "the number moves."
+    )
+    return block
+
+
+def sei_thickness_nm(sei_pct: list, film: "dict | None") -> list:
+    """The fitted LLI series as a film thickness in nanometres, per cycle."""
+    derivation = (film or {}).get("derivation") or {}
+    per_pct = derivation.get("nmPerPctLli")
+    # A gap in the fitted series stays a gap in the thickness: a missing
+    # measurement must not become a 5 nm film.
+    if not _is_finite(per_pct):
+        return [None for _ in sei_pct]
+    initial = _FILM_MODEL["initialNm"]
+    rate = _finite(per_pct, 0.0)
+    return [None if not _is_finite(v) else initial + _finite(v, 0.0) * rate for v in sei_pct]
+
+
+class PhysicalModel:
+    """The declared dimensions, and what each one is worth.
+
+    Deliberately not a bare dict of numbers: a dimension whose provenance is
+    unstated is a dimension nobody can check, which is the failure mode this
+    whole scene is built to avoid.
+    """
+
+    def __init__(self, form_factor: str, note: str) -> None:
+        self.form_factor = form_factor
+        self.form_factor_note = note
+
+    def block(self) -> dict:
+        if self.form_factor == FORM_FACTOR_PRISMATIC:
+            return self._prismatic()
+        # An undeclared cell is drawn as the cylindrical default, and the
+        # disclosure says the internal geometry is therefore not its own.
+        return self._cylindrical(declared=self.form_factor == FORM_FACTOR_CYLINDRICAL)
+
+    def _prismatic(self) -> dict:
+        fmt = _PRISMATIC_FORMAT
+        return {
+            "formFactor": FORM_FACTOR_PRISMATIC,
+            "format": fmt["format"],
+            "unitsMmPerCellUnit": fmt["heightMm"],
+            "cylindrical": None,
+            "prismatic": {
+                "widthMm": fmt["widthMm"],
+                "thicknessMm": fmt["thicknessMm"],
+                "heightMm": fmt["heightMm"],
+                "wallMm": fmt["wallMm"],
+            },
+            "roll": None,
+            # Filled in by build_cell_scene once the fit and the capacity are
+            # known; a stacked cell has no wound electrode length to derive a
+            # film thickness from, so this stays an explained refusal.
+            "film": None,
+            "provenance": {
+                "widthMm": "format-standard",
+                "thicknessMm": "format-standard",
+                "heightMm": "format-standard",
+                "wallMm": "assumed",
+            },
+            "note": (
+                "This is a prismatic cell's outer envelope, which is the part of a pouch cell that "
+                "is actually published. Its internal stack is drawn schematically: a prismatic "
+                "cell's layer count depends on a winding or stacking choice this platform's data "
+                "does not carry, so the drawn slabs are a diagram of a stacked cell, not this "
+                "cell's build."
+            ),
+            "schematic": [
+                "the stacked-layer count and slab thicknesses",
+                "the cap, vent and terminal sizes",
+                "the particle cloud's count and size",
+                "the drawn thickness of the SEI film (magnified: see `film.display`)",
+            ],
+        }
+
+    def _cylindrical(self, declared: bool) -> dict:
+        fmt = _CYLINDRICAL_FORMAT
+        stack = dict(_STACK_MM)
+        wall = fmt["wallMm"]
+        clearance = fmt["rollClearanceMm"]
+        mandrel_r = fmt["mandrelDiameterMm"] / 2
+        outer_r = fmt["diameterMm"] / 2 - wall - clearance
+        pitch = round(sum(stack.values()), 6)
+        # The roll fills the radial space this pitch gives it: the winding has
+        # nowhere else to go, which is exactly what a real jelly roll does. The
+        # turn count is therefore derived, not chosen.
+        turns = int((outer_r - mandrel_r) // pitch)
+        drawn_outer_r = mandrel_r + turns * pitch
+        # What those dimensions imply for the electrode: the sum of the turn
+        # circumferences, reported for checking. No source in this repository
+        # measures an electrode length.
+        electrode_m = sum(
+            2 * math.pi * (mandrel_r + (i + 0.5) * pitch) for i in range(turns)
+        ) / 1000.0
+        ribbons = {
+            "anode": round(stack["copperFoil"] + stack["anodeCoating"], 6),
+            "separator": round(stack["separator"], 6),
+            "cathode": round(stack["aluminiumFoil"] + stack["cathodeCoating"], 6),
+        }
+        return {
+            "formFactor": FORM_FACTOR_CYLINDRICAL if declared else FORM_FACTOR_UNKNOWN,
+            "format": fmt["format"],
+            "unitsMmPerCellUnit": fmt["heightMm"],
+            "cylindrical": {
+                "diameterMm": fmt["diameterMm"],
+                "heightMm": fmt["heightMm"],
+                "wallMm": wall,
+                "rollClearanceMm": clearance,
+                "mandrelDiameterMm": fmt["mandrelDiameterMm"],
+            },
+            "prismatic": None,
+            "roll": {
+                "stackMm": stack,
+                "pitchMm": pitch,
+                "turns": turns,
+                "mandrelDiameterMm": fmt["mandrelDiameterMm"],
+                "envelopeDiameterMm": round(2 * outer_r, 6),
+                "drawnOuterDiameterMm": round(2 * drawn_outer_r, 6),
+                "drawnRibbonsMm": ribbons,
+                "electrodeLengthM": round(electrode_m, 4),
+            },
+            # Filled in by build_cell_scene once the fit and the capacity are
+            # known (see `film_model`).
+            "film": None,
+            "provenance": {
+                "diameterMm": "format-standard",
+                "heightMm": "format-standard",
+                "wallMm": "typical for the format, not a datasheet figure",
+                "rollClearanceMm": "assumed",
+                "mandrelDiameterMm": "assumed",
+                "stackMm": "typical for a 18650-class cell, not measured for this cell",
+                "pitchMm": "derived",
+                "turns": "derived",
+                "envelopeDiameterMm": "derived",
+                "drawnOuterDiameterMm": "derived",
+                "drawnRibbonsMm": "derived",
+                "electrodeLengthM": "derived",
+            },
+            "note": (
+                "The winding is drawn to these millimetres: the stack thickness sets the pitch, the "
+                "pitch and the space between the mandrel and the roll's envelope set the turn count, "
+                "and the three drawn ribbons are the anode coating on its copper foil, the separator, "
+                "and the cathode coating on its aluminium foil — together they tile one turn's "
+                "advance exactly. Each ribbon therefore includes its current collector. Cap, vent "
+                "and terminal sizes are not drawn to a datasheet, and the SEI film is drawn at a "
+                "magnification its `film` block states — but the film's *thickness* is derived from "
+                "the fitted lithium-inventory loss rather than chosen."
+            ),
+            "schematic": [
+                "the cap, vent and terminal sizes",
+                "the particle cloud's count and size",
+                "the drawn thickness of the SEI film (magnified: see `film.display`)",
+            ],
+        }
+
+
 def _disclosures(form_factor: str, form_factor_note: str, mechanism: dict,
                  projection: "dict | None", dqdv_applicable: bool,
-                 provenance: str, split_identified: bool, split_reason: str) -> list[str]:
+                 provenance: str, split_identified: bool, split_reason: str,
+                 physical: "dict | None" = None) -> list[str]:
     """The honesty strip, assembled per cell rather than written once for all cells."""
     out = [
         "This scene is a schematic of a cell's construction, not a metrology model or a CAD drawing. "
@@ -1339,21 +1832,46 @@ def _disclosures(form_factor: str, form_factor_note: str, mechanism: dict,
         "Every part card is tagged measured, derived, fitted or projected. A part this source cannot "
         "speak to says so instead of showing a zero.",
     ]
+    prismatic = (physical or {}).get("prismatic")
+    roll = (physical or {}).get("roll")
+    envelope = (physical or {}).get("cylindrical") or {}
     if form_factor == FORM_FACTOR_PRISMATIC:
+        envelope = (
+            f"{prismatic['widthMm']} mm x {prismatic['thicknessMm']} mm x {prismatic['heightMm']} mm"
+            if prismatic else "its published envelope"
+        )
         out.append(
             f"Drawn as a prismatic (stacked-layer) cell because this source's cells are: "
-            f"{form_factor_note or 'declared prismatic by its chemistry profile'}."
+            f"{form_factor_note or 'declared prismatic by its chemistry profile'}. The outer "
+            f"envelope is drawn to {envelope}. Its internal stack is a diagram of a stacked cell, "
+            f"not this cell's build."
         )
     elif form_factor == FORM_FACTOR_UNKNOWN:
         out.append(
             "This cell's form factor is not declared, so it is drawn as a generic cylindrical cell. "
             "Do not read the internal geometry as this cell's construction."
         )
-    else:
+    elif roll:
+        stack = roll["stackMm"]
         out.append(
             "Drawn as a cylindrical 18650-class cell: "
+            f"{form_factor_note or 'declared cylindrical by this source'}. The winding is drawn to "
+            f"the format's millimetres — a {envelope.get('diameterMm', 18.4)} mm "
+            f"cell, a {roll['pitchMm']} mm foil-to-foil stack "
+            f"({stack['copperFoil']} mm copper, {stack['anodeCoating']} mm anode, "
+            f"{stack['separator']} mm separator, {stack['cathodeCoating']} mm cathode, "
+            f"{stack['aluminiumFoil']} mm aluminium), and the "
+            f"{roll['turns']} turns that stack's pitch gives a roll of that diameter. The turn "
+            f"count is derived from the dimensions rather than chosen: what those numbers imply is "
+            f"a {roll['electrodeLengthM']} m electrode. Cap, vent and terminal sizes and the particle "
+            f"cloud are not to a datasheet. The SEI film's thickness *is* derived — from the fitted "
+            f"lithium-inventory loss and this winding's area — but it is drawn magnified, and the "
+            f"magnification is stated in the film block and below."
+        )
+    else:
+        out.append(
+            "Drawn as a cylindrical cell: "
             f"{form_factor_note or 'declared cylindrical by this source'}."
-            " Internal geometry is schematic; the real jelly roll has far more turns than are drawn."
         )
     if mechanism.get("physics") and mechanism["physics"].get("gatePassed") is False:
         out.append(
@@ -1366,13 +1884,47 @@ def _disclosures(form_factor: str, form_factor_note: str, mechanism: dict,
             "The SEI and LAM layers come from a joint fit of √n and n to capacity data alone, and for "
             "this cell both channels fit above their own standard error — but those two regressors are "
             "still strongly correlated over a narrow cycle range, so read the split as evidence rather "
-            "than as a measurement of a film. The independently-fitted resistance-growth rate is the "
-            "more robust standalone signal for an active SEI channel and is drawn on the tabs."
+            "than as a measurement of a film. The film's nanometre figure inherits that uncertainty in "
+            "full: it is a rescaling of the very term whose share is uncertain, so a wide β_sei sigma "
+            "scales the thickness as well as the share. The independently-fitted resistance-growth "
+            "rate is the more robust standalone signal for an active SEI channel and is drawn on the "
+            "tabs."
         )
     else:
         out.append(
             f"The SEI film and the active-material particles are drawn but carry no number. {split_reason}"
         )
+    film = (physical or {}).get("film") or {}
+    if film.get("derivation"):
+        # The film's two numbers, disclosed separately because they answer two
+        # different questions: how thick the film is, and what the layer a
+        # viewer is looking at represents. Conflating them is what made the
+        # previous drawing a metaphor rather than an estimate.
+        d = film["derivation"]
+        assumptions = film["assumptions"]
+        chain = (
+            f"the fitted lithium-inventory loss is a quantity of lithium, and "
+            f"{assumptions['formulaUnit']} at its bulk density spread over this cell's own coated anode "
+            f"area ({d['anodeAreaCm2']} cm², both faces of a {d['electrodeLengthM']} m electrode) puts "
+            f"{d['nmPerPctLli']} nm of film on it per 1% of initial capacity lost to lithium inventory"
+        )
+        if d.get("maxNm") is not None:
+            out.append(
+                f"The SEI film's thickness is derived, not illustrative: {chain}. {film['note']}"
+            )
+        else:
+            out.append(
+                f"The SEI film's thickness *would* be derived from this cell's own geometry — {chain} "
+                f"— but this cell's data does not identify the lithium-inventory channel that scales it, "
+                f"so the film carries no thickness here. {film.get('reason') or ''}"
+            )
+        if film.get("display"):
+            out.append(
+                "The drawn SEI layer is a *magnification* of that thickness, disclosed separately: "
+                f"{film['display']['note']}"
+            )
+    elif film.get("reason"):
+        out.append(f"The SEI film's thickness is not derived for this cell. {film['reason']}")
     if not dqdv_applicable:
         out.append(
             "The electrode coatings carry no number for this cell: its source declares dQ/dV "

@@ -331,26 +331,34 @@ export function sphereMesh(radius: number, widthSegments = 6, heightSegments = 4
 // ---------------------------------------------------------------------------
 
 /**
- * The proportions every mesh is built from. Real where it can be: an 18650's
- * 18 mm diameter over 65 mm height is 9/65, and the roll's 8 mm per turn is a
- * real jelly-roll pitch. Where it cannot be real it is a declared schematic —
- * the roll has tens of turns in a real cell, not three.
+ * The stage furniture and the parts of the anatomy that are *not* drawn to a
+ * dimension.
+ *
+ * The winding is the exception, and it moved out of here on purpose: a roll's
+ * pitch, its turn count and the radius it fills are facts about the cell, so
+ * they come from the document's `physical` block (`rollModel` below) rather
+ * than from a constant in the renderer. What remains here is either real by
+ * derivation (the sweep of the cut-away) or declared schematic (cap, vent,
+ * terminals, particle count) — and the spec's own `schematic` list names the
+ * second group so nobody has to guess which is which.
  */
 export const CELL_GEOMETRY = {
-  /** 18650-class cylindrical: 18 mm diameter, 65 mm tall. */
-  canRadius: 9 / 65,
+  /** Fallback 18650 figures, used only when a document carries no `physical`. */
+  canRadius: 9.2 / 65,
   /** Fraction of the casing's circumference drawn (the cut-away). */
   canSweep: (285 * Math.PI) / 180,
-  canThickness: 0.004,
-  /** A prismatic (CALCE 1.1 Ah pouch class) cell: 5.4 × 20.5 × 64 mm, schematically. */
-  prismatic: { width: 0.34, depth: 0.125, thickness: 0.004 },
+  /** 0.25 mm of 304 stainless — the format's typical can wall, in cell units. */
+  canThickness: 0.25 / 65,
+  /** A prismatic (CALCE 1.1 Ah pouch class) cell: 20.5 × 5.4 × 64 mm. */
+  prismatic: { width: 20.5 / 65, depth: 5.4 / 65, thickness: 0.4 / 65 },
   roll: {
-    /** Each coating is its own coil here; a real roll interleaves them. */
-    anode: { innerRadius: 0.03, turns: 3, pitch: 0.008, thickness: 0.005 },
-    separator: { innerRadius: 0.062, turns: 2, pitch: 0.008, thickness: 0.003 },
-    cathode: { innerRadius: 0.084, turns: 2, pitch: 0.008, thickness: 0.005 },
     height: 0.84,
-    segmentsPerTurn: 40,
+    /**
+     * Arc segments per turn of the spiral. The roll's finest detail is a band a
+     * fraction of a pixel wide, so this is set by the *silhouette*: a turn's
+     * polygon must not read as a polygon.
+     */
+    segmentsPerTurn: 32,
   },
   /**
    * Explode displacements at `exploded = 1`, in cell units. `layerGap` is per
@@ -365,12 +373,248 @@ export const CELL_GEOMETRY = {
    * The drawn SEI film's thickness range, in cell units. Deliberately narrow:
    * it spans only the radial space the drawn roll leaves between the anode
    * ribbon and the separator, so a data-scaled film can never pierce a layer
-   * it does not physically sit inside. Real SEI is nanometres thick — this is a
-   * legibility-scaled metaphor, disclosed as one, and its opacity carries the
-   * same fitted term so the two cannot disagree.
+   * it does not physically sit inside. The film's real thickness is in
+   * nanometres and is derived in the document (`physical.film`); this band is
+   * the *magnification* that makes it visible, and the document states the
+   * factor. These figures are the fallback for a document written before that
+   * derivation existed.
    */
   seiFilm: { anatomical: 0.0015, dataMax: 0.0048, minOpacity: 0.18, maxOpacity: 0.52 },
 } as const;
+
+// ---------------------------------------------------------------------------
+// The physical roll: the winding is drawn from the document's own millimetres
+// ---------------------------------------------------------------------------
+
+/** A 18650-class stack, foil to foil, in millimetres. Fallback only. */
+const DEFAULT_STACK_MM = {
+  copperFoil: 0.010,
+  anodeCoating: 0.070,
+  separator: 0.020,
+  cathodeCoating: 0.060,
+  aluminiumFoil: 0.015,
+} as const;
+
+/**
+ * How much thicker than reality the stack is drawn at full explode.
+ *
+ * The assembled roll is drawn at its real pitch and its real turn count, where
+ * a layer is a fraction of a pixel wide — that *is* an 18 mm roll on a screen,
+ * and it reads as the dense winding it is. The exploded view is the legibility
+ * state: it magnifies the stack until the separator is a pixel wide, and pays
+ * for the magnification by drawing fewer turns into the same envelope. It is a
+ * view control, like the explode position itself, and never a data claim.
+ */
+export const EXPLODE_STACK_GAIN = 7;
+
+/** Air drawn between the three ribbons at full explode, in millimetres. */
+const EXPLODE_LANE_GAP_MM = 0.02;
+
+/** The winding, in cell units, derived from the document's declared millimetres. */
+export interface RollModel {
+  /** Millimetres per cell unit — the cell's own declared height. */
+  unitMm: number;
+  canRadius: number;
+  canThickness: number;
+  mandrelRadius: number;
+  /** The radius the can's bore allows the roll, clearance included. */
+  envelopeRadius: number;
+  pitch: number;
+  /** Turns a roll of this envelope and pitch has. Derived, never chosen. */
+  turns: number;
+  anodeThickness: number;
+  separatorThickness: number;
+  cathodeThickness: number;
+  pitchMm: number;
+  /** What this winding implies for the electrode, in metres. */
+  electrodeLengthM: number;
+  /** The projected area of the wound layers, in cm² — the cross-check number. */
+  woundAreaCm2: number;
+  /**
+   * False when the document carried no `physical` block, so these are the
+   * renderer's fallback 18650 figures rather than the cell's own.
+   */
+  declared: boolean;
+}
+
+/** One drawn ribbon: where it starts inside a turn, and how thick it is drawn. */
+export interface DrawnRibbon {
+  id: "anode_sheet" | "separator" | "cathode_sheet";
+  offset: number;
+  thickness: number;
+}
+
+export interface DrawnRoll {
+  /** Laps in the roll. A ribbon advances one lap and ends: see `spiralTurns`. */
+  turns: number;
+  /**
+   * The revolutions one ribbon's *advance* covers, which is one fewer than the
+   * roll's lap count: the last lap is where the ribbon ends, not another place
+   * its radius grows to. Getting this wrong draws a roll one stack thicker
+   * than its own envelope — which is exactly the bug this field fixed.
+   */
+  spiralTurns: number;
+  /** Radial advance per turn. The three ribbons tile it exactly. */
+  advance: number;
+  gain: number;
+  ribbons: DrawnRibbon[];
+  /** The outermost edge of the wound layers. Never past the envelope. */
+  outerRadius: number;
+  anodeOuterRadius: number;
+  declared: boolean;
+}
+
+/**
+ * The cell's declared dimensions, or the renderer's fallback 18650.
+ *
+ * Nothing here is picked for looks: the pitch is the declared stack, the turn
+ * count is what that pitch needs to fill the declared envelope, and the
+ * electrode length is what those two imply. The one thing the renderer adds is
+ * the fallback, flagged as undeclared so a host can say so.
+ */
+export function rollModel(spec: CellSceneSpec): RollModel {
+  const physical = spec.physical ?? null;
+  const unitMm = positive(physical?.unitsMmPerCellUnit, 65.0);
+  const cyl = physical?.cylindrical ?? null;
+  const roll = physical?.roll ?? null;
+  const toUnits = (mm: number) => mm / unitMm;
+
+  const diameterMm = positive(cyl?.diameterMm, 18.4);
+  const wallMm = positive(cyl?.wallMm, 0.25);
+  const clearanceMm = positive(cyl?.rollClearanceMm, 0.2);
+  const mandrelDiameterMm = positive(
+    roll?.mandrelDiameterMm ?? cyl?.mandrelDiameterMm,
+    4.0,
+  );
+  const stack = roll?.stackMm ?? DEFAULT_STACK_MM;
+  const pitchMm = positive(
+    roll?.pitchMm,
+    stack.copperFoil + stack.anodeCoating + stack.separator +
+      stack.cathodeCoating + stack.aluminiumFoil,
+  );
+
+  const mandrelRadius = toUnits(mandrelDiameterMm / 2);
+  const envelopeRadius = toUnits(diameterMm / 2 - wallMm - clearanceMm);
+  const pitch = toUnits(pitchMm);
+  const turns = Math.max(1, Math.floor((envelopeRadius - mandrelRadius) / pitch + 1e-9));
+
+  // The electrode length and the wound cross-section are the two numbers that
+  // let a reader check the drawing without trusting it: a 0.175 mm stack wound
+  // out to this envelope implies both, and both are reported.
+  let lengthMm = 0;
+  for (let i = 0; i < turns; i++) {
+    lengthMm += 2 * Math.PI * (mandrelDiameterMm / 2 + (i + 0.5) * pitchMm);
+  }
+  const woundAreaCm2 =
+    (Math.PI * (Math.pow(envelopeRadius * unitMm, 2) - Math.pow(mandrelRadius * unitMm, 2))) / 100;
+
+  return {
+    unitMm,
+    canRadius: toUnits(diameterMm / 2),
+    canThickness: toUnits(wallMm),
+    mandrelRadius,
+    envelopeRadius,
+    pitch,
+    turns,
+    anodeThickness: toUnits(stack.copperFoil + stack.anodeCoating),
+    separatorThickness: toUnits(stack.separator),
+    cathodeThickness: toUnits(stack.aluminiumFoil + stack.cathodeCoating),
+    pitchMm,
+    electrodeLengthM: lengthMm / 1000,
+    woundAreaCm2,
+    declared: physical !== null && physical !== undefined,
+  };
+}
+
+/** A declared value, or the fallback when the document left it out or nulled it. */
+function positive(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The roll as drawn at an explode position.
+ *
+ * At rest this is the real winding: the declared stack as the pitch, the turn
+ * count the envelope gives it, each ribbon including its current collector.
+ * Exploding magnifies the stack and opens a lane between the ribbons, and the
+ * turn count falls to pay for it — so the roll never grows past the bore, at
+ * any explode position, by construction rather than by a clamp.
+ */
+export function drawnRoll(model: RollModel, exploded: number): DrawnRoll {
+  const e = Math.max(0, Math.min(1, Number.isFinite(exploded) ? exploded : 0));
+  const gain = 1 + EXPLODE_STACK_GAIN * e;
+  const gap = (EXPLODE_LANE_GAP_MM / model.unitMm) * e;
+  const span = model.envelopeRadius - model.mandrelRadius;
+  const advance = model.pitch * gain + 2 * gap;
+  const turns = Math.max(2, Math.min(model.turns, Math.floor(span / advance + 1e-9)));
+  const spiralTurns = Math.max(1, turns - 1);
+  const anode = model.anodeThickness * gain;
+  const separator = model.separatorThickness * gain;
+  const cathode = model.cathodeThickness * gain;
+  // The three ribbons tile one turn's advance exactly, at every explode
+  // position — which is what keeps the drawn roll a filled roll.
+  const ribbons: DrawnRibbon[] = [
+    { id: "anode_sheet", offset: 0, thickness: anode },
+    { id: "separator", offset: anode + gap, thickness: separator },
+    { id: "cathode_sheet", offset: anode + gap + separator + gap, thickness: cathode },
+  ];
+  const outerRadius = Math.min(model.mandrelRadius + turns * advance, model.envelopeRadius);
+  return {
+    turns,
+    spiralTurns,
+    advance,
+    gain,
+    ribbons,
+    outerRadius,
+    anodeOuterRadius: model.mandrelRadius + (turns - 1) * advance + anode,
+    declared: model.declared,
+  };
+}
+
+/**
+ * The band the drawn SEI film occupies, in cell units.
+ *
+ * The endpoints come from the document's own `physical.film.display` when it
+ * has one — they are fixed by the roll's radial clearance and by what is
+ * visible at a cell's scale, not by taste — and from the fallback constants
+ * otherwise. Whichever it is, the band is a magnification of a thickness
+ * measured in nanometres, which is why the document prints the factor: the
+ * card carries the thickness, the layer on screen is the magnification.
+ */
+export function filmBand(spec: CellSceneSpec): { min: number; max: number; declared: boolean } {
+  const display = (spec.physical?.film ?? null)?.display ?? null;
+  const unitMm = positive(spec.physical?.unitsMmPerCellUnit, 65.0);
+  if (display && display.drawnMinMm > 0 && display.drawnMaxMm > display.drawnMinMm) {
+    return {
+      min: display.drawnMinMm / unitMm,
+      max: display.drawnMaxMm / unitMm,
+      declared: true,
+    };
+  }
+  return {
+    min: CELL_GEOMETRY.seiFilm.anatomical,
+    max: CELL_GEOMETRY.seiFilm.dataMax,
+    declared: false,
+  };
+}
+
+/** The prismatic envelope, in cell units, from the same declared block. */
+export function prismaticModel(spec: CellSceneSpec): {
+  width: number;
+  thickness: number;
+  wallThickness: number;
+  declared: boolean;
+} {
+  const physical = spec.physical ?? null;
+  const unitMm = positive(physical?.unitsMmPerCellUnit, 65.0);
+  const prism = physical?.prismatic ?? null;
+  return {
+    width: positive(prism?.widthMm, 20.5) / unitMm,
+    thickness: positive(prism?.thicknessMm, 5.4) / unitMm,
+    wallThickness: positive(prism?.wallMm, 0.4) / unitMm,
+    declared: physical !== null && physical !== undefined,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Timeline: measured replay, then the platform's own projection
@@ -613,6 +857,22 @@ export interface BuiltScene {
   /** The data-scaling sentence in force, straight from the spec, or null. */
   scaleNote: string | null;
   formFactor: string;
+  /**
+   * What the winding actually is, and what is drawn — the numbers a host or a
+   * test needs to see that "drawn to the datasheet" is true of this build.
+   */
+  roll: {
+    declared: boolean;
+    turns: number;
+    drawnTurns: number;
+    pitchMm: number;
+    drawnPitchMm: number;
+    electrodeLengthM: number;
+    woundAreaCm2: number;
+    outerRadiusMm: number;
+    envelopeRadiusMm: number;
+    gain: number;
+  };
 }
 
 interface Placement {
@@ -621,15 +881,37 @@ interface Placement {
   drawn?: boolean;
 }
 
-function _rollRibbon(layer: { innerRadius: number; turns: number; pitch: number; thickness: number }, radialShift: number, height: number): Mesh {
+/**
+ * The wound ribbons, memoised.
+ *
+ * A real winding is 38 laps, and rebuilding three of those from scratch on
+ * every scrub tick costs most of a frame — but the winding does not depend on
+ * the cursor at all, only on the declared dimensions and the explode position,
+ * so the same three calls arrive over and over while a user drags the timeline.
+ * Meshes here are treated as immutable (every transform in this module copies),
+ * which is what makes handing the same one back twice safe.
+ */
+const _ribbonCache = new Map<string, Mesh>();
+const RIBBON_CACHE_LIMIT = 16;
+
+function _rollRibbon(
+  layer: { innerRadius: number; turns: number; pitch: number; thickness: number },
+  height: number,
+): Mesh {
+  const key = [layer.innerRadius, layer.turns, layer.pitch, layer.thickness, height].join("|");
+  const cached = _ribbonCache.get(key);
+  if (cached) return cached;
   const outline = spiralOutline({
-    innerRadius: layer.innerRadius + radialShift,
+    innerRadius: layer.innerRadius,
     turns: layer.turns,
     pitch: layer.pitch,
     thickness: layer.thickness,
     segmentsPerTurn: CELL_GEOMETRY.roll.segmentsPerTurn,
   });
-  return extrudeClosed(outline, height);
+  const mesh = extrudeClosed(outline, height);
+  if (_ribbonCache.size >= RIBBON_CACHE_LIMIT) _ribbonCache.clear();
+  _ribbonCache.set(key, mesh);
+  return mesh;
 }
 
 /**
@@ -641,24 +923,30 @@ function _rollRibbon(layer: { innerRadius: number; turns: number; pitch: number;
  */
 function _particlePositions(
   count: number,
-  anodeShift = 0,
-  cathodeShift = 0,
+  model: RollModel,
+  drawn: DrawnRoll,
 ): Array<[number, number, number]> {
   let state = 0x2f6e2b1;
   const rand = () => {
     state = (state * 1664525 + 1013904223) >>> 0;
     return state / 0xffffffff;
   };
-  const { anode, cathode, height } = CELL_GEOMETRY.roll;
+  const { height } = CELL_GEOMETRY.roll;
+  const anode = drawn.ribbons.find((ribbon) => ribbon.id === "anode_sheet") as DrawnRibbon;
+  const cathode = drawn.ribbons.find((ribbon) => ribbon.id === "cathode_sheet") as DrawnRibbon;
   const out: Array<[number, number, number]> = [];
   for (let i = 0; i < count; i++) {
     const inner = rand() < CELL_GEOMETRY.particles.anodeShare;
-    const band = inner ? anode : cathode;
-    // Particles ride their own coating when the stack is exploded, so the
-    // cloud never drifts away from the ribbons it belongs to.
-    const shift = inner ? anodeShift : cathodeShift;
+    const lane = inner ? anode : cathode;
+    // A particle rides a *turn* of its own coating: the annulus that ribbon
+    // actually occupies on that turn. So the cloud scales with the winding and
+    // never drifts off the layers it belongs to as the stack is exploded.
+    const turn = Math.min(drawn.turns - 1, Math.floor(rand() * drawn.turns));
     const radius =
-      shift + band.innerRadius + 0.002 + rand() * Math.max(0.004, band.turns * band.pitch - 0.004);
+      model.mandrelRadius +
+      turn * drawn.advance +
+      lane.offset +
+      lane.thickness * (0.25 + 0.5 * rand());
     const theta = rand() * Math.PI * 2;
     const y = (rand() - 0.5) * height * 0.94;
     out.push([radius * Math.cos(theta), y, radius * Math.sin(theta)]);
@@ -666,13 +954,39 @@ function _particlePositions(
   return out;
 }
 
-function _cylindricalPlacements(exploded: number, filmThickness: number): Record<string, Placement> {
-  const { canRadius, canSweep, canThickness, roll, explode } = CELL_GEOMETRY;
+function _cylindricalPlacements(
+  exploded: number,
+  filmThickness: number,
+  model: RollModel,
+  drawn: DrawnRoll,
+): Record<string, Placement> {
+  const { canSweep, roll, explode } = CELL_GEOMETRY;
+  const canRadius = model.canRadius;
+  const canThickness = model.canThickness;
   const casing = extrudeOpen(arcPoints(canRadius, canSweep, 64, Math.PI * 0.6), 1.0);
   const floorDisc = extrudeClosed(ringPoints(canRadius, 64), 0.012);
   const canMesh = mergeMeshes([casing, translateMesh(floorDisc, 0, -0.494, 0)]);
 
-  const anodeOuter = roll.anode.innerRadius + roll.anode.turns * roll.anode.pitch + roll.anode.thickness;
+  // One ribbon per drawn layer, each starting at its own place inside the turn
+  // and wound at the drawn advance — so the roll is the document's stack, not
+  // the renderer's idea of one.
+  const ribbon = (id: DrawnRibbon["id"], height: number): Mesh => {
+    const lane = drawn.ribbons.find((candidate) => candidate.id === id) as DrawnRibbon;
+    return _rollRibbon(
+      {
+        innerRadius: model.mandrelRadius + lane.offset,
+        turns: drawn.spiralTurns,
+        pitch: drawn.advance,
+        thickness: lane.thickness,
+      },
+      height,
+    );
+  };
+  // The film is the one drawn size that is not millimetres (see the spec's
+  // `schematic` list), so it is magnified with the stack it sits in rather than
+  // left at its assembled size inside a stack the explode just doubled.
+  const film = filmThickness * drawn.gain;
+  const anodeOuter = drawn.anodeOuterRadius;
 
   return {
     can: { mesh: canMesh, anchor: [canRadius * 0.98, 0.34, canRadius * 0.2] },
@@ -700,13 +1014,13 @@ function _cylindricalPlacements(exploded: number, filmThickness: number): Record
       mesh: translateMesh(boxMesh(0.05, 0.006, 0.02), 0.055, -roll.height / 2 - 0.012, 0),
       anchor: [-0.06, -roll.height / 2 - 0.05, 0],
     },
-    anode_sheet: { mesh: _rollRibbon(roll.anode, 0, roll.height), anchor: [0, roll.height / 2 + 0.06, 0] },
+    anode_sheet: { mesh: ribbon("anode_sheet", roll.height), anchor: [0, roll.height / 2 + 0.06, 0] },
     separator: {
-      mesh: _rollRibbon(roll.separator, explode.layerGap * exploded, roll.height),
+      mesh: ribbon("separator", roll.height),
       anchor: [0, -roll.height / 2 - 0.06, 0],
     },
     cathode_sheet: {
-      mesh: _rollRibbon(roll.cathode, explode.layerGap * exploded * 2, roll.height),
+      mesh: ribbon("cathode_sheet", roll.height),
       anchor: [0, roll.height / 2 + 0.14, 0],
     },
     electrolyte: {
@@ -714,41 +1028,55 @@ function _cylindricalPlacements(exploded: number, filmThickness: number): Record
       anchor: [0, -0.1, 0],
     },
     sei_film: {
-      mesh: extrudeClosed(
-        ringPoints(anodeOuter + explode.layerGap * exploded + filmThickness / 2, 48),
-        roll.height * 0.98,
-      ),
+      // The film is drawn where the SEI actually forms: on the anode's own
+      // surface, at the anode–separator boundary.
+      mesh: extrudeClosed(ringPoints(anodeOuter + film / 2, 48), roll.height * 0.98),
       anchor: [-0.05, 0.2, 0],
     },
     particles: { mesh: emptyMesh(), anchor: [0, -0.24, 0] },
   };
 }
 
-function _prismaticPlacements(exploded: number, filmThickness: number): Record<string, Placement> {
-  const { prismatic, roll, explode } = CELL_GEOMETRY;
-  const halfWidth = prismatic.width / 2;
+function _prismaticPlacements(
+  exploded: number,
+  filmThickness: number,
+  prism: { width: number; thickness: number; wallThickness: number },
+): Record<string, Placement> {
+  const { roll, explode } = CELL_GEOMETRY;
+  const width = prism.width;
+  const depth = prism.thickness;
+  const wall = Math.min(prism.wallThickness, depth / 4);
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
   // The shell: four walls and a floor, drawn translucent so the stack is visible.
   const walls = mergeMeshes([
-    translateMesh(boxMesh(prismatic.width, 1.0, prismatic.thickness), 0, 0, prismatic.depth / 2),
-    translateMesh(boxMesh(prismatic.width, 1.0, prismatic.thickness), 0, 0, -prismatic.depth / 2),
-    translateMesh(boxMesh(prismatic.thickness, 1.0, prismatic.depth), halfWidth, 0, 0),
-    translateMesh(boxMesh(prismatic.thickness, 1.0, prismatic.depth), -halfWidth, 0, 0),
-    translateMesh(boxMesh(prismatic.width, prismatic.thickness, prismatic.depth), 0, -0.5, 0),
+    translateMesh(boxMesh(width, 1.0, wall), 0, 0, halfDepth - wall / 2),
+    translateMesh(boxMesh(width, 1.0, wall), 0, 0, -(halfDepth - wall / 2)),
+    translateMesh(boxMesh(wall, 1.0, depth - 2 * wall), halfWidth - wall / 2, 0, 0),
+    translateMesh(boxMesh(wall, 1.0, depth - 2 * wall), -(halfWidth - wall / 2), 0, 0),
+    translateMesh(boxMesh(width, wall, depth), 0, -0.5 + wall / 2, 0),
   ]);
   const slab = (z: number, thickness: number, height: number) =>
-    translateMesh(boxMesh(prismatic.width * 0.9, height, thickness), 0, 0, z);
+    translateMesh(boxMesh(width * 0.9, height, thickness), 0, 0, z);
 
-  const anodeZ = -0.028;
-  const cathodeZ = 0.028;
+  // The stack is a diagram (a prismatic cell's layer count is a winding or
+  // stacking choice this platform's data does not carry), but it is confined
+  // *by construction*: the outermost slab the explode can reach is one wall
+  // thickness inside the declared envelope, at any explode position.
+  const slabThickness = Math.min(0.012, depth * 0.22);
+  const zLimit = Math.max(slabThickness, halfDepth - wall - slabThickness / 2);
+  const spread = (base: number): number => base + (Math.sign(base) * zLimit - base) * exploded;
+  const anodeZ = spread(-Math.min(0.028, zLimit * 0.8));
+  const cathodeZ = spread(Math.min(0.028, zLimit * 0.8));
   return {
-    can: { mesh: walls, anchor: [halfWidth, 0.3, prismatic.depth / 2] },
+    can: { mesh: walls, anchor: [halfWidth, 0.3, halfDepth] },
     cap: {
-      mesh: translateMesh(boxMesh(prismatic.width, 0.02, prismatic.depth), 0, 0.5 + explode.cap * exploded, 0),
+      mesh: translateMesh(boxMesh(width, 0.02, depth), 0, 0.5 + explode.cap * exploded, 0),
       anchor: [halfWidth, 0.5 + explode.cap * exploded, 0],
     },
     vent: {
       mesh: translateMesh(boxMesh(0.06, 0.008, 0.04), 0.08, 0.51 + explode.vent * exploded, 0),
-      anchor: [-0.08, 0.511 + explode.vent * exploded, 2 * prismatic.depth],
+      anchor: [-0.08, 0.511 + explode.vent * exploded, 2 * depth],
     },
     terminal_pos: {
       mesh: translateMesh(extrudeClosed(ringPoints(0.03, 24), 0.04), 0.11, 0.53 + explode.terminalPos * exploded, 0),
@@ -766,15 +1094,15 @@ function _prismaticPlacements(exploded: number, filmThickness: number): Record<s
       mesh: translateMesh(boxMesh(0.02, 0.05, 0.006), 0.09, roll.height / 2 + 0.03, cathodeZ),
       anchor: [0.1, roll.height / 2 + 0.08, cathodeZ],
     },
-    anode_sheet: { mesh: slab(anodeZ, 0.012, roll.height), anchor: [0, roll.height / 2 + 0.12, anodeZ] },
+    anode_sheet: { mesh: slab(anodeZ, slabThickness, roll.height), anchor: [0, roll.height / 2 + 0.12, anodeZ] },
     separator: {
-      mesh: slab(0, 0.008, roll.height * 0.98),
+      mesh: slab(0, slabThickness * 0.67, roll.height * 0.98),
       anchor: [0, -roll.height / 2 - 0.06, 0],
     },
-    cathode_sheet: { mesh: slab(cathodeZ, 0.012, roll.height), anchor: [0, roll.height / 2 + 0.2, cathodeZ] },
-    electrolyte: { mesh: slab(0, prismatic.depth - 0.01, roll.height * 0.99), anchor: [0, -0.14, 0] },
+    cathode_sheet: { mesh: slab(cathodeZ, slabThickness, roll.height), anchor: [0, roll.height / 2 + 0.2, cathodeZ] },
+    electrolyte: { mesh: slab(0, depth - 2 * wall - slabThickness, roll.height * 0.99), anchor: [0, -0.14, 0] },
     sei_film: {
-      mesh: slab(anodeZ + 0.008 + filmThickness / 2, filmThickness, roll.height * 0.98),
+      mesh: slab(anodeZ + slabThickness * 0.6 + filmThickness / 2, filmThickness, roll.height * 0.98),
       anchor: [-halfWidth * 0.5, 0.22, anodeZ],
     },
     particles: { mesh: emptyMesh(), anchor: [0, -0.26, 0] },
@@ -801,32 +1129,45 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   const partCursor = projected ? Math.max(0, timeline.measuredCount - 1) : cursor;
 
   const soh = timeline.sohPct[cursor] ?? null;
-  const seiAtCursor = readingAt(spec.series.seiPct, partCursor).value;
   const splitIdentified = spec.physics.splitIdentified === true;
-
-  // The drawn film's thickness maps 0 → the anatomical minimum and the largest
-  // fitted value in this cell's own record → the maximum. The top of the range
-  // is read from the data, not fixed here, so a cell with a small film is not
-  // drawn identically to a cell with a large one.
+  // The drawn film's cursor reading comes from the series its own scale names,
+  // so a document that states a thickness in nanometres drives the geometry
+  // with it, and a document that only states a fitted share still renders.
   const seiScale = spec.geometryScales.sei_film;
+  const filmSeries =
+    seiScale?.from === "series.seiThicknessNm" ? (spec.series.seiThicknessNm ?? null) : spec.series.seiPct;
+  const seiAtCursor = readingAt(filmSeries, partCursor).value;
+
+  // The drawn film's thickness maps the cell's own derived nanometres — the
+  // film it left formation with → the largest the fit puts on it — onto the
+  // band `filmBand` returns. Both endpoints are read from the document, so a
+  // cell with a small film is not drawn identically to a cell with a large one,
+  // and the magnification the band implies is the document's own number rather
+  // than something this file chose.
   const filmScaled = opts.dataScaled && splitIdentified;
+  const band = filmBand(spec);
   const filmFraction = filmScaled
     ? normalize(
         seiAtCursor,
         seiScale?.displayMin ?? 0,
-        seiScale?.displayMax ?? seriesMax(spec.series.seiPct),
+        // Older documents carry the fitted share rather than a thickness: fall
+        // back to whatever series the scale actually points at.
+        seiScale?.displayMax ?? seriesMax(spec.series.seiThicknessNm ?? spec.series.seiPct),
         0,
       )
     : 0;
-  const filmThickness = filmScaled
-    ? CELL_GEOMETRY.seiFilm.anatomical +
-      filmFraction * (CELL_GEOMETRY.seiFilm.dataMax - CELL_GEOMETRY.seiFilm.anatomical)
-    : CELL_GEOMETRY.seiFilm.anatomical;
+  const filmThickness = filmScaled ? band.min + filmFraction * (band.max - band.min) : band.min;
 
+  // The winding the scene draws: derived from the document's declared
+  // millimetres, and rebuilt at each explode position (the explode is an
+  // un-winding, and the assembled state is the real roll).
+  const model = rollModel(spec);
+  const drawn = drawnRoll(model, exploded);
+  const prism = prismaticModel(spec);
   const placements =
     spec.cell.formFactor === "prismatic"
-      ? _prismaticPlacements(exploded, filmThickness)
-      : _cylindricalPlacements(exploded, filmThickness);
+      ? _prismaticPlacements(exploded, filmThickness, prism)
+      : _cylindricalPlacements(exploded, filmThickness, model, drawn);
 
   // The particle cloud: a legibility-limited sample of the coating volume. The
   // *lost* fraction follows the fitted linear term only when the split is
@@ -838,11 +1179,7 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   // "3.0 %/cycle" is not a fraction of anything.
   const lostFraction =
     splitIdentified && opts.dataScaled && seiShare !== null ? normalize(100 - seiShare, 0, 100, 0) : 0;
-  const cloud = _particlePositions(
-    CELL_GEOMETRY.particles.count,
-    0,
-    2 * CELL_GEOMETRY.explode.layerGap * exploded,
-  );
+  const cloud = _particlePositions(CELL_GEOMETRY.particles.count, model, drawn);
   const liveCount = Math.round(cloud.length * (1 - lostFraction));
   if (placements.particles) {
     placements.particles.mesh = mergeMeshes(
@@ -981,8 +1318,8 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
 
   const radius =
     spec.cell.formFactor === "prismatic"
-      ? Math.hypot(CELL_GEOMETRY.prismatic.width / 2, CELL_GEOMETRY.prismatic.depth / 2)
-      : CELL_GEOMETRY.canRadius;
+      ? Math.hypot(prism.width / 2, prism.thickness / 2)
+      : model.canRadius;
   const scaleNote = opts.dataScaled ? spec.geometryScales[dataScaledKey(spec)]?.note ?? null : null;
 
   return {
@@ -1001,6 +1338,18 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
     bounds: { radius, height: 1.0 },
     scaleNote,
     formFactor: spec.cell.formFactor,
+    roll: {
+      declared: drawn.declared,
+      turns: model.turns,
+      drawnTurns: drawn.turns,
+      pitchMm: model.pitchMm,
+      drawnPitchMm: drawn.advance * model.unitMm,
+      electrodeLengthM: model.electrodeLengthM,
+      woundAreaCm2: model.woundAreaCm2,
+      outerRadiusMm: drawn.outerRadius * model.unitMm,
+      envelopeRadiusMm: model.envelopeRadius * model.unitMm,
+      gain: drawn.gain,
+    },
   };
 }
 

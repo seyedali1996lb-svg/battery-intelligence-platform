@@ -7,9 +7,9 @@ Neither host can run Node, so the renderer has to already exist here.
 
 | File | What it is |
 | --- | --- |
-| `cell_scene.js` | The whole scene engine, minified, three.js included (~578 kB, ~146 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
+| `cell_scene.js` | The whole scene engine, minified, three.js included (~591 kB, ~150 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
 | `index.html` | The standalone host: no framework, no build step. Loads the bundle above and a scene document, and does everything the Streamlit page and the React SPA do. |
-| `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document. |
+| `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document — including the `physical` block, whose derivations (turn count, pitch, implied electrode length) are recomputed by the renderer and compared against the producer's, and the film's chain, whose nm-per-%-lithium-inventory factor the test re-derives from the tagged assumptions and whose **drawn band the renderer reads out of the document** rather than choosing for itself. |
 | `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit. |
 
 ## Regenerating (after any change under `frontend/src/scene/`)
@@ -77,9 +77,13 @@ page with `?cell=B0005` (or another real cell) and check:
 1. **The cell is closed.** Orbit under and behind it: no hole where the casing
    should be, no face that vanishes as you cross behind it. (Casing is drawn as a
    cut-away arc — the *shape* is open, but nothing should flicker or disappear.)
-2. **The roll reads as a roll.** Three nested coils, anode inside separator
-   inside cathode, none poking through another or through the casing at any
-   explode position.
+2. **The roll reads as a roll.** At rest it is a *dense* winding — 38 laps of a
+   0.175 mm stack, each layer a fraction of a pixel wide, so it should look like
+   the tight spiral a jelly roll is and not like a spring with air in it. As you
+   drag "Exploded view" the stack magnifies and the lanes open between the three
+   ribbons, so with the slider at 100% you can count the layers. Nothing may
+   touch or pass through the casing at any explode position — that is arithmetic
+   in the model, not a clamp, so if it happens the model is wrong.
 3. **Drag "Exploded view" to 100%.** The cap, vent and positive terminal lift in
    order, the coils separate radially, and everything stays inside the can.
 4. **Scrub the life cursor.** The state gauge on the casing fills as SOH falls;
@@ -101,10 +105,30 @@ page with `?cell=B0005` (or another real cell) and check:
    Clicking a row in the "Anatomy" list turns the camera to that part's side and
    dims the rest.
 8. **Toggle "Data-scaled geometry".** The caption under the canvas prints the
-   mapping in use — and the SEI film only grows when the split is identified
-   (an unidentified cell prints the *total fade* mapping instead and the film
-   stays architecture).
+   mapping in use. For the film that means the whole chain and its magnification:
+   the nm-per-%-LLI factor, the drawn band, the share of initial capacity the
+   band's top represents, and the factor the drawing magnifies by (a cell at
+   20% lithium-inventory loss reports ~1650 nm drawn at ~190×). The film's card
+   reads in **nanometres** — scrub the cursor and it moves (156 nm at cycle 1 to
+   1647 nm at the end of a long record) — and it only grows when the split is
+   identified: an unidentified cell prints the *total fade* mapping instead, says
+   the thickness is withheld, and leaves the film as architecture.
 9. **Toggle "Strip the casing".** The shell goes, the cell stays readable, and
    nothing else changes.
 10. **Colours agree with the rest of the app.** A cell the Streamlit UI calls
     "Degrading" is amber on the casing gauge and in the legend here too.
+11. **The film is a thickness before it is a drawing.** The card's number is
+    derived from the fitted lithium loss through stated assumptions (Li₂CO₃ at
+    its bulk density over the anode's own coated area), and the drawn layer is a
+    magnification of it — stated, never left to be read off the picture. If the
+    card ever shows a number while the disclosures say the √n channel is not
+    identified, or the drawn film moves when you edit `series.seiPct` but not
+    `series.seiThicknessNm`, that is a defect: the card and the geometry are
+    supposed to be the same number.
+12. **It is lit, not just drawn.** The can and the foils should carry a
+    reflection (there is a procedural environment behind them), the highlights
+    should roll off rather than clip to white, and the cell should cast a soft
+    shadow onto the stage. Watch the console: three removes APIs between minor
+    versions while still exporting their constants, so a warning here is a real
+    defect and there is a test (`src/scene/render.test.ts`) pinning the ones the
+    renderer is allowed to name.

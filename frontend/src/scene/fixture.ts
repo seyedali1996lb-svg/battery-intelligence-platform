@@ -9,7 +9,7 @@
  */
 
 import { ANATOMY_PART_IDS } from "./types.ts";
-import type { CellSceneSpec, PartId, ScenePart, Series } from "./types.ts";
+import type { CellSceneSpec, FilmModel, PartId, PhysicalModel, ScenePart, Series } from "./types.ts";
 
 const LABELS: Record<PartId, string> = {
   can: "Cell casing",
@@ -68,9 +68,151 @@ export interface FixtureOptions {
   unavailable?: PartId[];
   projection?: "none" | "refused" | "available";
   emphasis?: "sei" | "particles" | "neutral";
+  /**
+   * The document's declared dimensions: the 18650 block by default, omitted
+   * entirely (`"absent"`), or overridden field by field.
+   */
+  physical?: "declared" | "absent" | Partial<PhysicalModel>;
+}
+
+/**
+ * The same 18650 figures `src/cell_scene.py` declares, so the fixture's scene
+ * is the scene a real document produces.
+ */
+export function makePhysical(formFactor: "cylindrical" | "prismatic" | "unknown" = "cylindrical"): PhysicalModel {
+  const stackMm = {
+    copperFoil: 0.010,
+    anodeCoating: 0.070,
+    separator: 0.020,
+    cathodeCoating: 0.060,
+    aluminiumFoil: 0.015,
+  };
+  const pitchMm = Object.values(stackMm).reduce((total, mm) => total + mm, 0);
+  const unitMm = 65.0;
+  const wallMm = 0.25;
+  const clearanceMm = 0.2;
+  const mandrelDiameterMm = 4.0;
+  const envelopeRadiusMm = 18.4 / 2 - wallMm - clearanceMm;
+  const turns = Math.floor((envelopeRadiusMm - mandrelDiameterMm / 2) / pitchMm);
+  const drawnOuterRadiusMm = mandrelDiameterMm / 2 + turns * pitchMm;
+  let lengthMm = 0;
+  for (let i = 0; i < turns; i++) {
+    lengthMm += 2 * Math.PI * (mandrelDiameterMm / 2 + (i + 0.5) * pitchMm);
+  }
+  return {
+    formFactor,
+    format: "18650 — 18.4 mm x 65.0 mm, the format's published envelope",
+    unitsMmPerCellUnit: unitMm,
+    // Only the envelope this cell actually has is declared — the producer
+    // nulls the other, and a fixture that kept both would stop matching the
+    // real document's shape.
+    prismatic:
+      formFactor === "prismatic"
+        ? { widthMm: 20.5, thicknessMm: 5.4, heightMm: 64.0, wallMm: 0.4 }
+        : null,
+    cylindrical:
+      formFactor === "prismatic"
+        ? null
+        : {
+            diameterMm: 18.4,
+            heightMm: 65.0,
+            wallMm,
+            rollClearanceMm: clearanceMm,
+            mandrelDiameterMm,
+          },
+    roll: {
+      stackMm,
+      pitchMm,
+      turns,
+      mandrelDiameterMm,
+      envelopeDiameterMm: 2 * envelopeRadiusMm,
+      drawnOuterDiameterMm: 2 * drawnOuterRadiusMm,
+      drawnRibbonsMm: {
+        anode: stackMm.copperFoil + stackMm.anodeCoating,
+        separator: stackMm.separator,
+        cathode: stackMm.aluminiumFoil + stackMm.cathodeCoating,
+      },
+      electrodeLengthM: lengthMm / 1000,
+    } as PhysicalModel["roll"],
+    provenance: {
+      diameterMm: "format-standard",
+      heightMm: "format-standard",
+      stackMm: "typical for a 18650-class cell, not measured for this cell",
+      turns: "derived",
+      electrodeLengthM: "derived",
+    },
+    note: "The winding is drawn to these millimetres.",
+    schematic: ["the cap, vent and terminal sizes"],
+    // The film, in nanometres, as the producer derives it — with the drawn band
+    // and the magnification it implies. Kept on the fixture so the renderer's
+    // band, its endpoints and the geometry are all exercised against the same
+    // shape of document the app produces.
+    film: makeFilm(formFactor),
+  };
+}
+
+/** The fixture's film block: a stated chain, and a stated magnification. */
+export function makeFilm(
+  formFactor: "cylindrical" | "prismatic" | "unknown" = "cylindrical",
+  initialNm = 5.0,
+  nmPerPctLli = 80.0,
+): FilmModel {
+  const identified = formFactor !== "prismatic";
+  return {
+    modelledAs: "a compact Li₂CO₃ film on the anode",
+    available: identified,
+    identified,
+    assumptions: {
+      formulaUnit: "Li₂CO₃",
+      lithiumPerFormulaUnit: 2.0,
+      molarMassGPerMol: 73.89,
+      densityGPerCm3: 2.11,
+      coatedWidthMm: 58.0,
+      anodeFaces: 2.0,
+      initialNm,
+    },
+    provenance: { formulaUnit: "assumed — Li₂CO₃ is the phase most often reported" },
+    derivation: identified
+      ? {
+          capacity0Ah: 2.0,
+          electrodeLengthM: 1.2714,
+          coatedWidthMm: 58.0,
+          anodeAreaCm2: 1474.824,
+          molarVolumeCm3PerMol: 35.019,
+          nmPerPctLli,
+          maxPctLli: 20.0,
+          maxNm: initialNm + 20 * nmPerPctLli,
+          // The top of the scale: a share of initial capacity, not this record's
+          // own maximum, so two cells' films stay comparable by eye.
+          displayMaxNm: initialNm + 30 * nmPerPctLli,
+          displayMaxPctLli: 30.0,
+          chain: "nm = (Q₀·(LLI%/100)·3600 / F) / (Li per Li₂CO₃) · (M/ρ) / coated area · 1e7",
+          unitMm: 65.0,
+        }
+      : null,
+    display: {
+      drawnMinMm: 0.0975,
+      drawnMaxMm: 0.312,
+      drawnMinNm: 97500.0,
+      drawnMaxNm: 312000.0,
+      magnificationAtMaxX: identified ? 195.0 : null,
+      growthMagnificationX: identified ? 198.1 : null,
+      note: "The drawn SEI layer is a magnification, not a thickness.",
+    },
+    reason: identified
+      ? null
+      : "The thickness is withheld because this cell's data does not identify the lithium-inventory channel.",
+    note: "Read the nanometres as an estimate whose assumptions bound it from above.",
+  };
 }
 
 export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
+  const physical =
+    options.physical === "absent"
+      ? null
+      : options.physical && typeof options.physical === "object"
+        ? { ...makePhysical(options.formFactor), ...options.physical }
+        : makePhysical(options.formFactor);
   const n = options.n ?? 120;
   const fadePerCycle = options.fadePerCycle ?? 0.1;
   const series = (fn: (i: number) => number): Series =>
@@ -90,6 +232,13 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
     (i) => (options.lamAtStart ?? 0.4) + ((options.lamAtEnd ?? 3.0) - (options.lamAtStart ?? 0.4)) * (i / (n - 1)),
   );
   const fadeModelPct = seiPct.map((v, i) => (v ?? 0) + (lamPct[i] ?? 0));
+  // The same fitted term as a thickness: the fixture applies the producer's
+  // nm-per-percent scale, so the series the renderer reads is a nanometre one.
+  const filmInitialNm = 5.0;
+  const filmNmPerPct = 80.0;
+  const seiThicknessNm = seiPct.map((v) =>
+    v === null ? null : filmInitialNm + v * filmNmPerPct,
+  );
   const seiSharePct = seiPct.map((v, i) => {
     const total = (v ?? 0) + (lamPct[i] ?? 0);
     return total > 0 ? ((v ?? 0) / total) * 100 : null;
@@ -113,12 +262,18 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
     return {
       id,
       label: LABELS[id],
-      value: id === "sei_film" ? seiPct[n - 1] : id === "particles" ? lamPct[n - 1] : last,
-      unit: id === "sei_film" || id === "particles" ? "% of initial capacity (fitted)" : "",
-      provenance: id === "sei_film" || id === "particles" ? "fitted" : values ? "measured" : "",
+      value: id === "sei_film" ? seiThicknessNm[n - 1] : id === "particles" ? lamPct[n - 1] : last,
+      unit:
+        id === "sei_film"
+          ? "nm (derived from the fitted lithium-inventory loss)"
+          : id === "particles"
+            ? "% of initial capacity (fitted)"
+            : "",
+      provenance: id === "sei_film" ? "derived" : id === "particles" ? "fitted" : values ? "measured" : "",
       meaning: `${LABELS[id]} — what this scene claims, in words.`,
       law: "declared law",
-      series: isUnavailable ? null : id === "sei_film" ? seiPct : id === "particles" ? lamPct : values,
+      series:
+        isUnavailable ? null : id === "sei_film" ? seiThicknessNm : id === "particles" ? lamPct : values,
       available: !isUnavailable,
       unavailableReason: isUnavailable
         ? "no measurement in the cycle-summary data separates this part"
@@ -170,7 +325,9 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
       lamPct,
       seiSharePct,
       fadeModelPct,
+      seiThicknessNm,
     },
+    physical,
     record: {
       firstCycle: 1,
       lastCycle: n,
@@ -218,11 +375,11 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
       },
       sei_film: {
         target: "shellThickness",
-        from: "series.seiPct",
-        unit: "% of initial capacity (fitted)",
-        displayMin: 0,
-        displayMax: 20,
-        note: "The film's drawn thickness is the fitted √n lithium-inventory loss.",
+        from: "series.seiThicknessNm",
+        unit: "nm (derived from the fitted lithium-inventory loss)",
+        displayMin: filmInitialNm,
+        displayMax: filmInitialNm + 30 * filmNmPerPct,
+        note: "The film's drawn thickness is the fitted √n lithium-inventory loss, in nanometres.",
       },
       particles: {
         target: "lostFraction",

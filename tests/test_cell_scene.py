@@ -30,6 +30,7 @@ from cell_scene import (
     FORM_FACTOR_PRISMATIC,
     FORM_FACTOR_UNKNOWN,
     MESH_PART_IDS,
+    PhysicalModel,
     SCENE_SCHEMA_VERSION,
     build_cell_scene,
     build_cell_scene_from_sources,
@@ -513,7 +514,8 @@ def test_geometry_scales_name_the_series_they_read_and_promise_nothing_else():
     for key, scale in scales.items():
         assert scale["target"]
         assert scale["from"] in ("series.seiPct", "series.lamPct", "series.fadeModelPct",
-                                 "series.temperatureC", "series.sopPct", "series.resistanceOhm"), key
+                                 "series.temperatureC", "series.sopPct", "series.resistanceOhm",
+                                 "series.seiThicknessNm"), key
         assert scale["note"], f"{key} has no disclosed mapping"
     # Every scale that points at a per-cycle series must point at one that exists.
     series_names = set(spec["series"].keys())
@@ -631,3 +633,276 @@ def test_a_refused_route_keeps_its_own_words_in_the_spec(monkeypatch):
     assert spec["projection"]["available"] is False
     assert "no regime row clears the floor" in spec["projection"]["reason"]
     assert any("stops at the last measured cycle" in text for text in spec["disclosures"])
+
+
+# ---------------------------------------------------------------------------
+# The physical model: the winding is drawn from these millimetres
+# ---------------------------------------------------------------------------
+
+def test_the_physical_block_declares_a_dimension_for_every_drawn_size():
+    spec = _spec()
+    physical = spec["physical"]
+    assert physical["formFactor"] == FORM_FACTOR_CYLINDRICAL
+    cyl = physical["cylindrical"]
+    assert cyl["diameterMm"] == pytest.approx(18.4)
+    assert cyl["heightMm"] == pytest.approx(65.0)
+    assert physical["unitsMmPerCellUnit"] == pytest.approx(cyl["heightMm"])
+    roll = physical["roll"]
+    # The stack tiles the pitch exactly: the three drawn ribbons are the anode
+    # coating on its copper, the separator, and the cathode coating on its
+    # aluminium, and nothing is left over.
+    stack = roll["stackMm"]
+    assert roll["pitchMm"] == pytest.approx(sum(stack.values()))
+    assert roll["drawnRibbonsMm"]["anode"] == pytest.approx(stack["copperFoil"] + stack["anodeCoating"])
+    assert roll["drawnRibbonsMm"]["separator"] == pytest.approx(stack["separator"])
+    assert roll["drawnRibbonsMm"]["cathode"] == pytest.approx(
+        stack["aluminiumFoil"] + stack["cathodeCoating"]
+    )
+    assert sum(roll["drawnRibbonsMm"].values()) == pytest.approx(roll["pitchMm"])
+
+
+def test_the_turn_count_is_derived_from_the_dimensions_not_chosen():
+    roll = _spec()["physical"]["roll"]
+    span = roll["envelopeDiameterMm"] / 2 - roll["mandrelDiameterMm"] / 2
+    expected = int(span // roll["pitchMm"])
+    assert roll["turns"] == expected
+    # …and the roll it describes fills that envelope without leaving it.
+    assert roll["drawnOuterDiameterMm"] <= roll["envelopeDiameterMm"]
+    assert roll["drawnOuterDiameterMm"] > 0.95 * roll["envelopeDiameterMm"]
+    # What the winding implies for the electrode, reported for checking: the sum
+    # of the turn circumferences, which for an 18650-class stack and envelope is
+    # a metre of electrode, not a few centimetres.
+    assert 0.5 < roll["electrodeLengthM"] < 2.0
+
+
+def test_the_roll_may_not_be_drawn_wider_than_the_can_that_holds_it():
+    cyl = _spec()["physical"]["cylindrical"]
+    roll = _spec()["physical"]["roll"]
+    assert cyl["rollClearanceMm"] > 0, "a roll that touches the wall cannot be inserted"
+    assert roll["envelopeDiameterMm"] + 2 * cyl["wallMm"] + 2 * cyl["rollClearanceMm"] == pytest.approx(
+        cyl["diameterMm"]
+    )
+
+
+def test_every_declared_dimension_says_where_it_came_from():
+    physical = _spec()["physical"]
+    assert physical["provenance"]["diameterMm"] == "format-standard"
+    assert physical["provenance"]["turns"] == "derived"
+    assert physical["provenance"]["mandrelDiameterMm"] == "assumed"
+    assert "format-standard" not in physical["provenance"]["stackMm"]
+    assert physical["note"], "the block must explain what it is"
+    assert physical["schematic"], "and name what is not to a datasheet"
+
+
+def test_a_prismatic_cell_declares_its_envelope_and_admits_its_stack_is_a_diagram():
+    physical = PhysicalModel(FORM_FACTOR_PRISMATIC, "1.1 Ah prismatic").block()
+    assert physical["formFactor"] == FORM_FACTOR_PRISMATIC
+    assert physical["prismatic"]["widthMm"] == pytest.approx(20.5)
+    assert physical["prismatic"]["thicknessMm"] == pytest.approx(5.4)
+    assert physical["cylindrical"] is None
+    assert physical["roll"] is None, "a prismatic cell is not a winding"
+    assert any("stack" in item for item in physical["schematic"])
+    assert "diagram of a stacked cell" in physical["note"]
+    # A source that really is prismatic reaches that same block through the spec.
+    spec = _spec(cell_id="MLP-a1")
+    if spec["cell"]["formFactor"] == FORM_FACTOR_PRISMATIC:
+        assert spec["physical"]["roll"] is None
+        assert any("diagram of a stacked cell" in d for d in spec["disclosures"])
+
+
+def test_an_undeclared_form_factor_is_drawn_as_the_default_and_says_so():
+    physical = PhysicalModel(FORM_FACTOR_UNKNOWN, "").block()
+    assert physical["formFactor"] == FORM_FACTOR_UNKNOWN
+    assert physical["roll"] is not None, "the fallback envelope is still declared"
+    # …and it is the same 18650 block a declared cylindrical cell gets, so the
+    # drawing is unchanged — only the claim about it is.
+    assert physical["roll"]["turns"] == PhysicalModel(FORM_FACTOR_CYLINDRICAL, "x").block()["roll"]["turns"]
+
+
+def test_the_disclosure_states_the_winding_it_actually_drew():
+    spec = _spec()
+    roll = spec["physical"]["roll"]
+    sentence = next(d for d in spec["disclosures"] if "foil-to-foil stack" in d)
+    assert f"{roll['pitchMm']} mm foil-to-foil stack" in sentence
+    assert f"{roll['turns']} turns" in sentence
+    assert f"{roll['electrodeLengthM']} m electrode" in sentence
+    # The film used to be disclosed as a legibility-scaled metaphor; what must
+    # be in this sentence now is that its *thickness* is derived and its drawn
+    # layer magnified — the two facts a reader has to keep apart.
+    assert "SEI film's thickness *is* derived" in sentence
+    assert "magnified" in sentence
+
+
+# ---------------------------------------------------------------------------
+# The SEI film's thickness: derived from the fitted loss, magnified to be seen
+# ---------------------------------------------------------------------------
+
+def _identified(monkeypatch, beta_sei=0.01, beta_lam=0.0002):
+    """Reach the identified branch with a substantial √n term.
+
+    The fit on the synthetic frame puts β_sei below its own standard error (which
+    is why the refusal tests above are real data tests), so the identified branch
+    supplies the betas the fit would have returned for a cell whose film is
+    actually identified.
+    """
+    import cell_scene
+    real = cell_scene.fit_physics
+    monkeypatch.setattr(cell_scene, "fit_physics", lambda df: {
+        **real(df), "splitIdentified": True, "splitReason": None,
+        "seiTStat": 9.0, "lamTStat": 4.0,
+        "betaSei": beta_sei, "betaLam": beta_lam,
+    })
+
+
+def test_the_film_chain_is_arithmetic_a_reader_can_re_do():
+    """The nm-per-percent factor must fall out of the stated assumptions and the
+    cell's own capacity and area. That is the whole difference between a derived
+    thickness and a drawing constant."""
+    import cell_scene
+    physical = PhysicalModel(FORM_FACTOR_CYLINDRICAL, "cylindrical").block()
+    film = cell_scene.film_model(physical, 1.8026, 20.0)
+    assert film["available"] and film["identified"]
+    a, d = film["assumptions"], film["derivation"]
+    for key in a:
+        assert film["provenance"].get(key), f"{key} is assumed without saying so"
+    molar_volume = a["molarMassGPerMol"] / a["densityGPerCm3"]
+    area_cm2 = a["anodeFaces"] * (d["electrodeLengthM"] * 100.0) * (a["coatedWidthMm"] / 10.0)
+    mol_film = (0.01 * d["capacity0Ah"] * 3600.0 / 96485.33212) / a["lithiumPerFormulaUnit"]
+    # The block rounds what it reports; the chain is checked at that precision.
+    assert d["molarVolumeCm3PerMol"] == pytest.approx(molar_volume, rel=1e-4)
+    assert d["anodeAreaCm2"] == pytest.approx(area_cm2, rel=1e-4)
+    assert d["nmPerPctLli"] == pytest.approx(mol_film * molar_volume / area_cm2 * 1e7, rel=1e-6)
+    assert d["maxNm"] == pytest.approx(a["initialNm"] + 20.0 * d["nmPerPctLli"], rel=1e-5)
+    assert d["chain"]
+    # A plausible order of magnitude for a wound graphite anode: tens to
+    # thousands of nanometres, not ångströms and not millimetres.
+    assert 10.0 < d["nmPerPctLli"] < 1000.0
+
+
+def test_the_thickness_series_is_the_fitted_term_rescaled(monkeypatch):
+    _identified(monkeypatch)
+    spec = _spec()
+    sei = spec["series"]["seiPct"]
+    nm = spec["series"]["seiThicknessNm"]
+    a = spec["physical"]["film"]["assumptions"]
+    per_pct = spec["physical"]["film"]["derivation"]["nmPerPctLli"]
+    assert len(nm) == len(sei)
+    for pct, thickness in zip(sei, nm):
+        if pct is None:
+            assert thickness is None, "a gap in the fit must stay a gap in the thickness"
+        else:
+            assert thickness == pytest.approx(a["initialNm"] + pct * per_pct)
+    assert nm[-1] > 100.0, "no film growth in the fixture to draw"
+
+
+def test_the_film_card_reports_nanometres(monkeypatch):
+    _identified(monkeypatch)
+    spec = _spec()
+    card = next(p for p in spec["parts"] if p["id"] == "sei_film")
+    nm = [v for v in spec["series"]["seiThicknessNm"] if v is not None]
+    assert card["value"] == pytest.approx(nm[-1])
+    assert card["unit"].startswith("nm")
+    assert card["provenance"] == "derived", "a derived number is not a fitted one"
+    assert card["series"] == spec["series"]["seiThicknessNm"]
+    assert card["law"] == spec["physical"]["film"]["derivation"]["chain"]
+    assert card["available"] is True
+
+
+def test_the_disclosure_states_the_thickness_and_the_magnification_separately(monkeypatch):
+    """Two questions, two sentences: how thick the film is, and what the layer a
+    viewer is looking at is worth. Conflating them is what made the old drawing
+    a metaphor."""
+    _identified(monkeypatch)
+    spec = _spec()
+    film = spec["physical"]["film"]
+    d, display = film["derivation"], film["display"]
+    thickness = next(x for x in spec["disclosures"] if "SEI film's thickness is derived" in x)
+    assert f"{d['nmPerPctLli']} nm" in thickness
+    assert f"{d['anodeAreaCm2']} cm²" in thickness
+    assert film["note"] in thickness
+    drawn = next(x for x in spec["disclosures"] if "drawn SEI layer" in x)
+    assert "magnification" in drawn
+    assert display["note"] in drawn
+
+
+def test_the_drawn_band_and_its_magnification_are_the_documents_own_numbers(monkeypatch):
+    _identified(monkeypatch)
+    spec = _spec()
+    film = spec["physical"]["film"]
+    d, display = film["derivation"], film["display"]
+    assert display["drawnMaxMm"] > display["drawnMinMm"] > 0
+    assert display["drawnMaxNm"] == pytest.approx(display["drawnMaxMm"] * 1e6, rel=1e-9)
+    assert display["magnificationAtMaxX"] == pytest.approx(display["drawnMaxNm"] / d["maxNm"], rel=1e-3)
+    # The magnification is printed, not left to be assumed away: it is far from
+    # one, which is exactly why a reader has to be told it.
+    assert display["magnificationAtMaxX"] > 10.0
+    assert "magnification" in display["note"]
+    assert f"{display['drawnMaxMm']} mm" in display["note"]
+
+
+def test_the_film_scale_reads_nanometres_and_keeps_two_cells_comparable(monkeypatch):
+    _identified(monkeypatch)
+    young, old = _spec(n=60), _spec(n=200)
+    scale = old["geometryScales"]["sei_film"]
+    a, d = old["physical"]["film"]["assumptions"], old["physical"]["film"]["derivation"]
+    assert scale["from"] == "series.seiThicknessNm"
+    assert scale["unit"].startswith("nm")
+    assert scale["displayMin"] == pytest.approx(a["initialNm"])
+    assert scale["displayMax"] == pytest.approx(d["displayMaxNm"])
+    assert d["displayMaxNm"] == pytest.approx(
+        a["initialNm"] + d["displayMaxPctLli"] * d["nmPerPctLli"])
+    assert d["chain"] in scale["note"] and "magnification" in scale["note"]
+    # The scale is a share of initial capacity, not this record's own maximum:
+    # a young cell and an old one draw to the same scale, so their films can be
+    # compared by eye — the one comparison normalising to the record's own max
+    # would destroy.
+    assert young["geometryScales"]["sei_film"]["displayMax"] == pytest.approx(scale["displayMax"])
+    assert d["maxNm"] > young["physical"]["film"]["derivation"]["maxNm"]
+
+
+def test_an_unidentified_channel_withholds_a_thickness_instead_of_a_zero():
+    """The chain's constants are still this cell's, but the quantity they scale
+    is not identified — so the scale factor is reported and the thickness is
+    not."""
+    spec = _spec()
+    film = spec["physical"]["film"]
+    assert film["available"] is True
+    assert film["identified"] is False
+    assert film["derivation"]["maxNm"] is None
+    assert film["derivation"]["nmPerPctLli"] > 0, "the chain is still this cell's"
+    assert film["reason"] and "does not identify" in film["reason"]
+    assert film["display"]["magnificationAtMaxX"] is None
+    card = next(p for p in spec["parts"] if p["id"] == "sei_film")
+    assert card["value"] is None and card["available"] is False
+    assert spec["geometryScales"]["sei_film"]["from"] == "series.seiPct", (
+        "with no thickness to scale, the mapping must stay on the fitted share"
+    )
+    # The series keeps the document's shape (like seiPct, which is emitted even
+    # when the split is refused) but carries no growth a renderer could draw:
+    # the gate is physics.splitIdentified, and the values are the formation film
+    # plus a fit that put essentially no lithium in the film.
+    nm = [v for v in spec["series"]["seiThicknessNm"] if v is not None]
+    assert nm, "the series must be emitted with the shape a renderer indexes"
+    assert max(nm) - film["assumptions"]["initialNm"] < 1.0
+    refused = next(x for x in spec["disclosures"] if "would* be derived" in x)
+    assert "does not identify" in refused
+
+
+def test_a_stacked_prismatic_cell_has_no_winding_to_derive_a_thickness_from():
+    import cell_scene
+    film = cell_scene.film_model(
+        PhysicalModel(FORM_FACTOR_PRISMATIC, "1.1 Ah prismatic").block(), 1.1, 20.0)
+    assert film["available"] is False
+    assert film["derivation"] is None and film["display"] is None
+    assert "prismatic" in film["reason"]
+    assert film["assumptions"], "the assumptions are stated even when they are not used"
+
+
+def test_a_missing_capacity_is_a_refusal_not_a_thickness():
+    import cell_scene
+    physical = PhysicalModel(FORM_FACTOR_CYLINDRICAL, "cylindrical").block()
+    film = cell_scene.film_model(physical, None, 20.0)
+    assert film["available"] is False and film["derivation"] is None
+    assert "capacity" in film["reason"]
+    # …and the same is true of a document carrying no physical block at all.
+    assert cell_scene.film_model(None, 2.0, 20.0)["available"] is False

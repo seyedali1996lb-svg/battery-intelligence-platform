@@ -24,12 +24,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { THEME, makeSpec } from "./fixture.ts";
+import { THEME, makePhysical, makeSpec } from "./fixture.ts";
 import {
   CELL_GEOMETRY,
   DEFAULT_BUILD_OPTIONS,
   arcPoints,
   buildScene,
+  filmBand,
   buildTimeline,
   ensureCounterClockwise,
   extrudeClosed,
@@ -38,6 +39,7 @@ import {
   mergeMeshes,
   partReadings,
   readingAt,
+  rollModel,
   ringPoints,
   scaleMesh,
   seriesMax,
@@ -331,25 +333,141 @@ test("hiding the casing removes the shell but leaves the cell measurable", () =>
   assert.equal(partOf(hidden, "sei_film").drawn, true);
 });
 
-test("the roll's coils are radially ordered and never overlap, exploded or not", () => {
+test("the roll is wound, not stacked: each ribbon has its own lane in every turn", () => {
+  // A real jelly roll interleaves its layers — anode, separator, cathode,
+  // repeat — so the three ribbons share the same radial span and are ordered
+  // *within* a turn. Asserting nested cylinders instead would be asserting the
+  // schematic this replaced.
+  const scene = buildScene(makeSpec(), { cursor: 12 });
+  const anode = radialExtent(partOf(scene, "anode_sheet").mesh);
+  const separator = radialExtent(partOf(scene, "separator").mesh);
+  const cathode = radialExtent(partOf(scene, "cathode_sheet").mesh);
+  assert.ok(anode.min < separator.min, "the separator's lane is inside the anode's");
+  assert.ok(separator.min < cathode.min, "the cathode's lane is inside the separator's");
+  assert.ok(anode.max < separator.max, "each ribbon reaches further out than the one inside it");
+  assert.ok(separator.max < cathode.max, "each ribbon reaches further out than the one inside it");
+  // …and the outermost lane is the roll's own outer edge, so the winding fills
+  // the space it has rather than hanging in it. The mesh and the model have to
+  // agree in millimetres, or one of them is lying about the other.
+  const unitMm = rollModel(makeSpec()).unitMm;
+  assert.ok(
+    Math.abs(cathode.max * unitMm - scene.roll.outerRadiusMm) < 0.2,
+    `the drawn cathode reaches ${(cathode.max * unitMm).toFixed(2)} mm, the model says ${scene.roll.outerRadiusMm.toFixed(2)} mm`,
+  );
+});
+
+test("the winding follows the document's millimetres, not the renderer's taste", () => {
+  const declared = buildScene(makeSpec(), { cursor: 12 });
+  const physical = makePhysical();
+  assert.equal(declared.roll.declared, true);
+  assert.equal(declared.roll.turns, physical.roll?.turns);
+  assert.equal(declared.roll.pitchMm, physical.roll?.pitchMm);
+  assert.ok(
+    Math.abs(declared.roll.electrodeLengthM - (physical.roll?.electrodeLengthM ?? 0)) < 1e-6,
+    "the renderer and the producer must derive the same electrode length",
+  );
+  // The three ribbons tile one turn's advance exactly: that is what makes the
+  // roll a filled roll instead of a spiral with gaps in it.
+  const model = rollModel(makeSpec());
+  assert.ok(
+    Math.abs(
+      model.anodeThickness + model.separatorThickness + model.cathodeThickness - model.pitch,
+    ) < 1e-12,
+    "the drawn ribbons do not tile the stack pitch",
+  );
+  // A thicker declared stack means a shorter electrode at the same diameter —
+  // the trade-off is in the dimensions, not in the drawing.
+  const thicker = buildScene(
+    makeSpec({
+      physical: {
+        roll: {
+          ...makePhysical().roll!,
+          stackMm: {
+            copperFoil: 0.02,
+            anodeCoating: 0.14,
+            separator: 0.04,
+            cathodeCoating: 0.12,
+            aluminiumFoil: 0.03,
+          },
+          pitchMm: 0.35,
+        },
+      },
+    }),
+    { cursor: 12 },
+  );
+  assert.ok(thicker.roll.turns < declared.roll.turns, "a thicker stack must need fewer turns");
+  assert.ok(
+    thicker.roll.outerRadiusMm <= thicker.roll.envelopeRadiusMm + 1e-9,
+    "however thick the stack, the roll may not leave its envelope",
+  );
+});
+
+test("a document with no declared dimensions is drawn with the fallback and says so", () => {
+  const scene = buildScene(makeSpec({ physical: "absent" }), { cursor: 12 });
+  assert.equal(scene.roll.declared, false);
+  // The fallback is the same 18650 figures, so the drawing is unchanged — what
+  // changes is that the scene can no longer claim they are this cell's.
+  assert.equal(scene.roll.turns, makePhysical().roll?.turns);
+  assert.equal(scene.roll.pitchMm, 0.175);
+});
+
+test("exploding un-winds the roll instead of pushing it through the can", () => {
   const spec = makeSpec();
-  for (const exploded of [0, 0.5, 1]) {
+  let previous = Infinity;
+  for (const exploded of [0, 0.25, 0.5, 0.75, 1]) {
     const scene = buildScene(spec, { cursor: 12, exploded });
-    const anode = radialExtent(partOf(scene, "anode_sheet").mesh);
-    const separator = radialExtent(partOf(scene, "separator").mesh);
     const cathode = radialExtent(partOf(scene, "cathode_sheet").mesh);
-    assert.ok(anode.max < separator.min, `exploded=${exploded}: anode/separator overlap`);
-    assert.ok(separator.max < cathode.min, `exploded=${exploded}: separator/cathode overlap`);
+    const bore = rollModel(spec).canRadius - rollModel(spec).canThickness;
+    assert.ok(cathode.max < bore, `exploded=${exploded}: the cathode pierces the can wall`);
+    assert.ok(
+      scene.roll.outerRadiusMm <= scene.roll.envelopeRadiusMm + 1e-9,
+      `exploded=${exploded}: the roll left its envelope`,
+    );
+    assert.ok(scene.roll.drawnTurns <= previous, "the un-winding must not add turns");
+    previous = scene.roll.drawnTurns;
+  }
+  const assembled = buildScene(spec, { cursor: 12, exploded: 0 });
+  const apart = buildScene(spec, { cursor: 12, exploded: 1 });
+  assert.ok(apart.roll.gain > assembled.roll.gain, "exploding must magnify the stack");
+  assert.ok(apart.roll.drawnPitchMm > assembled.roll.drawnPitchMm);
+  assert.equal(assembled.roll.drawnTurns, assembled.roll.turns, "at rest the winding is the real one");
+});
+
+test("the whole cell stays inside a triangle budget a scrub can afford", () => {
+  // The winding is 38 laps of three ribbons, and the rebuild is what a slider
+  // drag pays for. The ribbons are memoised (they do not depend on the cursor),
+  // but the budget is asserted anyway: if a future change multiplies the
+  // geometry, this fails here rather than as a stutter on someone's machine.
+  const spec = makeSpec();
+  for (const exploded of [0, 1]) {
+    const scene = buildScene(spec, { cursor: 12, exploded });
+    const triangles = scene.parts.reduce((total, part) => total + triangleCount(part.mesh), 0);
+    assert.ok(triangles < 80_000, `exploded=${exploded}: ${triangles} triangles in the cell`);
   }
 });
 
-test("a fully exploded stack still fits inside its own casing", () => {
-  const scene = buildScene(makeSpec(), { cursor: 12, exploded: 1 });
-  const cathode = radialExtent(partOf(scene, "cathode_sheet").mesh);
-  assert.ok(cathode.max < CELL_GEOMETRY.canRadius, "the exploded cathode pierces the can wall");
+test("the film sheathes the anode's own surface and stays inside the winding", () => {
+  // With a physical stack the anode and the separator are *adjacent*, so the
+  // film is a sheath on the anode's surface rather than a filler in a gap that
+  // no longer exists. What must hold either way: it is outside the anode it
+  // coats, and it never leaves the roll it is part of.
+  const scene = buildScene(makeSpec(), { cursor: 12 });
   const film = radialExtent(partOf(scene, "sei_film").mesh);
   const anode = radialExtent(partOf(scene, "anode_sheet").mesh);
-  assert.ok(film.min > anode.max - 1e-9, "the film must sit outside the anode it coats");
+  const cathode = radialExtent(partOf(scene, "cathode_sheet").mesh);
+  assert.ok(film.min > anode.max, "the film must sit outside the anode it coats");
+  assert.ok(film.max < cathode.max, "the film must not reach past the roll's own layers");
+  assert.ok(
+    film.max < rollModel(makeSpec()).envelopeRadius,
+    "the film must stay inside the roll's envelope",
+  );
+  // It grows along the anode's own surface: the drawn sheath follows the roll
+  // as the stack is magnified.
+  const apart = buildScene(makeSpec(), { cursor: 12, exploded: 1 });
+  const filmApart = radialExtent(partOf(apart, "sei_film").mesh);
+  const anodeApart = radialExtent(partOf(apart, "anode_sheet").mesh);
+  assert.ok(filmApart.min > anodeApart.max);
+  assert.ok(filmApart.max < radialExtent(partOf(apart, "cathode_sheet").mesh).max);
 });
 
 test("the explode control moves parts apart and changes nothing else", () => {
@@ -662,4 +780,72 @@ test("the scene carries no stage furniture into the anatomy", () => {
   assert.equal(partOf(scene, "can").id, "can");
   assert.ok(bounds(scene.chrome.floor).maxY < bounds(partOf(scene, "terminal_neg").mesh).minY);
   assert.ok(bounds(scene.chrome.shadow).maxY < 0);
+});
+
+// ---------------------------------------------------------------------------
+// The SEI film: a derived thickness, drawn at a declared magnification
+// ---------------------------------------------------------------------------
+
+test("the film band comes from the document, and falls back when it has none", () => {
+  const spec = makeSpec();
+  const band = filmBand(spec);
+  assert.equal(band.declared, true, "the document declares its own drawn band");
+  assert.equal(band.min, spec.physical!.film!.display!.drawnMinMm / spec.physical!.unitsMmPerCellUnit);
+  assert.equal(band.max, spec.physical!.film!.display!.drawnMaxMm / spec.physical!.unitsMmPerCellUnit);
+  // A document produced before the derivation existed still draws, on the
+  // renderer's own band, and says the band is a fallback rather than this cell's.
+  const stripped = { ...spec, physical: { ...spec.physical!, film: null } };
+  assert.equal(filmBand(stripped).declared, false);
+  assert.equal(filmBand(stripped).min, CELL_GEOMETRY.seiFilm.anatomical);
+  assert.equal(filmBand(stripped).max, CELL_GEOMETRY.seiFilm.dataMax);
+  // A degenerate band (no span) falls back instead of dividing a thickness by
+  // zero: a zero-width film is not a scale, it is a divide-by-nothing.
+  const film = spec.physical!.film!;
+  const degenerate = {
+    ...spec,
+    physical: {
+      ...spec.physical!,
+      film: { ...film, display: { ...film.display!, drawnMaxMm: film.display!.drawnMinMm } },
+    },
+  };
+  assert.equal(filmBand(degenerate).declared, false);
+});
+
+test("the drawn film follows the nanometre series its own scale names", () => {
+  // The film's card carries a thickness, and the scale that draws it names
+  // `series.seiThicknessNm`. So the *fitted share* must no longer be able to
+  // move the geometry, and the thickness series must be the thing that does.
+  const small = makeSpec({ splitIdentified: true, seiAtStart: 0.5, seiAtEnd: 1 });
+  const large = makeSpec({ splitIdentified: true, seiAtStart: 5, seiAtEnd: 20 });
+  const filmOf = (spec: typeof small) =>
+    radialExtent(partOf(buildScene(spec, { cursor: 119, dataScaled: true }), "sei_film").mesh).max;
+  assert.ok(filmOf(large) > filmOf(small), "a thicker fitted film was drawn identically");
+
+  // Same document, a large fitted share, the thickness series left alone.
+  const shareOnly = { ...small, series: { ...small.series, seiPct: small.series.seiPct.map(() => 20) } };
+  assert.equal(
+    filmOf(shareOnly),
+    filmOf(small),
+    "the fitted share drove a film the document states in nanometres",
+  );
+
+  // …and the reverse: the thickness series alone moves the drawing.
+  const thickened = {
+    ...small,
+    series: { ...small.series, seiThicknessNm: large.series.seiThicknessNm },
+  };
+  assert.equal(filmOf(thickened), filmOf(large), "the thickness series did not drive the film");
+});
+
+test("a refused split draws no film growth, whatever the thickness series says", () => {
+  // The values in the series come from a fit whose √n channel is not identified,
+  // so the gate is `splitIdentified` and not the array being empty.
+  const refused = makeSpec({ splitIdentified: false, seiAtStart: 5, seiAtEnd: 20 });
+  const anatomical = buildScene(refused, { cursor: 119 });
+  const scaled = buildScene(refused, { cursor: 119, dataScaled: true });
+  assert.equal(
+    radialExtent(partOf(scaled, "sei_film").mesh).max,
+    radialExtent(partOf(anatomical, "sei_film").mesh).max,
+    "a refused split drew a film growth",
+  );
 });

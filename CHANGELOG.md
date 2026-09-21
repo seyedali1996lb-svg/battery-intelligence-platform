@@ -22,14 +22,29 @@ those changes live in the docs they affect; this file records interface changes.
   `/scene/index.html` (Streamlit's static route and the API's new `/scene` mount), and a new authenticated REST
   endpoint `GET /cells/{id}/scene` (`?horizon_cycles=` bounds the projection; `0` asks for the measured record only).
   Every drawn part is bound to a measurement the platform already computes and tagged measured / derived / fitted /
-  projected; a part no source can speak to is drawn *with a reason* instead of a zero. The SEI film and particle loss
-  are drawn only when the two fitted fade channels are separable, and the timeline's future half is the platform's own
-  hierarchical forecast gated by its existing per-cell routing — a refused route yields no future at all. The renderer's
-  geometry is DOM-free and unit-tested by Node's own runner (`npm run test:scene`, 53 tests); the renderer bundle is
+  projected; a part no source can speak to is drawn *with a reason* instead of a zero. The film is reported as a derived
+  **thickness** in nanometres and particle loss as the linear term's share of fade, and both are drawn only when the two
+  fitted fade channels are separable; the timeline's future half is the platform's own hierarchical forecast gated by its
+  existing per-cell routing — a refused route yields no future at all. The renderer's geometry is DOM-free and
+  unit-tested by Node's own runner (`npm run test:scene`, 69 tests); the renderer bundle is
   built by `npm run build:scene` into `app/static/cell_scene/` and committed, because Streamlit serves it to a browser
   that has no Node — so a manifest records the digest of the bundle and of every source file it was built from, and
   `tests/test_cell_scene_bundle.py` fails on a stale or hand-edited artifact instead of shipping a scene that
   disagrees with its own source.
+- **The SEI film is a derived thickness in nanometres, with its display magnification disclosed separately.** The film
+  used to be the one drawn *size* that was not a size — a band of the roll's clearance scaled for legibility and
+  disclosed as a metaphor. The quantity behind it is fitted, so it is now converted: the lithium the fitted $\sqrt{n}$
+  term puts in the film, at the modelled phase's molar volume (Li₂CO₃, 35.02 cm³/mol) and spread over the coated anode
+  area the declared winding implies (1475 cm²), is **~80 nm per 1% of initial capacity lost to lithium inventory** —
+  1647 nm at 20.8% LLI, 2284 nm at 27.1%. Every constant is tagged (`physical.film.assumptions` + `provenance`), the
+  chain reduces to the single factor `nmPerPctLli` a reader can recompute by hand, and the refusal is explicit: a cell
+  whose $\sqrt{n}$ channel is not identified reports the factor and withholds the thickness (no number on the card),
+  and a stacked prismatic cell — which has no wound electrode length to take an area from — is refused with its reason.
+  The drawing is kept as a separate, separately stated claim: `physical.film.display` gives the drawn band (fixed by
+  the roll's radial clearance and by what is visible at a 65 mm scale) and the magnification it implies (~189× at the
+  top of B0018's scale, ~131× on the film's growth), the scale's top is a fixed 30% of initial capacity rather than
+  each record's own maximum so two cells' films stay comparable, and the new `series.seiThicknessNm` is what the
+  geometry follows — the fitted share can no longer move the drawn film, which a test now pins both ways.
 - **A host contract for the 3D scene, so a host's panels cannot disagree with the scene beside them.**
   `CellSceneHandle.parts()` returns every part's reading **at the scene's own cursor** (id, label, value, unit,
   provenance, availability, a `carried` flag for a cycle with no measurement, and the document's own sentence about
@@ -42,6 +57,24 @@ those changes live in the docs they affect; this file records interface changes.
 
 ### Changed
 
+- **The 3D cell view is dimensioned rather than decorated.** A new `physical` block in the scene document declares the cell's
+  own millimetres — an 18.4 × 65.0 mm envelope, a 0.25 mm can wall, 0.2 mm of roll clearance, and a 0.175 mm foil-to-foil
+  stack (10 µm copper, 70 µm anode, 20 µm separator, 60 µm cathode, 15 µm aluminium) — with the provenance of **every**
+  field (`format-standard`, `typical`, `assumed`, `derived`) and a `schematic` list naming what is *not* to a datasheet.
+  The renderer derives the winding from it instead of drawing its own idea of one: the pitch is the stack, the turn count is
+  what that pitch needs to fill the envelope (38 turns, 17.3 mm of 17.5 mm), and the electrode length those two imply
+  (1.27 m) is reported for checking. The three rolled sheets tile one turn's advance exactly, so the drawn roll is a
+  *filled* roll — the previous schematic filled 52% of the cross-section and read as a spring. The exploded view now
+  un-winds the rolling (×8 stack magnification, 38 laps down to 4) and keeps the roll inside its envelope by construction
+  at every explode position; the SEI film, the last legibility-scaled *size*, is drawn as a sheath on the anode's own
+  surface where an SEI forms. Ribbons are memoised, so a cursor-only rebuild costs 7 ms rather than 13 ms. A document
+  without the block still renders, on the same fallback figures, and reports that they are not this cell's.
+- **The 3D view is shaded as an object.** Filmic tone mapping, a procedural room environment for the metal surfaces, a
+  material per anatomy part (steel, nickel, aluminium, copper, graphite, membrane, electrolyte) replacing the single
+  metalness string test that made a can, a membrane and electrolyte look alike, a shadow-casting key light with a fitted
+  shadow camera, and a camera framed from the part's own bounds so a prismatic cell is framed as deliberately as a
+  cylinder. `PCFSoftShadowMap` is deliberately *not* used: three r186 still exports it with its implementation removed, so
+  naming it silently renders a different filter — a test now asserts the renderer never does.
 - **Physics calibration is part of the library, not of the demo application.**
   `batlab.features.physics_calibration` (with `src/physics_calibration.py` kept as a thin
   re-export shim that registers the app's mechanism classifier). `build_features()` used to import

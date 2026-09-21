@@ -37,6 +37,106 @@ export type PartId = (typeof ANATOMY_PART_IDS)[number];
 /** A per-cycle series: a null entry means "no measurement at this cycle". */
 export type Series = (number | null)[];
 
+/**
+ * The cell's declared dimensions, in millimetres, with where each came from.
+ *
+ * Optional because a document produced before this block existed still renders:
+ * the renderer falls back to the same 18650 figures rather than refusing, and
+ * says so (`RollModel.declared`). What it must never do is *invent* a size —
+ * every number here is a published dimension of the cell format or an
+ * assumption the document states.
+ */
+export interface PhysicalModel {
+  formFactor: string;
+  format: string;
+  unitsMmPerCellUnit: number;
+  cylindrical: {
+    diameterMm: number;
+    heightMm: number;
+    wallMm: number;
+    rollClearanceMm: number;
+    mandrelDiameterMm: number;
+  } | null;
+  prismatic: {
+    widthMm: number;
+    thicknessMm: number;
+    heightMm: number;
+    wallMm: number;
+  } | null;
+  roll: {
+    stackMm: {
+      copperFoil: number;
+      anodeCoating: number;
+      separator: number;
+      cathodeCoating: number;
+      aluminiumFoil: number;
+    };
+    pitchMm: number;
+    turns: number;
+    mandrelDiameterMm: number;
+    envelopeDiameterMm: number;
+    drawnOuterDiameterMm: number;
+    drawnRibbonsMm: { anode: number; separator: number; cathode: number };
+    electrodeLengthM: number;
+  } | null;
+  provenance: Record<string, string>;
+  note: string;
+  /** The drawn things that are *not* to a datasheet, named rather than implied. */
+  schematic: string[];
+  /**
+   * The anode film, in nanometres, derived from the fitted lithium-inventory
+   * loss — and, separately, what the *drawn* band is worth. Absent from
+   * documents produced before the derivation existed, in which case a renderer
+   * must fall back to the anatomical band and say the film's size is a
+   * drawing constant rather than a thickness.
+   */
+  film?: FilmModel | null;
+}
+
+/**
+ * A derived film thickness, and the magnification that draws it.
+ *
+ * `derivation` is the chain (capacity → coulombs → moles → volume → area →
+ * nanometres) and `display` is the drawing, kept in separate objects because
+ * they answer separate questions and because the second must never be used as
+ * if it were the first.
+ */
+export interface FilmModel {
+  modelledAs: string;
+  /** The derivation's inputs were all present (geometry and capacity). */
+  available: boolean;
+  /** The fitted LLI channel this thickness scales was identified for this cell. */
+  identified: boolean;
+  assumptions: Record<string, number | string>;
+  provenance: Record<string, string>;
+  derivation: {
+    capacity0Ah: number;
+    electrodeLengthM: number;
+    coatedWidthMm: number;
+    anodeAreaCm2: number;
+    molarVolumeCm3PerMol: number;
+    nmPerPctLli: number;
+    maxPctLli: number | null;
+    maxNm: number | null;
+    /** The top of the drawn scale, in nm — a fixed share of initial capacity. */
+    displayMaxNm?: number | null;
+    displayMaxPctLli?: number | null;
+    chain: string;
+    unitMm: number;
+  } | null;
+  display: {
+    drawnMinMm: number;
+    drawnMaxMm: number;
+    drawnMinNm: number;
+    drawnMaxNm: number;
+    magnificationAtMaxX: number | null;
+    growthMagnificationX: number | null;
+    note: string;
+  } | null;
+  reason: string | null;
+  note?: string;
+}
+
 export interface ScenePart {
   id: PartId;
   label: string;
@@ -63,6 +163,8 @@ export interface SceneSeries {
   lamPct: Series;
   seiSharePct: Series;
   fadeModelPct: Series;
+  /** The same fitted term as a film thickness, in nanometres. */
+  seiThicknessNm?: Series;
 }
 
 export interface SceneBand {
@@ -193,6 +295,7 @@ export interface CellSceneSpec {
   };
   projection: SceneProjection;
   parts: ScenePart[];
+  physical?: PhysicalModel | null;
   geometryScales: Record<string, GeometryScale>;
   disclosures: string[];
   theme: SceneTheme;

@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildScene, buildTimeline, todayCursor } from "./geometry.ts";
+import { buildScene, buildTimeline, filmBand, rollModel, todayCursor } from "./geometry.ts";
+import { DEFAULT_PART_MATERIAL, materialFor } from "./materials.ts";
 import { checkSchemaVersion, SCENE_SCHEMA_VERSION } from "./index.ts";
 import { ANATOMY_PART_IDS } from "./types.ts";
 import type { CellSceneSpec } from "./types.ts";
@@ -159,6 +160,63 @@ test("a document from another version is refused with a sentence, not drawn", ()
   assert.equal(missing.ok, false);
 });
 
+test("the winding drawn is the winding the producer declared", () => {
+  // The Python producer derives the turn count, the pitch and the electrode
+  // length from the declared dimensions; the renderer derives them again from
+  // the same inputs. If the two ever disagree, one of them is drawing a cell
+  // the other never described — so this compares them on a real document.
+  const declared = sample.physical;
+  assert.ok(declared?.roll, "the committed sample carries no physical block");
+  const model = rollModel(sample);
+  assert.equal(model.declared, true);
+  assert.equal(model.turns, declared.roll.turns, "turn count");
+  assert.equal(model.pitchMm, declared.roll.pitchMm, "stack pitch");
+  assert.ok(
+    Math.abs(model.electrodeLengthM - declared.roll.electrodeLengthM) < 1e-3,
+    `electrode length: renderer ${model.electrodeLengthM} m, producer ${declared.roll.electrodeLengthM} m`,
+  );
+  // And the drawn roll really fills the envelope the producer declared.
+  const scene = buildScene(sample, { cursor: todayCursor(buildTimeline(sample)) });
+  assert.ok(
+    scene.roll.outerRadiusMm <= scene.roll.envelopeRadiusMm + 1e-9,
+    "the assembled roll leaves its envelope",
+  );
+  assert.ok(
+    scene.roll.outerRadiusMm >= 0.95 * scene.roll.envelopeRadiusMm,
+    `the rolling fills only ${((scene.roll.outerRadiusMm / scene.roll.envelopeRadiusMm) * 100).toFixed(1)}% of its envelope`,
+  );
+  // Every declared field says where it came from; an unlabelled dimension is
+  // one nobody can check.
+  for (const key of Object.keys(declared.roll)) {
+    if (key === "stackMm" || key === "turns" || key === "pitchMm") continue;
+    assert.ok(
+      declared.provenance[key] || key === "mandrelDiameterMm",
+      `no provenance for physical.roll.${key}`,
+    );
+  }
+  assert.ok(declared.schematic.length > 0, "the sample must name what is NOT to scale");
+});
+
+test("every part is given a material deliberately", async () => {
+  await import("./fixture.ts");
+  for (const id of ANATOMY_PART_IDS) {
+    const material = materialFor(id);
+    assert.notEqual(
+      material,
+      DEFAULT_PART_MATERIAL,
+      `part ${id} falls through to the default material — give it a shading or say it is neutral`,
+    );
+    assert.ok(material.metalness >= 0 && material.metalness <= 1);
+    assert.ok(material.roughness >= 0 && material.roughness <= 1);
+    assert.ok(material.envMapIntensity > 0);
+  }
+  // The metals are the metals: a can is metal, a membrane is not, and the
+  // electrolyte is the wettest thing in the cell.
+  assert.ok(materialFor("can").metalness > 0.5);
+  assert.equal(materialFor("separator").metalness, 0);
+  assert.ok(materialFor("electrolyte").roughness < materialFor("separator").roughness);
+});
+
 test("the renderer's own fixture obeys the same contract as the real sample", async () => {
   // Guards against the inverse failure: fixtures that only the fixture agrees
   // with. Every field the sample carries must exist on a synthetic spec too,
@@ -174,4 +232,116 @@ test("the renderer's own fixture obeys the same contract as the real sample", as
     spec.parts.map((part) => part.id),
     sample.parts.map((part) => part.id),
   );
+});
+
+test("the film's nanometres, the chain and the magnification all agree", () => {
+  // The producer derives the thickness; the renderer draws the band the
+  // document declares. This is the one place where both halves of that chain
+  // can be checked against each other on a real cell rather than a fixture.
+  const film = sample.physical?.film;
+  assert.ok(film, "the committed sample carries no film block");
+  const derivation = film.derivation;
+  assert.ok(derivation, "the sample's film has no derivation to check");
+  const assumptions = film.assumptions as {
+    lithiumPerFormulaUnit: number;
+    molarMassGPerMol: number;
+    densityGPerCm3: number;
+    coatedWidthMm: number;
+    anodeFaces: number;
+    initialNm: number;
+  };
+  // Every constant the chain uses states where it came from.
+  for (const key of Object.keys(assumptions)) {
+    assert.ok(film.provenance[key], `${key} is assumed without saying so`);
+  }
+  // The chain re-derives: capacity → coulombs → moles → volume → area → nm.
+  const molarVolume = assumptions.molarMassGPerMol / assumptions.densityGPerCm3;
+  const areaCm2 =
+    assumptions.anodeFaces * (derivation.electrodeLengthM * 100) * (assumptions.coatedWidthMm / 10);
+  const molFilm =
+    (0.01 * derivation.capacity0Ah * 3600) / 96485.33212 / assumptions.lithiumPerFormulaUnit;
+  assert.ok(
+    Math.abs(derivation.nmPerPctLli - (molFilm * molarVolume) / areaCm2 * 1e7) < 1e-3,
+    "the nm-per-percent factor does not fall out of the stated assumptions",
+  );
+  assert.equal(derivation.anodeAreaCm2, Number(areaCm2.toFixed(3)));
+});
+
+test("the film's thickness series is the fitted term, rescaled onto the document's own scale", () => {
+  const film = sample.physical!.film!;
+  const series = sample.series.seiThicknessNm;
+  assert.ok(Array.isArray(series), "the sample carries no seiThicknessNm series");
+  const sei = sample.series.seiPct;
+  const perPct = film.derivation!.nmPerPctLli;
+  const initial = film.assumptions.initialNm as number;
+  assert.equal(series.length, sei.length);
+  for (let i = 0; i < series.length; i++) {
+    if (sei[i] === null) {
+      assert.equal(series[i], null, "a gap in the fit must stay a gap in the thickness");
+    } else {
+      assert.ok(Math.abs((series[i] as number) - (initial + (sei[i] as number) * perPct)) < 1e-6);
+    }
+  }
+  // The scale's endpoints are the document's, not the record's own maximum — so
+  // two cells' films stay comparable, which normalising to each record's max
+  // would destroy. Which *series* it names follows the document's own
+  // identification: a cell whose √n channel is not identified has no thickness
+  // to scale, and the mapping must then stay on the fitted share rather than on
+  // a number the producer withheld.
+  const scale = sample.geometryScales.sei_film;
+  if (film.derivation!.maxNm === null) {
+    assert.equal(film.identified, false);
+    assert.equal(scale.from, "series.seiPct");
+    assert.equal(film.display!.magnificationAtMaxX, null);
+    assert.ok(film.reason && film.reason.includes("does not identify"));
+    assert.equal(
+      sample.parts.find((part) => part.id === "sei_film")!.value,
+      null,
+      "a withheld thickness must not reach the card as a number",
+    );
+  } else {
+    assert.equal(film.identified, true);
+    assert.equal(scale.from, "series.seiThicknessNm");
+    assert.equal(scale.displayMin, initial);
+    assert.equal(scale.displayMax, film.derivation!.displayMaxNm);
+    assert.ok((scale.displayMax as number) > initial);
+    assert.ok(
+      Math.abs(
+        film.display!.magnificationAtMaxX! - film.display!.drawnMaxNm / film.derivation!.maxNm,
+      ) < 1,
+      "the stated magnification is not the band over the thickness it draws",
+    );
+    const card = sample.parts.find((part) => part.id === "sei_film")!;
+    assert.equal(card.provenance, "derived");
+    assert.ok(card.unit.startsWith("nm"));
+    assert.equal(card.value, Math.max(...series.filter((v): v is number => v !== null)));
+  }
+});
+
+test("the renderer draws the magnified band the document declared, and says it is one", () => {
+  const film = sample.physical!.film!;
+  const display = film.display!;
+  const unitMm = sample.physical!.unitsMmPerCellUnit;
+  const band = filmBand(sample);
+  assert.equal(band.declared, true);
+  assert.equal(band.min, display.drawnMinMm / unitMm);
+  assert.equal(band.max, display.drawnMaxMm / unitMm);
+  assert.ok(band.max > band.min);
+  // The two questions stay separate: the thickness has a number, the layer on
+  // screen has a magnification, and the document states the second rather than
+  // letting a viewer read the first off the drawing.
+  assert.equal(display.note.includes("magnification"), true);
+  assert.equal(sample.disclosures.some((d) => d.includes("drawn SEI layer")), true);
+});
+
+test("a document with no film block still draws, and says the band is a fallback", async () => {
+  const { makeSpec } = await import("./fixture.ts");
+  const stripped = makeSpec();
+  stripped.physical = { ...stripped.physical!, film: null };
+  const band = filmBand(stripped);
+  assert.equal(band.declared, false);
+  assert.ok(band.max > band.min);
+  // The geometry still builds — an older document must not blank the canvas.
+  const scene = buildScene(stripped, { cursor: 10, dataScaled: true });
+  assert.ok(scene.bounds.radius > 0);
 });
