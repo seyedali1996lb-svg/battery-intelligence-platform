@@ -44,7 +44,10 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { materialFor } from "./materials.ts";
 
 import {
+  CELL_GEOMETRY,
   DEFAULT_BUILD_OPTIONS,
+  DEFAULT_PEEL,
+  UNROLL_LENGTH,
   buildScene,
   gaugeBandMesh,
   mergeBuildOptions,
@@ -54,8 +57,10 @@ import {
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
 import { paletteFor, provenanceColor, readPref, writePref } from "./theme.ts";
 import { CARD_H_ONE, CARD_H_TWO, chromeSvg, desaturateHex, layoutFlank } from "./annotation.ts";
-import { poseFacing, poseLerp, poseToPosition, type CameraPose } from "./tween.ts";
+import { poseFacing, poseLerp, poseToPosition, springStep, type CameraPose, type Spring } from "./tween.ts";
 import { composeDossier } from "./dossier.ts";
+import { createHud } from "./hud.ts";
+import type { HudHandle, HudState, Telemetry } from "./hud.ts";
 import type { CellSceneSpec, DossierSpecRow, SceneTheme } from "./types.ts";
 
 /**
@@ -167,6 +172,14 @@ export interface CellSceneHandle {
   isPlaying(): boolean;
   resetView(): void;
   /**
+   * One of the document's named camera poses (`iso`/`plan`/`section`/
+   * `unrolled`), tweened like `resetView`. The section pose drives the explode
+   * and peel springs rather than jumping the geometry.
+   */
+  framePreset(name: "iso" | "plan" | "section" | "unrolled"): void;
+  /** The last sampled renderer stats the HUD rail prints (fps/calls/tris/verts). */
+  telemetry(): Telemetry;
+  /**
    * Paint the stage with one of the document's named palettes (`null`/unknown
    * returns to the document's own `theme`). Bands never move: a palette may
    * repaint the platform's colours, never re-band what it calls healthy.
@@ -228,9 +241,40 @@ export function mountCellScene(
   };
   let build: BuildOptions = { ...DEFAULT_BUILD_OPTIONS };
 
-  /** Fold a host's view options into the build state. Callbacks are not options. */
+  // ── View springs ───────────────────────────────────────────────────────
+  // Every explode/peel change is a *target* the tick's spring runs toward,
+  // never a jump of the built geometry: that is why HUD buttons animate
+  // instead of snapping, and why a slider drag stays interactive (the rebuild
+  // only runs when the spring has actually moved, at most every 8 ms).
+  let explodeTarget = build.exploded;
+  let peelTarget = build.peel;
+  let explodeSpring: Spring = { value: build.exploded, velocity: 0 };
+  let peelSpring: Spring = { value: build.peel, velocity: 0 };
+  let lastRebuild = 0;
+  let breathe = false;
+  let breathePhase = 0;
+  /** The HUD rail: created after the handle, called by `tick` before then. */
+  let hudHandle: HudHandle | null = null;
+  /** 4 Hz HUD cadence + exponentially smoothed frame time for the fps readout. */
+  let frameCount = 0;
+  let emaDt = 16;
+  /** Vertices actually drawn last paint — the honest half of the telemetry. */
+  let paintedVertices = 0;
+  let lastTelemetry: Telemetry = { fps: 0, calls: 0, triangles: 0, vertices: 0 };
+
+  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+
+  /**
+   * Fold a host's view options into the build state. Callbacks are not
+   * options. Explode and peel are intercepted here: they become spring
+   * *targets* (the spring chases on the next ticks) while every other option
+   * still merges immediately.
+   */
   function applyOptions(patch: Partial<BuildOptions>): void {
-    build = mergeBuildOptions(build, patch);
+    const { exploded, peel, ...rest } = patch;
+    if (exploded !== undefined) explodeTarget = clamp01(exploded);
+    if (peel !== undefined) peelTarget = clamp01(peel);
+    build = mergeBuildOptions(build, rest);
   }
   let scene: BuiltScene | null = null;
   let currentSpec: CellSceneSpec = spec;
@@ -498,6 +542,59 @@ export function mountCellScene(
     controls.update();
   }
 
+  /** The distance `resetView`/`fitView` would frame the cell at right now. */
+  function fitDistance(): number {
+    return homePose(lastBounds.radius, lastBounds.height).distance;
+  }
+
+  /**
+   * Named camera poses. The section pose drives the explode and peel springs —
+   * a preset animates the cell open rather than rebuilding it open.
+   */
+  const PRESETS: Record<"iso" | "plan" | "section" | "unrolled", () => void> = {
+    iso: () => framePose({ azimuth: Math.PI / 4, elevation: 0.38, distance: fitDistance(), targetY: 0 }, 600),
+    plan: () => framePose({ azimuth: Math.PI / 4, elevation: 1.52, distance: fitDistance() * 0.9, targetY: 0 }, 600),
+    section: () => {
+      explodeTarget = 0.35;
+      peelTarget = 0.25;
+      framePose({ azimuth: Math.PI * 1.6, elevation: 0.14, distance: fitDistance(), targetY: 0 }, 600);
+    },
+    unrolled: () => {
+      // The layout is part of this pose: the camera looks along the flat
+      // strip, which only exists once the ribbons are laid out.
+      build = mergeBuildOptions(build, { layout: "unrolled" });
+      rebuild(currentSpec);
+      framePose({ azimuth: 0, elevation: 0.21, distance: UNROLL_LENGTH * 1.6, targetY: 0 }, 600);
+    },
+  };
+
+  /**
+   * The rail's picture of the world: cheap, assembled from live state, with
+   * the explode's travel in *millimetres* — the axial table is in cell units
+   * (× the document's own scale), the radial table is already in mm.
+   */
+  function hudState(): HudState {
+    const mmPerUnit = currentSpec.physical?.unitsMmPerCellUnit ?? 65;
+    return {
+      theme: activePalette(),
+      exploded: explodeTarget,
+      peel: peelTarget,
+      layout: build.layout,
+      cursor: state.cursor,
+      measuredCount: state.measuredCount,
+      cycle: state.cycle,
+      soh: state.soh,
+      projected: state.projected,
+      playing: playTimer !== null,
+      annotations: annotationsVisible,
+      breathe,
+      themeName,
+      availablePalettes: Object.keys(currentSpec.palettes ?? {}),
+      mmMaxAxial: CELL_GEOMETRY.explode.terminalPos * mmPerUnit,
+      mmMaxRadial: Math.max(...Object.values(CELL_GEOMETRY.explode.radial)),
+    };
+  }
+
   /** Keep the shadow camera just wide enough for whatever is being drawn. */
   function fitShadow(radius: number): void {
     const extent = Math.max(0.9, radius * 2.8);
@@ -580,6 +677,7 @@ export function mountCellScene(
 
     const drawn = built.parts.filter((part) => part.drawn && vertexCount(part.mesh) > 0);
     const live = new Set<string>(drawn.map((part) => part.id));
+    paintedVertices = drawn.reduce((sum, part) => sum + vertexCount(part.mesh), 0);
 
     for (const part of drawn) {
       let object = objects.get(part.id);
@@ -1077,12 +1175,51 @@ export function mountCellScene(
     const dtMs = lastTickMs === 0 ? 16 : Math.min(now - lastTickMs, 100);
     lastTickMs = now;
     pulsePhase = (pulsePhase + dtMs / 1600) % 1;
+    emaDt = emaDt * 0.9 + dtMs * 0.1;
+
+    // Sliders retarget, the springs chase — and the scene only rebuilds when
+    // a spring has actually moved (throttled to 8 ms) so a drag stays
+    // interactive and a button press animates instead of snapping.
+    explodeSpring = springStep(explodeSpring, explodeTarget, dtMs);
+    peelSpring = springStep(peelSpring, peelTarget, dtMs);
+    const springMoved =
+      Math.abs(explodeSpring.value - build.exploded) > 1e-3 ||
+      Math.abs(peelSpring.value - build.peel) > 1e-3;
+    if (springMoved && now - lastRebuild >= 8) {
+      lastRebuild = now;
+      build.exploded = explodeSpring.value;
+      build.peel = peelSpring.value;
+      rebuild(currentSpec);
+    }
+
+    if (breathe) {
+      breathePhase += dtMs / 3200; // 3.2 s cycle
+      let i = 0;
+      for (const object of objects.values()) {
+        object.group.scale.setScalar(1 + 0.012 * Math.sin((breathePhase + i * 0.11) * Math.PI * 2));
+        i++;
+      }
+    }
+
     if (camTween) {
       const t = Math.min(1, (now - camTween.start) / camTween.dur);
       applyPose(poseLerp(camTween.from, camTween.to, t));
       if (t >= 1) camTween = null;
     }
     controls.update();
+    // The rail refreshes at 4 Hz — smooth enough to read, cheap enough to
+    // ignore beside the render itself.
+    frameCount++;
+    if (frameCount % 4 === 0) {
+      lastTelemetry = {
+        fps: Math.round(1000 / Math.max(1, emaDt)),
+        calls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        vertices: paintedVertices,
+      };
+      hudHandle?.setTelemetry(lastTelemetry);
+      hudHandle?.update(hudState());
+    }
     renderer.render(scene3, camera);
     updateLeaderLines();
     // The card follows the cursor (a scrub changes every live row) and the
@@ -1218,6 +1355,12 @@ export function mountCellScene(
       controls.maxDistance = pose.distance * 3.5;
       framePose(pose, 600);
     },
+    framePreset(name) {
+      if (disposed) return;
+      PRESETS[name]();
+      hudHandle?.update(hudState());
+    },
+    telemetry: () => lastTelemetry,
     setTheme(name) {
       themeName = name || null;
       const next = themed(currentSpec);
@@ -1243,6 +1386,11 @@ export function mountCellScene(
       renderer.domElement.removeEventListener("click", onPointerClick);
       observer?.disconnect();
       window.removeEventListener("resize", resize);
+      hudHandle?.dispose();
+      hudHandle = null;
+      container.removeEventListener("keydown", onStageKey);
+      container.removeEventListener("pointerenter", onStageEnter);
+      container.removeEventListener("pointerleave", onStageLeave);
       for (const object of objects.values()) {
         object.mesh.geometry.dispose();
         object.material.dispose();
@@ -1260,11 +1408,113 @@ export function mountCellScene(
     },
   };
 
+  // ── HUD rail, then the stage-scoped hotkeys ───────────────────────────
+  // The callbacks are the handle's own methods: there is exactly one
+  // implementation of "explode the cell" whether the button, a hotkey or a
+  // host call asks for it.
+  hudHandle = createHud(container, hudState(), {
+    setExploded: (v) => {
+      explodeTarget = clamp01(v);
+    },
+    setPeel: (v) => {
+      const target = clamp01(v);
+      // Same-value is a toggle back to the default sweep: the CUTAWAY button
+      // and the C key both mean "cut, then uncut" — a control that only ever
+      // cuts leaves the reader hunting for the way home.
+      peelTarget = Math.abs(peelTarget - target) < 1e-6 ? DEFAULT_PEEL : target;
+    },
+    setLayout: (l) => {
+      build = mergeBuildOptions(build, { layout: l });
+      rebuild(currentSpec);
+    },
+    toggleBreathe: () => {
+      breathe = !breathe;
+      if (!breathe) {
+        for (const object of objects.values()) object.group.scale.setScalar(1);
+      }
+    },
+    toggleAnnotations: () => {
+      handle.setAnnotations(!annotationsVisible);
+      hudHandle?.update(hudState());
+    },
+    playPause: () => {
+      const playing = handle.isPlaying() ? (handle.pause(), false) : handle.play();
+      hudHandle?.update(hudState());
+      return playing;
+    },
+    scrub: (c) => handle.setCursor(c),
+    preset: (name) => {
+      PRESETS[name]();
+      hudHandle?.update(hudState());
+    },
+    setTheme: (name) => handle.setTheme(name),
+    frameActive: () => {
+      if (pinned) handle.inspect(pinned);
+    },
+  });
+
+  // Hotkeys (spec §7) are scoped to this stage: they fire only while the
+  // pointer is over it or focus sits inside it, so the same key over the
+  // host's own UI belongs to the host. Space is skipped when a rail button
+  // holds focus — the button takes that press natively.
+  let pointerOverStage = false;
+  container.tabIndex = 0;
+  const onStageEnter = (): void => {
+    pointerOverStage = true;
+  };
+  const onStageLeave = (): void => {
+    pointerOverStage = false;
+  };
+  const onStageKey = (event: KeyboardEvent): void => {
+    const focused = container.contains(document.activeElement);
+    if (!focused && !pointerOverStage) return;
+    const onButton =
+      event.target instanceof HTMLElement && event.target.tagName === "BUTTON";
+    const key = event.key.toLowerCase();
+    if (event.key === " " && onButton) return;
+    if (![" ", "e", "c", "a", "h", "escape"].includes(key)) return;
+    event.preventDefault();
+    switch (key) {
+      case " ":
+        // The transport: Space plays and pauses where the pointer is — but the
+        // host owns the button's label, so a host-supplied onPlaybackEnd still
+        // puts "Play" back when the timeline runs out.
+        if (handle.isPlaying()) handle.pause();
+        else handle.play();
+        hudHandle?.update(hudState());
+        break;
+      case "e":
+        explodeTarget = explodeTarget > 0.5 ? 0 : 1;
+        break;
+      case "c":
+        peelTarget = Math.abs(peelTarget - 0.25) < 1e-6 ? DEFAULT_PEEL : 0.25;
+        break;
+      case "a":
+        handle.setAnnotations(!annotationsVisible);
+        hudHandle?.update(hudState());
+        break;
+      case "h":
+        hudHandle?.toggleCollapsed();
+        break;
+      case "escape":
+        handle.inspect(null);
+        break;
+    }
+  };
+  container.addEventListener("pointerenter", onStageEnter);
+  container.addEventListener("pointerleave", onStageLeave);
+  container.addEventListener("keydown", onStageKey);
+
   // A host's options apply to the very first frame, not the second one: the
-  // scene it asked for is the scene it gets.
+  // scene it asked for is the scene it gets. The springs snap to their targets
+  // so that "first frame" includes the explode/peel position — a start-up
+  // animation would be the host's request arriving a moment late.
   applyOptions(options);
+  explodeSpring = { value: explodeTarget, velocity: 0 };
+  peelSpring = { value: peelTarget, velocity: 0 };
   currentSpec = themed(currentSpec);
   rebuild(currentSpec);
+  hudHandle.update(hudState());
   raf = window.requestAnimationFrame(tick);
   return handle;
 }

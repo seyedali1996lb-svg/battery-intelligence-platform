@@ -25,6 +25,7 @@ export { paletteFor } from "./theme.ts";
 export { composeDossier } from "./dossier.ts";
 export type { DossierView, LiveRow } from "./dossier.ts";
 export type { CellSceneHandle, FrameState, MountOptions } from "./engine.ts";
+export type { HudCallbacks, HudHandle, HudState, Telemetry } from "./hud.ts";
 export { buildScene, buildTimeline, DEFAULT_PEEL, partReadings, peelSweepDeg, readingAt, todayCursor, UNROLL_LENGTH } from "./geometry.ts";
 export type { PartReading } from "./geometry.ts";
 export { mountCellScene } from "./engine.ts";
