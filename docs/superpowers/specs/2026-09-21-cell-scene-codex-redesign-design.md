@@ -413,7 +413,7 @@ rows read as refusals.
 
 1. **Geometry** — 3 parts, peel, unrolled, explode keys, schema 19, producer, fixture, counts, sample/manifest. **Green: `7128d56`, `2761453`, `79d4a05`.**
 2. **Annotation** — `annotation.ts`, solver + invariants, two-row cards, category, pulse, smooth camera frame. **Green: `2e4290a`, `c2be1e1`, `c35519b`.**
-3. **Dossier** — document block + producer table + schema + engine floating card + React `PART_DOSSIERS` deletion + refusal rows.
+3. **Dossier** — document block + producer table + schema + engine floating card + React `PART_DOSSIERS` deletion + refusal rows. **Green: `7a1e143`, `f430528`, `44d4443`.**
 4. **Palettes** — schema tokens, two palettes producer-side, threshold-equality test, `setTheme`, lighting/material adjust, chrome, grain/vignette, host font links.
 5. **HUD** — `hud.ts` rail, playback, presets, hotkeys, telemetry, breathe, persistence.
 6. **Artifacts & docs** — bundle/sample/manifest, all suites + pyright + lint + mkdocs strict; README, CHANGELOG, docs/history row, scene_prompt mapping + contract, static README checklist, `battery3d.py` prose ("nineteen"), METHODOLOGY test counts.
