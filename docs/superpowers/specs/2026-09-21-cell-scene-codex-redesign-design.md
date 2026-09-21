@@ -412,7 +412,7 @@ rows read as refusals.
 ## 10. Phases (each ends green, committed)
 
 1. **Geometry** — 3 parts, peel, unrolled, explode keys, schema 19, producer, fixture, counts, sample/manifest. **Green: `7128d56`, `2761453`, `79d4a05`.**
-2. **Annotation** — `annotation.ts`, solver + invariants, two-row cards, category, pulse, smooth camera frame.
+2. **Annotation** — `annotation.ts`, solver + invariants, two-row cards, category, pulse, smooth camera frame. **Green: `2e4290a`, `c2be1e1`, `c35519b`.**
 3. **Dossier** — document block + producer table + schema + engine floating card + React `PART_DOSSIERS` deletion + refusal rows.
 4. **Palettes** — schema tokens, two palettes producer-side, threshold-equality test, `setTheme`, lighting/material adjust, chrome, grain/vignette, host font links.
 5. **HUD** — `hud.ts` rail, playback, presets, hotkeys, telemetry, breathe, persistence.
