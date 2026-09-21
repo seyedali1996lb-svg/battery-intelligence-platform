@@ -415,7 +415,7 @@ rows read as refusals.
 2. **Annotation** — `annotation.ts`, solver + invariants, two-row cards, category, pulse, smooth camera frame. **Green: `2e4290a`, `c2be1e1`, `c35519b`.**
 3. **Dossier** — document block + producer table + schema + engine floating card + React `PART_DOSSIERS` deletion + refusal rows. **Green: `7a1e143`, `f430528`, `44d4443`.**
 4. **Palettes** — schema tokens, two palettes producer-side, threshold-equality test, `setTheme`, lighting/material adjust, chrome, grain/vignette, host font links. **Green: `8b204ba`, `38a4612`.**
-5. **HUD** — `hud.ts` rail, playback, presets, hotkeys, telemetry, breathe, persistence.
+5. **HUD** — `hud.ts` rail, playback, presets, hotkeys, telemetry, breathe, persistence. **Green: `096f8ad`.**
 6. **Artifacts & docs** — bundle/sample/manifest, all suites + pyright + lint + mkdocs strict; README, CHANGELOG, docs/history row, scene_prompt mapping + contract, static README checklist, `battery3d.py` prose ("nineteen"), METHODOLOGY test counts.
 
 **Bundle budget:** 595 kB → ≈640 kB raw (hud/annotation/dossier/palettes ≈ +30–45 kB over today's engine additions); manifest re-hashed at phase 6 and any engine-touching phase thereafter.
