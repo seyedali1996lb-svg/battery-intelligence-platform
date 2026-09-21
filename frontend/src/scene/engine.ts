@@ -54,6 +54,7 @@ import {
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
 import { provenanceColor } from "./theme.ts";
 import { CARD_H_ONE, CARD_H_TWO, layoutFlank } from "./annotation.ts";
+import { poseFacing, poseLerp, poseToPosition, type CameraPose } from "./tween.ts";
 import type { CellSceneSpec } from "./types.ts";
 
 /**
@@ -271,6 +272,37 @@ export function mountCellScene(
   controls.target.set(0, 0, 0);
   controls.update();
 
+  // A click in a list should *turn* the camera, not teleport it: the tween
+  // carries the viewer's own framing (distance, elevation, height) to a pose
+  // facing the part, and any grab of the controls cancels it mid-flight —
+  // the hand always wins over an animation.
+  let camTween: { from: CameraPose; to: CameraPose; start: number; dur: number } | null = null;
+
+  function currentPose(): CameraPose {
+    const offset = camera.position.clone().sub(controls.target);
+    return {
+      azimuth: Math.atan2(offset.x, offset.z),
+      elevation: Math.asin(Math.max(-1, Math.min(1, offset.y / Math.max(offset.length(), 1e-9)))),
+      distance: offset.length(),
+      targetY: controls.target.y,
+    };
+  }
+
+  function applyPose(p: CameraPose): void {
+    const pos = poseToPosition(p);
+    camera.position.set(pos.x, pos.y, pos.z);
+    controls.target.set(0, p.targetY, 0);
+    controls.update();
+  }
+
+  function framePose(to: CameraPose, durMs = 500): void {
+    camTween = { from: currentPose(), to, start: performance.now(), dur: durMs };
+  }
+
+  controls.addEventListener("start", () => {
+    camTween = null;
+  });
+
   // A three-point rig over the environment: the hemisphere carries the fill (so
   // nothing is ever pitch black), the key does the modelling and casts the
   // shadow, and the rim separates the cell's far edge from the background.
@@ -288,20 +320,36 @@ export function mountCellScene(
   scene3.add(rim);
 
   /**
-   * Frame the cell from its own bounds.
+   * The framing a fresh view wants: the cell's bounding sphere seen from the
+   * house direction. Shared by `fitView` (a new document, immediately) and
+   * `resetView` (a deliberate return, tweened) so the two can never drift into
+   * framing the same cell differently.
    *
-   * The camera used to be a fixed position tuned for the 18650's tall aspect, so
-   * a prismatic cell — 20.5 mm wide over 5.4 mm thick — was framed by luck.
+   * The camera used to be a fixed position tuned for the 18650's tall aspect,
+   * so a prismatic cell — 20.5 mm wide over 5.4 mm thick — was framed by luck.
    * Fitting the *distance* to the bounding sphere and keeping only the viewing
    * direction fixed gives every form factor the same framing.
    */
-  function fitView(radius: number, height: number): void {
+  function homePose(radius: number, height: number): CameraPose {
     const margin = height > radius * 2 ? 1.5 : 1.35;
     const extent = Math.max(radius, height / 2) * margin;
     const distance = extent / Math.sin(((camera.fov / 2) * Math.PI) / 180);
-    camera.position.set(0.62, 0.36, 0.72).normalize().multiplyScalar(distance);
-    controls.minDistance = distance * 0.5;
-    controls.maxDistance = distance * 3.5;
+    const dir = new Vector3(0.62, 0.36, 0.72).normalize();
+    return {
+      azimuth: Math.atan2(dir.x, dir.z),
+      elevation: Math.asin(Math.max(-1, Math.min(1, dir.y))),
+      distance,
+      targetY: 0,
+    };
+  }
+
+  /** Frame the cell from its own bounds — a new document's first look. */
+  function fitView(radius: number, height: number): void {
+    const pose = homePose(radius, height);
+    const pos = poseToPosition(pose);
+    camera.position.set(pos.x, pos.y, pos.z);
+    controls.minDistance = pose.distance * 0.5;
+    controls.maxDistance = pose.distance * 3.5;
     controls.target.set(0, 0, 0);
     controls.update();
   }
@@ -648,6 +696,14 @@ export function mountCellScene(
         <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${isTarget ? 6.5 : 5}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="2 2" opacity="${opacity}" />
         <polyline points="${item.sx.toFixed(1)},${item.sy.toFixed(1)} ${elbowX.toFixed(1)},${endY.toFixed(1)} ${badgeEdgeX.toFixed(1)},${endY.toFixed(1)}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" opacity="${opacity}" />
       `;
+      if (isTarget) {
+        // One pulsing target, not nineteen — a pulse everywhere is noise. The
+        // ring breathes around the active reticle and touches nothing else.
+        const pulseR = 6.5 + 1.4 * Math.sin(pulsePhase * 2 * Math.PI);
+        svgContent += `
+          <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${pulseR.toFixed(2)}" fill="none" stroke="${currentSpec.theme.accent}" stroke-width="1" opacity="0.9"/>
+        `;
+      }
 
       // `box-sizing: border-box` is what makes `width` the *whole* badge, so
       // the border the line meets is exactly at `badgeEdgeX` above rather than
@@ -727,9 +783,22 @@ export function mountCellScene(
 
   // ── Render loop ───────────────────────────────────────────────────────
   let raf = 0;
+  // The active reticle's breath: one phase for this engine instance, advanced
+  // by frame time so the period is wall-clock (1.6 s) rather than frame-count.
+  let pulsePhase = 0;
+  let lastTickMs = 0;
   function tick(): void {
     if (disposed) return;
     raf = window.requestAnimationFrame(tick);
+    const now = performance.now();
+    const dtMs = lastTickMs === 0 ? 16 : Math.min(now - lastTickMs, 100);
+    lastTickMs = now;
+    pulsePhase = (pulsePhase + dtMs / 1600) % 1;
+    if (camTween) {
+      const t = Math.min(1, (now - camTween.start) / camTween.dur);
+      applyPose(poseLerp(camTween.from, camTween.to, t));
+      if (t >= 1) camTween = null;
+    }
     controls.update();
     renderer.render(scene3, camera);
     updateLeaderLines();
@@ -805,19 +874,11 @@ export function mountCellScene(
       }
       // Turn the camera to the inspected part's own side, keeping the distance
       // and height the viewer chose — a click in a list should not throw away
-      // their framing.
+      // their framing — and as a tween rather than a jump, so the click turns
+      // the view. Any grab of the controls cancels it mid-flight.
       if (partId && scene) {
         const part = scene.parts.find((candidate) => candidate.id === partId);
-        if (part) {
-          const azimuth = Math.atan2(part.anchor[2], part.anchor[0]);
-          const distance = camera.position.length();
-          camera.position.set(
-            distance * Math.cos(azimuth),
-            camera.position.y,
-            distance * Math.sin(azimuth),
-          );
-          controls.update();
-        }
+        if (part) framePose(poseFacing(part.anchor, { ...currentPose(), targetY: 0 }), 500);
       }
       options.onInspect?.(partId);
       emit();
@@ -862,7 +923,12 @@ export function mountCellScene(
     },
     isPlaying: () => playTimer !== null,
     resetView() {
-      fitView(lastBounds.radius, lastBounds.height);
+      // The same pose a fresh document gets, but tweened: a deliberate return
+      // should glide home, not snap — the hand can watch where it went.
+      const pose = homePose(lastBounds.radius, lastBounds.height);
+      controls.minDistance = pose.distance * 0.5;
+      controls.maxDistance = pose.distance * 3.5;
+      framePose(pose, 600);
     },
     state: () => ({ ...state }),
     dispose() {
