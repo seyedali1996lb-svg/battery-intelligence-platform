@@ -28,6 +28,7 @@ import { THEME, makePhysical, makeSpec } from "./fixture.ts";
 import {
   CELL_GEOMETRY,
   DEFAULT_BUILD_OPTIONS,
+  UNROLL_LENGTH,
   arcPoints,
   buildScene,
   filmBand,
@@ -722,7 +723,7 @@ test("a cursor asked for at mount is the cursor the scene opens on", () => {
 });
 
 test("an option a host does not mention keeps its current value", () => {
-  const current = { cursor: 42, exploded: 1, casing: "hidden" as const, dataScaled: true, peel: 0.25 };
+  const current = { cursor: 42, exploded: 1, casing: "hidden" as const, dataScaled: true, peel: 0.25, layout: "wound" as const };
   assert.deepEqual(mergeBuildOptions(current, { cursor: 7 }), { ...current, cursor: 7 });
   assert.deepEqual(mergeBuildOptions(current, { exploded: 0.25 }), { ...current, exploded: 0.25 });
 });
@@ -786,6 +787,57 @@ test("the wrap opens with the can, because the jacket is skin of the casing", ()
     Array.from(partOf(open, "wrap").mesh.positions),
     Array.from(partOf(closed, "wrap").mesh.positions),
   );
+});
+
+// ---------------------------------------------------------------------------
+// The unrolled layout: the spiral laid flat, saying what that cost
+// ---------------------------------------------------------------------------
+
+test("unrolled draws the three ribbons as one flat sandwich, not a spiral", () => {
+  const wound = buildScene(makeSpec());
+  const flat = buildScene(makeSpec(), { layout: "unrolled" });
+  for (const id of ["anode_sheet", "separator", "cathode_sheet"] as const) {
+    assert.ok(
+      vertexCount(partOf(flat, id).mesh) < vertexCount(partOf(wound, id).mesh),
+      `${id}: a straight strip has fewer vertices than a multi-turn spiral`,
+    );
+  }
+  // The three strips are parallel slabs: same x-extent, capped at the strip length.
+  const extent = (s: typeof flat, id: "anode_sheet" | "cathode_sheet") => {
+    const pos = partOf(s, id).mesh.positions;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      minX = Math.min(minX, pos[i]);
+      maxX = Math.max(maxX, pos[i]);
+    }
+    return maxX - minX;
+  };
+  assert.ok(Math.abs(extent(flat, "anode_sheet") - extent(flat, "cathode_sheet")) < 1e-6);
+  assert.ok(extent(flat, "anode_sheet") <= UNROLL_LENGTH + 1e-6);
+});
+
+test("the unrolled view admits its compression instead of implying scale", () => {
+  const flat = buildScene(makeSpec(), { layout: "unrolled" });
+  assert.ok(flat.unrollNote !== null, "unrolled build must print its compression");
+  assert.match(flat.unrollNote, /1:\d+/, "the note carries a ratio");
+  const wound = buildScene(makeSpec());
+  assert.equal(wound.unrollNote, null);
+});
+
+test("unrolling is a view control: assembled wound geometry is untouched by the option's existence", () => {
+  assert.equal(DEFAULT_BUILD_OPTIONS.layout, "wound");
+  const a = buildScene(makeSpec());
+  const b = buildScene(makeSpec(), { layout: "wound" });
+  assert.deepEqual(Array.from(a.parts[0].mesh.positions), Array.from(b.parts[0].mesh.positions));
+});
+
+test("tabs stay attached to the strip ends when the roll is unrolled", () => {
+  const flat = buildScene(makeSpec(), { layout: "unrolled" });
+  const pos = partOf(flat, "tab_pos").mesh.positions;
+  let maxX = -Infinity;
+  for (let i = 0; i < pos.length; i += 3) maxX = Math.max(maxX, pos[i]);
+  assert.ok(maxX > UNROLL_LENGTH * 0.3, "the positive tab rises from the strip's far end");
 });
 
 // ---------------------------------------------------------------------------

@@ -438,6 +438,13 @@ export function peelSweepDeg(peel: number): number {
   return Math.max(90, 360 * (1 - p));
 }
 
+/**
+ * Drawn length of the unrolled strip, in cell units. The real electrode is
+ * ~19 cell units long, so laying it onto 1.5 units is roughly a 1:13 squeeze —
+ * big enough that the unrolled view must say so, which it does in `unrollNote`.
+ */
+export const UNROLL_LENGTH = 1.5;
+
 export const CELL_GEOMETRY = {
   /** Fallback 18650 figures, used only when a document carries no `physical`. */
   canRadius: 9.2 / 65,
@@ -1017,6 +1024,13 @@ export interface BuildOptions {
    * quarter shell. The default reproduces the historic 285° cut exactly.
    */
   peel: number;
+  /**
+   * `"wound"` draws the assembled spiral; `"unrolled"` lays the three ribbons
+   * out as one flat sandwich and prints what that compression cost beside the
+   * scene. A view control, never data — wound output is byte-identical either
+   * way, which a test pins.
+   */
+  layout: "wound" | "unrolled";
 }
 
 export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
@@ -1025,6 +1039,7 @@ export const DEFAULT_BUILD_OPTIONS: BuildOptions = {
   casing: "translucent",
   dataScaled: false,
   peel: DEFAULT_PEEL,
+  layout: "wound",
 };
 
 /**
@@ -1048,6 +1063,7 @@ export function mergeBuildOptions(build: BuildOptions, patch: Partial<BuildOptio
     casing: patch.casing ?? build.casing,
     dataScaled: patch.dataScaled ?? build.dataScaled,
     peel: patch.peel ?? build.peel,
+    layout: patch.layout ?? build.layout,
   };
 }
 
@@ -1147,6 +1163,12 @@ export interface BuiltScene {
   bounds: { radius: number; height: number };
   /** The data-scaling sentence in force, straight from the spec, or null. */
   scaleNote: string | null;
+  /**
+   * What the unrolled view cost, in its own words: a ratio printed beside the
+   * scene so a compressed strip can never be read as a scale drawing. `null`
+   * in wound mode, where nothing is compressed.
+   */
+  unrollNote: string | null;
   formFactor: string;
   /**
    * What the winding actually is, and what is drawn — the numbers a host or a
@@ -1252,6 +1274,11 @@ function _cylindricalPlacements(
   drawn: DrawnRoll,
   /** Casing arc in radians, from `peelSweepDeg(opts.peel)` — the cut-away. */
   sweepRad: number,
+  /**
+   * Draw the winding as flat strips instead of a spiral — `opts.layout ===
+   * "unrolled"`. A view control: the wound branch below stays byte-identical.
+   */
+  unrolled: boolean,
 ): Record<string, Placement> {
   const { roll, explode } = CELL_GEOMETRY;
   // The casing is a datum, so it sits on the declared diameter — but its offset
@@ -1273,9 +1300,20 @@ function _cylindricalPlacements(
 
   // One ribbon per drawn layer, each starting at its own place inside the turn
   // and wound at the drawn advance — so the roll is the document's stack, not
-  // the renderer's idea of one.
+  // the renderer's idea of one. Unrolled, each lane becomes a straight slab.
+  const UNROLL_ORDER = ["anode_sheet", "separator", "cathode_sheet"] as const;
   const ribbon = (id: DrawnRibbon["id"], height: number): Mesh => {
     const lane = drawn.ribbons.find((candidate) => candidate.id === id) as DrawnRibbon;
+    if (unrolled) {
+      // The flat sandwich: each ribbon as a straight slab at its DECLARED drawn
+      // thickness (already explode-gained by `drawnRoll` — scaling again here
+      // would make the strip seven times the spiral it claims to be), stacked
+      // in winding order with a hairline of air between them: the same
+      // thicknesses the spiral drew, laid out.
+      const idx = UNROLL_ORDER.indexOf(id);
+      const z = (idx - 1) * (lane.thickness + 0.004);
+      return translateMesh(boxMesh(UNROLL_LENGTH, height, lane.thickness), 0, 0, z);
+    }
     return _rollRibbon(
       {
         innerRadius: drawn.base + lane.offset,
@@ -1325,6 +1363,15 @@ function _cylindricalPlacements(
   const THETA_CATHODE = Math.PI * 1.35;
   const THETA_SEI = Math.PI * 1.75;
   const THETA_MANDREL = Math.PI * 0.3;
+
+  // Where each slab sits in z when unrolled — the same arithmetic as the
+  // unrolled branch of `ribbon`, so a strip's label anchor lands ON the slab
+  // its leader line points at rather than in the air beside it.
+  const stripZ = (id: DrawnRibbon["id"]): number => {
+    const idx = UNROLL_ORDER.indexOf(id);
+    const lane = drawn.ribbons.find((c) => c.id === id) as DrawnRibbon;
+    return (idx - 1) * (lane.thickness + 0.004);
+  };
 
   return {
     can: { mesh: canMesh, anchor: [canRadius * 0.98, 0.34, canRadius * 0.2] },
@@ -1453,32 +1500,46 @@ function _cylindricalPlacements(
       anchor: [(canRadius - canThickness) * 0.6, -0.484 - explode.bottomInsulator * exploded, 0],
     },
     tab_pos: {
-      mesh: tabStripMesh(rollTopRadius, roll.height / 2, tabTopPos, canRadius, THETA_POS, top.capThickness, -1),
-      anchor: [
-        rollTopRadius * 0.7 * Math.cos(THETA_POS),
-        roll.height / 2 + 0.05,
-        rollTopRadius * 0.7 * Math.sin(THETA_POS),
-      ],
+      mesh: unrolled
+        ? translateMesh(boxMesh(0.05, 0.22, 0.008), UNROLL_LENGTH * 0.5, roll.height * 0.6, stripZ("cathode_sheet"))
+        : tabStripMesh(rollTopRadius, roll.height / 2, tabTopPos, canRadius, THETA_POS, top.capThickness, -1),
+      anchor: unrolled
+        ? [UNROLL_LENGTH * 0.5, roll.height * 0.75, stripZ("cathode_sheet")]
+        : [
+            rollTopRadius * 0.7 * Math.cos(THETA_POS),
+            roll.height / 2 + 0.05,
+            rollTopRadius * 0.7 * Math.sin(THETA_POS),
+          ],
     },
     tab_neg: {
-      mesh: tabStripMesh(rollTopRadius, -roll.height / 2, tabTopNeg, canRadius, THETA_NEG, top.capThickness, 1),
-      anchor: [
-        rollTopRadius * 0.7 * Math.cos(THETA_NEG),
-        -roll.height / 2 - 0.05,
-        rollTopRadius * 0.7 * Math.sin(THETA_NEG),
-      ],
+      mesh: unrolled
+        ? translateMesh(boxMesh(0.05, 0.22, 0.008), -UNROLL_LENGTH * 0.5, -roll.height * 0.6, stripZ("anode_sheet"))
+        : tabStripMesh(rollTopRadius, -roll.height / 2, tabTopNeg, canRadius, THETA_NEG, top.capThickness, 1),
+      anchor: unrolled
+        ? [-UNROLL_LENGTH * 0.5, -roll.height * 0.75, stripZ("anode_sheet")]
+        : [
+            rollTopRadius * 0.7 * Math.cos(THETA_NEG),
+            -roll.height / 2 - 0.05,
+            rollTopRadius * 0.7 * Math.sin(THETA_NEG),
+          ],
     },
     anode_sheet: {
       mesh: ribbon("anode_sheet", roll.height),
-      anchor: [anodeR * Math.cos(THETA_ANODE), roll.height * 0.15, anodeR * Math.sin(THETA_ANODE)],
+      anchor: unrolled
+        ? [-UNROLL_LENGTH * 0.3, roll.height * 0.15, stripZ("anode_sheet")]
+        : [anodeR * Math.cos(THETA_ANODE), roll.height * 0.15, anodeR * Math.sin(THETA_ANODE)],
     },
     separator: {
       mesh: ribbon("separator", roll.height),
-      anchor: [sepR * Math.cos(THETA_SEP), -roll.height * 0.12, sepR * Math.sin(THETA_SEP)],
+      anchor: unrolled
+        ? [0, -roll.height * 0.12, stripZ("separator")]
+        : [sepR * Math.cos(THETA_SEP), -roll.height * 0.12, sepR * Math.sin(THETA_SEP)],
     },
     cathode_sheet: {
       mesh: ribbon("cathode_sheet", roll.height),
-      anchor: [cathodeR * Math.cos(THETA_CATHODE), roll.height * 0.28, cathodeR * Math.sin(THETA_CATHODE)],
+      anchor: unrolled
+        ? [UNROLL_LENGTH * 0.3, roll.height * 0.28, stripZ("cathode_sheet")]
+        : [cathodeR * Math.cos(THETA_CATHODE), roll.height * 0.28, cathodeR * Math.sin(THETA_CATHODE)],
     },
     electrolyte: {
       mesh: extrudeClosed(ringPoints(canRadius - canThickness, 48), roll.height * 0.98),
@@ -1651,7 +1712,7 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
   const placements =
     spec.cell.formFactor === "prismatic"
       ? _prismaticPlacements(exploded, filmThickness, prism, topAssemblyModel(spec))
-      : _cylindricalPlacements(exploded, filmThickness, spec, model, drawn, sweepRad);
+      : _cylindricalPlacements(exploded, filmThickness, spec, model, drawn, sweepRad, opts.layout === "unrolled");
 
   // The particle cloud: a legibility-limited sample of the coating volume. The
   // *lost* fraction follows the fitted linear term only when the split is
@@ -1849,6 +1910,14 @@ export function buildScene(spec: CellSceneSpec, options: Partial<BuildOptions> =
     },
     bounds: { radius, height: 1.0 },
     scaleNote,
+    unrollNote:
+      opts.layout === "unrolled"
+        ? (() => {
+            const cellUnits = (model.electrodeLengthM * 1000) / model.unitMm;
+            const ratio = Math.max(2, Math.round(cellUnits / UNROLL_LENGTH));
+            return `Electrode drawn 1:${ratio} along its length — ${model.electrodeLengthM.toFixed(2)} m compressed to a ${UNROLL_LENGTH} cell-unit strip`;
+          })()
+        : null,
     formFactor: spec.cell.formFactor,
     roll: {
       declared: drawn.declared,

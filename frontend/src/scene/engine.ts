@@ -721,7 +721,12 @@ export function mountCellScene(
     state.projected = scene.gauge.projected;
     state.projectionLabel = scene.timeline.projectionLabel;
     state.inspected = pinned ?? hovered;
-    state.scaleNote = scene.scaleNote;
+    // `unrollNote` appends, never replaces: a compressed strip's ratio rides
+    // beside whatever the data-scaled view already had to say, and is null in
+    // wound mode, where old behaviour stays byte-identical.
+    state.scaleNote = scene.unrollNote
+      ? [scene.scaleNote, scene.unrollNote].filter(Boolean).join(" · ")
+      : scene.scaleNote;
     state.measuredCount = scene.timeline.measuredCount;
     state.lastMeasuredCycle = scene.timeline.lastMeasuredCycle;
     state.partCount = scene.parts.length;
