@@ -7,7 +7,7 @@ Neither host can run Node, so the renderer has to already exist here.
 
 | File | What it is |
 | --- | --- |
-| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~595 kB, ~149 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
+| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~618 kB, ~159 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
 | `index.html` | The standalone host: no framework, no build step. Loads the bundle above and a scene document, and does everything the Streamlit page and the React SPA do. |
 | `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document — including the `physical` block, whose derivations (turn count, pitch, implied electrode length) are recomputed by the renderer and compared against the producer's, and the film's chain, whose nm-per-%-lithium-inventory factor the test re-derives from the tagged assumptions and whose **drawn band the renderer reads out of the document** rather than choosing for itself. |
 | `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit. |
@@ -120,8 +120,11 @@ page with `?cell=B0005` (or another real cell) and check:
    the thickness is withheld, and leaves the film as architecture.
 9. **Toggle "Strip the casing".** The shell goes, the cell stays readable, and
    nothing else changes.
-10. **Colours agree with the rest of the app.** A cell the Streamlit UI calls
-    "Degrading" is amber on the casing gauge and in the legend here too.
+10. **Colours agree with the rest of the app, and a palette never moves a band.** A cell the
+    Streamlit UI calls "Degrading" is amber on the casing gauge and in the legend here too.
+    Switch palettes from the HUD (Codex ⇄ Obsidian): stage, lights, chrome, dossier card and
+    rail repaint together and the choice is remembered — while the SOH band thresholds, what
+    counts as "Degrading", stay pinned identical across both.
 11. **The film is a thickness before it is a drawing.** The card's number is
     derived from the fitted lithium loss through stated assumptions (Li₂CO₃ at
     its bulk density over the anode's own coated area), and the drawn layer is a
@@ -144,13 +147,21 @@ page with `?cell=B0005` (or another real cell) and check:
     turn and bend over the cap to the terminals they feed; at full explode they
     stay attached to both ends. A defect looks like: a jacket covering the
     cut-away, a bead floating free of the can, or a tab that hangs in space.
-14. **The annotations live at the margins, in two columns.** Every badge sits
-    12 px from its stage edge, 158 px wide, and every leader line terminates on
-    the badge's inner border — so the left flank and the right flank each read
-    as one column whatever the camera does. Orbit the cell: the line should
-    follow its part's anchor with a single dog-leg, never cross the drawing, and
-    never end in mid-air. Selecting a part fills the host's dossier panel (the
-    SPA's right panel) with its Latin name, subsystem, material and failure
-    mode; a badge whose value is refused shows the reason instead of a zero. A
-    defect looks like: a badge floating over the can, two badges at the same
-    height, or a dossier that stays blank after a click.
+14. **The annotations live at the margins, in two columns of two rows.** Every badge sits
+    12 px from its stage edge, 158 px wide — the value on the first row, its provenance dot
+    and unit on the second — and every leader line terminates on the badge's inner border, so
+    the left flank and the right flank each read as one column whatever the camera does.
+    Orbit the cell: the line should follow its part's anchor with a single dog-leg, never
+    cross the drawing, and never end in mid-air. Selecting a part opens that part's dossier —
+    carried by the document, floated over the stage — with its Latin name, subsystem,
+    material, failure mode and its spec rows tagged typical/measured/derived/fitted; a badge
+    or row whose value is refused shows the reason instead of a zero. A defect looks like: a
+    badge floating over the can, two badges at the same height, or a dossier that stays blank
+    after a click.
+15. **Hotkeys act only while the stage has focus or hover.** `Space` plays/pauses the life,
+    `E` explodes, `C` cuts a quarter away (and back), `A` toggles the annotations, `H`
+    collapses the rail to its `⋯` pill, `Esc` clears the selection — and none of them fire
+    while the pointer is elsewhere on the page; a focused rail button takes `Space` itself.
+    The explode and peel sliders animate on springs rather than jumping, the HUD's
+    millimetre readout tracks the explode, and the telemetry line (fps / calls / triangles /
+    vertices) moves while the scene renders.

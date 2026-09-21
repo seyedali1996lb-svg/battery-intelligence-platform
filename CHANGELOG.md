@@ -14,6 +14,25 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+- **The scene becomes a codex: nineteen parts, aimed peel, document-carried dossiers, two palettes, a cockpit.** Three
+  new anatomy parts — `gasket`, `cid_ptc` (the CID/PTC safety pair) and `bottom_insulator` — take the
+  mesh/card/schema-enum bijection to **19** on every side, each with its plain-language card, material entry and axial
+  explode lift. The cut-away peel became a build option (`peel`): the default still draws the historic 285° sweep
+  byte-for-byte, the `CUTAWAY · ¼ PEEL` action lands on the quarter detent and back, and `layout: "unrolled"` lays the
+  three ribbons out as one flat sandwich that **prints what the compression cost** — wound output stays byte-identical
+  under any view options (test-pinned). Callouts became two rows — value over provenance dot and unit — placed by a
+  pure flank solver that carries no state between frames, and every part's **dossier moved into the document**
+  (`dossier` block): Latin/engineering name, subsystem, material, failure mode, camera focus, at least four spec rows
+  each tagged `typical`/`measured`/`derived`/`fitted`, and refusal rows carrying a reason instead of a number, shown as
+  a card floating over the stage. The document also carries **two palettes** (`palettes.codex`, `palettes.obsidian`)
+  with the SOH band thresholds pinned identical across them (Python-tested): `setTheme()` repaints stage, lights,
+  materials, chrome, fonts, card and HUD together and persists the reader's choice, while the bands never move. A
+  **cockpit HUD** rides the stage's bottom edge — spring-damped explode/peel with a millimetre readout, cutaway,
+  breathe, annotations, lifecycle transport, layout switches, camera presets (`iso`/`plan`/`section`/`unrolled`), 4 Hz
+  renderer telemetry and a collapse pill — with `Space`/`E`/`C`/`A`/`H`/`Esc` scoped to the stage: they act only while
+  it has focus or hover. Node tests 76 → 108 (peel/unroll shapes, flank solver, dossier composer, palette contract, HUD
+  mount); Python 108 across the four scene suites (dossier block, palette contract); bundle re-hashed at 618.4 kB
+  (~159 kB gzipped).
 - **Museum-grade dynamic SVG leader-line annotation overlay and technical component dossier.** Replaces cluttered
   on-mesh floating tags with an architectural drafting annotation system. Each drawn component's anchor is projected
   into viewport space with a precision concentric target reticle (`<circle>`), connecting via orthogonal/elbow dashed

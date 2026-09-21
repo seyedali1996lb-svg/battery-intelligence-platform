@@ -80,9 +80,18 @@ what makes the view trustworthy rather than merely pretty.
 | Millimetres with provenance | `physical` block in `src/cell_scene.py`; `docs/cell_scene.schema.json` |
 | Roll derived from the stack | `rollModel()` + `drawnRoll()`, `frontend/src/scene/geometry.ts` |
 | Independent radial offsets on explode (concentric members, envelope by construction) | `explode.radial` → `radialOffsets()` + `drawnRoll()`, same file |
-| The core as anatomy (`mandrel`, the 16th part) | `MESH_PART_IDS` in `src/cell_scene.py`; placement in `geometry.ts` |
-| Leader lines to the stage margin, badges in two fixed columns | SVG overlay in `frontend/src/scene/engine.ts` (`BADGE_MARGIN`, `BADGE_WIDTH`, `DIM_OPACITY`) |
-| The dossier (one reading surface per part) | `PART_DOSSIERS` + `onInspect`, `frontend/src/components/CellSceneView.tsx` |
+| The core as anatomy (`mandrel`, part 16 of 19) | `MESH_PART_IDS` in `src/cell_scene.py`; placement in `geometry.ts` |
+| The gasket under the crimp (part 17 of 19) | `gasket` in `src/cell_scene.py`; `CELL_GEOMETRY.explode.gasket`, `geometry.ts` |
+| The CID/PTC safety pair (part 18 of 19) | `cid_ptc` in `src/cell_scene.py`; `CELL_GEOMETRY.explode.cidPtc`, `geometry.ts` |
+| The bottom insulator (part 19 of 19) | `bottom_insulator` in `src/cell_scene.py`; `CELL_GEOMETRY.explode.bottomInsulator`, `geometry.ts` |
+| Peel default = the historic 285° cut, test-pinned (wound output byte-identical under any view options) | `DEFAULT_PEEL` + `peelSweepDeg()`, `geometry.ts`; asserted in `geometry.test.ts` |
+| Unrolled layout prints what the compression cost | `layout: "wound"/"unrolled"` + `unrollNote`, `geometry.ts` |
+| Leader lines to the stage margin, two-row badges in two fixed columns | flank solver + card heights in `frontend/src/scene/annotation.ts` (`layoutFlank`, `CARD_H_ONE`/`CARD_H_TWO`, `CATEGORY_TAXONOMY`); `BADGE_MARGIN`, `DIM_OPACITY` in `engine.ts` |
+| The dossier, carried by the document (one reading surface per part) | `dossier` block + `_DOSSIER_TABLE`, `src/cell_scene.py`; `composeDossier()`, `frontend/src/scene/dossier.ts`; floating card in `engine.ts` |
+| Dossier tag vocabulary + refusal rule (`typical`/`measured`/`derived`/`fitted`/`refusal`; ≥ 4 rows per part; reasons, never zeros) | `_DOSSIER_TABLE` + `composeDossier()`, same files |
+| Two palettes with pinned band thresholds (colour may change, health may not) | `palettes.codex`/`palettes.obsidian`, `src/cell_scene.py`; threshold-equality test, `tests/test_cell_scene.py`; `paletteFor()`, `theme.ts` |
+| Cockpit HUD: presets, transport, telemetry, breathe, collapse | `frontend/src/scene/hud.ts`; springs + `PRESETS` in `engine.ts` |
+| Hotkeys act only while the stage has focus or hover | `onStageKey`, `frontend/src/scene/engine.ts` |
 | Formed top (cap, boss, vent, button, crimp, wrap) | `topAssemblyModel()` + `latheMesh()` profiles, same file |
 | Tabs as leads | `tabStripMesh()`, same file |
 | Material table | `frontend/src/scene/materials.ts` |
