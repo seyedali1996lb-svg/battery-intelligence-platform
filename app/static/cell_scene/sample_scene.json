@@ -4029,5 +4029,143 @@
     "sopFloorPct": 70.0,
     "powerGaugeMinPct": 40.0,
     "powerGaugeMaxPct": 110.0
+  },
+  "palettes": {
+    "codex": {
+      "background": "#F4EEDA",
+      "panel": "#E8DFCA",
+      "text": "#2A2118",
+      "muted": "#6B5B45",
+      "accent": "#2F4F6F",
+      "accent2": "#8A6A2F",
+      "grid": "#C9BCA0",
+      "metal": "#7D7466",
+      "anodeColor": "#A8763F",
+      "cathodeColor": "#5F4B8B",
+      "separatorColor": "#CFC5AD",
+      "electrolyteColor": "#4A7FA5",
+      "seiColor": "#7A4F9E",
+      "name": "Codex Atlanticus",
+      "variant": "light",
+      "fonts": {
+        "display": "'Cinzel','EB Garamond',Georgia,serif",
+        "mono": "'JetBrains Mono',ui-monospace,Menlo,monospace"
+      },
+      "sohBands": [
+        {
+          "min": 90.0,
+          "max": null,
+          "color": "#2F855A",
+          "label": "Healthy"
+        },
+        {
+          "min": 80.0,
+          "max": 90.0,
+          "color": "#B7791F",
+          "label": "Degrading"
+        },
+        {
+          "min": 0.0,
+          "max": 80.0,
+          "color": "#C53030",
+          "label": "End of Life"
+        }
+      ],
+      "temperatureBands": [
+        {
+          "min": 0.0,
+          "max": 30.0,
+          "color": "#2B6CB0"
+        },
+        {
+          "min": 30.0,
+          "max": 45.0,
+          "color": "#B7791F"
+        },
+        {
+          "min": 45.0,
+          "max": null,
+          "color": "#C53030"
+        }
+      ],
+      "provenanceColors": {
+        "measured": "#2F855A",
+        "derived": "#2F4F6F",
+        "fitted": "#6B46C1",
+        "projected": "#B7791F",
+        "": "#8A8172"
+      },
+      "sopFloorPct": 70.0,
+      "powerGaugeMinPct": 40.0,
+      "powerGaugeMaxPct": 110.0
+    },
+    "obsidian": {
+      "background": "#070A10",
+      "panel": "#0C101A",
+      "text": "#e2e8f0",
+      "muted": "#94a3b8",
+      "accent": "#38BDF8",
+      "accent2": "#EAB308",
+      "grid": "#1B2436",
+      "metal": "#cbd5e0",
+      "anodeColor": "#C89B6A",
+      "cathodeColor": "#7b6ba8",
+      "separatorColor": "#d9e2ec",
+      "electrolyteColor": "#38BDF8",
+      "seiColor": "#A78BFA",
+      "name": "Obsidian Aerospace",
+      "variant": "dark",
+      "fonts": {
+        "display": "'Inter',system-ui,sans-serif",
+        "mono": "'JetBrains Mono',ui-monospace,Menlo,monospace"
+      },
+      "sohBands": [
+        {
+          "min": 90.0,
+          "max": null,
+          "color": "#48bb78",
+          "label": "Healthy"
+        },
+        {
+          "min": 80.0,
+          "max": 90.0,
+          "color": "#f6e05e",
+          "label": "Degrading"
+        },
+        {
+          "min": 0.0,
+          "max": 80.0,
+          "color": "#fc8181",
+          "label": "End of Life"
+        }
+      ],
+      "temperatureBands": [
+        {
+          "min": 0.0,
+          "max": 30.0,
+          "color": "#4299e1"
+        },
+        {
+          "min": 30.0,
+          "max": 45.0,
+          "color": "#ecc94b"
+        },
+        {
+          "min": 45.0,
+          "max": null,
+          "color": "#e53e3e"
+        }
+      ],
+      "provenanceColors": {
+        "measured": "#48bb78",
+        "derived": "#63b3ed",
+        "fitted": "#b794f4",
+        "projected": "#f6ad55",
+        "": "#718096"
+      },
+      "sopFloorPct": 70.0,
+      "powerGaugeMinPct": 40.0,
+      "powerGaugeMaxPct": 110.0
+    }
   }
 }

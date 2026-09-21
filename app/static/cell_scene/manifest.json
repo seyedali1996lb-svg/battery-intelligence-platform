@@ -5,7 +5,7 @@
   "bundleSha256": "a6f8c70f7fd2cfb9260d80f4cec4d2fd8af3376ecdeed2357029b601fb89e42e",
   "sampleScene": "sample_scene.json",
   "sampleSceneCell": "B0005",
-  "sampleSceneSha256": "66ab0d1f1253c263ea8f438913aa01cb2e9400f0044be72e26b93dc05d79c9e8",
+  "sampleSceneSha256": "efaff969bea094f268a664f65758a1e525dd093740d25c52d46cc743b25e00cd",
   "schemaVersion": 1,
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
@@ -18,7 +18,7 @@
     "src/scene/standalone.ts": "84ca28a92bc210b37e5d47d46771b38cc0b234506e09277e8305ccb962227987",
     "src/scene/theme.ts": "b3d0547e91696d93063fa09e171b3d38cf0c2e34629f6931bcef56e24efa1b39",
     "src/scene/tween.ts": "b82ba252f2f9050777632844c314694ddf888e86d1bd1636665f7af6542b0380",
-    "src/scene/types.ts": "0d70be787e5f59a539143952fb50c58d813b055c9cd398585eb2d30a60bcd522",
+    "src/scene/types.ts": "bf006c525d838be02cb0be22dc39361af6ddd8f19a07aa174117fe263c502483",
     "vite.scene.config.ts": "b5fdc9dbeb9aa740acf308b815796d5b918dfa4a293a9f1fe062340e31000791"
   },
   "threeVersion": "^0.186.0"

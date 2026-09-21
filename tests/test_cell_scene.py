@@ -997,3 +997,35 @@ def test_rows_the_platform_cannot_source_are_refusals_not_numbers():
     assert refusals, "the impedance/overpotential questions must be answered honestly"
     for row in refusals:
         assert not row["value"].strip().replace(".", "").replace(",", "").isdigit(), row
+
+
+def test_codex_and_obsidian_disagree_only_where_a_palette_may():
+    scene = _spec()
+    codex, obsidian = scene["palettes"]["codex"], scene["palettes"]["obsidian"]
+    assert codex["background"] == "#F4EEDA"
+    assert obsidian["background"] == "#070A10"
+    assert codex["variant"] == "light" and obsidian["variant"] == "dark"
+
+
+def test_every_palette_keeps_the_platform_s_own_band_thresholds():
+    scene = _spec()
+    base = scene["theme"]["sohBands"]
+    base_t = scene["theme"]["temperatureBands"]
+    assert set(scene.get("palettes", {})) == {"codex", "obsidian"}
+    for name, palette in scene["palettes"].items():
+        assert [(b["min"], b["max"], b["label"]) for b in palette["sohBands"]] == \
+               [(b["min"], b["max"], b["label"]) for b in base], name
+        assert [(b["min"], b["max"]) for b in palette["temperatureBands"]] == \
+               [(b["min"], b["max"]) for b in base_t], name
+
+
+def test_every_palette_colour_is_a_hex_and_carries_its_presentation_tokens():
+    import re
+    scene = _spec()
+    for name, palette in scene["palettes"].items():
+        assert palette["name"] and palette["variant"] in {"dark", "light"}
+        assert palette["fonts"]["display"] and palette["fonts"]["mono"]
+        assert re.fullmatch(r"#[0-9a-fA-F]{6}", palette["accent2"])
+        for key, value in palette.items():
+            if isinstance(value, str) and key.endswith(("Color", "")) and value.startswith("#"):
+                assert re.fullmatch(r"#[0-9a-fA-F]{6}", value), (name, key, value)

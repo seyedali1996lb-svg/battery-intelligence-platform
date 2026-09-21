@@ -719,6 +719,14 @@
       "description": "Host-supplied design tokens (src/cell_scene.default_theme() is the default). The renderer reads every colour it paints from here and hard-codes none of its own, so a host can restyle the scene without the scene knowing anything about the host. Nested values are allowed because the SOH band table (sohBands) carries thresholds as well as colours.",
       "additionalProperties": true
     },
+    "palettes": {
+      "type": "object",
+      "description": "Named alternative SceneThemes. setTheme(name) picks one; the document's own `theme` remains the default and still renders when this block is absent (documents from before it existed). Band THRESHOLDS are identical across every palette — only colours may differ.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
     "physical": {
       "type": "object",
       "additionalProperties": false,

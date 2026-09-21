@@ -9,7 +9,7 @@
  */
 
 import { ANATOMY_PART_IDS } from "./types.ts";
-import type { CellSceneSpec, FilmModel, PartId, PhysicalModel, ScenePart, Series } from "./types.ts";
+import type { CellSceneSpec, FilmModel, PartId, PhysicalModel, ScenePart, Series, SceneTheme } from "./types.ts";
 
 const LABELS: Record<PartId, string> = {
   can: "Cell casing",
@@ -98,6 +98,46 @@ export const THEME = {
   sopFloorPct: 70,
   powerGaugeMinPct: 40,
   powerGaugeMaxPct: 110,
+};
+
+/**
+ * The document's two palettes, mirroring the producer's table. Band
+ * thresholds are identical to THEME's on purpose — the same invariant the
+ * Python tests pin: a palette repaints, it never re-bands.
+ */
+export const PALETTES: Record<string, SceneTheme> = {
+  codex: {
+    ...THEME,
+    background: "#F4EEDA", panel: "#E8DFCA", text: "#2A2118", muted: "#6B5B45",
+    accent: "#2F4F6F", accent2: "#8A6A2F", grid: "#C9BCA0", metal: "#7D7466",
+    anodeColor: "#A8763F", cathodeColor: "#5F4B8B", separatorColor: "#CFC5AD",
+    electrolyteColor: "#4A7FA5", seiColor: "#7A4F9E",
+    name: "Codex Atlanticus", variant: "light",
+    fonts: {
+      display: "'Cinzel','EB Garamond',Georgia,serif",
+      mono: "'JetBrains Mono',ui-monospace,Menlo,monospace",
+    },
+    sohBands: [
+      { min: 90, max: null, color: "#2F855A", label: "Healthy" },
+      { min: 80, max: 90, color: "#B7791F", label: "Degrading" },
+      { min: 0, max: 80, color: "#C53030", label: "End of Life" },
+    ],
+    temperatureBands: [
+      { min: 0, max: 30, color: "#2B6CB0", label: "cool" },
+      { min: 30, max: 45, color: "#B7791F", label: "warm" },
+      { min: 45, max: null, color: "#C53030", label: "hot" },
+    ],
+    provenanceColors: { measured: "#2F855A", derived: "#2F4F6F", fitted: "#6B46C1", projected: "#B7791F", "": "#8A8172" },
+  },
+  obsidian: {
+    ...THEME,
+    accent2: "#EAB308",
+    name: "Obsidian Aerospace", variant: "dark",
+    fonts: {
+      display: "'Inter',system-ui,sans-serif",
+      mono: "'JetBrains Mono',ui-monospace,Menlo,monospace",
+    },
+  },
 };
 
 export interface FixtureOptions {
@@ -479,5 +519,6 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
       "Every part card is tagged measured, derived, fitted or projected.",
     ],
     theme: THEME,
+    palettes: PALETTES,
   };
 }

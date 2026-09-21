@@ -261,11 +261,16 @@ export interface SceneTheme {
   accent2?: string;
   grid: string;
   /**
-   * Font stacks the chrome may set — `mono` for the drafting frame's ruler
-   * marks. Optional with a monospace fallback, for the same reason `accent2`
-   * is optional.
+   * Font stacks the chrome may set — `display` for dossier and HUD headings,
+   * `mono` for the drafting frame's ruler marks. Optional with system
+   * fallbacks, for the same reason `accent2` is optional: a document that
+   * does not spell them gets generic stacks, never a font it never named.
    */
-  fonts?: { mono: string };
+  fonts?: { display: string; mono: string };
+  /** Display name for the palette switcher, e.g. "Codex Atlanticus". */
+  name?: string;
+  /** Whether this palette is drawn for a light or a dark background. */
+  variant?: "dark" | "light";
   metal: string;
   anodeColor: string;
   cathodeColor: string;
@@ -379,4 +384,10 @@ export interface CellSceneSpec {
   geometryScales: Record<string, GeometryScale>;
   disclosures: string[];
   theme: SceneTheme;
+  /**
+   * Named alternative themes — `setTheme(name)` picks one. The document's own
+   * `theme` remains the default and still renders when this block is absent
+   * (documents from before it existed), which is why nothing may *require* it.
+   */
+  palettes?: Record<string, SceneTheme>;
 }

@@ -165,6 +165,76 @@ def default_theme() -> dict:
     return copy.deepcopy(_DEFAULT_THEME)
 
 
+#: The two art-direction palettes. Band THRESHOLDS are copied from
+#: _DEFAULT_THEME on purpose and tests pin that equality: a palette may
+#: repaint the platform's bands for its background, never re-band them —
+#: a cell called amber here must be called amber there.
+_CODEX_THEME = {
+    "background": "#F4EEDA", "panel": "#E8DFCA", "text": "#2A2118", "muted": "#6B5B45",
+    "accent": "#2F4F6F", "accent2": "#8A6A2F", "grid": "#C9BCA0", "metal": "#7D7466",
+    "anodeColor": "#A8763F", "cathodeColor": "#5F4B8B", "separatorColor": "#CFC5AD",
+    "electrolyteColor": "#4A7FA5", "seiColor": "#7A4F9E",
+    "name": "Codex Atlanticus", "variant": "light",
+    "fonts": {
+        "display": "'Cinzel','EB Garamond',Georgia,serif",
+        "mono": "'JetBrains Mono',ui-monospace,Menlo,monospace",
+    },
+    "sohBands": [
+        {"min": 90.0, "max": None, "color": "#2F855A", "label": "Healthy"},
+        {"min": 80.0, "max": 90.0, "color": "#B7791F", "label": "Degrading"},
+        {"min": 0.0, "max": 80.0, "color": "#C53030", "label": "End of Life"},
+    ],
+    "temperatureBands": [
+        {"min": 0.0, "max": 30.0, "color": "#2B6CB0"},
+        {"min": 30.0, "max": 45.0, "color": "#B7791F"},
+        {"min": 45.0, "max": None, "color": "#C53030"},
+    ],
+    "provenanceColors": {
+        "measured": "#2F855A", "derived": "#2F4F6F", "fitted": "#6B46C1",
+        "projected": "#B7791F", "": "#8A8172",
+    },
+    "sopFloorPct": 70.0, "powerGaugeMinPct": 40.0, "powerGaugeMaxPct": 110.0,
+}
+
+_OBSIDIAN_THEME = {
+    "background": "#070A10", "panel": "#0C101A", "text": "#e2e8f0", "muted": "#94a3b8",
+    "accent": "#38BDF8", "accent2": "#EAB308", "grid": "#1B2436", "metal": "#cbd5e0",
+    "anodeColor": "#C89B6A", "cathodeColor": "#7b6ba8", "separatorColor": "#d9e2ec",
+    "electrolyteColor": "#38BDF8", "seiColor": "#A78BFA",
+    "name": "Obsidian Aerospace", "variant": "dark",
+    "fonts": {
+        "display": "'Inter',system-ui,sans-serif",
+        "mono": "'JetBrains Mono',ui-monospace,Menlo,monospace",
+    },
+    "sohBands": [          # the app's own bands, verbatim — same thresholds
+        {"min": 90.0, "max": None, "color": "#48bb78", "label": "Healthy"},
+        {"min": 80.0, "max": 90.0, "color": "#f6e05e", "label": "Degrading"},
+        {"min": 0.0, "max": 80.0, "color": "#fc8181", "label": "End of Life"},
+    ],
+    "temperatureBands": [
+        {"min": 0.0, "max": 30.0, "color": "#4299e1"},
+        {"min": 30.0, "max": 45.0, "color": "#ecc94b"},
+        {"min": 45.0, "max": None, "color": "#e53e3e"},
+    ],
+    "provenanceColors": {
+        "measured": "#48bb78", "derived": "#63b3ed", "fitted": "#b794f4",
+        "projected": "#f6ad55", "": "#718096",
+    },
+    "sopFloorPct": 70.0, "powerGaugeMinPct": 40.0, "powerGaugeMaxPct": 110.0,
+}
+
+
+def default_palettes() -> dict:
+    """Fresh copies of both art-direction palettes (see `_CODEX_THEME`).
+
+    Copies for the same reason `default_theme()` copies: the Streamlit page
+    mutates host tokens in place, and one page's restyle must not repaint
+    every other caller's scene.
+    """
+    import copy
+    return copy.deepcopy({"codex": _CODEX_THEME, "obsidian": _OBSIDIAN_THEME})
+
+
 _TWO_TERM_LAW = "SOH(n)/SOH₀ = 1 − β_sei·√n − β_lam·n   (n = cycles since first cycle + 1)"
 _SEI_TERM = "β_sei·√n"
 _LAM_TERM = "β_lam·n"
@@ -1423,6 +1493,7 @@ def build_cell_scene(
     horizon_cycles: int = DEFAULT_HORIZON_CYCLES,
     max_points: int = MAX_SERIES_POINTS,
     theme: "dict | None" = None,
+    palettes: "dict | None" = None,
 ) -> dict:
     """Build the full ``CellSceneSpec`` for one cell.
 
@@ -1672,6 +1743,10 @@ def build_cell_scene(
             physical=spec_physical,
         ),
         "theme": {**default_theme(), **(theme or {})},
+        # Named alternates, always present (defaults + caller overrides). The
+        # renderer needs no palette it was not given, and `theme` above stays
+        # the default so pre-palette documents render unchanged.
+        "palettes": {**default_palettes(), **(palettes or {})},
     }
     return _jsonify(spec)
 
