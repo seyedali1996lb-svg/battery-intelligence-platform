@@ -170,6 +170,31 @@ export interface FilmModel {
   note?: string;
 }
 
+/**
+ * A dossier row's provenance tag, in full. Five words, deliberately closed:
+ * `typical` marks a format-level figure (never this cell's datasheet — the
+ * disclosure strip says so), `refusal` answers a question the platform does
+ * not measure per part, in words rather than with a number. Anything the
+ * document or this platform computed earns one of the other three.
+ */
+export type DossierTag = "typical" | "measured" | "derived" | "fitted" | "refusal";
+
+export interface DossierSpecRow {
+  label: string;
+  value: string;
+  unit?: string;
+  tag: DossierTag;
+}
+
+export interface PartDossier {
+  latinTitle: string;
+  subsystem: string;
+  material: string;
+  degradation?: string;
+  insight?: string;
+  specs?: DossierSpecRow[];
+}
+
 export interface ScenePart {
   id: PartId;
   label: string;
@@ -189,6 +214,8 @@ export interface ScenePart {
    * word where the category would be.
    */
   category?: string;
+  /** The part's document-carried dossier; null when it predates them. */
+  dossier?: PartDossier;
 }
 
 export interface SceneSeries {

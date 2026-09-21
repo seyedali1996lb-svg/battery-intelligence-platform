@@ -20,6 +20,9 @@ import type { CellSceneSpec, SceneTheme } from "./types.ts";
 
 export { SCENE_SCHEMA_VERSION };
 export type { CellSceneSpec, SceneTheme } from "./types.ts";
+export type { DossierSpecRow, DossierTag, PartDossier } from "./types.ts";
+export { composeDossier } from "./dossier.ts";
+export type { DossierView, LiveRow } from "./dossier.ts";
 export type { CellSceneHandle, FrameState, MountOptions } from "./engine.ts";
 export { buildScene, buildTimeline, DEFAULT_PEEL, partReadings, peelSweepDeg, readingAt, todayCursor, UNROLL_LENGTH } from "./geometry.ts";
 export type { PartReading } from "./geometry.ts";

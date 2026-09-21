@@ -342,6 +342,17 @@ export function makeSpec(options: FixtureOptions = {}): CellSceneSpec {
       unavailableReason: isUnavailable
         ? "no measurement in the cycle-summary data separates this part"
         : null,
+      // A minimal document-carried dossier, generated per part: the composer's
+      // tests care about shape, tags and refusal behaviour, not prose (the
+      // real prose lives in the producer's `_DOSSIER_TABLE`).
+      dossier: {
+        latinTitle: id.replace(/_/g, " ").toUpperCase(),
+        subsystem: `${LABELS[id]} subsystem (fixture)`,
+        material: "Fixture material",
+        degradation: "Fixture degradation.",
+        insight: "Fixture insight — what this scene claims about this part.",
+        specs: [{ label: "Thickness", value: "1.0", unit: "mm", tag: "typical" }],
+      },
     };
   });
 

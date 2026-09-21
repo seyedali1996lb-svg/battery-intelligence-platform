@@ -10,14 +10,15 @@
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
     "src/scene/annotation.ts": "44ab095da0476389c62b8850ad1b9f6d6ccdc290a6b3538b4310c8bb64844fcb",
+    "src/scene/dossier.ts": "fff22f1bd8023b98ebfd639ee403249b0ee2ffa01e57522c3f7d45495d84888b",
     "src/scene/engine.ts": "3a8cb68a3bcb31f14720ea9bc4582aa35e19c89ca871ce966f90ec9e67206c69",
     "src/scene/geometry.ts": "a822695db18e8aac48d44e883cbd6461c8515c0e22921ebc3c8efbd124cf14a8",
-    "src/scene/index.ts": "e483f9491d3e068ed1afccfdeff5d6a93226be572583790f62ce2183a37b0786",
+    "src/scene/index.ts": "aa2d227dd2de354e8352e8493bf1439ffe0bde18349eb658791462812e3ba1c9",
     "src/scene/materials.ts": "2be6916043b0580896485a9b5112e962cf8ad6aa9c5e6af4a6f18b7b995db85a",
     "src/scene/standalone.ts": "84ca28a92bc210b37e5d47d46771b38cc0b234506e09277e8305ccb962227987",
     "src/scene/theme.ts": "b3d0547e91696d93063fa09e171b3d38cf0c2e34629f6931bcef56e24efa1b39",
     "src/scene/tween.ts": "b82ba252f2f9050777632844c314694ddf888e86d1bd1636665f7af6542b0380",
-    "src/scene/types.ts": "bb2ef3d6fb92d32582ea116f7b8c6367caea58d756728f5ef7626e826e11c468",
+    "src/scene/types.ts": "0d70be787e5f59a539143952fb50c58d813b055c9cd398585eb2d30a60bcd522",
     "vite.scene.config.ts": "b5fdc9dbeb9aa740acf308b815796d5b918dfa4a293a9f1fe062340e31000791"
   },
   "threeVersion": "^0.186.0"
