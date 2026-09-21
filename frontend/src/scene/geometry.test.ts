@@ -1100,6 +1100,35 @@ test("the top assembly's declared sizes drive the drawn cap, vent and terminal",
   );
 });
 
+test("the cap's scored exhaust slots are drawn as detail geometry on the plate", () => {
+  const scene = buildScene(makeSpec(), { cursor: 6 });
+  const cap = partOf(scene, "cap").mesh;
+  // The plate top sits at y = 0.5 (assembled), and nothing else the cap draws
+  // lives in the sliver just above it — its other rings are at the boss height
+  // or below the rim — so vertices in that window are the six slots and only
+  // they. They must also stay under the rim: detail, not a flange.
+  let slotVertices = 0;
+  let slotRadius = 0;
+  for (let i = 0; i < cap.positions.length; i += 3) {
+    const x = cap.positions[i];
+    const y = cap.positions[i + 1];
+    const z = cap.positions[i + 2];
+    if (y > 0.5 + 1e-6 && y < 0.5 + 0.003) {
+      slotVertices += 1;
+      const r = Math.hypot(x, z);
+      if (r > slotRadius) slotRadius = r;
+    }
+  }
+  assert.ok(
+    slotVertices >= 100,
+    `six scored slots should mark the plate, found ${slotVertices} vertices`,
+  );
+  assert.ok(
+    slotRadius <= CELL_GEOMETRY.canRadius + 1e-6,
+    `the slots must stay under the rim: r=${slotRadius}`,
+  );
+});
+
 test("the tabs are attached: each runs from the roll's own end to the cap it feeds", () => {
   const scene = buildScene(makeSpec(), { cursor: 6 });
   const rollHalf = CELL_GEOMETRY.roll.height / 2;

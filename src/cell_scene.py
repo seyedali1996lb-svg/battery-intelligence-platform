@@ -690,7 +690,7 @@ _DOSSIER_TABLE: dict[str, dict] = {
         "subsystem": "Lathed Cap Plate, Boss & Crimp Groove",
         "material": "Aluminium / Nickel-plated steel formed assembly",
         "degradation": "Mechanical stress relaxation of crimp seal, micro-fissuring under thermal cycling.",
-        "insight": "The cap plate is where the winding's current leaves the cell — boss, vent and crimp above the roll are one formed assembly, sized together.",
+        "insight": "The cap plate is where the winding's current leaves the cell — boss, vent and crimp above the roll are one formed assembly, sized together; its six scored exhaust slots, a format-typical detail drawn on the plate, are where the gas leaves once the vent opens.",
         "specs": [
             {"label": "Plate thickness", "value": "0.3", "unit": "mm", "tag": "typical"},
             {"label": "Boss diameter", "value": "from the document's topAssembly", "unit": "", "tag": "typical"},

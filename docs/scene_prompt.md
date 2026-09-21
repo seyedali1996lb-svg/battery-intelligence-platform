@@ -86,6 +86,7 @@ what makes the view trustworthy rather than merely pretty.
 | The bottom insulator (part 19 of 19) | `bottom_insulator` in `src/cell_scene.py`; `CELL_GEOMETRY.explode.bottomInsulator`, `geometry.ts` |
 | Peel default = the historic 285° cut, test-pinned (wound output byte-identical under any view options) | `DEFAULT_PEEL` + `peelSweepDeg()`, `geometry.ts`; asserted in `geometry.test.ts` |
 | Unrolled layout prints what the compression cost | `layout: "wound"/"unrolled"` + `unrollNote`, `geometry.ts` |
+| Exhaust ports drawn as cap detail, never a part | six scored slots merged into `cap`, `geometry.ts`; the cap dossier's refusal row, `src/cell_scene.py` |
 | Leader lines to the stage margin, two-row badges in two fixed columns | flank solver + card heights in `frontend/src/scene/annotation.ts` (`layoutFlank`, `CARD_H_ONE`/`CARD_H_TWO`, `CATEGORY_TAXONOMY`); `BADGE_MARGIN`, `DIM_OPACITY` in `engine.ts` |
 | The dossier, carried by the document (one reading surface per part) | `dossier` block + `_DOSSIER_TABLE`, `src/cell_scene.py`; `composeDossier()`, `frontend/src/scene/dossier.ts`; floating card in `engine.ts` |
 | Dossier tag vocabulary + refusal rule (`typical`/`measured`/`derived`/`fitted`/`refusal`; ≥ 4 rows per part; reasons, never zeros) | `_DOSSIER_TABLE` + `composeDossier()`, same files |

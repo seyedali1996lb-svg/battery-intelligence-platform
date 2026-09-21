@@ -1375,6 +1375,47 @@ function _cylindricalPlacements(
     return (idx - 1) * (lane.thickness + 0.004);
   };
 
+  // The cap carries its own scored exhaust slots: six shallow slits on the
+  // exposed plate ring between boss and rim — where the cell's gas actually
+  // leaves once the vent opens. They merge into the cap's mesh, so they move,
+  // dim, select and explode with the plate, and they are never a part of
+  // their own: the document holds no carded number for a slot, which is what
+  // the cap dossier's refusal row says (spec: exhaust ports are cap detail
+  // geometry, not a part). The lift off the plate is a hair (~0.1 mm) —
+  // enough for a raking light to score them without cutting a hole no CSG
+  // exists to cut, and enough clearance to keep two coplanar faces apart.
+  const capPlate = latheMesh(
+    [
+      [canRadius, -top.capThickness],
+      [canRadius, 0],
+      [top.capBossRadius, 0],
+      [top.capBossRadius, top.capBossHeight],
+      [top.ventRadius, top.capBossHeight],
+      [top.ventRadius, 0],
+      [0, 0],
+      [0, -top.capThickness],
+    ],
+    48,
+  );
+  const slotRing = canRadius - top.capBossRadius;
+  let capMesh = capPlate;
+  if (slotRing > 0.012) {
+    const slotR = top.capBossRadius + slotRing / 2;
+    const slotW = Math.min(0.005, slotRing * 0.16);
+    const slotSweep = Math.min(0.4, (slotRing * 0.5) / slotR);
+    const slotH = 0.0016;
+    const capPieces: Mesh[] = [capPlate];
+    for (let i = 0; i < 6; i++) {
+      const start = (i * Math.PI * 2) / 6 - slotSweep / 2;
+      const slit: Outline = [
+        ...arcPoints(slotR + slotW / 2, slotSweep, 4, start),
+        ...arcPoints(slotR - slotW / 2, slotSweep, 4, start + slotSweep).reverse(),
+      ];
+      capPieces.push(translateMesh(extrudeClosed(slit, slotH), 0, slotH / 2 + 0.0001, 0));
+    }
+    capMesh = mergeMeshes(capPieces);
+  }
+
   return {
     can: { mesh: canMesh, anchor: [canRadius * 0.98, 0.34, canRadius * 0.2] },
     mandrel: {
@@ -1405,26 +1446,9 @@ function _cylindricalPlacements(
       ],
     },
     cap: {
-      // Plate, boss and the groove the crimping die rolled the can wall into:
-      // one profile, one revolution — a formed part, not stacked discs.
-      mesh: translateMesh(
-        latheMesh(
-          [
-            [canRadius, -top.capThickness],
-            [canRadius, 0],
-            [top.capBossRadius, 0],
-            [top.capBossRadius, top.capBossHeight],
-            [top.ventRadius, top.capBossHeight],
-            [top.ventRadius, 0],
-            [0, 0],
-            [0, -top.capThickness],
-          ],
-          48,
-        ),
-        0,
-        topCapY,
-        0,
-      ),
+      // Plate, boss, crimp groove — and the scored exhaust slots computed
+      // just above: one formed assembly, one mesh.
+      mesh: translateMesh(capMesh, 0, topCapY, 0),
       anchor: [canRadius * 0.8, topCapY, 0],
     },
     vent: {
