@@ -425,7 +425,12 @@ export function mountCellScene(
     if (nextKey === styleKey) return;
     styleKey = nextKey;
 
-    backdrop.innerHTML = themeVariant === "light" ? paperGrain(theme) : vignette(theme);
+    // The vignette/paper helpers return *CSS declarations*, not markup — they
+    // belong in style.cssText beside the layer's own positioning. Assigning
+    // them to innerHTML renders the gradient as literal stray text on stage.
+    backdrop.style.cssText =
+      `position:absolute;inset:0;pointer-events:none;z-index:0;` +
+      (themeVariant === "light" ? paperGrain(theme) : vignette(theme));
     chromeLayer.innerHTML = chromeSvg({
       theme,
       ornate: themeVariant === "light",
