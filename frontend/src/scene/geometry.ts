@@ -265,15 +265,23 @@ export function extrudeOpen(path: Outline, height: number): Mesh {
   const indices: number[] = [];
   for (const [x, z] of path) positions.push(x, -half, z);
   for (const [x, z] of path) positions.push(x, half, z);
+  // Emitted both ways: an open shell has no inside to hide, and a one-sided
+  // shell simply vanishes when the camera orbits behind it. The reversed shell
+  // gets its *own* ring of vertices — coincident with the first, referenced
+  // only by the back winding. Sharing rings would cancel every face against
+  // its mirror in `finalize`'s area-weighted accumulation and hand the shader
+  // normalize(vec3(0)) = NaN on every fragment of the shell.
+  const rb = 2 * n;
+  const rt = 3 * n;
+  for (const [x, z] of path) positions.push(x, -half, z);
+  for (const [x, z] of path) positions.push(x, half, z);
   for (let i = 0; i < n - 1; i++) {
     const b0 = i;
     const b1 = i + 1;
     const t0 = n + i;
     const t1 = n + i + 1;
-    // Emitted both ways: an open shell has no inside to hide, and a one-sided
-    // shell simply vanishes when the camera orbits behind it.
     indices.push(b0, t0, t1, b0, t1, b1);
-    indices.push(t1, t0, b0, b1, t1, b0);
+    indices.push(rt + i + 1, rt + i, rb + i, rb + i + 1, rt + i + 1, rb + i);
   }
   return finalize(positions, indices);
 }

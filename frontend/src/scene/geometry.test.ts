@@ -215,10 +215,54 @@ test("a jelly-roll ribbon is a closed outline spanning its own radial band", () 
 test("an open extrusion emits both faces so the cut-away casing never disappears", () => {
   const path = arcPoints(0.5, Math.PI, 12);
   const mesh = extrudeOpen(path, 1);
-  assert.equal(vertexCount(mesh), path.length * 2);
+  // Two coincident rings per shell: the reversed winding owns its own copies
+  // so the shells cannot cancel each other's normals to zero.
+  assert.equal(vertexCount(mesh), path.length * 4);
   assert.equal(triangleCount(mesh), (path.length - 1) * 2 * 2);
   const withoutBothWays = extrudeOpen(path, 1);
   assert.equal(triangleCount(withoutBothWays), (path.length - 1) * 4);
+});
+
+/**
+ * Every vertex a rasterized triangle touches must carry a unit normal.
+ *
+ * `normalize(vec3(0))` is undefined in GLSL and produces NaN — which poisons
+ * a whole frame once the scene renders through a half-float target (the
+ * tone-mapped default framebuffer happened to mask it, the composer did not).
+ * Vertices touched only by degenerate (zero-area) triangles are exempt: those
+ * triangles never cover a pixel, so their normals never reach the shader.
+ */
+test("every vertex a visible triangle touches carries a unit normal", () => {
+  const DEGENERATE_AREA = 1e-12;
+  for (const form of ["cylindrical", "prismatic"] as const) {
+    const scene = buildScene(makeSpec({ formFactor: form }), { cursor: 4 });
+    for (const part of scene.parts) {
+      const mesh = part.mesh;
+      const rasterized = new Set<number>();
+      for (let t = 0; t < mesh.indices.length; t += 3) {
+        const [a, b, c] = [mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2]];
+        const at = (v: number, o: number) => mesh.positions[v * 3 + o];
+        const ux = at(b, 0) - at(a, 0);
+        const uy = at(b, 1) - at(a, 1);
+        const uz = at(b, 2) - at(a, 2);
+        const vx = at(c, 0) - at(a, 0);
+        const vy = at(c, 1) - at(a, 1);
+        const vz = at(c, 2) - at(a, 2);
+        const cross = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+        if (cross <= DEGENERATE_AREA) continue;
+        rasterized.add(a);
+        rasterized.add(b);
+        rasterized.add(c);
+      }
+      for (const v of rasterized) {
+        const len = Math.hypot(mesh.normals[v * 3], mesh.normals[v * 3 + 1], mesh.normals[v * 3 + 2]);
+        assert.ok(
+          Math.abs(len - 1) < 1e-3,
+          `${form}/${part.id}: vertex ${v} has normal length ${len}, the shader would turn that into NaN`,
+        );
+      }
+    }
+  }
 });
 
 test("degenerate inputs return an empty mesh rather than throwing or emitting NaN", () => {
