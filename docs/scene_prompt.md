@@ -97,6 +97,7 @@ what makes the view trustworthy rather than merely pretty.
 | Tabs as leads | `tabStripMesh()`, same file |
 | Material table | `frontend/src/scene/materials.ts` |
 | Tone mapping, environment, key light | `frontend/src/scene/engine.ts` |
+| Bloom on the emissive gauge, tone-mapped exactly once at the end | `RenderPass → UnrealBloomPass → OutputPass` in `frontend/src/scene/engine.ts`; per-palette strength/radius/threshold in `applyStageStyle()`; chain pinned in `render.test.ts` |
 | Plain-language titles | `title` on every part, produced in `src/cell_scene.py` |
 | Data-scaled geometry as an opt-in, annotated | `dataScaled` build option + `geometryScales` in the document |
 | Magnification printed | `physical.film.display` (drawn band + factor) |
@@ -124,13 +125,10 @@ what makes the view trustworthy rather than merely pretty.
    top of the cell from "typical" to "this cell".
 2. **The screenshot gate** — hover/dim/explode/playback behaviour is still
    checklist-verified; goldens from a headless render would make it a test.
-3. **Bloom on the emissive gauge** via `EffectComposer` — the best
-   product-shot win per line of code, at the cost of bundle size and one
-   re-hash.
-4. **Paint the diagnosis on the object** — the fitted fade already has a
+3. **Paint the diagnosis on the object** — the fitted fade already has a
    thickness (the film); the active-material share could darken the anode's
    graphite the same way, making both fitted channels visible on the parts
    they belong to.
-5. **Portability** — the document is self-contained and versioned; a single
+4. **Portability** — the document is self-contained and versioned; a single
    offline HTML file with a scene baked in would make a battery passport that
    opens anywhere.

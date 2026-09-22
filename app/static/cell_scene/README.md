@@ -7,7 +7,7 @@ Neither host can run Node, so the renderer has to already exist here.
 
 | File | What it is |
 | --- | --- |
-| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~618 kB, ~159 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
+| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~639 kB, ~164 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
 | `index.html` | The standalone host: no framework, no build step. Loads the bundle above and a scene document, and does everything the Streamlit page and the React SPA do. |
 | `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document — including the `physical` block, whose derivations (turn count, pitch, implied electrode length) are recomputed by the renderer and compared against the producer's, and the film's chain, whose nm-per-%-lithium-inventory factor the test re-derives from the tagged assumptions and whose **drawn band the renderer reads out of the document** rather than choosing for itself. |
 | `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit. |
@@ -165,3 +165,10 @@ page with `?cell=B0005` (or another real cell) and check:
     The explode and peel sliders animate on springs rather than jumping, the HUD's
     millimetre readout tracks the explode, and the telemetry line (fps / calls / triangles /
     vertices) moves while the scene renders.
+16. **The gauge glows, and the stage still tells the truth.** The emissive state gauge
+    carries a soft bloom — a halo that fades over a few dozen pixels around the band and
+    the terminal highlights, never a global haze — while the void stays the palette's own
+    colour to the byte (`#0b1120` on Obsidian, `#F4EEDA` on Codex) and the vignette is a
+    gradient, never stray text on the stage. Codex's threshold sits deliberately above the
+    lit parchment, so its bloom fires only on true >0.9 highlights (none at rest is
+    correct); Obsidian's gauge should glow at rest.

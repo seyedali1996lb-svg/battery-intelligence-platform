@@ -14,6 +14,21 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+- **Bloom on the emissive gauge, via `EffectComposer`.** The stage now renders
+  `RenderPass → UnrealBloomPass → OutputPass`: linear HDR into MSAA half-float targets, the
+  highlights lifted once, ACES applied once on the way out (the chain is pinned in
+  `render.test.ts`), with per-palette tuning — Obsidian 0.35/0.45/0.5 so the gauge band and
+  terminal speculars glow at rest, Codex 0.16/0.3/0.9 so the lit parchment itself never
+  blooms. Shipping it surfaced three latent defects, each now fixed: `extrudeOpen` drew its
+  two-sided shell from shared vertices, cancelling every face against its mirror in
+  `finalize()` so the shader saw `normalize(vec3(0))` = NaN fragments that poisoned the
+  half-float frame (each shell now owns its rings; new test: every vertex a visible triangle
+  touches carries a unit normal); the stage vignette and paper grain were assigned to
+  `innerHTML` as raw CSS — literal stray text on the stage — and now paint through
+  `style.cssText`; and `scene.background` rode through the composer's tone mapping, landing
+  the palette ~1 EV too dark, so the void is now the canvas element's own CSS surface and
+  renders the palette byte-exact on both palettes. Bundle re-hashed at 639.1 kB (~164 kB
+  gzipped); node tests 109 → 112.
 - **The scene becomes a codex: nineteen parts, aimed peel, document-carried dossiers, two palettes, a cockpit.** Three
   new anatomy parts — `gasket`, `cid_ptc` (the CID/PTC safety pair) and `bottom_insulator` — take the
   mesh/card/schema-enum bijection to **19** on every side, each with its plain-language card, material entry and axial

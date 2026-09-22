@@ -418,4 +418,4 @@ rows read as refusals.
 5. **HUD** — `hud.ts` rail, playback, presets, hotkeys, telemetry, breathe, persistence. **Green: `096f8ad`.**
 6. **Artifacts & docs** — bundle/sample/manifest, all suites + pyright + lint + mkdocs strict; README, CHANGELOG, docs/history row, scene_prompt mapping + contract, static README checklist, `battery3d.py` prose ("nineteen"), METHODOLOGY test counts. **Green: `b9f1716`.**
 
-**Bundle budget:** 595 kB → ≈640 kB raw (hud/annotation/dossier/palettes ≈ +30–45 kB over today's engine additions); manifest re-hashed at phase 6 and any engine-touching phase thereafter.
+**Bundle budget:** 595 kB → ≈640 kB raw (hud/annotation/dossier/palettes ≈ +30–45 kB over today's engine additions; the bloom composer landed inside the same envelope at ≈ +20 kB, shipped 639.1 kB raw / 164 kB gzip); manifest re-hashed at phase 6 and any engine-touching phase thereafter.

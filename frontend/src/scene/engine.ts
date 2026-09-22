@@ -41,6 +41,10 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { materialFor } from "./materials.ts";
 
 import {
@@ -318,13 +322,25 @@ export function mountCellScene(
   let lastBounds = { radius: 0.5, height: 1 };
 
   // ── Renderer, scene, camera ────────────────────────────────────────────
-  const renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+  // alpha: the stage background is the canvas element's own CSS background
+  // (the palette's colour, set in applyStageStyle), so the frame buffer must
+  // stay transparent where nothing is drawn. Clearing with scene.background
+  // instead would put the palette in the composer's buffer, where OutputPass
+  // tone-maps it — the void would land ~1 EV too dark, and pre-compensating
+  // would push Codex's parchment above its own bloom threshold.
+  const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO));
+  renderer.setClearAlpha(0);
   // Filmic tone mapping, so a specular highlight rolls off instead of clipping
   // to a white blob — the difference between "metal" and "shiny plastic" is
   // mostly what happens at the top of the range.
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
+  // The composer runs several renderer.render() calls per frame and three
+  // resets `info` at the *start* of each one, so auto-reset would leave the
+  // HUD's telemetry reporting only the final fullscreen quad. Count the whole
+  // frame instead: reset manually, once, just before the composer renders.
+  renderer.info.autoReset = false;
   renderer.shadowMap.enabled = true;
   // PCFShadowMap, not PCFSoftShadowMap: three r186 still exports the latter as
   // a constant but has removed its implementation, so asking for it silently
@@ -410,8 +426,20 @@ export function mountCellScene(
   function applyStageStyle(): void {
     const theme = activePalette();
     themeVariant = theme.variant ?? "dark";
-    scene3.background = new Color(theme.background);
+    // The palette owns the background as the canvas element's CSS surface —
+    // three's clear would be tone-mapped by OutputPass (see the renderer
+    // comment), a baseline clear straight to the canvas was not.
+    renderer.domElement.style.background = theme.background;
     renderer.toneMappingExposure = themeVariant === "light" ? 1.15 : 1.05;
+    // Bloom rides the same palette swap as the exposure, and the thresholds
+    // read linear light: Obsidian's near-black void (~0.005 linear) lets a
+    // 0.5 catch the gauge, the selection lift and the environment's HDR
+    // speculars, while Codex's parchment background itself sits around 0.86 —
+    // at that threshold the *paper* would bloom. The light palette keeps only
+    // true >0.9 highlights, at about half the haze.
+    bloomPass.strength = themeVariant === "light" ? 0.16 : 0.35;
+    bloomPass.radius = themeVariant === "light" ? 0.3 : 0.45;
+    bloomPass.threshold = themeVariant === "light" ? 0.9 : 0.5;
     key.color.set(themeVariant === "light" ? "#fff6e0" : "#ffffff");
     fill.intensity = themeVariant === "light" ? 0.9 : 0.7;
     fill.groundColor.set(theme.panel); // bounce light is the palette's own panel
@@ -462,6 +490,32 @@ export function mountCellScene(
   controls.maxDistance = 6;
   controls.target.set(0, 0, 0);
   controls.update();
+
+  // ── Post: bloom over the linear frame, tone-mapped once at the end ─────
+  // three skips tone mapping for anything rendered off-screen, so the scene
+  // lands in the composer's half-float buffer as linear HDR, UnrealBloomPass
+  // reads the highlights out of it, and OutputPass applies renderer.toneMapping
+  // (ACES) and sRGB exactly once on the way out. Drop the OutputPass and the
+  // picture renders linear and dark; add a second tone mapper and the top of
+  // the range gets rolled off twice — render.test.ts pins the chain.
+  const composer = new EffectComposer(renderer);
+  // The composer renders into its own targets, where the canvas framebuffer's
+  // `antialias: true` means nothing — ask the targets for MSAA themselves or
+  // the can's silhouette grows stair-steps the bare renderer never showed.
+  composer.renderTarget1.samples = 4;
+  composer.renderTarget2.samples = 4;
+  composer.addPass(new RenderPass(scene3, camera));
+  // Strength/radius/threshold are re-tuned per palette in applyStageStyle():
+  // Obsidian's void can afford a real glow, Codex's parchment is itself bright
+  // enough to bloom — these are the dark-palette numbers it starts from.
+  const bloomPass = new UnrealBloomPass(
+    new Vector2(container.clientWidth || 640, container.clientHeight || 480),
+    0.35,
+    0.45,
+    0.5,
+  );
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
 
   // A click in a list should *turn* the camera, not teleport it: the tween
   // carries the viewer's own framing (distance, elevation, height) to a pose
@@ -1152,6 +1206,9 @@ export function mountCellScene(
     const width = container.clientWidth || 640;
     const height = container.clientHeight || 480;
     renderer.setSize(width, height, false);
+    // Logical pixels: the composer keeps its own pixel ratio internally, the
+    // same contract as renderer.setSize.
+    composer.setSize(width, height);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     // The chrome SVG is sized in pixels, so a resize re-draws it too.
@@ -1225,7 +1282,11 @@ export function mountCellScene(
       hudHandle?.setTelemetry(lastTelemetry);
       hudHandle?.update(hudState());
     }
-    renderer.render(scene3, camera);
+    // One manual reset per frame (auto-reset is off — see the renderer
+    // setup): scene, bloom mips and output all accumulate into the same
+    // counters, so the telemetry reports what the whole frame costs.
+    renderer.info.reset();
+    composer.render();
     updateLeaderLines();
     // The card follows the cursor (a scrub changes every live row) and the
     // selection — one string compare when nothing moved.
@@ -1405,6 +1466,8 @@ export function mountCellScene(
       shadowMesh?.geometry.dispose();
       gaugeMesh?.geometry.dispose();
       gaugeMaterial.dispose();
+      bloomPass.dispose();
+      composer.dispose();
       controls.dispose();
       environment.dispose();
       renderer.dispose();
