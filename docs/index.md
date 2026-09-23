@@ -69,3 +69,4 @@ The same honesty applies to *what the model is asked to predict*. A RUL label is
 - [Boot layers and fold caching](performance.md) — why a cold boot serves the core model first, what the deferred layers disclose while they run, and the measured cost of replaying a leave-cell-out fold versus refitting it.
 - [API stability](api_stability.md) — what you may depend on, the deprecation policy, and the inputs that depend on the environment rather than the data.
 - [Project history](history.md) — the Streamlit demo application this library was extracted from, and everything built in it.
+- [The Battery 3D Explorer](battery_3d_explorer.md) — the demo app's 3D cell view: one versioned JSON document, one renderer, four hosts, and the full why/how of every part of it (shareable view state, cache-busted bundle, the band key, accessibility, touch, performance, single-sourced constants); the creative contract it is built against is [the scene's standing prompt](scene_prompt.md).

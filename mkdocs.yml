@@ -56,6 +56,7 @@ nav:
       - Knee detection: notebooks/03_knee_detection.ipynb
       - Bring your own data: notebooks/04_bring_your_own_data.ipynb
   - 3D cell view:
+      - The Battery 3D Explorer: battery_3d_explorer.md
       - The scene's standing prompt: scene_prompt.md
   - Project history: history.md
 

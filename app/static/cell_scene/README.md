@@ -7,10 +7,10 @@ Neither host can run Node, so the renderer has to already exist here.
 
 | File | What it is |
 | --- | --- |
-| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~639 kB, ~164 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
+| `cell_scene.js` | The whole scene engine, minified, three.js and SVG leader-line overlay included (~647.6 kB, ~167 kB gzipped). Built from `frontend/src/scene/` — one implementation, three hosts. |
 | `index.html` | The standalone host: no framework, no build step. Loads the bundle above and a scene document, and does everything the Streamlit page and the React SPA do. |
 | `sample_scene.json` | A real `CellSceneSpec` for a real cell, so the page works in a fresh checkout with no data loaded and no API running. Also read by `frontend/src/scene/spec.test.ts`, which is how the Python producer and the JavaScript renderer are held to the same document — including the `physical` block, whose derivations (turn count, pitch, implied electrode length) are recomputed by the renderer and compared against the producer's, and the film's chain, whose nm-per-%-lithium-inventory factor the test re-derives from the tagged assumptions and whose **drawn band the renderer reads out of the document** rather than choosing for itself. |
-| `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit. |
+| `manifest.json` | The hashes that make a stale or hand-edited bundle impossible to commit — **and the cache key**: `bundleSha256[:12]` is what both hosts append to the bundle URL as `?v=`, so shipping a new bundle always ships a new URL and a browser cache can never pin an old renderer. |
 
 ## Regenerating (after any change under `frontend/src/scene/`)
 
@@ -18,11 +18,12 @@ Neither host can run Node, so the renderer has to already exist here.
 cd frontend
 npm ci
 npm run test:scene      # node --test src/scene/*.test.ts — the geometry and the
-                        # contract with src/cell_scene.py
+                        # contract with src/cell_scene.py (129 tests)
 npm run build:scene     # → ../app/static/cell_scene/cell_scene.js
 
 cd ..
 python scripts/export_scene_sample.py --cell B0005   # refreshes the sample + manifest
+                                                    # and stamps index.html's <script> with ?v=
 python -m pytest tests/test_cell_scene_bundle.py     # or: export_scene_sample.py --check
 ```
 
@@ -30,7 +31,10 @@ The build is deterministic in the ways that matter (fixed output filename, no
 hash in the name) and the manifest records the digest of the bundle **and of
 every source file it was built from** — so "I changed the geometry but forgot to
 rebuild" fails a test rather than shipping a scene that disagrees with its own
-source. `npm run build` (the SPA) is a separate build of the same sources; it
+source. The export script also stamps this page's `<script src="cell_scene.js?v=…">`
+tag with the manifest's digest and validates the pair in `--check`; the Streamlit
+host reads the same `bundleSha256` to build its own URL (`app/_scene_view.py`).
+`npm run build` (the SPA) is a separate build of the same sources; it
 serves the scene from `frontend/dist` and does not touch this directory.
 
 ## Opening the standalone page
@@ -48,6 +52,20 @@ Query parameters:
 | `?token=…` | Bearer token for the REST endpoint — it is authenticated |
 | `?spec=./file.json` | Load any URL that serves a `CellSceneSpec` |
 | *(nothing)* | Falls back to `sample_scene.json` |
+
+**View state** (the share button is the address bar — these are written back as you
+interact, and read on load; precedence is **URL > the stored view of this cell on this
+machine > the host's default**, and the loader keys above survive both trips because
+one half of the URL says *which* cell and the other *how to look at it*):
+
+| Parameter | Effect |
+| --- | --- |
+| `?cursor=150` | Life-cursor index (measured + projected cycles); default when unset = last measured cycle |
+| `?exploded=0.7` / `?peel=0.4` | Explode / peel position, 0–1 |
+| `?layout=unrolled` | Wound or unrolled geometry |
+| `?part=anode` | The **pinned** part (a click) — a transient hover never enters the URL |
+| `?annotations=0` | Hide the badge/leader-line layer |
+| `?theme=codex` | Palette; otherwise the reader's stored choice, else the document's own |
 
 A `file://` double-click cannot `fetch` a sibling file, so the page has no data
 path in that mode — serve the directory over HTTP. That is a browser rule, not a
@@ -172,3 +190,24 @@ page with `?cell=B0005` (or another real cell) and check:
     gradient, never stray text on the stage. Codex's threshold sits deliberately above the
     lit parchment, so its bloom fires only on true >0.9 highlights (none at rest is
     correct); Obsidian's gauge should glow at rest.
+17. **The key states numbers, under headings.** The legend beside the stage reads Health /
+    Origin / Casing temperature, and *every* band prints its range — including the
+    End-of-Life band, which must read `< 80%` (it starts at `min: 0`, the exact case a
+    truthiness check used to swallow) and must render as literal text, not vanish into a
+    tag the browser invents. An empty section is omitted, not shown as a heading over
+    nothing.
+18. **The address bar is the share button.** Drag the explode/peel sliders, scrub the
+    cursor, click a part, switch palette — the query string gains `exploded=…&cursor=…
+    &part=…&theme=…` (coalesced, not per-frame). Copy it into a new tab: the same picture
+    reopens. Hovering without clicking must *not* put a part in the URL. Reload lands you
+    back where you were even without a URL, via the stored per-cell view.
+19. **Badges with no reading collapse.** At a cursor where several parts have none, the
+    flanks show one `N unmeasured` count badge rather than a wall of grey rows; clicking it
+    (or the HUD toggle) expands them, and the badge's label explains what it will do.
+20. **It behaves on a phone and with reduced motion.** Narrow the window (or open on a
+    phone): the layout goes single-column, controls stay reachable, and a *tap* on a part
+    opens its dossier (touch never hovers, so the press itself is raycast). With
+    `prefers-reduced-motion: reduce` set, springs snap, camera poses jump and the target
+    reticle holds still — while orbiting, scrubbing and selecting all keep working.
+    A screen reader hears the current selection/cycle/SOH announced once, politely, when
+    it actually changes.

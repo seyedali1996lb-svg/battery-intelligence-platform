@@ -14,6 +14,42 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+- **The scene becomes shareable, accessible, and still when idle — ten hardening changes.**
+  *Shareable view state:* a new pure `frontend/src/scene/viewstate.ts` defines what a view is
+  (`cursor`, `exploded`, `peel`, `layout`, `part`, `annotations`, `theme` — how you look, never a
+  number read from the data) with `encode`/`decode`/`mergeViewState` and one precedence for every
+  host, **URL > stored view of this cell (`view:<cellId>`) > host default**. Both HTML hosts now
+  write the view back to their query string (the harness on a coalesced `history.replaceState`,
+  preserving `cell`/`api`/`token`/`spec`), the engine persists it, and `FrameState` gained
+  `pinned` so a transient **hover can never enter a shareable URL** (`inspected = pinned ??
+  hovered`); `MountOptions` gained `restore`/`part`/`annotations`, and hosts no longer pin
+  `cursor` at mount (unset cursor = last measured cycle). *Caching:* both hosts load
+  `cell_scene.js?v=<manifest bundleSha256[:12]>` — the bundle's own hash is the cache key, so a
+  browser can no longer pin an old renderer (`BUNDLE_URL`, `_scene_view.py`; the export script
+  stamps and `--check`s the harness tag). *Key/legend:* new pure `legend.ts` fixes the truthiness
+  bug that made the End-of-Life band (`min: 0`) print no range, adds the missing temperature-band
+  key and Health/Origin/Casing-temperature headings, HTML-escapes every label (`_esc` mirrors it
+  server-side) and omits empty sections. *Accessibility/motion:* `prefers-reduced-motion` now
+  snaps springs, jumps poses and stills the reticle; the canvas carries an `aria-label`, a
+  visually-hidden `aria-live="polite"` region announces selection/cycle/SOH, and badges expose
+  `role`/`tabindex`/`aria-expanded`. *Touch/mobile:* a press is raycast directly (touch never
+  hovers, so tap-to-inspect now works) and the host layout collapses to one column with
+  coarse-pointer-sized controls. *Clutter:* parts with no reading collapse into a single `N
+  unmeasured` count badge (`groupUnmeasured()`), expandable via the badge or the HUD.
+  *Performance:* idle stages stop rendering (`needsRender`), the raycast target list and pointer
+  work are cached and run once per tick, the leader-line overlay rebuilds only on a signature
+  change, and `battery3d` memoises spec building on input identity (`_SPEC_MEMO`).
+  *Unification:* hosts derive their controls from `FrameState` rather than keeping a second copy
+  (Streamlit's cursor strip syncs from frames; the SPA dropped local control state; `App.tsx` syncs
+  `?tab=`). *De-duplication:* badge chrome is theme-derived via `withAlpha`; the r² gate and
+  refit window are one pair of constants (`R2_FLOOR`, `REFIT_EVERY_CYCLES`, exposed as
+  `mechanism.physics.gate` / `physics.refitEveryCycles`); SOH bands/thresholds/colours are one set
+  of tokens in `app/_design_tokens.py` (`SOH_*`) consumed by `soh_status`, the pack layout, the
+  degradation space and the Battery 3D tiles (pack/explore band colours move to the canonical
+  `#48bb78`/`#f6e05e`/`#fc8181`); stale doc pointers fixed. Bundle re-hashed at 647.6 kB (~167 kB
+  gzipped); node tests 112 → **129** (legend, view state, badge grouping), plus new Python pins
+  for the r² gate, the legend, the `?v=` stamp and the SOH tokens. Full record:
+  `docs/battery_3d_explorer.md`.
 - **Bloom on the emissive gauge, via `EffectComposer`.** The stage now renders
   `RenderPass → UnrealBloomPass → OutputPass`: linear HDR into MSAA half-float targets, the
   highlights lifted once, ACES applied once on the way out (the chain is pinned in

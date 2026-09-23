@@ -102,6 +102,14 @@ what makes the view trustworthy rather than merely pretty.
 | Data-scaled geometry as an opt-in, annotated | `dataScaled` build option + `geometryScales` in the document |
 | Magnification printed | `physical.film.display` (drawn band + factor) |
 | Refusals drawn with reasons | `unavailableReason` / `reason` per part |
+| The key beside the stage states every band's range (the `band.min = 0` EOL band included), grouped Health / Origin / Casing temperature | `bandRange()` + `legendHtml()`, `frontend/src/scene/legend.ts`; mirrored server-side by `band_range()` + `legend_html()`, `app/_scene_view.py`; pinned on both sides (`legend.test.ts`, `tests/test_cell_scene_page.py`) |
+| A view is shareable: cursor, explode, peel, layout, pinned part, annotations, palette | `viewstate.ts` (`encode`/`decode`/`merge`, precedence URL > stored > host default, keyed `view:<cellId>`); `FrameState.pinned` vs `inspected` in `engine.ts` — hover never enters a URL |
+| Bundles cannot go stale in a browser cache | `BUNDLE_URL = path?v=<bundleSha256[:12]>`, `app/_scene_view.py`; harness `<script>` tag stamped + checked by `scripts/export_scene_sample.py` |
+| Touch inspects, and the layout survives a phone | `pointerdown` raycast in `engine.ts`; `@media (max-width: 760px)` / `(pointer: coarse)` in `app/_scene_view.py` |
+| Motion preference respected, stage readable to a screen reader | `reducedMotion` (springs snap, poses jump, reticle holds), canvas `aria-label`, `aria-live="polite"` selection voice, `role=button`/`aria-expanded` badges — `engine.ts` |
+| Badges with no reading collapse into one count badge | `groupUnmeasured()`, `frontend/src/scene/annotation.ts`; expansion flag + labels in `engine.ts` |
+| One truth for controls, one r² gate, one SOH band table | hosts mirror `FrameState` (never a second copy); `R2_FLOOR`/`REFIT_EVERY_CYCLES`, `src/cell_scene.py`; `SOH_*` tokens, `app/_design_tokens.py` |
+| Idle stage costs a boolean, not a draw | `needsRender` / `pointerDirty` / cached `raycastTargets`, `engine.ts`; `_SPEC_MEMO`, `app/_pages/battery3d.py` |
 
 ## What guards it
 
@@ -116,7 +124,20 @@ what makes the view trustworthy rather than merely pretty.
 * The **honesty tests** pin the epistemics: a refused split draws no film
   growth, the fitted share cannot move the drawn film, every part card carries
   a provenance tag, the magnification is printed where the film is drawn.
-* The **bundle test** keeps the committed artifacts the hash of their sources.
+* The **bundle test** keeps the committed artifacts the hash of their sources,
+  and (since the cache-bust) that the harness's `<script>` tag carries the
+  manifest's own `?v=` digest — a stale renderer cannot be committed silently.
+* The **key and view tests** (`legend.test.ts`, `viewstate.test.ts`, the
+  grouping cases in `annotation.test.ts`, mirrored by pins in
+  `tests/test_cell_scene_page.py`) hold the legend's ranges/headings, the
+  view-state round-trip and its precedence, and the "no reading" collapse.
+  Renderer geometry + contract total: **129 Node tests** (`npm run test:scene`).
+* The **shared-constant tests** pin that there is only one r² floor
+  (`R2_FLOOR`, exposed as `mechanism.physics.gate`) and one SOH band table
+  (`SOH_*` in `app/_design_tokens.py`), so a drift in one call site fails.
+
+The full build/verify order for all of the above lives in
+[The Battery 3D Explorer](battery_3d_explorer.md).
 
 ## The standing backlog (what "10/10" still owes)
 
