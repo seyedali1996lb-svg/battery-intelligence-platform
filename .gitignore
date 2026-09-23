@@ -58,3 +58,9 @@ Thumbs.db
 
 # Freebuff agent workspace metadata
 .freebuff/
+
+# Deployment secrets — README's Streamlit Cloud section tells deployers to put
+# API keys / knob overrides in .streamlit/secrets.toml (read through
+# app/_secrets_env.py's bridge into os.environ); keys never enter git.
+# .streamlit/config.toml stays tracked — it is not secret.
+.streamlit/secrets.toml

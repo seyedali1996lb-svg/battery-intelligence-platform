@@ -14,6 +14,18 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+- **Deployment knobs are finally reachable on Streamlit Community Cloud.** Every knob this app
+  reads (`BATLAB_BOOT_STUDIES`, `BATLAB_BOOT_LAYERS`, `BATLAB_FOLD_WORKERS`,
+  `SETTINGS_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`) comes from `os.environ`, but Community Cloud has
+  no environment-variable setting — `.streamlit/secrets.toml` is its only configuration surface —
+  so a CPU-throttled instance could not be told `BATLAB_BOOT_STUDIES=off`, and the docs' own "set
+  it via Streamlit Cloud secrets" instructions had no code behind them. New `app/_secrets_env.py`,
+  applied by `app/main.py` at module top level *before* `from _data import ...` (AST-pinned by
+  `tests/test_secrets_env.py`), mirrors the file's top-level scalars into the environment with
+  `setdefault`: a real environment variable always wins, TOML tables stay with `st.secrets`, bools
+  become `true`/`false`; a missing file is a no-op (the local case), a malformed one still raises
+  at boot. `.streamlit/secrets.toml` is now gitignored, and README documents the bridge next to
+  the environment table.
 - **The scene becomes shareable, accessible, and still when idle — ten hardening changes.**
   *Shareable view state:* a new pure `frontend/src/scene/viewstate.ts` defines what a view is
   (`cursor`, `exploded`, `peel`, `layout`, `part`, `annotations`, `theme` — how you look, never a

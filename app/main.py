@@ -32,6 +32,16 @@ import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
 import streamlit as st
 
+from _secrets_env import apply_secrets_to_environ
+
+# Streamlit Community Cloud has no environment-variable setting — its only
+# configuration surface is .streamlit/secrets.toml — while every deployment
+# knob (BATLAB_BOOT_*, BATLAB_FOLD_WORKERS, SETTINGS_ENCRYPTION_KEY, ...) is
+# read from os.environ. Mirror the file into the environment before _data and
+# friends are imported, so even an import-time reader sees it; a real
+# environment variable always wins (the rules: app/_secrets_env.py).
+apply_secrets_to_environ()
+
 from _data import (
     load_everything,
     ensure_cell_summaries_synced,
