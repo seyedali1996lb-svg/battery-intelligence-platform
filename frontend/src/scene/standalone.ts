@@ -17,6 +17,10 @@ import {
   SCENE_SCHEMA_VERSION,
   autoMount,
   checkSchemaVersion,
+  decodeViewState,
+  encodeViewState,
+  legendHtml,
+  mergeViewState,
   mount,
   mountCellScene,
   renderLegend,
@@ -31,6 +35,15 @@ export interface CellSceneGlobal {
   autoMount: typeof autoMount;
   checkSchemaVersion: typeof checkSchemaVersion;
   renderLegend: typeof renderLegend;
+  legendHtml: typeof legendHtml;
+  /**
+   * The shareable-view codec: hosts that keep their own URL (a router, a
+   * report's query string) round-trip a view through these instead of
+   * re-inventing one — the engine's own storage uses the same three.
+   */
+  encodeViewState: typeof encodeViewState;
+  decodeViewState: typeof decodeViewState;
+  mergeViewState: typeof mergeViewState;
 }
 
 const api: CellSceneGlobal = {
@@ -41,6 +54,10 @@ const api: CellSceneGlobal = {
   autoMount,
   checkSchemaVersion,
   renderLegend,
+  legendHtml,
+  encodeViewState,
+  decodeViewState,
+  mergeViewState,
 };
 
 declare global {

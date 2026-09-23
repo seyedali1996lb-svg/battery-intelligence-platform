@@ -50,6 +50,14 @@ import streamlit as st
 
 import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
+from _design_tokens import (
+    SOH_DEGRADING_COLOR,
+    SOH_EOL_COLOR,
+    SOH_EOL_MIN,
+    SOH_HEALTHY_COLOR,
+    SOH_HEALTHY_MIN,
+)
+
 # ---------------------------------------------------------------------------
 # Geometry (arbitrary but consistent units; the scene uses aspectmode="data",
 # so proportions are the only thing that matters). A real 18650 is ~18 mm
@@ -76,13 +84,14 @@ SOH_HEIGHT_MIN = 0.25        # a cell at/below the floor draws at 25% height
 # which covers every pack this platform's fleets can actually produce.)
 SOH_HEIGHT_FLOOR = 50.0      # SOH% at which the height metaphor bottoms out
 
-# SOH colour bands — the same 90/80 thresholds and palette as
-# app/_ui_helpers.py's soh_status() (Healthy / Degrading / End of Life), so a
-# cell is never green on this chart and amber everywhere else.
+# SOH colour bands — the same thresholds and palette as _design_tokens'
+# SOH_HEALTHY_MIN/SOH_EOL_MIN and the three band colours, which is also what
+# app/_ui_helpers.py's soh_status() (Healthy / Degrading / End of Life) reads.
+# One definition, so a cell is never green on this chart and amber elsewhere.
 SOH_BANDS: tuple[tuple[float, str, str], ...] = (
-    (90.0, "#68d391", "Healthy (≥90% SOH)"),
-    (80.0, "#f6ad55", "Degrading (80–90% SOH)"),
-    (float("-inf"), "#fc8181", "End of Life (<80% SOH)"),
+    (SOH_HEALTHY_MIN, SOH_HEALTHY_COLOR, f"Healthy (≥{SOH_HEALTHY_MIN:.0f}% SOH)"),
+    (SOH_EOL_MIN, SOH_DEGRADING_COLOR, f"Degrading ({SOH_EOL_MIN:.0f}–{SOH_HEALTHY_MIN:.0f}% SOH)"),
+    (float("-inf"), SOH_EOL_COLOR, f"End of Life (<{SOH_EOL_MIN:.0f}% SOH)"),
 )
 
 _INTERCONNECT_COLOR = "#8896a8"

@@ -72,6 +72,26 @@ export function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
+ * A theme colour at an opacity — `rgba(r, g, b, a)`, never a hand-typed literal.
+ *
+ * The badge chrome used to spell its own dark blues and greys, which meant a
+ * light palette got dark badges painted over it. Every translucent surface in
+ * the overlay now derives from `theme.panel`/`theme.grid`/`theme.accent`
+ * through this one function, so the chrome repaints with the palette like the
+ * meshes do. Falls back to the colour untouched when it is not a hex triple
+ * (an `rgb()`/named token from a future schema still renders, just opaque).
+ */
+export function withAlpha(hex: string, alpha: number): string {
+  try {
+    const [r, g, b] = hexToRgb(hex);
+    const a = Math.max(0, Math.min(1, alpha));
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  } catch {
+    return hex;
+  }
+}
+
+/**
  * The band a measurement falls in, or null when no band applies (a missing
  * reading, or a value outside every band's range).
  *

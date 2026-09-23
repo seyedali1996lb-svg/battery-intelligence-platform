@@ -7,6 +7,35 @@ import type { CellSceneHandle, CellSceneSpec, DossierView, FrameState, PartReadi
 // exists to keep off the critical path. `dossier` reaches only into
 // three-free modules (geometry, types, theme), so this import is cheap.
 import { composeDossier } from "../scene/dossier";
+// Likewise the shareable-view codec: a value import from `../scene` would be
+// enough to pull the whole engine into this chunk, so it comes from the module
+// itself — which imports nothing but `theme.ts`'s two preference helpers.
+import { decodeViewState, encodeViewState } from "../scene/viewstate";
+
+/**
+ * The view fields this host shares through the address bar — the same set the
+ * engine persists, so a copied link and a reload land on the same picture.
+ * Loader parameters (`cell`, `tab`, `api`) are never in this list: which cell
+ * to draw is not a way of looking at it.
+ */
+const VIEW_KEYS = ["cursor", "exploded", "peel", "layout", "part", "annotations", "theme"];
+
+/** Read-modify-write the URL without dropping anyone else's parameters. */
+function writeUrl(mutate: (params: URLSearchParams) => void): void {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    mutate(params);
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (query ? `?${query}` : "") + window.location.hash,
+    );
+  } catch {
+    // A sandboxed frame or a `file://` page may refuse history writes; sharing
+    // by URL is a convenience, never a reason to fail the view.
+  }
+}
 
 /**
  * The scene engine, loaded on demand.
@@ -33,14 +62,18 @@ type SceneModule = typeof import("../scene");
  */
 export default function CellSceneView() {
   const [cells, setCells] = useState<string[]>([]);
-  const [cellId, setCellId] = useState<string>("");
+  // The cell travels in the URL like everything else here, so a link to a cell
+  // reopens that cell. Read once, before the list arrives; an id the store does
+  // not know is kept (the API answers with a sentence) rather than silently
+  // swapped for a different cell the reader did not ask for.
+  const [cellId, setCellId] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("cell") ?? "",
+  );
   const [spec, setSpec] = useState<CellSceneSpec | null>(null);
+  /** Whether the cell list has settled — the difference between "loading" and "empty". */
+  const [listed, setListed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [frame, setFrame] = useState<FrameState | null>(null);
-  const [exploded, setExploded] = useState(0);
-  const [dataScaled, setDataScaled] = useState(false);
-  const [annotations, setAnnotations] = useState(true);
-  const [stripCasing, setStripCasing] = useState(false);
   const [playing, setPlaying] = useState(false);
   /**
    * The part the scene is showing a dossier for.
@@ -58,15 +91,70 @@ export default function CellSceneView() {
   const legendRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<CellSceneHandle | null>(null);
   const moduleRef = useRef<SceneModule | null>(null);
+  /**
+   * Shareable-view write-back, coalesced.
+   *
+   * The engine reports a frame per scrub tick and per playback step, and
+   * browsers rate-limit `history.replaceState` (Chrome refuses after 100 calls
+   * in 30 seconds) — so the latest view is written once the reader pauses,
+   * which also makes "scrub to 7 and stop" land on 7 rather than on every
+   * value in between. `lastView` is what has been *scheduled*; the write reads
+   * it again at fire time, so the newest frame always wins.
+   */
+  const lastView = useRef("");
+  const viewTimer = useRef<number | null>(null);
+
+  const shareView = (state: FrameState): void => {
+    const encoded = encodeViewState({
+      cursor: state.cursor,
+      exploded: state.exploded,
+      peel: state.peel,
+      layout: state.layout,
+      // Only the *pinned* part is a view: a transient hover must not be
+      // something the recipient of a link is forced to look at.
+      part: state.pinned ?? undefined,
+      annotations: state.annotations,
+      theme: state.themeName ?? undefined,
+    });
+    if (encoded === lastView.current) return;
+    lastView.current = encoded;
+    if (viewTimer.current !== null) return;
+    viewTimer.current = window.setTimeout(() => {
+      viewTimer.current = null;
+      writeUrl((params) => {
+        for (const key of VIEW_KEYS) params.delete(key);
+        for (const [key, value] of new URLSearchParams(lastView.current)) params.set(key, value);
+      });
+    }, 400);
+  };
+
+  useEffect(
+    () => () => {
+      if (viewTimer.current !== null) window.clearTimeout(viewTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     listCells()
       .then((response) => {
         setCells(response.cells);
         setCellId((current) => current || response.cells[0] || "");
+        setListed(true);
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't list cells."));
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Couldn't list cells.");
+        setListed(true);
+      });
   }, []);
+
+  // Which cell is on screen belongs in the URL too — a cell pick is part of
+  // "send me what you are looking at", and `writeUrl` preserves the view and
+  // tab parameters this file and App.tsx each own.
+  useEffect(() => {
+    if (!cellId) return;
+    writeUrl((params) => params.set("cell", cellId));
+  }, [cellId]);
 
   useEffect(() => {
     if (!cellId) return;
@@ -92,13 +180,21 @@ export default function CellSceneView() {
       if (disposed) return;
       moduleRef.current = sceneModule;
       handleRef.current?.dispose();
+      // The address bar is the highest-precedence view carrier: whatever it
+      // names beats this cell's stored view, and whatever it is silent about
+      // falls through to storage — or, with neither, to the engine's default
+      // of *today*. No cursor is pinned here: a hard-coded "last cycle" would
+      // outrank both and make every shared link reopen at a different frame
+      // than the one it was copied from.
+      const urlView = decodeViewState(window.location.search);
       // `mount`, not `mountCellScene`: the wrapper refuses a document produced by
       // another schema version with a sentence, and turns a missing WebGL
       // context into an explanation, where the raw call would return null.
       const mounted = sceneModule.mount(stage, spec, {
-        cursor: Math.max(0, spec.series.cycles.length - 1),
+        ...urlView,
         onFrame: (state) => {
           setFrame(state);
+          shareView(state);
           // The cards move with the scene: a card that kept showing today's
           // number while the cursor scrubbed back would be a second, quieter
           // reading of the same cell. `handleRef` is still empty during the
@@ -129,15 +225,6 @@ export default function CellSceneView() {
       handleRef.current = null;
     };
   }, [spec]);
-
-  useEffect(() => {
-    if (!spec || !handleRef.current) return;
-    handleRef.current.update(spec, { exploded, dataScaled, casing: stripCasing ? "hidden" : "translucent" });
-  }, [spec, exploded, dataScaled, stripCasing]);
-
-  useEffect(() => {
-    handleRef.current?.setAnnotations(annotations);
-  }, [annotations]);
 
   const cards: PartReading[] =
     readings ??
@@ -254,17 +341,49 @@ export default function CellSceneView() {
         </span>
       </div>
 
+      {/* The loading placeholder is a *sibling* of the stage, never its child:
+          `mount()` clears the stage container before it paints, so anything
+          React put inside would be wiped by the very arrival it announces. */}
+      {!spec && !error && (
+        <div className="card" style={{ marginBottom: 14, color: "var(--c-muted, #94a3b8)" }}>
+          {listed && cells.length === 0 ? "No cells to show yet." : "Loading the scene…"}
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "220px minmax(340px, 1fr) 280px", gap: 14, alignItems: "start" }}>
         <div className="card">
           <div className="kpi-label">Controls</div>
+          {/* Every control below reads its value from the frame the engine
+              reported and writes back through the handle — one source of
+              truth. The HUD rail, the keyboard shortcuts and a shared URL can
+              all move the view, and a control showing a stale private copy
+              would silently disagree with the picture beside it. */}
           <label style={{ display: "block", fontSize: 12, marginBottom: 10 }}>
-            Exploded view <span style={{ float: "right" }}>{Math.round(exploded * 100)}%</span>
+            Exploded view{" "}
+            <span style={{ float: "right" }}>{Math.round((frame?.exploded ?? 0) * 100)}%</span>
             <input
               type="range"
               min={0}
               max={100}
-              value={Math.round(exploded * 100)}
-              onChange={(event) => setExploded(Number(event.target.value) / 100)}
+              value={Math.round((frame?.exploded ?? 0) * 100)}
+              onChange={(event) => {
+                if (!spec) return;
+                handleRef.current?.update(spec, { exploded: Number(event.target.value) / 100 });
+              }}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <label style={{ display: "block", fontSize: 12, marginBottom: 10 }}>
+            Peel layers <span style={{ float: "right" }}>{Math.round((frame?.peel ?? 0) * 100)}%</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round((frame?.peel ?? 0) * 100)}
+              onChange={(event) => {
+                if (!spec) return;
+                handleRef.current?.update(spec, { peel: Number(event.target.value) / 100 });
+              }}
               style={{ width: "100%" }}
             />
           </label>
@@ -282,6 +401,17 @@ export default function CellSceneView() {
               style={{ width: "100%" }}
             />
           </label>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {(["iso", "plan", "section"] as const).map((pose) => (
+              <button
+                key={pose}
+                className="btn-outline"
+                onClick={() => handleRef.current?.framePreset(pose)}
+              >
+                {pose === "iso" ? "ISO" : pose === "plan" ? "Plan" : "Section"}
+              </button>
+            ))}
+          </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
             <button
               className="btn-outline"
@@ -313,25 +443,56 @@ export default function CellSceneView() {
             </button>
           </div>
           <label style={{ display: "flex", gap: 6, fontSize: 12, marginBottom: 6 }}>
-            <input type="checkbox" checked={dataScaled} onChange={(event) => setDataScaled(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={frame?.dataScaled ?? false}
+              onChange={(event) => {
+                if (!spec) return;
+                handleRef.current?.update(spec, { dataScaled: event.target.checked });
+              }}
+            />
             Data-scaled geometry
           </label>
           <label style={{ display: "flex", gap: 6, fontSize: 12, marginBottom: 6 }}>
             <input
               type="checkbox"
-              checked={annotations}
-              onChange={(event) => setAnnotations(event.target.checked)}
+              checked={frame?.annotations ?? true}
+              onChange={(event) => handleRef.current?.setAnnotations(event.target.checked)}
             />
             Part annotations
           </label>
           <label style={{ display: "flex", gap: 6, fontSize: 12 }}>
             <input
               type="checkbox"
-              checked={stripCasing}
-              onChange={(event) => setStripCasing(event.target.checked)}
+              checked={frame?.casing === "hidden"}
+              onChange={(event) => {
+                if (!spec) return;
+                handleRef.current?.update(spec, {
+                  casing: event.target.checked ? "hidden" : "translucent",
+                });
+              }}
             />
             Strip the casing
           </label>
+          {/* The palette switcher appears only when the document offers a
+              second one — a control that cannot do anything is worse than
+              no control at all. */}
+          {(Object.keys(spec?.palettes ?? {}).length > 1) && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+              {Object.keys(spec?.palettes ?? {}).map((name) => (
+                <button
+                  key={name}
+                  className="btn-outline"
+                  style={{
+                    borderColor: (frame?.themeName ?? null) === name ? "var(--c-accent, #63b3ed)" : undefined,
+                  }}
+                  onClick={() => handleRef.current?.setTheme(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
           <div ref={legendRef} style={{ marginTop: 10 }} />
         </div>
 

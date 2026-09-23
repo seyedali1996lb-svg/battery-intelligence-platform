@@ -207,6 +207,11 @@ def test_figure_has_one_path_per_cell_plus_the_eol_plane():
     assert types[-1] == "surface"
     plane = fig.data[-1]
     assert list(plane.y[0]) == [EOL_PCT, EOL_PCT], "the plane must sit at the 80% EOL convention"
+    # …and that convention is the platform's own token, not a number this page
+    # happens to hold. Both views of end-of-life are one number.
+    from _design_tokens import SOH_EOL_MIN
+
+    assert EOL_PCT == SOH_EOL_MIN
 
 
 def test_figure_axes_are_cycle_age_soh_and_the_selected_axis():

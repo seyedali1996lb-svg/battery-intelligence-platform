@@ -66,11 +66,28 @@ def _spec() -> dict:
 def test_the_iframe_links_the_bundle_over_the_route_streamlit_already_serves():
     """`app/static/theme.css` (app/main.py) is fetched this exact way, so the
     scene's 578 kB renderer travels the route that is already known to work —
-    and is cached by the browser instead of re-sent on every rerun."""
+    and is cached by the browser instead of re-sent on every rerun.
+
+    The link carries `?v=<digest12>`: a browser that cached yesterday's bundle
+    has no way to learn the file on disk changed (same URL, same ETag day), so
+    the digest *is* the cache-bust. It must be the digest of the bundle this
+    checkout actually ships, and the path underneath it must still exist —
+    otherwise the page loads a stale renderer or a 404, each silently."""
     html = scene_iframe_html(_spec())
     assert f'<script src="{BUNDLE_URL}"></script>' in html
-    assert BUNDLE_URL == "app/static/cell_scene/cell_scene.js"
-    assert (pathlib.Path(_root) / BUNDLE_URL).is_file()
+    path, sep, query = BUNDLE_URL.partition("?")  # sep holds the "?"; the tail does not
+    assert path == "app/static/cell_scene/cell_scene.js"
+    assert sep == "?" and query.startswith("v=") and len(query) == len("v=") + 12, (
+        f"BUNDLE_URL must be cache-busted with a 12-hex digest, got {BUNDLE_URL!r}"
+    )
+    digest = query[len("v="):]
+    assert re.fullmatch(r"[0-9a-f]{12}", digest), f"the ?v= digest is not 12 hex chars: {digest!r}"
+    bundle = pathlib.Path(_root) / path
+    assert bundle.is_file()
+    # The stamp names this build, not some earlier one.
+    import hashlib
+
+    assert hashlib.sha256(bundle.read_bytes()).hexdigest()[:12] == digest
 
 
 def test_the_document_embeds_the_spec_verbatim_and_reads_back_identical():
@@ -108,6 +125,74 @@ def test_the_cursor_starts_at_today_and_spans_the_projection():
     html = scene_iframe_html(spec)
     measured = len(spec["series"]["cycles"])
     assert f'id="cursor" type="range" min="0" max="{measured - 1}" value="{measured - 1}"' in html
+
+
+# ---------------------------------------------------------------------------
+# The band and provenance key
+# ---------------------------------------------------------------------------
+
+def test_band_range_states_every_bands_numbers_including_a_zero_minimum():
+    """Mirrors frontend/src/scene/legend.ts's `bandRange` line for line.
+
+    The falsy check this replaces (`band.min ? …`) silently dropped the
+    End-of-Life band's range — `0` is a real minimum — and the key became a row
+    of colours with no numbers. Each host has one of these functions, so each
+    host gets the same test: same inputs, same strings, or the iframe and the
+    standalone page would describe different colours than the ones painted.
+    """
+    from _scene_view import band_range
+
+    assert band_range(90, None) == "≥ 90%"
+    assert band_range(80, 90) == "80–90%"
+    # The bug: 0 is falsy, so `min ? …` lost this band's range entirely.
+    assert band_range(0, 80) == "< 80%"
+    assert band_range(None, None) == ""
+    # Temperature bands travel in the reader's own units, not percentages.
+    assert band_range(45, None, " °C") == "≥ 45 °C"
+    assert band_range(0, 30, " °C") == "< 30 °C"
+
+
+def test_the_legend_states_ranges_under_all_three_headings():
+    from _scene_view import legend_html
+    from cell_scene import default_theme
+
+    html = legend_html(default_theme())
+    for heading in ("Health", "Origin", "Casing temperature"):
+        assert heading in html, f"the key lost its {heading!r} heading"
+    # Every SOH band states its numbers — none hidden by a truthiness check.
+    assert "≥ 90%" in html, "healthy range missing"
+    assert "80–90%" in html, "degrading range missing"
+    assert "&lt; 80%" in html, "EOL range missing (the band.min=0 bug)"
+    # The three colours are the platform's own, not a second palette.
+    from _design_tokens import SOH_DEGRADING_COLOR, SOH_EOL_COLOR, SOH_HEALTHY_COLOR
+
+    for hex_code in (SOH_HEALTHY_COLOR, SOH_DEGRADING_COLOR, SOH_EOL_COLOR):
+        assert hex_code in html, f"the key paints {hex_code} without saying so"
+
+
+def test_the_legend_omits_an_empty_section_rather_than_a_heading_over_nothing():
+    """Old documents carry no temperature bands; a heading over an empty body
+    is noise, so the section disappears entirely (matching legend.ts)."""
+    from _scene_view import legend_html
+    from cell_scene import default_theme
+
+    theme = dict(default_theme(), temperatureBands=[])
+    html = legend_html(theme)
+    assert "Casing temperature" not in html
+    assert "Health" in html
+
+
+def test_the_legend_never_labels_the_empty_provenance_swatch():
+    """The empty-string key is the "no provenance" swatch — printing a row
+    labelled `""` would be a swatch explaining nothing."""
+    from _scene_view import legend_html
+    from cell_scene import default_theme
+
+    html = legend_html(default_theme())
+    for key in ("measured", "derived", "fitted", "projected"):
+        assert key in html, f"provenance {key} missing"
+    # An empty name would render `…</i></span>` — a swatch that says nothing.
+    assert "</i></span>" not in html
 
 
 def test_a_non_spec_argument_is_refused_rather_than_rendered_blank():

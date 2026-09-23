@@ -1,26 +1,28 @@
 {
   "builtBy": "cd frontend && npm run build:scene (frontend/vite.scene.config.ts)",
   "bundle": "cell_scene.js",
-  "bundleBytes": 639124,
-  "bundleSha256": "b1088db21a689b356f8c1f3e6ba949cc2e3f1165a4c7a6c1586a862951b7d466",
+  "bundleBytes": 647564,
+  "bundleSha256": "c6125e34fbf6977faa617a859482c7a600ce47b9f2f7a1a83315243f50f38ede",
   "sampleScene": "sample_scene.json",
   "sampleSceneCell": "B0005",
   "sampleSceneSha256": "543bdf388f9f90a486e0f52099fe0dd09f902022eb4c8a8f25f441c0a6f415e5",
   "schemaVersion": 1,
   "sourceSha256": {
     "package.json": "ccc3155923a40981da02b8e0e093d82c4a4ada7f7324fca0ab217be9231264e9",
-    "src/scene/annotation.ts": "44ab095da0476389c62b8850ad1b9f6d6ccdc290a6b3538b4310c8bb64844fcb",
+    "src/scene/annotation.ts": "a8c60b94c446c5e74edd80db4adfc8c08af63f3601f52fab66325d6654154b9f",
     "src/scene/dossier.ts": "fff22f1bd8023b98ebfd639ee403249b0ee2ffa01e57522c3f7d45495d84888b",
-    "src/scene/engine.ts": "12b22d81fda95a7c32bc11144809d4f81411766907ed8841673e3d6f22a50f6e",
+    "src/scene/engine.ts": "ce40d707458cc2068bdb5c48bbe826b8ee464ea50295d6f0bbe9987d30f8d097",
     "src/scene/geometry.ts": "19ba0f05fbfcc861ef8a26140342fdf6b519bc6ccf0732816279704cd014703d",
-    "src/scene/hud.ts": "d971560802483ac7a552d9e46e860207f02f820867f834a8153f66b5a6299100",
-    "src/scene/index.ts": "2be2e7a953807fa9a5623bb12bfe7b6ed8fd74d22f24016f78e7442ff46cf4c1",
+    "src/scene/hud.ts": "7b8aef826b01bbb19c260336c598dbdc06cbc7fdf036ac384138606a825c35fe",
+    "src/scene/index.ts": "daeeef53828519e8bde4a7aa7c9da3e9c6ff33f10e45947cbbe4734eddd63287",
+    "src/scene/legend.ts": "e2b86d0c56a4c73ed1093237a82eb9cd2a9cbdc94fa5382bff011b99c23afcbb",
     "src/scene/materials.ts": "0392473b9e6f61c4265313c4ddc5d3ea6b8e670eebedfcde87d59cec4c7bb81f",
-    "src/scene/standalone.ts": "84ca28a92bc210b37e5d47d46771b38cc0b234506e09277e8305ccb962227987",
-    "src/scene/theme.ts": "9f7ee60503b8b352621ac191d87b90b48017fb8c37ca6b70f055259274aabc58",
+    "src/scene/standalone.ts": "a0ece491788858a1857b995846cd68f7aa4ee15f52cbcc51c50eba43c4beee5c",
+    "src/scene/theme.ts": "b6b570f588c1eef044fb0c8758430dbb0105db50bd43385368738c9b02a84f00",
     "src/scene/tween.ts": "b82ba252f2f9050777632844c314694ddf888e86d1bd1636665f7af6542b0380",
     "src/scene/types.ts": "bf006c525d838be02cb0be22dc39361af6ddd8f19a07aa174117fe263c502483",
-    "vite.scene.config.ts": "b5fdc9dbeb9aa740acf308b815796d5b918dfa4a293a9f1fe062340e31000791"
+    "src/scene/viewstate.ts": "3aed4552aa0b9251a1cbd593e3bac1398ca2d4860e4071b8a4f759bf11e778cd",
+    "vite.scene.config.ts": "036d7610abfff5a581e39f7194cf982b4b361abeb02cc60bbd0abda88726774e"
   },
   "threeVersion": "^0.186.0"
 }

@@ -161,9 +161,34 @@ def test_cell_height_tolerates_a_missing_soh():
     assert cell_height(None, scale_by_soh=True) == pytest.approx(SOH_HEIGHT_MIN * CELL_HEIGHT)
 
 
-@pytest.mark.parametrize("soh,expected", [(95.0, "#68d391"), (85.0, "#f6ad55"), (70.0, "#fc8181")])
+@pytest.mark.parametrize("soh,expected", [(95.0, "#48bb78"), (85.0, "#f6e05e"), (70.0, "#fc8181")])
 def test_soh_band_color_uses_this_apps_own_bands(soh, expected):
     assert soh_band_color(soh) == expected
+
+
+def test_the_soh_bands_are_the_platforms_own_tokens_not_local_hexes():
+    """The three colours must come from _design_tokens (which pins them to
+    app/static/theme.css's hero-* classes) — a local literal here is exactly the
+    duplication that once let this chart paint a cell green while the rest of
+    the app called it degrading."""
+    from _design_tokens import (
+        SOH_DEGRADING_COLOR,
+        SOH_EOL_COLOR,
+        SOH_EOL_MIN,
+        SOH_HEALTHY_COLOR,
+        SOH_HEALTHY_MIN,
+    )
+
+    assert [band[0] for band in SOH_BANDS[:2]] == [SOH_HEALTHY_MIN, SOH_EOL_MIN]
+    assert [band[1] for band in SOH_BANDS] == [
+        SOH_HEALTHY_COLOR,
+        SOH_DEGRADING_COLOR,
+        SOH_EOL_COLOR,
+    ]
+    # …and those thresholds are the ones soh_status() branches on.
+    assert [90.0, 85.0, 70.0]  # sanity: the parametrised colours above span all three
+    assert soh_status(SOH_HEALTHY_MIN)[0] == "Healthy"
+    assert soh_status(SOH_EOL_MIN)[0] == "Degrading"
 
 
 @pytest.mark.parametrize("soh", [95.0, 90.0, 85.0, 80.0, 70.0, 55.0])
@@ -199,7 +224,7 @@ def test_figure_draws_a_cylinder_per_cell_plus_a_merged_terminal_trace():
 def test_figure_cylinder_colours_follow_the_soh_bands():
     cells = [_cell("A", 95.0), _cell("B", 85.0), _cell("C", 70.0)]
     fig = build_pack_layout_figure(cells, "Series")
-    assert [t.color for t in _mesh_traces(fig)[:3]] == ["#68d391", "#f6ad55", "#fc8181"]
+    assert [t.color for t in _mesh_traces(fig)[:3]] == ["#48bb78", "#f6e05e", "#fc8181"]
 
 
 def test_figure_marks_the_bottleneck_with_a_halo_and_a_label():

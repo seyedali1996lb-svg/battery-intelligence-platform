@@ -34,6 +34,9 @@ export interface HudState {
   annotations: boolean;
   breathe: boolean;
   themeName: string | null;
+  /** Whether geometry is drawn from the data rather than anatomy. */
+  dataScaled: boolean;
+  casing: "translucent" | "hidden";
   availablePalettes: string[];
   /** The full explode's travel in millimetres — axial lift, radial spread. */
   mmMaxAxial: number;
@@ -46,6 +49,14 @@ export interface HudCallbacks {
   setLayout(l: "wound" | "unrolled"): void;
   toggleBreathe(): void;
   toggleAnnotations(): void;
+  /** Strip the casing (or put it back). */
+  toggleCasing(): void;
+  /** Swap anatomical proportions for data-scaled geometry (or back). */
+  toggleDataScaled(): void;
+  /** Glide the camera back to the document's framing. */
+  resetView(): void;
+  /** Jump the life cursor to the last measured cycle. */
+  today(): void;
   playPause(): boolean;
   scrub(cursor: number): void;
   preset(name: "iso" | "plan" | "section" | "unrolled"): void;
@@ -87,6 +98,19 @@ export function createHud(
   // so the first build already knows whether it starts as a pill.
   let collapsed = readPref<boolean>("hudCollapsed") === true;
   let disposed = false;
+  /**
+   * A coarse pointer means fingers, not cursors: buttons grow to a touch
+   * target (and gain a margin) instead of staying 22 px tall under a thumb.
+   * Read once per rail build — a device does not change its pointing devices
+   * while the tab is open.
+   */
+  const coarsePointer = (() => {
+    try {
+      return window.matchMedia("(pointer: coarse)").matches;
+    } catch {
+      return false;
+    }
+  })();
 
   /** Element refs — rebound whenever a palette swap rebuilds the rail. */
   interface RailRefs {
@@ -101,6 +125,8 @@ export function createHud(
     tel: HTMLSpanElement;
     breathe: HTMLButtonElement;
     annotations: HTMLButtonElement;
+    casing: HTMLButtonElement;
+    dataScaled: HTMLButtonElement;
     layout: Record<string, HTMLButtonElement>;
     palettes: Record<string, HTMLButtonElement>;
   }
@@ -114,9 +140,16 @@ export function createHud(
     const b = document.createElement("button");
     b.textContent = label;
     b.title = hotkey ? `${title}  [${hotkey}]` : title;
+    // Every control names itself for a screen reader; `title` alone is not an
+    // accessible name in most implementations, and a rail of "ISO"/"PLAN"
+    // glyphs read out cold would say nothing about what they do.
+    b.setAttribute("aria-label", title);
     b.style.cssText =
       `background:${theme.grid};color:${theme.text};border:1px solid ${borderColorOf(false)};border-radius:4px;` +
-      "padding:3px 8px;font:inherit;cursor:pointer;display:flex;gap:6px;align-items:center";
+      // 32 px tall: a finger's minimum on a phone, still a compact rail on a
+      // desktop (the coarse-pointer query below is what grows it).
+      `padding:3px 8px;min-height:${coarsePointer ? 32 : 22}px;min-width:${coarsePointer ? 44 : 0}px;` +
+      "font:inherit;cursor:pointer;display:flex;gap:6px;align-items:center";
     if (hotkey) {
       const k = document.createElement("kbd");
       k.textContent = hotkey;
@@ -127,14 +160,18 @@ export function createHud(
     return b;
   };
 
-  const slider = (min: number, max: number, step: number, value: number, onInput: (v: number) => void, width = "110px"): HTMLInputElement => {
+  const slider = (min: number, max: number, step: number, value: number, onInput: (v: number) => void, width = "110px", label = ""): HTMLInputElement => {
     const s = document.createElement("input");
     s.type = "range";
     s.min = String(min);
     s.max = String(max);
     s.step = String(step);
     s.value = String(value);
-    s.style.cssText = `width:${width};accent-color:${theme.accent}`;
+    // A range input with no text inside has no accessible name of its own;
+    // the caption beside it is visual only.
+    if (label) s.setAttribute("aria-label", label);
+    if (coarsePointer) s.style.height = "24px";
+    s.style.cssText += `;width:${width};accent-color:${theme.accent}`;
     s.addEventListener("input", () => onInput(Number(s.value)));
     return s;
   };
@@ -184,7 +221,7 @@ export function createHud(
       `border:1px solid ${theme.grid};color:${theme.text};font-family:${theme.fonts?.mono ?? "ui-monospace,monospace"};font-size:11px;z-index:4;`;
 
     // 1 — Explode: sliders retarget, the engine's spring chases.
-    const explode = slider(0, 1, 0.01, last.exploded, (v) => cb.setExploded(v));
+    const explode = slider(0, 1, 0.01, last.exploded, (v) => cb.setExploded(v), "110px", "Explode the cell");
     const mm = readout();
     const gExplode = group();
     gExplode.append(
@@ -196,7 +233,7 @@ export function createHud(
     );
 
     // 2 — Peel, with the ¼ detent drawn where the cutaway lands.
-    const peel = slider(0, 1, 0.01, last.peel, (v) => cb.setPeel(v));
+    const peel = slider(0, 1, 0.01, last.peel, (v) => cb.setPeel(v), "110px", "Peel the layers");
     const peelWrap = document.createElement("div");
     peelWrap.style.cssText = "position:relative;display:flex;align-items:center;width:110px";
     const detent = document.createElement("span");
@@ -217,9 +254,20 @@ export function createHud(
     const gToggles = group();
     gToggles.append(breathe, annotations);
 
+    // 3b — The view toggles the host strips used to carry alone: casing,
+    // data-scaled geometry, camera reset, and "today". Folded into the rail so
+    // the stage has exactly one control surface — a feature only the Streamlit
+    // strip offered was a feature most readers never found.
+    const casing = btn("STRIP CASING", "Hide or show the can and its parts", null, () => cb.toggleCasing());
+    const dataScaled = btn("DATA-SCALED", "Draw geometry from the data, not anatomy", null, () => cb.toggleDataScaled());
+    const resetCamera = btn("RESET", "Glide the camera back to the document's framing", null, () => cb.resetView());
+    const today = btn("TODAY", "Jump the life cursor to the last measured cycle", null, () => cb.today());
+    const gView = group();
+    gView.append(casing, dataScaled, resetCamera, today);
+
     // 4 — Lifecycle: play/scrub the measured record (and its projection).
     const play = btn("▶", "Play the cell's life", "Space", () => void cb.playPause());
-    const scrub = slider(0, Math.max(1, last.measuredCount), 1, last.cursor, (v) => cb.scrub(v), "150px");
+    const scrub = slider(0, Math.max(1, last.measuredCount), 1, last.cursor, (v) => cb.scrub(v), "150px", "Life cursor");
     const life = readout();
     const gLife = group();
     gLife.append(caption("LIFE"), play, scrub, life);
@@ -263,7 +311,7 @@ export function createHud(
     const collapse = btn("‹", "Collapse the HUD", "H", toggle);
 
     rail.append(
-      gExplode, gPeel, gToggles, gLife, gLayout, gCamera,
+      gExplode, gPeel, gToggles, gView, gLife, gLayout, gCamera,
       ...(gTheme ? [gTheme] : []),
       tel, collapse,
     );
@@ -272,6 +320,7 @@ export function createHud(
     const pill = document.createElement("button");
     pill.textContent = "⋯";
     pill.title = "Show the HUD";
+    pill.setAttribute("aria-label", "Show the HUD");
     pill.style.cssText =
       "position:absolute;left:12px;bottom:12px;z-index:4;padding:3px 10px;cursor:pointer;" +
       `background:${theme.panel}ee;color:${theme.text};border:1px solid ${theme.grid};border-radius:4px;` +
@@ -281,7 +330,7 @@ export function createHud(
 
     const fresh: RailRefs = {
       rail, pill, explode, peel, scrub, mm, life, play, tel,
-      breathe, annotations, layout, palettes,
+      breathe, annotations, casing, dataScaled, layout, palettes,
     };
     refs = fresh;
     rail.style.display = collapsed ? "none" : "flex";
@@ -320,8 +369,19 @@ export function createHud(
     r.play.style.borderColor = borderColorOf(s.playing);
     r.breathe.style.borderColor = borderColorOf(s.breathe);
     r.annotations.style.borderColor = borderColorOf(s.annotations);
+    // Toggle buttons carry their state to assistive tech the way the border
+    // carries it to the eye — `aria-pressed` is the only thing that says
+    // "on" when the visual cue is colour alone.
+    r.breathe.setAttribute("aria-pressed", String(s.breathe));
+    r.annotations.setAttribute("aria-pressed", String(s.annotations));
+    r.casing.setAttribute("aria-pressed", String(s.casing === "hidden"));
+    r.dataScaled.setAttribute("aria-pressed", String(s.dataScaled));
+    r.casing.style.borderColor = borderColorOf(s.casing === "hidden");
+    r.dataScaled.style.borderColor = borderColorOf(s.dataScaled);
     r.layout.wound.style.borderColor = borderColorOf(s.layout === "wound");
     r.layout.unrolled.style.borderColor = borderColorOf(s.layout === "unrolled");
+    r.layout.wound.setAttribute("aria-pressed", String(s.layout === "wound"));
+    r.layout.unrolled.setAttribute("aria-pressed", String(s.layout === "unrolled"));
     for (const [name, b] of Object.entries(r.palettes)) {
       b.style.borderColor = borderColorOf(s.themeName === name);
     }

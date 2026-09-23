@@ -23,10 +23,50 @@ const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: "monitor", label: "Live Telemetry", icon: <Radio size={15} /> },
 ];
 
+const TAB_KEYS = new Set<string>(tabs.map((tab) => tab.key));
+
+/**
+ * The tab a shared link names, or the default.
+ *
+ * The parameter is validated rather than cast: a hand-edited `?tab=banana`
+ * must fall back to the workbench, not render an empty pane — and an unknown
+ * value is dropped from the URL by `writeTab` on the next click, so the address
+ * bar never advertises a tab this app does not have.
+ */
+function tabFromUrl(): Tab {
+  const value = new URLSearchParams(window.location.search).get("tab");
+  return value !== null && TAB_KEYS.has(value) ? (value as Tab) : "workbench";
+}
+
+/** Mirror the active tab into the URL without dropping anyone else's keys. */
+function writeTab(tab: Tab): void {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    // `workbench` is the default tab; carrying it would make every plain link
+    // look parameterised, so the default is written as its absence.
+    if (tab === "workbench") params.delete("tab");
+    else params.set("tab", tab);
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (query ? `?${query}` : "") + window.location.hash,
+    );
+  } catch {
+    // A sandboxed frame may refuse history writes; the tab still switches.
+  }
+}
+
 function App() {
   const [user, setUser] = useState<LoginResponse | null>(null);
-  const [tab, setTab] = useState<Tab>("workbench");
+  const [tab, setTab] = useState<Tab>(tabFromUrl);
   const [loggedOut, setLoggedOut] = useState(!getToken());
+
+  /** Switch tabs and keep the address bar in step, in one place. */
+  const goToTab = (next: Tab): void => {
+    setTab(next);
+    writeTab(next);
+  };
 
   if (loggedOut || !user) {
     return (
@@ -72,7 +112,7 @@ function App() {
           <button
             key={t.key}
             className={tab === t.key ? "active" : ""}
-            onClick={() => setTab(t.key)}
+            onClick={() => goToTab(t.key)}
           >
             {t.icon}
             {t.label}

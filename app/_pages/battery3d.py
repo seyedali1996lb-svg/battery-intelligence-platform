@@ -39,7 +39,20 @@ import streamlit.components.v1 as components
 
 from utils import _action_bar, _md_html, _empty_state, metric_tile_html, render_card, soh_status
 from design_system import provenance_banner
+from _design_tokens import SOH_DEGRADING_COLOR, SOH_EOL_COLOR, SOH_EOL_MIN, SOH_HEALTHY_COLOR, SOH_HEALTHY_MIN
 from _scene_view import scene_iframe_html, theme_from_app
+
+
+def _soh_color(soh: "float | None") -> str:
+    """The tile accent for a cell's SOH — the same bands `soh_status` labels it
+    with, read from _design_tokens so this tile cannot paint a cell green while
+    the label beside it says Degrading."""
+    value = (soh or 0.0)
+    if value >= SOH_HEALTHY_MIN:
+        return SOH_HEALTHY_COLOR
+    if value >= SOH_EOL_MIN:
+        return SOH_DEGRADING_COLOR
+    return SOH_EOL_COLOR
 
 #: What the app says about a value's origin, in the renderer's vocabulary.
 _PROVENANCE_LABEL = {
@@ -51,6 +64,21 @@ _PROVENANCE_LABEL = {
 }
 
 
+# ── The spec memo ───────────────────────────────────────────────────────────
+# Building one cell's scene document is not cheap (a full-history two-term fade
+# fit plus nineteen part cards), and Streamlit re-runs this whole function on
+# every widget interaction — a slider drag here used to re-fit the physics on
+# every single step. `st.cache_data` cannot hold it: the `graph` argument is a
+# networkx object with no stable hash, so hashing would either fail or silently
+# miss. What every input *does* have is identity: `featured_dfs` is written once
+# at app/_data.py load time, the bundles and graph live for the process, and
+# `theme_from_app` deep-copies per call (hence `==`, not `is`, for the theme).
+# So this is a single-slot memo keyed on the identity of four references and the
+# equality of two values — rebuilt exactly when its inputs are rebuilt, never
+# one interaction later than that.
+_SPEC_MEMO: dict = {}
+
+
 def _spec_for(cell_id, featured_dfs, bundles, graph, theme):
     """Build the scene document for one cell, or None when there is no frame.
 
@@ -59,10 +87,32 @@ def _spec_for(cell_id, featured_dfs, bundles, graph, theme):
     this page cannot show a number the page beside it disagrees with. The
     builder is `src/cell_scene.py`, which is also what `GET /cells/{id}/scene`
     serves and what the tests validate against the published schema.
+
+    Memoised on input identity: see the note on `_SPEC_MEMO` above.
     """
     from cell_scene import build_cell_scene_from_sources
 
-    return build_cell_scene_from_sources(cell_id, featured_dfs, bundles, graph=graph, theme=theme)
+    memo = _SPEC_MEMO
+    if (
+        memo.get("cell_id") == cell_id
+        and memo.get("featured_dfs") is featured_dfs
+        and memo.get("bundles") is bundles
+        and memo.get("graph") is graph
+        and memo.get("theme") == theme
+    ):
+        return memo.get("spec")
+
+    spec = build_cell_scene_from_sources(cell_id, featured_dfs, bundles, graph=graph, theme=theme)
+    memo.clear()
+    memo.update(
+        cell_id=cell_id,
+        featured_dfs=featured_dfs,
+        bundles=bundles,
+        graph=graph,
+        theme=theme,
+        spec=spec,
+    )
+    return spec
 
 
 def _vitals(spec: dict) -> None:
@@ -81,7 +131,7 @@ def _vitals(spec: dict) -> None:
 
     tiles = [
         ("State of health", f"{soh:.1f}%" if soh is not None else "—",
-         f"{label} · {spec['record']['nCycles']} cycles plotted", "#48bb78" if (soh or 0) >= 90 else "#f6e05e" if (soh or 0) >= 80 else "#fc8181"),
+         f"{label} · {spec['record']['nCycles']} cycles plotted", _soh_color(soh)),
         ("Capacity", f"{capacity:.3f} Ah" if capacity is not None else "—",
          "measured discharge per cycle", "#e2e8f0"),
         ("DC resistance", f"{resistance * 1000:.1f} mΩ" if resistance is not None else "—",

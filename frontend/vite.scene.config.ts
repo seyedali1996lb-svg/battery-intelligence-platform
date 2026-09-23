@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 
 /**
- * The standalone build of the 3D cell scene (see src/scene/README.md).
+ * The standalone build of the 3D cell scene (see app/static/cell_scene/README.md).
  *
  * Separate from `vite.config.ts` on purpose. The SPA build bundles the scene as
  * a module and serves it from the API at `/app`; this build emits ONE
@@ -16,6 +16,15 @@ import { resolve } from "node:path";
  * and must work from a fresh checkout with no Node toolchain. That is also why
  * `tests/test_cell_scene_bundle.py` fails on a stale or hand-edited bundle —
  * a committed artifact nobody can regenerate is a liability, and this one can.
+ *
+ * The format is IIFE on purpose: one classic script, no module graph, so a
+ * plain `<script src>` in the harness page and an iframe in Streamlit both load
+ * it with no import map and no cross-origin module rules. The cost is that this
+ * delivery has **no code-splitting** — three.js and the engine arrive together
+ * or not at all — so every performance improvement for this host has to be
+ * runtime work (idle rendering, raycast caching, overlay gating) rather than a
+ * `import()` the format cannot express. The SPA build, which does use dynamic
+ * import, is the host that gets to split.
  *
  * `emptyOutDir: false` keeps the harness page, the sample scene and the manifest
  * that live in the same directory.

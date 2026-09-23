@@ -59,8 +59,10 @@ import {
   vertexCount,
 } from "./geometry.ts";
 import type { BuildOptions, BuiltScene, PartReading } from "./geometry.ts";
-import { paletteFor, provenanceColor, readPref, writePref } from "./theme.ts";
-import { CARD_H_ONE, CARD_H_TWO, chromeSvg, desaturateHex, layoutFlank } from "./annotation.ts";
+import { paletteFor, provenanceColor, readPref, withAlpha, writePref } from "./theme.ts";
+import { CARD_H_ONE, CARD_H_TWO, chromeSvg, desaturateHex, groupUnmeasured, layoutFlank } from "./annotation.ts";
+import { readStoredView, writeStoredView, encodeViewState, mergeViewState } from "./viewstate.ts";
+import type { ViewState } from "./viewstate.ts";
 import { poseFacing, poseLerp, poseToPosition, springStep, type CameraPose, type Spring } from "./tween.ts";
 import { composeDossier } from "./dossier.ts";
 import { createHud } from "./hud.ts";
@@ -119,6 +121,15 @@ function paperGrain(theme: SceneTheme): string {
 const BADGE_MARGIN = 12;
 const BADGE_WIDTH = 158;
 
+/**
+ * The synthetic id of a collapsed "N unmeasured" group badge.
+ *
+ * Starts with `__` because part ids come from a document — a real part can
+ * never collide with it, so `closest("[data-part]")` and the badge-to-part
+ * lookups stay unambiguous.
+ */
+const GROUP_BADGE_ID = "__unmeasured__";
+
 /** What the host is told on every frame the cursor or a hover changes. */
 export interface FrameState {
   cursor: number;
@@ -129,6 +140,14 @@ export interface FrameState {
   projected: boolean;
   projectionLabel: string | null;
   inspected: string | null;
+  /**
+   * The part the reader *pinned* (a click), as opposed to `inspected`, which
+   * follows the pointer. A host writing a shareable URL needs this one: hover
+   * is a private, momentary act, and a link that forced its recipient to look
+   * at whatever the sender's cursor happened to rest on would be a worse
+   * share than none. The engine's own storage persists exactly this field.
+   */
+  pinned: string | null;
   scaleNote: string | null;
   /** Cycle count of the measured record, so a host can mark "today" on a slider. */
   measuredCount: number;
@@ -137,6 +156,20 @@ export interface FrameState {
   drawnParts: number;
   /** How many future positions the timeline carries (0 when no forecast). */
   projectionLength: number;
+  // ── View state, mirrored so a host's controls can follow the engine ────
+  // The HUD rail, a hotkey and a host button all reach the same state; these
+  // fields are what lets a host *show* the current value (slider position,
+  // checkbox) without keeping a second copy that could disagree.
+  /** Explode target, 0–1 (the target, not the spring's mid-flight value). */
+  exploded: number;
+  /** Peel target, 0–1. */
+  peel: number;
+  layout: "wound" | "unrolled";
+  annotations: boolean;
+  /** The active palette's name, or null for the document's own theme. */
+  themeName: string | null;
+  dataScaled: boolean;
+  casing: "translucent" | "hidden";
 }
 
 export interface MountOptions extends Partial<BuildOptions> {
@@ -154,6 +187,24 @@ export interface MountOptions extends Partial<BuildOptions> {
    * own `theme` — the default has to be the document's, not the host's taste.
    */
   theme?: string;
+  /**
+   * Whether the reader's last stored view of this cell (cursor, explode,
+   * peel, layout, pinned part, palette) is applied before the host's own
+   * defaults. Explicit host fields still win — precedence is
+   * URL > stored > host default — and `restore: false` skips storage entirely
+   * (a host that must open on an exact frame, like a report figure).
+   */
+  restore?: boolean;
+  /**
+   * The part to pin on the first frame (usually from a shared URL). Absent
+   * means the stored view's part if restoring, else nothing pinned.
+   */
+  part?: string | null;
+  /**
+   * Whether the annotation layer draws on the first frame (usually from a
+   * shared URL). Absent means the stored view's choice, else shown.
+   */
+  annotations?: boolean;
 }
 
 export interface CellSceneHandle {
@@ -239,9 +290,11 @@ export function mountCellScene(
 
   const state: FrameState = {
     cursor: 0, cycle: null, soh: null, gaugeLabel: "", gaugeColor: "#000000",
-    projected: false, projectionLabel: null, inspected: null, scaleNote: null,
+    projected: false, projectionLabel: null, inspected: null, pinned: null, scaleNote: null,
     measuredCount: 0, lastMeasuredCycle: null, partCount: 0, drawnParts: 0,
     projectionLength: 0,
+    exploded: 0, peel: 0, layout: "wound", annotations: true, themeName: null,
+    dataScaled: false, casing: "translucent",
   };
   let build: BuildOptions = { ...DEFAULT_BUILD_OPTIONS };
 
@@ -317,9 +370,42 @@ export function mountCellScene(
   /** A part the host pinned (a click in its own list), which outranks hover. */
   let pinned: string | null = null;
   let annotationsVisible = true;
+  /**
+   * Whether the reader expanded the collapsed "no reading" badges. One flag
+   * for the whole stage (not per flank): a reader who wants to see the
+   * unmeasured parts almost always wants to see all of them, and two
+   * independent toggles would be two things to discover.
+   */
+  let showUnmeasured = readPref<boolean>("showUnmeasured") ?? false;
   /** The document the camera was framed for, so a scrub does not re-frame it. */
   let framedSpec: CellSceneSpec | null = null;
   let lastBounds = { radius: 0.5, height: 1 };
+
+  // ── Motion preference ─────────────────────────────────────────────────
+  // Read once per mount: springs snap instead of chasing, camera poses jump
+  // instead of tweening, the target reticle holds still instead of pulsing.
+  // Geometry and interaction are untouched — reduced motion is not reduced
+  // function.
+  const reducedMotion = (() => {
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return false;
+    }
+  })();
+
+  // ── Idle gating ───────────────────────────────────────────────────────
+  // The stage used to re-render, re-project every anchor and rebuild the whole
+  // badge DOM at 60 fps whether or not anything moved. Now: `needsRender` says
+  // a frame is owed (camera/scene/state changed), and the raycast runs only
+  // when the pointer or camera moved (`pointerDirty`). An untouched stage
+  // costs one boolean test per rAF tick.
+  let needsRender = true;
+  let pointerDirty = false;
+  /** Meshes under the raycaster's feet, rebuilt only when visibility changes. */
+  let raycastTargets: Mesh[] = [];
+  /** Signature of everything the badge overlay depends on — see updateLeaderLines. */
+  let overlaySignature = "";
 
   // ── Renderer, scene, camera ────────────────────────────────────────────
   // alpha: the stage background is the canvas element's own CSS background
@@ -352,6 +438,10 @@ export function mountCellScene(
   renderer.domElement.style.height = "100%";
   renderer.domElement.style.display = "block";
   renderer.domElement.style.borderRadius = "10px";
+  // The canvas is a picture of this cell: named as one, so a screen reader
+  // that lands on it says what it is instead of "image".
+  renderer.domElement.setAttribute("role", "img");
+  renderer.domElement.setAttribute("aria-label", `3D cutaway of cell ${spec.cell.id}`);
   container.appendChild(renderer.domElement);
 
   if (getComputedStyle(container).position === "static") {
@@ -415,6 +505,21 @@ export function mountCellScene(
     `color:${currentSpec.theme.text};font-family:${currentSpec.theme.fonts?.mono ?? "ui-monospace, monospace"};` +
     "font-size:11px;z-index:3;";
   overlayContainer.appendChild(dossierCard);
+
+  /**
+   * The stage's voice: a visually-hidden live region that announces what the
+   * reader selected (or the current cycle/SOH when nothing is pinned) to a
+   * screen reader. Updated only when the *message* changes — an `aria-live`
+   * node rewritten every frame would make the view unreadable by ear.
+   */
+  const liveRegion = document.createElement("div");
+  liveRegion.setAttribute("aria-live", "polite");
+  liveRegion.setAttribute("role", "status");
+  liveRegion.style.cssText =
+    "position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;" +
+    "clip:rect(0 0 0 0);white-space:nowrap;border:0";
+  container.appendChild(liveRegion);
+  let lastAnnouncement = "";
 
   /**
    * Paint the stage for the active palette: exposure, key/fill/rim lights,
@@ -497,7 +602,8 @@ export function mountCellScene(
   // reads the highlights out of it, and OutputPass applies renderer.toneMapping
   // (ACES) and sRGB exactly once on the way out. Drop the OutputPass and the
   // picture renders linear and dark; add a second tone mapper and the top of
-  // the range gets rolled off twice — render.test.ts pins the chain.
+  // the range gets rolled off twice — `render.test.ts`'s composer-chain pin
+  // guards this contract.
   const composer = new EffectComposer(renderer);
   // The composer renders into its own targets, where the canvas framebuffer's
   // `antialias: true` means nothing — ask the targets for MSAA themselves or
@@ -546,6 +652,15 @@ export function mountCellScene(
 
   controls.addEventListener("start", () => {
     camTween = null;
+  });
+
+  // Any camera movement owes a frame — orbit, damping inertia, a tween, a
+  // preset. Without this the idle gate would hold the last picture while the
+  // camera turned underneath it. (The listener also flags the raycast: the
+  // part under a *stationary* pointer changes when the view moves.)
+  controls.addEventListener("change", () => {
+    needsRender = true;
+    pointerDirty = true;
   });
 
   // A three-point rig over the environment: the hemisphere carries the fill (so
@@ -648,6 +763,8 @@ export function mountCellScene(
       annotations: annotationsVisible,
       breathe,
       themeName,
+      dataScaled: build.dataScaled,
+      casing: build.casing,
       availablePalettes: Object.keys(currentSpec.palettes ?? {}),
       mmMaxAxial: CELL_GEOMETRY.explode.terminalPos * mmPerUnit,
       mmMaxRadial: Math.max(...Object.values(CELL_GEOMETRY.explode.radial)),
@@ -805,6 +922,15 @@ export function mountCellScene(
       object.group.visible = false;
     }
 
+    // Visibility is settled only here (a build decides what exists and what
+    // the casing hides), so the raycaster's target list is rebuilt exactly
+    // once per paint instead of being re-filtered on every pointer event —
+    // nineteen `visible` checks per event became zero.
+    raycastTargets = [...objects.values()]
+      .filter((o) => o.group.visible)
+      .map((o) => o.mesh);
+    needsRender = true;
+
     // The state gauge: a band on the casing, height = remaining capacity.
     const gaugeGeometry = toBuffer(gaugeBandMesh(currentSpec, built.gauge.fraction));
     if (!gaugeMesh) {
@@ -843,6 +969,9 @@ export function mountCellScene(
    */
   function applyActiveTreatment(): void {
     const active = pinned ?? hovered;
+    // Materials changed on stage, so a frame is owed (the idle gate would
+    // otherwise hold the un-highlighted picture until something else moved).
+    needsRender = true;
     for (const object of objects.values()) {
       const isActive = active !== null && object.id === active;
       // Highlight is an offset from the value the build asked for, never a
@@ -864,6 +993,7 @@ export function mountCellScene(
   function setHovered(id: string | null): void {
     if (hovered === id) return;
     hovered = id;
+    needsRender = true;
     if (pinned === null) {
       options.onInspect?.(id);
     }
@@ -946,22 +1076,40 @@ export function mountCellScene(
     renderDossier(active);
   }
 
-  function onPointerMove(event: PointerEvent): void {
+  function pointerFromEvent(event: PointerEvent | MouseEvent): void {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     pointerInside = true;
+    pointerDirty = true;
+  }
+
+  function raycastAtPointer(): string | null {
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects(
-      [...objects.values()].filter((o) => o.group.visible).map((o) => o.mesh),
-      false,
-    );
-    setHovered(hits.length > 0 ? (hits[0].object.userData.partId as string) : null);
+    const hits = raycaster.intersectObjects(raycastTargets, false);
+    return hits.length > 0 ? (hits[0].object.userData.partId as string) : null;
+  }
+
+  function onPointerMove(event: PointerEvent): void {
+    pointerFromEvent(event);
+    // The actual intersect happens once per tick (pointerDirty), so a mouse
+    // moved at 240 Hz costs one coordinate write per event, not a raycast.
   }
 
   function onPointerLeave(): void {
     pointerInside = false;
+    pointerDirty = false;
     setHovered(null);
+  }
+
+  // Tap-to-inspect: a touch generates no hover, so the old click handler —
+  // which inspected whatever `hovered` remembered — found nothing and the
+  // dossier never opened on a phone. Raycasting the *press* coordinates gives
+  // the click that follows a real target, on touch and mouse alike.
+  function onPointerDown(event: PointerEvent): void {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    pointerFromEvent(event);
+    setHovered(raycastAtPointer());
   }
 
   function onPointerClick(): void {
@@ -972,27 +1120,57 @@ export function mountCellScene(
 
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+  renderer.domElement.addEventListener("pointerdown", onPointerDown);
   renderer.domElement.addEventListener("click", onPointerClick);
 
   badgeOverlay.addEventListener("pointerover", (event) => {
     const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
-    if (target?.dataset.part) {
+    // The group badge names no part, so hovering it must not light anything —
+    // `hovered` is a part id the meshes look up.
+    if (target?.dataset.part && target.dataset.part !== GROUP_BADGE_ID) {
       setHovered(target.dataset.part);
     }
   });
 
   badgeOverlay.addEventListener("pointerout", (event) => {
     const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
-    if (target?.dataset.part) {
+    if (target?.dataset.part && target.dataset.part !== GROUP_BADGE_ID) {
       setHovered(null);
     }
   });
 
   badgeOverlay.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
-    if (target?.dataset.part) {
-      handle.inspect(pinned === target.dataset.part ? null : target.dataset.part);
+    if (!target?.dataset.part) return;
+    // The collapsed-count badge toggles the reader's expansion choice; it is
+    // not a part, so there is nothing to inspect.
+    if (target.dataset.part === GROUP_BADGE_ID) {
+      showUnmeasured = !showUnmeasured;
+      writePref("showUnmeasured", showUnmeasured);
+      updateLeaderLines();
+      emit();
+      return;
     }
+    handle.inspect(pinned === target.dataset.part ? null : target.dataset.part);
+  });
+
+  // Keyboard access to the badges: they are buttons that happen to be painted
+  // as divs, so Enter/Space presses them exactly as a click would. Without
+  // this the annotation layer is a mouse-only surface — unreachable for anyone
+  // navigating the stage with Tab.
+  badgeOverlay.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = (event.target as HTMLElement).closest("[data-part]") as HTMLElement | null;
+    if (!target?.dataset.part) return;
+    event.preventDefault();
+    if (target.dataset.part === GROUP_BADGE_ID) {
+      showUnmeasured = !showUnmeasured;
+      writePref("showUnmeasured", showUnmeasured);
+      updateLeaderLines();
+      emit();
+      return;
+    }
+    handle.inspect(pinned === target.dataset.part ? null : target.dataset.part);
   });
 
   const projVec = new Vector3();
@@ -1023,13 +1201,34 @@ export function mountCellScene(
 
   function updateLeaderLines(): void {
     if (!annotationsVisible || !scene) {
-      svgOverlay.innerHTML = "";
-      badgeOverlay.innerHTML = "";
+      if (overlaySignature !== "") {
+        svgOverlay.innerHTML = "";
+        badgeOverlay.innerHTML = "";
+        overlaySignature = "";
+      }
       return;
     }
 
     const width = container.clientWidth || 640;
     const height = container.clientHeight || 480;
+    const activeId = pinned ?? hovered;
+
+    // Everything below is a pure function of these inputs: the camera's
+    // projection of fixed anchors, the cursor's readings, the selection, the
+    // stage size, the palette and the pulse phase. When none of them moved,
+    // rebuilding nineteen badges and an SVG per rAF frame produced byte-
+    // identical markup — so the signature gates it, and an idle stage touches
+    // no DOM at all. The pulse bucket (32 steps) is dropped when nothing is
+    // selected or motion is reduced: no pulse runs, so no rebuild is owed.
+    const pulseBucket = activeId !== null && !reducedMotion ? Math.floor(pulsePhase * 32) : -1;
+    const signature = [
+      width, height, activeId ?? "", build.cursor, showUnmeasured ? 1 : 0,
+      themeName ?? "", pulseBucket,
+      camera.position.x.toFixed(4), camera.position.y.toFixed(4), camera.position.z.toFixed(4),
+      controls.target.x.toFixed(4), controls.target.y.toFixed(4), controls.target.z.toFixed(4),
+    ].join("|");
+    if (signature === overlaySignature) return;
+    overlaySignature = signature;
 
     const visibleItems: LeaderItem[] = [];
 
@@ -1084,11 +1283,11 @@ export function mountCellScene(
     // Partition into left and right flanks based on projected 3D anchor X.
     // Invariant (c) of the solver: the partition happens BEFORE the call, so
     // each solver run covers exactly one column and the flanks never mix.
-    const leftItems = visibleItems.filter((item) => item.sx < width * 0.5);
-    const rightItems = visibleItems.filter((item) => item.sx >= width * 0.5);
+    const leftAll = visibleItems.filter((item) => item.sx < width * 0.5);
+    const rightAll = visibleItems.filter((item) => item.sx >= width * 0.5);
 
-    leftItems.sort((a, b) => a.sy - b.sy);
-    rightItems.sort((a, b) => a.sy - b.sy);
+    leftAll.sort((a, b) => a.sy - b.sy);
+    rightAll.sort((a, b) => a.sy - b.sy);
 
     // The pure solver returns card TOPS in anchor order: gaps hold (no card
     // overlaps its neighbour), order follows the anchors (leader lines cannot
@@ -1103,45 +1302,105 @@ export function mountCellScene(
       });
     };
 
-    applyFlank(leftItems);
-    applyFlank(rightItems);
+    /**
+     * One flank, after collapsing: the badges that draw individually, plus at
+     * most one "N unmeasured" group badge when (and only when) something was
+     * actually collapsed.
+     *
+     * The group badge carries no leader line — it points at no single anchor —
+     * and is anchored at the mean of the hidden badges it stands for, so it
+     * sits where the clutter was. It is solved *with* the flank (one more
+     * card in the same run), which is what reserves the height: it can never
+     * overlap a neighbour the solver has already spaced.
+     */
+    const solveFlank = (flank: LeaderItem[]): { cards: LeaderItem[]; group: LeaderItem | null } => {
+      if (flank.length === 0) return { cards: [], group: null };
+      const activeIdNow = pinned ?? hovered;
+      // Group with expansion OFF to learn what *would* collapse — that set is
+      // what the badge counts and toggles, in both states. The reader's choice
+      // then decides which cards draw: collapsed shows `shown` plus the badge,
+      // expanded shows every card plus the badge as the way back.
+      const grouping = groupUnmeasured(flank, activeIdNow, false);
+      const cards = showUnmeasured ? flank : grouping.shown;
+      let group: LeaderItem | null = null;
+      if (grouping.hidden.length > 0) {
+        const hidden = grouping.hidden;
+        group = {
+          id: GROUP_BADGE_ID,
+          label: showUnmeasured ? "Hide unmeasured" : `${hidden.length} unmeasured`,
+          valueStr: "",
+          title: showUnmeasured
+            ? "Collapse the badges with no reading back into a count."
+            : `The document carries no reading for ${hidden.length} part(s) at this cursor. ` +
+              "Press to show them anyway.",
+          color: currentSpec.theme.muted,
+          sx: hidden.reduce((sum, item) => sum + item.sx, 0) / hidden.length,
+          sy: hidden.reduce((sum, item) => sum + item.sy, 0) / hidden.length,
+          targetY: 0,
+          available: false,
+          category: "",
+          provenanceWord: "",
+          singleLine: false,
+        };
+      }
+      const solved = group ? [...cards, group] : cards;
+      applyFlank(solved);
+      return { cards: solved, group };
+    };
 
-    const activeId = pinned ?? hovered;
+    const leftFlank = solveFlank(leftAll);
+    const rightFlank = solveFlank(rightAll);
 
     let svgContent = "";
     let badgesContent = "";
 
     const renderItem = (item: LeaderItem, onLeft: boolean) => {
       const isTarget = item.id === activeId;
+      const isGroup = item.id === GROUP_BADGE_ID;
       const hasActive = activeId !== null;
-      const opacity = isTarget ? 1.0 : hasActive ? DIM_OPACITY : 0.85;
+      const opacity = isTarget ? 1.0 : hasActive && !isGroup ? DIM_OPACITY : 0.85;
       const strokeWidth = isTarget ? 1.75 : 1;
       const strokeDash = isTarget ? "none" : "2 2";
       const lineColor = isTarget ? currentSpec.theme.accent : item.color;
 
-      // The line ends on the badge's *inner* border — the edge facing the cell
-      // — at the card's vertical centre (the solver returns card TOPS), a fixed
-      // distance from the stage edge, so the badges line up into two columns
-      // whatever the parts do. The elbow is the midpoint of the anchor and that
-      // terminus: one dog-leg, drawn the same way on both flanks.
-      const cardH = item.singleLine ? CARD_H_ONE : CARD_H_TWO;
-      const endY = item.targetY + cardH / 2;
-      const badgeEdgeX = onLeft ? BADGE_MARGIN + BADGE_WIDTH : width - BADGE_MARGIN - BADGE_WIDTH;
-      const elbowX = (item.sx + badgeEdgeX) / 2;
+      // A group badge stands for several anchors at once and points at none of
+      // them — a leader line to the *mean* would aim at a part that may not
+      // even be unmeasured. It gets no line and no reticle, only the count.
+      if (!isGroup) {
+        // The line ends on the badge's *inner* border — the edge facing the cell
+        // — at the card's vertical centre (the solver returns card TOPS), a fixed
+        // distance from the stage edge, so the badges line up into two columns
+        // whatever the parts do. The elbow is the midpoint of the anchor and that
+        // terminus: one dog-leg, drawn the same way on both flanks.
+        const cardH = item.singleLine ? CARD_H_ONE : CARD_H_TWO;
+        const endY = item.targetY + cardH / 2;
+        const badgeEdgeX = onLeft ? BADGE_MARGIN + BADGE_WIDTH : width - BADGE_MARGIN - BADGE_WIDTH;
+        const elbowX = (item.sx + badgeEdgeX) / 2;
 
-      svgContent += `
+        svgContent += `
         <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="2.5" fill="${item.color}" opacity="${opacity}" />
         <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${isTarget ? 6.5 : 5}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="2 2" opacity="${opacity}" />
         <polyline points="${item.sx.toFixed(1)},${item.sy.toFixed(1)} ${elbowX.toFixed(1)},${endY.toFixed(1)} ${badgeEdgeX.toFixed(1)},${endY.toFixed(1)}" fill="none" stroke="${lineColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" opacity="${opacity}" />
       `;
-      if (isTarget) {
-        // One pulsing target, not nineteen — a pulse everywhere is noise. The
-        // ring breathes around the active reticle and touches nothing else.
-        const pulseR = 6.5 + 1.4 * Math.sin(pulsePhase * 2 * Math.PI);
-        svgContent += `
+        if (isTarget) {
+          // One pulsing target, not nineteen — a pulse everywhere is noise. The
+          // ring breathes around the active reticle and touches nothing else.
+          // Under prefers-reduced-motion the ring holds its rest radius: the
+          // selection is still marked, it simply does not move.
+          const pulseR = reducedMotion ? 6.5 : 6.5 + 1.4 * Math.sin(pulsePhase * 2 * Math.PI);
+          svgContent += `
           <circle cx="${item.sx.toFixed(1)}" cy="${item.sy.toFixed(1)}" r="${pulseR.toFixed(2)}" fill="none" stroke="${currentSpec.theme.accent}" stroke-width="1" opacity="0.9"/>
         `;
+        }
       }
+
+      // Every colour below comes from the ACTIVE PALETTE: panel for the fill,
+      // grid for the rule, text/muted for the ink, accent for the selection's
+      // edge and glow. The old literals (a dark navy, slate greys, a fixed
+      // sky-blue glow) painted dark badges over a light palette; deriving them
+      // through `withAlpha` makes the chrome repaint with the meshes.
+      const theme = currentSpec.theme;
+      const cardH = item.singleLine ? CARD_H_ONE : CARD_H_TWO;
 
       // `box-sizing: border-box` is what makes `width` the *whole* badge, so
       // the border the line meets is exactly at `badgeEdgeX` above rather than
@@ -1157,7 +1416,7 @@ export function mountCellScene(
         box-sizing: border-box;
         width: ${BADGE_WIDTH}px;
         pointer-events: auto;
-        cursor: pointer;
+        cursor: ${isGroup ? "pointer" : "pointer"};
         display: flex;
         flex-direction: column;
         align-items: stretch;
@@ -1165,13 +1424,13 @@ export function mountCellScene(
         gap: 1px;
         padding: 2px 7px;
         font: 500 10.5px/1.3 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        background: ${isTarget ? "rgba(22, 33, 58, 0.95)" : "rgba(11, 17, 32, 0.82)"};
-        border: 1px solid ${isTarget ? currentSpec.theme.accent : "rgba(51, 65, 85, 0.55)"};
+        background: ${isTarget ? withAlpha(theme.panel, 0.95) : withAlpha(theme.panel, 0.82)};
+        border: 1px solid ${isTarget ? theme.accent : withAlpha(theme.grid, 0.55)};
         ${onLeft ? `border-left: 2.5px solid ${item.color};` : `border-right: 2.5px solid ${item.color};`}
         border-radius: 4px;
-        color: #e2e8f0;
+        color: ${theme.text};
         backdrop-filter: blur(4px);
-        box-shadow: ${isTarget ? "0 0 10px rgba(99, 179, 237, 0.35)" : "0 2px 5px rgba(0,0,0,0.35)"};
+        box-shadow: ${isTarget ? `0 0 10px ${withAlpha(theme.accent, 0.35)}` : "0 2px 5px rgba(0,0,0,0.35)"};
         opacity: ${opacity};
         white-space: nowrap;
         overflow: hidden;
@@ -1179,23 +1438,38 @@ export function mountCellScene(
         transition: opacity 0.12s ease, border-color 0.12s ease;
       `;
 
+      // ARIA: these are buttons that happen to be painted as divs. The label
+      // carries what a sighted reader gets from the badge at a glance — name,
+      // value, and (for the group) what pressing it does — and `tabindex="0"`
+      // puts them in the Tab order beside the HUD's own controls.
+      const ariaLabel = isGroup
+        ? `${item.label} — ${showUnmeasured ? "collapse" : "show parts with no reading"}`
+        : `${item.label}, ${item.valueStr}${item.available ? "" : ", no reading"}`;
+      const roleAttrs = isGroup
+        ? `role="button" tabindex="0" aria-expanded="${showUnmeasured ? "true" : "false"}"`
+        : `role="button" tabindex="0"`;
+
+      const valueColor = item.available ? withAlpha(theme.muted, 1) : withAlpha(theme.muted, 0.65);
+      const dimColor = withAlpha(theme.muted, 0.7);
+
       badgesContent += `
-        <div class="cell-scene-callout" data-part="${escapeHtml(item.id)}" title="${escapeHtml(item.title)}" style="${badgeStyle}">
+        <div class="cell-scene-callout" data-part="${escapeHtml(item.id)}" ${roleAttrs}
+             aria-label="${escapeHtml(ariaLabel)}" title="${escapeHtml(item.title)}" style="${badgeStyle}">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0">
-            <span style="font-weight: 600; color: #f8fafc; overflow: hidden; text-overflow: ellipsis; min-width: 0;">${escapeHtml(item.label)}</span>
-            <span style="color: ${item.available ? "#94a3b8" : "#64748b"}; font-size: 10px; flex-shrink: 0;">${escapeHtml(item.valueStr)}</span>
+            <span style="font-weight: 600; color: ${theme.text}; overflow: hidden; text-overflow: ellipsis; min-width: 0;">${escapeHtml(item.label)}</span>
+            <span style="color: ${valueColor}; font-size: 10px; flex-shrink: 0;">${escapeHtml(item.valueStr)}</span>
           </div>
-          ${item.singleLine ? "" : `
+          ${item.singleLine || isGroup ? "" : `
           <div style="display:flex;align-items:center;gap:6px;min-width:0">
-            <span style="font-size:9px;letter-spacing:0.06em;color:${item.available ? currentSpec.theme.muted : "#64748b"};overflow:hidden;text-overflow:ellipsis">${escapeHtml(item.category)}</span>
+            <span style="font-size:9px;letter-spacing:0.06em;color:${item.available ? theme.muted : dimColor};overflow:hidden;text-overflow:ellipsis">${escapeHtml(item.category)}</span>
             <span title="${escapeHtml(item.provenanceWord)}" style="width:7px;height:7px;border-radius:50%;background:${item.color};flex-shrink:0;margin-left:auto"></span>
           </div>`}
         </div>
       `;
     };
 
-    for (const item of leftItems) renderItem(item, true);
-    for (const item of rightItems) renderItem(item, false);
+    for (const item of leftFlank.cards) renderItem(item, true);
+    for (const item of rightFlank.cards) renderItem(item, false);
 
     svgOverlay.innerHTML = svgContent;
     badgeOverlay.innerHTML = badgesContent;
@@ -1213,6 +1487,10 @@ export function mountCellScene(
     camera.updateProjectionMatrix();
     // The chrome SVG is sized in pixels, so a resize re-draws it too.
     applyStageStyle();
+    // A resize changes every projected anchor and the whole framebuffer —
+    // without this the idle gate would hold the pre-resize picture.
+    needsRender = true;
+    overlaySignature = "";
     updateLeaderLines();
   }
 
@@ -1236,18 +1514,32 @@ export function mountCellScene(
     const now = performance.now();
     const dtMs = lastTickMs === 0 ? 16 : Math.min(now - lastTickMs, 100);
     lastTickMs = now;
-    pulsePhase = (pulsePhase + dtMs / 1600) % 1;
+    if (!reducedMotion) pulsePhase = (pulsePhase + dtMs / 1600) % 1;
     emaDt = emaDt * 0.9 + dtMs * 0.1;
 
     // Sliders retarget, the springs chase — and the scene only rebuilds when
     // a spring has actually moved (throttled to 8 ms) so a drag stays
-    // interactive and a button press animates instead of snapping.
-    explodeSpring = springStep(explodeSpring, explodeTarget, dtMs);
-    peelSpring = springStep(peelSpring, peelTarget, dtMs);
-    const springMoved =
-      Math.abs(explodeSpring.value - build.exploded) > 1e-3 ||
-      Math.abs(peelSpring.value - build.peel) > 1e-3;
-    if (springMoved && now - lastRebuild >= 8) {
+    // interactive and a button press animates instead of snapping. Reduced
+    // motion skips the chase entirely: the geometry arrives where it was told
+    // to, on this frame.
+    let springMoved = false;
+    if (reducedMotion) {
+      if (
+        Math.abs(explodeSpring.value - explodeTarget) > 1e-3 ||
+        Math.abs(peelSpring.value - peelTarget) > 1e-3
+      ) {
+        explodeSpring = { value: explodeTarget, velocity: 0 };
+        peelSpring = { value: peelTarget, velocity: 0 };
+        springMoved = true;
+      }
+    } else {
+      explodeSpring = springStep(explodeSpring, explodeTarget, dtMs);
+      peelSpring = springStep(peelSpring, peelTarget, dtMs);
+      springMoved =
+        Math.abs(explodeSpring.value - build.exploded) > 1e-3 ||
+        Math.abs(peelSpring.value - build.peel) > 1e-3;
+    }
+    if (springMoved && (reducedMotion || now - lastRebuild >= 8)) {
       lastRebuild = now;
       build.exploded = explodeSpring.value;
       build.peel = peelSpring.value;
@@ -1261,14 +1553,36 @@ export function mountCellScene(
         object.group.scale.setScalar(1 + 0.012 * Math.sin((breathePhase + i * 0.11) * Math.PI * 2));
         i++;
       }
+      needsRender = true;
     }
 
     if (camTween) {
-      const t = Math.min(1, (now - camTween.start) / camTween.dur);
-      applyPose(poseLerp(camTween.from, camTween.to, t));
-      if (t >= 1) camTween = null;
+      // Reduced motion lands the camera on the pose immediately: a 600 ms
+      // glide is exactly the kind of movement the preference asks to skip.
+      if (reducedMotion) {
+        applyPose(camTween.to);
+        camTween = null;
+      } else {
+        const t = Math.min(1, (now - camTween.start) / camTween.dur);
+        applyPose(poseLerp(camTween.from, camTween.to, t));
+        if (t >= 1) camTween = null;
+      }
+      needsRender = true;
     }
+    // Damping settles for a moment after a drag; OrbitControls reports each
+    // change through its own event, which already set the flag — this call
+    // keeps the inertia itself advancing while the flag is set.
     controls.update();
+
+    // The hover highlight decays once the pointer stops moving; re-raycast
+    // only when the pointer or the camera actually moved (pointerDirty), not
+    // every frame forever. The target list is `raycastTargets`, rebuilt by
+    // paint() — nothing here filters or allocates per event.
+    if (pointerInside && pointerDirty) {
+      setHovered(raycastAtPointer());
+      pointerDirty = false;
+    }
+
     // The rail refreshes at 4 Hz — smooth enough to read, cheap enough to
     // ignore beside the render itself.
     frameCount++;
@@ -1282,6 +1596,18 @@ export function mountCellScene(
       hudHandle?.setTelemetry(lastTelemetry);
       hudHandle?.update(hudState());
     }
+
+    // Idle gating: a stage nothing has touched since the last frame skips the
+    // composer, the badge overlay rebuild and the dossier sync entirely. The
+    // pulse ring keeps its own clock (only while something is selected and
+    // motion is allowed), because a selected part's ring is the one thing on
+    // stage that moves without input.
+    const activeIdNow = pinned ?? hovered;
+    const pulseActive = activeIdNow !== null && !reducedMotion;
+    if (pulseActive) needsRender = true;
+    if (!needsRender) return;
+    needsRender = false;
+
     // One manual reset per frame (auto-reset is off — see the renderer
     // setup): scene, bloom mips and output all accumulate into the same
     // counters, so the telemetry reports what the whole frame costs.
@@ -1291,16 +1617,6 @@ export function mountCellScene(
     // The card follows the cursor (a scrub changes every live row) and the
     // selection — one string compare when nothing moved.
     syncDossier();
-    if (pointerInside) {
-      // A hover highlight decays once the pointer stops moving; refresh it so
-      // the lit part stays lit while the camera orbits around it.
-      raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(
-        [...objects.values()].filter((o) => o.group.visible).map((o) => o.mesh),
-        false,
-      );
-      setHovered(hits.length > 0 ? (hits[0].object.userData.partId as string) : null);
-    }
   }
 
   function emit(): void {
@@ -1313,6 +1629,7 @@ export function mountCellScene(
     state.projected = scene.gauge.projected;
     state.projectionLabel = scene.timeline.projectionLabel;
     state.inspected = pinned ?? hovered;
+    state.pinned = pinned;
     // `unrollNote` appends, never replaces: a compressed strip's ratio rides
     // beside whatever the data-scaled view already had to say, and is null in
     // wound mode, where old behaviour stays byte-identical.
@@ -1324,7 +1641,65 @@ export function mountCellScene(
     state.partCount = scene.parts.length;
     state.drawnParts = scene.parts.filter((part) => part.drawn).length;
     state.projectionLength = Math.max(0, scene.timeline.cycles.length - scene.timeline.measuredCount);
+    // The view half of the frame: what a host's sliders and checkboxes mirror,
+    // and what gets persisted so the next visit reopens here. Explode/peel
+    // report the *target*, not the spring's mid-flight value — a host showing
+    // "70%" while the geometry is still travelling to 70% is correct; showing
+    // the travelling number would make its slider crawl.
+    state.exploded = explodeTarget;
+    state.peel = peelTarget;
+    state.layout = build.layout;
+    state.annotations = annotationsVisible;
+    state.themeName = themeName;
+    state.dataScaled = build.dataScaled;
+    state.casing = build.casing;
+    persistView();
+    // What a screen reader hears: the pinned part and its number, else the
+    // cursor's own reading. Gated on the rendered text so a playing timeline
+    // announces each cycle once, not sixty times a second.
+    const announcement = state.inspected
+      ? `${(currentSpec.parts.find((part) => part.id === state.inspected) ?? {}).label ?? state.inspected}: ` +
+        `${(currentSpec.parts.find((part) => part.id === state.inspected) ?? {}).value ?? "no reading"}`
+      : state.cycle === null
+        ? "No reading at this cursor."
+        : `Cycle ${Math.round(state.cycle)}, SOH ${state.soh === null ? "no reading" : state.soh.toFixed(1) + "%"}${
+            state.projected ? ", projected" : ""
+          }`;
+    if (announcement !== lastAnnouncement) {
+      lastAnnouncement = announcement;
+      liveRegion.textContent = announcement;
+    }
     options.onFrame?.({ ...state });
+  }
+
+  // ── View persistence ──────────────────────────────────────────────────
+  /** What was last written, so a hover storm does not re-stringify per frame. */
+  let lastPersistedView = "";
+  const cellId = (): string => currentSpec.cell?.id ?? "";
+
+  function currentView(): ViewState {
+    const view: ViewState = {
+      cursor: state.cursor,
+      exploded: explodeTarget,
+      peel: peelTarget,
+      layout: build.layout,
+      annotations: annotationsVisible,
+    };
+    if (pinned) view.part = pinned;
+    if (themeName) view.theme = themeName;
+    return view;
+  }
+
+  function persistView(): void {
+    // `restore` governs the whole round trip: a host that passes false wants
+    // an exact, reproducible frame (a report figure) and gets no memory of it.
+    if (options.restore === false) return;
+    const id = cellId();
+    if (!id) return;
+    const encoded = encodeViewState(currentView());
+    if (encoded === lastPersistedView) return;
+    lastPersistedView = encoded;
+    writeStoredView(id, currentView());
   }
 
   function rebuild(spec_: CellSceneSpec): void {
@@ -1378,6 +1753,11 @@ export function mountCellScene(
     setAnnotations(visible) {
       annotationsVisible = visible;
       updateLeaderLines();
+      // Hosts mirror this in their own checkboxes from `onFrame` — without an
+      // emit the HUD's A key would move the engine and leave the host's UI
+      // quietly out of sync.
+      emit();
+      hudHandle?.update(hudState());
     },
     parts: () => (scene ? partReadings(currentSpec, scene) : []),
     play(intervalMs = 120) {
@@ -1449,11 +1829,13 @@ export function mountCellScene(
       window.cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("click", onPointerClick);
       observer?.disconnect();
       window.removeEventListener("resize", resize);
       hudHandle?.dispose();
       hudHandle = null;
+      liveRegion.remove();
       container.removeEventListener("keydown", onStageKey);
       container.removeEventListener("pointerenter", onStageEnter);
       container.removeEventListener("pointerleave", onStageLeave);
@@ -1505,6 +1887,26 @@ export function mountCellScene(
       handle.setAnnotations(!annotationsVisible);
       hudHandle?.update(hudState());
     },
+    toggleCasing: () => {
+      build = mergeBuildOptions(build, {
+        casing: build.casing === "hidden" ? "translucent" : "hidden",
+      });
+      rebuild(currentSpec);
+      hudHandle?.update(hudState());
+    },
+    toggleDataScaled: () => {
+      build = mergeBuildOptions(build, { dataScaled: !build.dataScaled });
+      rebuild(currentSpec);
+      hudHandle?.update(hudState());
+    },
+    resetView: () => handle.resetView(),
+    today: () => {
+      // "Today" is the last *measured* cycle — never the projection's end: the
+      // question the button answers is "where is the cell now", and a modelled
+      // future is not where it is.
+      handle.setCursor(Math.max(0, state.measuredCount - 1));
+      hudHandle?.update(hudState());
+    },
     playPause: () => {
       const playing = handle.isPlaying() ? (handle.pause(), false) : handle.play();
       hudHandle?.update(hudState());
@@ -1527,6 +1929,8 @@ export function mountCellScene(
   // holds focus — the button takes that press natively.
   let pointerOverStage = false;
   container.tabIndex = 0;
+  container.setAttribute("aria-label", `3D cell scene: ${spec.cell.id}`);
+  container.setAttribute("role", "group");
   const onStageEnter = (): void => {
     pointerOverStage = true;
   };
@@ -1573,15 +1977,89 @@ export function mountCellScene(
   container.addEventListener("pointerleave", onStageLeave);
   container.addEventListener("keydown", onStageKey);
 
+  // ── One-time hotkey hint ──────────────────────────────────────────────
+  // The rail's buttons carry the keys as badges, but the stage-scoped keys
+  // (Space/E/C/A/H) live nowhere on screen. One hint, dismissed for good on
+  // first use or by press, stored in the same preference store as everything
+  // else this viewer remembers.
+  if (!readPref<boolean>("hotkeyHintSeen")) {
+    const hint = document.createElement("div");
+    hint.textContent = "SPACE play · E explode · C cutaway · A annotations · H hide rail";
+    hint.setAttribute("role", "note");
+    hint.style.cssText =
+      "position:absolute;right:12px;bottom:56px;z-index:5;padding:4px 9px;border-radius:4px;" +
+      `background:${activePalette().panel}f2;color:${activePalette().muted};` +
+      `border:1px solid ${activePalette().grid};font:500 10px ui-monospace,SFMono-Regular,Menlo,monospace;` +
+      "pointer-events:auto;cursor:pointer";
+    hint.title = "Dismiss";
+    const dismissHint = (): void => {
+      hint.remove();
+      writePref("hotkeyHintSeen", true);
+    };
+    hint.addEventListener("click", dismissHint);
+    container.appendChild(hint);
+    // Any key on the stage means the reader found the keys another way.
+    container.addEventListener(
+      "keydown",
+      (event: KeyboardEvent) => {
+        if ([" ", "e", "c", "a", "h"].includes(event.key.toLowerCase())) dismissHint();
+      },
+      { once: false },
+    );
+  }
+
   // A host's options apply to the very first frame, not the second one: the
   // scene it asked for is the scene it gets. The springs snap to their targets
   // so that "first frame" includes the explode/peel position — a start-up
   // animation would be the host's request arriving a moment late.
-  applyOptions(options);
+  //
+  // Precedence (shared with `mergeViewState`): URL/explicit host fields beat
+  // the reader's stored view of this cell, which beats the host's defaults.
+  // Only fields the host actually mentioned override storage — a URL that says
+  // nothing about the palette must not erase the palette the reader stored.
+  const storedView = options.restore === false ? null : readStoredView(spec.cell.id ?? "");
+  const explicitView: ViewState = {};
+  if (options.cursor !== undefined) explicitView.cursor = options.cursor;
+  if (options.exploded !== undefined) explicitView.exploded = options.exploded;
+  if (options.peel !== undefined) explicitView.peel = options.peel;
+  if (options.layout !== undefined) explicitView.layout = options.layout;
+  if (options.annotations !== undefined) explicitView.annotations = options.annotations;
+  if (options.part !== undefined) explicitView.part = options.part;
+  if (options.theme !== undefined) explicitView.theme = options.theme;
+  const view = mergeViewState(explicitView, storedView, null);
+  applyOptions({
+    ...options,
+    // `undefined` here means "keep the default" inside `mergeBuildOptions`,
+    // so an unset field never clobbers a build default it did not earn.
+    cursor: view.cursor,
+    exploded: view.exploded,
+    peel: view.peel,
+    layout: view.layout,
+    // Nothing in URL or storage chose a point in the cell's life: open at
+    // *today* — the last measured cycle — the question every reader arrives
+    // with. An explicit host cursor already won above.
+    dataScaled: options.dataScaled,
+    casing: options.casing,
+  });
+  if (view.cursor === undefined && options.cursor === undefined) {
+    applyOptions({ cursor: Math.max(0, spec.series.cycles.length - 1) });
+  }
+  if (view.annotations !== undefined) annotationsVisible = view.annotations;
+  // The palette precedence inside `themeName`'s initializer was host > store;
+  // the stored view's own palette sits between them: a link's explicit
+  // theme wins, then this cell's remembered one, then the global preference.
+  if (view.theme !== undefined && options.theme === undefined) themeName = view.theme || null;
+  if (view.part !== undefined && view.part !== null) pinned = view.part;
   explodeSpring = { value: explodeTarget, velocity: 0 };
   peelSpring = { value: peelTarget, velocity: 0 };
   currentSpec = themed(currentSpec);
   rebuild(currentSpec);
+  if (pinned) {
+    // Restoring a pin must not turn the camera: the reader's *angle* is not in
+    // the stored view, so a restored link would otherwise swing the stage.
+    applyActiveTreatment();
+    options.onInspect?.(pinned);
+  }
   hudHandle.update(hudState());
   raf = window.requestAnimationFrame(tick);
   return handle;

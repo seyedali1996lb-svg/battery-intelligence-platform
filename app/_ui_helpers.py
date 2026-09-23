@@ -17,6 +17,7 @@ import _paths  # noqa: F401
 
 from _design_tokens import (
     CARD_BG, CARD_BORDER, FEATURE_LABELS,
+    SOH_EOL_MIN, SOH_HEALTHY_MIN,
 )
 from design_system import provenance_banner, BADGE_MEASURED, BADGE_SIMULATED, BADGE_SYNTHETIC
 
@@ -114,8 +115,12 @@ def base_layout(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 def soh_status(soh: float) -> tuple[str, str]:
-    if soh >= 90: return "Healthy",    "hero-green"
-    if soh >= 80: return "Degrading",  "hero-yellow"
+    # Thresholds live in _design_tokens, not here: the scene's bands, the pack
+    # chart's cylinders and the 3D scatter's ramp all read the same two numbers,
+    # so no view can drift into calling a cell healthy while this one calls it
+    # degrading. The CSS classes resolve to the same hexes (app/static/theme.css).
+    if soh >= SOH_HEALTHY_MIN: return "Healthy",    "hero-green"
+    if soh >= SOH_EOL_MIN:     return "Degrading",  "hero-yellow"
     return "End of Life", "hero-red"
 
 

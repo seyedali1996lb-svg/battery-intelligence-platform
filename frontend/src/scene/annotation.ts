@@ -98,6 +98,48 @@ export function desaturateHex(hex: string, amount: number, neutralHex: string): 
     .map((v) => v.toString(16).padStart(2, "0")).join("");
 }
 
+/** What one badge needs to know about the part it names, for grouping. */
+export interface GroupableItem {
+  id: string;
+  /** False when the document carries no reading here — the "no reading" badge. */
+  available: boolean;
+}
+
+export interface FlankGrouping<T extends GroupableItem> {
+  /** Badges drawn individually, in input order. */
+  shown: T[];
+  /** Collapsed into one "N unmeasured" badge for this flank. */
+  hidden: T[];
+}
+
+/**
+ * Which badges stand alone and which collapse into a count.
+ *
+ * A cell early in life (or a document that measures few parts) can put a
+ * dozen "no reading" badges on stage — clutter that hides the readings that
+ * exist. So per flank: every *available* badge always shows, the **active**
+ * part always shows even when unmeasured (you clicked it, it must stay
+ * inspectable), and the rest collapse into one group badge the reader can
+ * expand. `expanded` is the reader's toggle for that flank.
+ *
+ * Pure and order-preserving — `annotation.test.ts` asserts the invariants:
+ * `shown ∪ hidden = input` (disjoint), available ⊆ shown, and expansion
+ * empties `hidden` without reordering anything.
+ */
+export function groupUnmeasured<T extends GroupableItem>(
+  items: T[],
+  activeId: string | null,
+  expanded: boolean,
+): FlankGrouping<T> {
+  const shown: T[] = [];
+  const hidden: T[] = [];
+  for (const item of items) {
+    if (item.available || item.id === activeId || expanded) shown.push(item);
+    else hidden.push(item);
+  }
+  return { shown, hidden };
+}
+
 /**
  * The drafting frame behind the stage, entirely from the theme's own tokens:
  * a ruled border with ticks, a compass rose (`ornate` selects codex's eight-

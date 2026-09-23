@@ -88,7 +88,14 @@ def test_the_bundle_is_rebuilt_from_every_source_file_that_exists():
 
 def test_the_harness_page_loads_the_bundle_and_the_sample_that_exist():
     page = HARNESS.read_text(encoding="utf-8")
-    assert '<script src="cell_scene.js">' in page, "the harness no longer loads the bundle by name"
+    # Cache-busted by the same digest the manifest records: a browser holding
+    # yesterday's bundle must not be able to reopen it under today's URL.
+    stamped = re.search(r'<script src="cell_scene\.js\?v=([0-9a-f]{12})"></script>', page)
+    assert stamped, "the harness must load cell_scene.js?v=<digest12> — run scripts/export_scene_sample.py"
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    assert stamped.group(1) == manifest["bundleSha256"][:12], (
+        "the harness pins a cache-bust digest that is not this bundle's"
+    )
     assert "sample_scene.json" in page, "the harness no longer falls back to the committed sample"
     assert "/cells/" in page and "/scene" in page, "the harness no longer knows the REST surface"
     # Every path it mentions must be a sibling file that is actually committed.

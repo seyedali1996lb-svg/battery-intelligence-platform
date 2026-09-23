@@ -121,10 +121,48 @@ def build_sample(cell_id: str) -> dict:
     return build_cell_scene(cell_id, df)
 
 
+#: The harness page's own link to the bundle — the one tag, and only that tag.
+#: The prose comment at the top of index.html also says `cell_scene.js`, so the
+#: match is anchored on the script tag: stamping must touch exactly one place,
+#: and a page that lost its tag is a failure, not a silent no-op. The whole tag
+#: is matched and replaced (rather than spliced through capture groups) so the
+#: rewrite cannot mis-count quotes: the tag ends `js">` followed by `<`, and a
+#: group written `(">")` demands a third quote that is not there.
+_HARNESS_BUNDLE_TAG = re.compile(r'<script src="cell_scene\.js(?:\?v=[0-9a-f]*)?">')
+
+
+def _stamp_harness_bundle_url(bundle_sha: str) -> None:
+    """Point `app/static/cell_scene/index.html` at this exact bundle build.
+
+    Same reason as `_scene_view._bundle_url()`: a committed bundle is served
+    from a browser cache that never learns the file changed, so the harness —
+    the page that is opened by double-clicking or from any static server —
+    gets the manifest's own digest as a query string. The stamp is written
+    here (next to the manifest that records the digest) rather than by hand,
+    so the two can never disagree: `--check` verifies the pair.
+    """
+    harness = SCENE_DIR / "index.html"
+    if not harness.is_file():
+        return
+    text = harness.read_text(encoding="utf-8")
+    stamped, count = _HARNESS_BUNDLE_TAG.subn(
+        f'<script src="cell_scene.js?v={bundle_sha[:12]}">', text
+    )
+    if count != 1:
+        raise SystemExit(
+            f"{harness.name} must contain exactly one <script src=\"cell_scene.js...\"> tag to "
+            f"cache-bust (found {count}) — the page would load a stale renderer without it"
+        )
+    if stamped != text:
+        harness.write_text(stamped, encoding="utf-8")
+
+
 def write_manifest(extra_sample_cell: str | None = None) -> dict:
+    bundle_sha = sha256(SCENE_DIR / BUNDLE)
+    _stamp_harness_bundle_url(bundle_sha)
     manifest: dict = {
         "bundle": BUNDLE,
-        "bundleSha256": sha256(SCENE_DIR / BUNDLE),
+        "bundleSha256": bundle_sha,
         "bundleBytes": (SCENE_DIR / BUNDLE).stat().st_size,
         "schemaVersion": _scene_schema_version(),
         "threeVersion": _three_version(),
@@ -165,6 +203,23 @@ def check() -> int:
 
     if SAMPLE.is_file() and manifest.get("sampleSceneSha256") != sha256(SAMPLE):
         problems.append("sample_scene.json does not match its recorded digest")
+
+    # The harness must load the bundle this build produced, by this build's
+    # digest — the pair the stamping above writes. A hand-reverted or stale
+    # ?v= is exactly the stale-renderer failure the stamp exists to prevent.
+    harness = SCENE_DIR / "index.html"
+    if not harness.is_file():
+        problems.append("index.html (the harness page) is missing")
+    else:
+        page = harness.read_text(encoding="utf-8")
+        tag = re.search(r'<script src="cell_scene\.js(\?v=[0-9a-f]*)?">', page)
+        if not tag:
+            problems.append('index.html has no <script src="cell_scene.js..."> tag')
+        elif f'?v={(manifest.get("bundleSha256") or "")[:12]}' not in tag.group(0):
+            problems.append(
+                "index.html loads the bundle without this build's ?v= digest — run the export "
+                "script to re-stamp it"
+            )
 
     version = _scene_schema_version()
     if manifest.get("schemaVersion") != version:

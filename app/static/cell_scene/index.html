@@ -102,6 +102,7 @@
       details.disclosure ul { margin: 8px 0 0 16px; padding: 0; color: var(--muted); font-size: 11.5px; }
       #legend { margin-top: 10px; }
       #error { color: #fc8181; font-size: 12px; }
+      #loading { color: var(--muted); font-size: 12px; }
     </style>
   </head>
   <body>
@@ -121,6 +122,15 @@
           <span>Life cursor</span> <span class="value" id="cursor-value">—</span>
           <input id="cursor" type="range" min="0" max="1" value="0" />
         </label>
+        <label class="row">
+          Peel layers <span class="value" id="peel-value">0%</span>
+          <input id="peel" type="range" min="0" max="100" value="0" />
+        </label>
+        <div class="row-buttons" style="margin-bottom: 12px">
+          <button data-pose="iso" title="Isometric view">ISO</button>
+          <button data-pose="plan" title="Plan view — top down">PLAN</button>
+          <button data-pose="section" title="Section view — cut through the axis">SECTION</button>
+        </div>
         <div class="row-buttons" style="margin-bottom: 12px">
           <button id="play" class="primary">▶ Play life</button>
           <button id="today">Today</button>
@@ -131,6 +141,7 @@
           <label><input id="annotations" type="checkbox" checked /> Part annotations</label>
           <label><input id="strip-casing" type="checkbox" /> Strip the casing</label>
         </div>
+        <div class="row-buttons" id="palette" style="display: none"></div>
         <div id="legend"></div>
       </section>
 
@@ -142,6 +153,7 @@
         </div>
         <div id="stage"></div>
         <p id="scale-note"></p>
+        <p id="loading">Loading the scene…</p>
         <p id="error"></p>
       </section>
 
@@ -155,7 +167,7 @@
       </section>
     </div>
 
-    <script src="cell_scene.js"></script>
+    <script src="cell_scene.js?v=c6125e34fbf6"></script>
     <script>
       // The fallback scene, committed next to this page by
       // scripts/export_scene_sample.py so the file works offline.
@@ -190,7 +202,60 @@
       };
       let scene = null;
       let spec = null;
-      let cursor = 0;
+
+      // ── Shareable view state ─────────────────────────────────────────────
+      // The address bar is this page's share button: every frame writes the
+      // reader's view (cursor, explode, peel, layout, pinned part, annotations,
+      // palette) back into the query string, and `decodeViewState` reads it on
+      // load — URL beats stored view beats default, the precedence every host
+      // of this engine uses. The loader's own keys (`cell`/`api`/`token`/
+      // `spec`) survive both trips: one half of the URL says *which* cell to
+      // draw, the other *how to look at it*, and neither may erase the other.
+      const VIEW_KEYS = ["cursor", "exploded", "peel", "layout", "part", "annotations", "theme"];
+      /** What was last actually written, so an unchanged view rewrites nothing. */
+      let lastUrlView = "";
+      /** What the latest frame wants written — committed on a trailing timer. */
+      let nextUrlView = "";
+      let urlTimer = 0;
+
+      function syncUrl(state) {
+        const encoded = window.CellScene.encodeViewState({
+          cursor: state.cursor,
+          exploded: state.exploded,
+          peel: state.peel,
+          layout: state.layout,
+          // Only the *pinned* part is a view: a transient hover must not be
+          // something the recipient of a link is forced to look at.
+          part: state.pinned ?? undefined,
+          annotations: state.annotations,
+          theme: state.themeName ?? undefined,
+        });
+        if (encoded === nextUrlView) return;
+        nextUrlView = encoded;
+        // Coalesced rather than immediate: playback emits a frame per tick and
+        // browsers rate-limit `replaceState` (Chrome refuses after 100 calls in
+        // 30 seconds). A trailing write also means the *last* state wins —
+        // scrubbing to cycle 7 and stopping lands on 7, not on every value
+        // between.
+        if (urlTimer) return;
+        urlTimer = window.setTimeout(writeUrl, 400);
+      }
+
+      function writeUrl() {
+        urlTimer = 0;
+        if (nextUrlView === lastUrlView) return;
+        lastUrlView = nextUrlView;
+        try {
+          const next = new URLSearchParams(location.search);
+          for (const key of VIEW_KEYS) next.delete(key);
+          for (const [key, value] of new URLSearchParams(nextUrlView)) next.set(key, value);
+          const query = next.toString();
+          history.replaceState(null, "", location.pathname + (query ? `?${query}` : "") + location.hash);
+        } catch (error) {
+          // A `file://` page or a sandboxed frame may refuse history writes.
+          // Sharing by URL is a convenience, never a reason to fail the view.
+        }
+      }
 
       function paintChrome(state) {
         el("soh").textContent = state.soh === null ? "no reading" : `${state.soh.toFixed(1)}%`;
@@ -203,6 +268,21 @@
         el("scale-note").textContent = state.scaleNote || "";
         el("cursor-value").textContent =
           `${state.cursor + 1} / ${state.measuredCount + (state.projectionLength || 0)}`;
+        // The controls mirror the engine's frame rather than keep a private
+        // copy: a hotkey, the HUD rail or a pose button can move the view
+        // without touching this panel, and two copies would disagree. Writing
+        // `.value` fires no `input` event, so this direction cannot feed back.
+        const explodePct = Math.round(state.exploded * 100);
+        el("explode").value = String(explodePct);
+        el("explode-value").textContent = `${explodePct}%`;
+        const peelPct = Math.round(state.peel * 100);
+        el("peel").value = String(peelPct);
+        el("peel-value").textContent = `${peelPct}%`;
+        el("cursor").value = String(state.cursor);
+        el("data-scaled").checked = state.dataScaled;
+        el("annotations").checked = state.annotations;
+        el("strip-casing").checked = state.casing === "hidden";
+        syncUrl(state);
       }
 
       function paintParts(state) {
@@ -259,14 +339,23 @@
         try {
           loaded = await loadSpec();
         } catch (error) {
+          el("loading").remove();
           el("error").textContent =
             `Could not load a scene (${error.message}). Serve this directory over HTTP ` +
             `(e.g. python -m http.server) or pass ?cell=... with an API base.`;
           return;
         }
         spec = loaded.spec;
+        el("loading").remove();
+        // The address bar is the highest-precedence view carrier: whatever it
+        // names wins over the reader's stored view of this cell, and anything
+        // it is silent about falls through to storage — or, with no storage,
+        // to the engine's own default of *today*. No cursor is pinned here:
+        // a hard-coded "last cycle" would outrank both, which is exactly the
+        // bug this precedence exists to prevent.
+        const urlView = window.CellScene.decodeViewState(location.search);
         const mounted = window.CellScene.mount(el("stage"), spec, {
-          cursor: spec.series.cycles.length - 1,
+          ...urlView,
           onFrame: refresh,
           // The engine stops at the end of the timeline; the button is ours, so
           // putting its label back is ours too.
@@ -291,7 +380,6 @@
 
         const total = spec.series.cycles.length + (spec.projection.cycles ? spec.projection.cycles.length : 0);
         el("cursor").max = String(total - 1);
-        el("cursor").value = String(spec.series.cycles.length - 1);
         el("cursor").addEventListener("input", (event) => {
           scene.setCursor(Number(event.target.value));
         });
@@ -300,6 +388,27 @@
           el("explode-value").textContent = `${event.target.value}%`;
           scene.update(spec, { exploded });
         });
+        el("peel").addEventListener("input", (event) => {
+          el("peel-value").textContent = `${event.target.value}%`;
+          scene.update(spec, { peel: Number(event.target.value) / 100 });
+        });
+        document.querySelectorAll("[data-pose]").forEach((button) => {
+          button.addEventListener("click", () => scene.framePreset(button.dataset.pose));
+        });
+        // The palette switcher appears only when the document offers a second
+        // one — a hidden control that cannot do anything is worse than none.
+        const palettes = Object.keys(spec.palettes || {});
+        if (palettes.length > 1) {
+          const holder = el("palette");
+          holder.style.display = "flex";
+          palettes.forEach((name) => {
+            const button = document.createElement("button");
+            button.textContent = name;
+            button.title = `Palette ${name}`;
+            button.addEventListener("click", () => scene.setTheme(name));
+            holder.appendChild(button);
+          });
+        }
         el("data-scaled").addEventListener("change", (event) => {
           scene.update(spec, { dataScaled: event.target.checked });
         });

@@ -63,6 +63,28 @@ FEATURE_LABELS = {
 
 
 # ---------------------------------------------------------------------------
+# State-of-health: the ONE place the band thresholds and colours are written
+# ---------------------------------------------------------------------------
+
+#: At or above this SOH% a cell is called Healthy; at or below ``SOH_EOL_MIN``
+#: it is End of Life; between the two, Degrading. These two numbers (and the
+#: three colours below) used to be retyped wherever a cell was labelled — the
+#: scene's bands, the pack chart's bands, the 3D scatter's ramp, a tile's
+#: accent, and app/_ui_helpers.soh_status()'s own comparisons — so any drift
+#: between them could paint a cell green here and amber there. Everything now
+#: imports from here; ``tests/test_cell_scene.py`` pins this module against
+#: app/static/theme.css, which is where the same hexes are painted for text.
+SOH_HEALTHY_MIN = 90.0
+SOH_EOL_MIN = 80.0
+
+#: The three band colours, matching app/static/theme.css's
+#: ``.hero-green`` / ``.hero-yellow`` / ``.hero-red`` exactly.
+SOH_HEALTHY_COLOR = "#48bb78"
+SOH_DEGRADING_COLOR = "#f6e05e"
+SOH_EOL_COLOR = "#fc8181"
+
+
+# ---------------------------------------------------------------------------
 # Card / tile colours
 # ---------------------------------------------------------------------------
 

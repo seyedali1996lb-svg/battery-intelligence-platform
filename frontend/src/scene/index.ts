@@ -15,6 +15,7 @@
 
 import { mountCellScene } from "./engine.ts";
 import type { CellSceneHandle, MountOptions } from "./engine.ts";
+import { legendHtml } from "./legend.ts";
 import { SCENE_SCHEMA_VERSION } from "./types.ts";
 import type { CellSceneSpec, SceneTheme } from "./types.ts";
 
@@ -29,6 +30,11 @@ export type { HudCallbacks, HudHandle, HudState, Telemetry } from "./hud.ts";
 export { buildScene, buildTimeline, DEFAULT_PEEL, partReadings, peelSweepDeg, readingAt, todayCursor, UNROLL_LENGTH } from "./geometry.ts";
 export type { PartReading } from "./geometry.ts";
 export { mountCellScene } from "./engine.ts";
+export { bandRange, legendHtml } from "./legend.ts";
+export { decodeViewState, encodeViewState, mergeViewState, readStoredView, writeStoredView } from "./viewstate.ts";
+export type { ViewState } from "./viewstate.ts";
+export { groupUnmeasured } from "./annotation.ts";
+export type { GroupableItem, FlankGrouping } from "./annotation.ts";
 
 /** The version handshake. A host and a renderer that disagree say so. */
 export interface VersionCheck {
@@ -116,28 +122,14 @@ export function mount(
  *
  * Reads the same theme the meshes do, so the legend cannot describe different
  * colours than the ones painted. Hosts that draw their own panel (the Streamlit
- * page does) simply do not call this.
+ * page does) simply do not call this — `app/_scene_view.py`'s `legend_html`
+ * mirrors `legendHtml` instead, and a test on each side pins them together.
  */
 export function renderLegend(container: HTMLElement, theme: SceneTheme): void {
-  const rows = theme.sohBands
-    .map(
-      (band) =>
-        `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:14px">` +
-        `<i style="width:10px;height:10px;border-radius:2px;background:${band.color};display:inline-block"></i>` +
-        `${band.label}${band.min ? ` ≥ ${band.min}%` : ""}</span>`,
-    )
-    .join("");
-  const provenance = Object.entries(theme.provenanceColors)
-    .filter(([key]) => key !== "")
-    .map(
-      ([key, color]) =>
-        `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:14px">` +
-        `<i style="width:10px;height:2px;background:${color};display:inline-block"></i>${key}</span>`,
-    )
-    .join("");
   container.innerHTML =
     `<div style="font:400 11px/1.6 ui-sans-serif,system-ui,sans-serif;color:${theme.muted}">` +
-    `<div style="margin-bottom:2px">${rows}</div><div>${provenance}</div></div>`;
+    legendHtml(theme) +
+    `</div>`;
 }
 
 /**
@@ -162,7 +154,9 @@ export function autoMount(root: ParentNode = document): MountResult[] {
     if (inline?.textContent) {
       try {
         const spec = JSON.parse(inline.textContent) as CellSceneSpec;
-        options.cursor = spec.series.cycles.length - 1;
+        // No explicit cursor: the engine opens at today (or at the reader's
+        // stored view of this cell) — the declarative path should inherit the
+        // same precedence as the imperative one rather than pin the cursor.
         results.push(mount(target, spec, options));
       } catch (error) {
         results.push({
@@ -175,7 +169,6 @@ export function autoMount(root: ParentNode = document): MountResult[] {
       void fetch(src)
         .then((response) => response.json() as Promise<CellSceneSpec>)
         .then((spec) => {
-          options.cursor = (spec.series.cycles.length ?? 1) - 1;
           mount(target, spec, options);
         })
         .catch((error: unknown) => {

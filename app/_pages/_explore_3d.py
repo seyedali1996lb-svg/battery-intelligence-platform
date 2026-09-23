@@ -42,6 +42,8 @@ import streamlit as st
 
 import _paths  # noqa: F401 — ensures src/ and app/ are on sys.path
 
+from _design_tokens import SOH_DEGRADING_COLOR, SOH_EOL_COLOR, SOH_EOL_MIN, SOH_HEALTHY_COLOR
+
 from _ui_helpers import _empty_state, base_layout
 from utils import _resample_df
 
@@ -86,17 +88,21 @@ Z_AXIS_SPECS: dict[str, ZAxisSpec] = {
     },
 }
 
-EOL_PCT = 80.0  # the platform's own end-of-life convention
+# The platform's end-of-life convention — the same number soh_status() and the
+# pack chart band on, read from _design_tokens rather than retyped here.
+EOL_PCT = SOH_EOL_MIN  # the platform's own end-of-life convention
 
 # SOH-derived colour ramp, matching the app's card palette: red at/below End of
-# Life, amber through the degrading band, green when healthy. The range is
-# pinned (not data-fitted) so two cells at the same SOH are the same colour.
+# Life, amber through the degrading band, green when healthy — the three band
+# colours from _design_tokens, so this ramp cannot disagree with the bands the
+# rest of the app paints a cell with. The range is pinned (not data-fitted) so
+# two cells at the same SOH are the same colour.
 SOH_COLORSCALE = [
-    [0.00, "#fc8181"],
-    [0.50, "#fc8181"],
-    [0.65, "#f6ad55"],
-    [0.90, "#f6ad55"],
-    [1.00, "#68d391"],
+    [0.00, SOH_EOL_COLOR],
+    [0.50, SOH_EOL_COLOR],
+    [0.65, SOH_DEGRADING_COLOR],
+    [0.90, SOH_DEGRADING_COLOR],
+    [1.00, SOH_HEALTHY_COLOR],
 ]
 SOH_CBAR_MIN, SOH_CBAR_MAX = 60.0, 100.0
 

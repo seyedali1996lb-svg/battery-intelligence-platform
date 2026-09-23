@@ -19,7 +19,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CATEGORY_TAXONOMY, chromeSvg, desaturateHex, layoutFlank } from "./annotation.ts";
+import { CATEGORY_TAXONOMY, chromeSvg, desaturateHex, groupUnmeasured, layoutFlank } from "./annotation.ts";
 import { makeSpec } from "./fixture.ts";
 
 const stageH = 560;
@@ -86,4 +86,58 @@ test("chrome draws only from the theme it was handed", () => {
 
 test("the category taxonomy is exactly the ten words the spec declares", () => {
   assert.equal(CATEGORY_TAXONOMY.length, 10);
+});
+
+// ── Collapsing the "no reading" clutter ──────────────────────────────────
+
+const groupable = (ids: [string, boolean][]) => ids.map(([id, available]) => ({ id, available }));
+
+test("unavailable badges collapse; available ones always stand alone", () => {
+  const flank = groupable([
+    ["can", true],
+    ["anode", false],
+    ["cathode", false],
+    ["separator", true],
+  ]);
+  const { shown, hidden } = groupUnmeasured(flank, null, false);
+  assert.deepEqual(shown.map((i) => i.id), ["can", "separator"]);
+  assert.deepEqual(hidden.map((i) => i.id), ["anode", "cathode"]);
+});
+
+test("grouping is a partition: shown and hidden are disjoint and complete", () => {
+  const flank = groupable([
+    ["a", true], ["b", false], ["c", false], ["d", true], ["e", false],
+  ]);
+  for (const activeId of [null, "b", "a"]) {
+    const { shown, hidden } = groupUnmeasured(flank, activeId, false);
+    const ids = [...shown, ...hidden].map((i) => i.id).sort();
+    assert.deepEqual(ids, ["a", "b", "c", "d", "e"], "partition lost or duplicated an item");
+    // order-preserving within each half
+    assert.deepEqual(shown.map((i) => i.id), flank.filter((f) => shown.includes(f)).map((f) => f.id));
+  }
+});
+
+test("the active part stays visible even when it has no reading", () => {
+  const flank = groupable([["a", true], ["b", false], ["c", false]]);
+  const { shown, hidden } = groupUnmeasured(flank, "b", false);
+  assert.ok(shown.some((i) => i.id === "b"), "an unmeasured active part vanished");
+  assert.ok(!hidden.some((i) => i.id === "b"), "the active part is in the collapsed pile");
+});
+
+test("expanding empties the hidden pile without reordering what shows", () => {
+  const flank = groupable([["a", true], ["b", false], ["c", true], ["d", false]]);
+  const collapsed = groupUnmeasured(flank, null, false);
+  const expanded = groupUnmeasured(flank, null, true);
+  assert.deepEqual(expanded.hidden, []);
+  assert.deepEqual(expanded.shown.map((i) => i.id), ["a", "b", "c", "d"]);
+  // Collapsed order is the input order with the hidden ones removed — the
+  // badge layout must not shuffle when the reader toggles.
+  assert.deepEqual(collapsed.shown.map((i) => i.id), ["a", "c"]);
+});
+
+test("an all-measured flank has nothing to collapse", () => {
+  const flank = groupable([["a", true], ["b", true]]);
+  const { shown, hidden } = groupUnmeasured(flank, null, false);
+  assert.equal(shown.length, 2);
+  assert.deepEqual(hidden, []);
 });

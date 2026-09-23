@@ -109,11 +109,38 @@ FORM_FACTOR_CYLINDRICAL = "cylindrical"
 FORM_FACTOR_PRISMATIC = "prismatic"
 FORM_FACTOR_UNKNOWN = "unknown"
 
+# ── The physics-fit gate, read once ─────────────────────────────────────────
+# Two numbers used to be typed inline at each of the three places that needed
+# them (the geometry gate, the mechanism verdict, and the spec's own
+# ``refitEveryCycles``), each with its own copy of the same fallback. One
+# import at module load with one fallback means the scene, the mechanism
+# vocabulary and the published spec can no longer disagree about where "this
+# fit is trustworthy" sits — the failure mode this whole gate exists to prevent.
+# The fallbacks are the library's own values (physics_calibration.py,
+# ``MIN_FIT_R2_FOR_DOMINANT_MODE`` / ``REFIT_EVERY_CYCLES``): an environment
+# that cannot import it still gates on the same evidence, just without the
+# function that would have computed it. There is no import cycle: batlab never
+# imports this module.
+try:  # pragma: no cover - exercised by whichever branch the environment has
+    from physics_calibration import MIN_FIT_R2_FOR_DOMINANT_MODE as _LIB_R2_FLOOR
+    from physics_calibration import REFIT_EVERY_CYCLES as _LIB_REFIT_EVERY
+except Exception:  # pragma: no cover
+    _LIB_R2_FLOOR = 0.3
+    _LIB_REFIT_EVERY = 25
+
+#: Below this r², the β_sei/β_lam split is not identified well enough to name
+#: a mechanism or draw a fade curve from — the library's own gate.
+R2_FLOOR: float = float(_LIB_R2_FLOOR)
+
+#: How often the frame's per-cycle physics columns are refit (a window size the
+#: spec publishes so a reader knows what ``fitR2Series`` is sampled over).
+REFIT_EVERY_CYCLES: int = int(_LIB_REFIT_EVERY)
+
 #: The host-independent default design tokens. The renderer reads colours from
 #: here and hard-codes none of its own, so a host can restyle the scene without
 #: the scene knowing anything about the host — and so the SOH bands a cell is
 #: painted with are the SAME bands (90/80, and these three colours) the rest of
-#: the platform labels it with. ``tests/test_cell_scene_theme.py`` asserts that
+#: the platform labels it with. ``tests/test_cell_scene.py`` asserts that
 #: equivalence against app/_ui_helpers.soh_status() and app/static/theme.css,
 #: which is what stops this view from calling a cell green while the app calls
 #: it amber.
@@ -443,11 +470,10 @@ def fit_physics(df) -> dict:
         return out
 
     try:
-        from physics_calibration import MIN_FIT_R2_FOR_DOMINANT_MODE, fit_two_term_fade
-        r2_floor = float(MIN_FIT_R2_FOR_DOMINANT_MODE)
+        from physics_calibration import fit_two_term_fade
     except Exception:
-        r2_floor = 0.3
         fit_two_term_fade = None  # type: ignore[assignment]
+    r2_floor = R2_FLOOR
     try:
         if fit_two_term_fade is None:
             raise ImportError("the physics calibration module is unavailable")
@@ -1234,17 +1260,16 @@ def _mechanism(df, graph, cell_id: str, fit: dict) -> dict:
 
     if b_sei == b_sei and b_lam == b_lam and fit_r2 == fit_r2:
         try:
-            from physics_calibration import MIN_FIT_R2_FOR_DOMINANT_MODE, dominant_mode
+            from physics_calibration import dominant_mode
             key, label = dominant_mode(b_sei, b_lam, at_cycle, fit_r2)
         except Exception:
             key, label = "insufficient_data", "Insufficient data"
-            MIN_FIT_R2_FOR_DOMINANT_MODE = 0.3
         out["physics"] = {
             "key": key, "label": label,
             "betaSei": _opt(b_sei), "betaLam": _opt(b_lam),
             "fitR2": _opt(fit_r2),
             "atCycle": _opt(at_cycle),
-            "gate": float(MIN_FIT_R2_FOR_DOMINANT_MODE),
+            "gate": R2_FLOOR,
             "gatePassed": bool(key != "insufficient_data"),
             "contributionSeiPct": _opt(100.0 * b_sei * math.sqrt(at_cycle)),
             "contributionLamPct": _opt(100.0 * b_lam * at_cycle),
@@ -1724,7 +1749,7 @@ def build_cell_scene(
             "nCyclesUsed": fit.get("nCyclesUsed"),
             "reason": fit.get("reason"),
             "fitR2Series": fit_r2_series,
-            "refitEveryCycles": 25,
+            "refitEveryCycles": REFIT_EVERY_CYCLES,
             "perWindowBetasInFrame": n_window_betas,
             "spmCapacityAh": _opt(_column(df, "physics_spm_capacity_ah")[-1]) if _column(df, "physics_spm_capacity_ah") else None,
             "source": (

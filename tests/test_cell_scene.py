@@ -217,6 +217,34 @@ def test_the_fitted_physics_comes_from_the_library_fit_not_a_reimplementation():
     assert spec["physics"]["nCyclesUsed"] == fit["n_cycles_used"]
 
 
+def test_the_r2_gate_and_refit_window_are_the_librarys_own_numbers():
+    """`R2_FLOOR` and `REFIT_EVERY_CYCLES` are read from physics_calibration once
+    at import, with the library's own values as the offline fallback.
+
+    They used to be retyped at each of the three places that needed them (the
+    geometry gate, the mechanism verdict's `gate`, and the spec's
+    `refitEveryCycles`), so the scene could refuse a fit on one evidence while
+    the mechanism vocabulary accepted it on another. One symbol, one source."""
+    import cell_scene
+    from physics_calibration import MIN_FIT_R2_FOR_DOMINANT_MODE, REFIT_EVERY_CYCLES
+
+    assert cell_scene.R2_FLOOR == float(MIN_FIT_R2_FOR_DOMINANT_MODE)
+    assert cell_scene.REFIT_EVERY_CYCLES == REFIT_EVERY_CYCLES
+
+
+def test_the_spec_publishes_the_same_gate_and_window_the_builder_gates_on():
+    """A reader of `physics.gate` / `refitEveryCycles` must be able to predict
+    the scene's own refusals from the document alone."""
+    import cell_scene
+
+    spec = _spec(n=200)
+    # `gate` rides inside mechanism.physics (the verdict dict the library's
+    # dominant_mode() gates); `refitEveryCycles` is a property of the full-history
+    # fit itself, on the top-level physics block.
+    assert spec["mechanism"]["physics"]["gate"] == cell_scene.R2_FLOOR
+    assert spec["physics"]["refitEveryCycles"] == cell_scene.REFIT_EVERY_CYCLES
+
+
 def test_the_physics_law_is_the_one_the_library_fits():
     # The library's own model function — private, so imported from the library
     # rather than through the app's src/physics_calibration.py shim, whose
