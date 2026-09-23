@@ -392,6 +392,7 @@ def test_the_application_shim_reexports_and_registers_the_apps_classifier():
     resolve to the library's function objects (one implementation) and the shim's
     import must be what registers the app's classifier.
     """
+    import importlib
     import pathlib
     import sys as _sys
 
@@ -403,6 +404,15 @@ def test_the_application_shim_reexports_and_registers_the_apps_classifier():
     assert shim.calibrate_cell is pc.calibrate_cell
     assert shim.calibrated_feature_series is pc.calibrated_feature_series
     assert set(shim.__all__) == set(pc.__all__)
+    # Registration is an import SIDE EFFECT, so it can only be observed while
+    # the module body actually runs — and a plain `import` re-runs nothing once
+    # anything has imported this module first (this file's own fit test does,
+    # and `cell_scene` reads `R2_FLOOR` from it), while the agreement test above
+    # has quite correctly unregistered its stub in a `finally`. Re-executing
+    # the body — exactly what a first import runs — pins the contract whatever
+    # order the suite happens to collect files in, instead of passing only when
+    # this file happens to be the first to touch the shim.
+    importlib.reload(shim)
     assert pc.get_mechanism_classifier() is not None
     # A shim, not a fork: if a copy of the fit logic ever reappears here, this
     # module has grown a second implementation of a library feature again.
