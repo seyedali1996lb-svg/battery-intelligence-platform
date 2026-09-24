@@ -298,7 +298,7 @@ This is a second, independent RUL estimate grounded in electrochemistry rather t
 
 **Method** (`src/pybamm_rul.py`):
 
-1. Run one PyBaMM Single Particle Model (SPM) discharge simulation using a published parameter set matched to the cell's chemistry (`Chen2020` for LFP/Severson, `NCA_Kim2011` for NASA, `Marquis2019` for synthetic/LiCoO₂) — this anchors the projection in real electrochemistry rather than an arbitrary curve shape.
+1. Run one PyBaMM Single Particle Model (SPM) discharge simulation using a published parameter set matched to the cell's **cathode chemistry** (`Prada2013` for LFP/Severson — `LFP_ocp_Afshar2017`, `Ramadass2004` for NASA/LiCoO₂ — `lico2_ocp_Ramadass2004`, `Marquis2019` for synthetic and CALCE/LiCoO₂, `NCA_Kim2011` for Zhu's NCM+NCA blend, where no exact set exists) — this anchors the projection in real electrochemistry rather than an arbitrary curve shape. Selection is on cathode identity first and voltage window only as a tie-break among chemistry-matched sets, because the positive-electrode OCP is the term that sets the discharge-curve shape: an anchor with the wrong cathode is wrong even when its window fits perfectly. This invariant is enforced by `tests/test_physics_calibration.py::test_every_anchor_is_cathode_matched`, added after both originally shipped anchors were found cathode-mismatched (NASA/LiCoO₂ → an NCA set, Severson/LFP → an NMC811 set), each with a plausible-looking window that is what let the error persist.
 2. Fit the classic **SEI-growth square-root fade law** to the cell's own measured SOH history:
 ```math
 \frac{Q(n)}{Q_0} = 1 - \beta \sqrt{n}

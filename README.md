@@ -61,7 +61,7 @@ A SOH number tells you where a cell is. The degradation indicators tell you why 
 - **dQ/dV (differential capacity) analysis.** Peak positions in the differential capacity curve correspond to specific electrochemical phase transitions. Shifts in those peaks show which electrode is limiting capacity, separating cathode degradation from anode degradation without opening the cell.
 - **Knee-point detection.** This identifies the inflection point where a fade curve moves from slow linear loss into rapid nonlinear decline — the most useful early-warning signal for end-of-life planning.
 - **Equivalent Full Cycle (EFC) accumulation.** ASTM E1049-85 Rainflow Cycle Counting on irregular charge/discharge profiles, enabling fair cycle-count comparison across different duty cycles — lab cycling, EV driving, BESS dispatch.
-- **LLI / LAM decomposition.** Per-cell decomposition of capacity loss into Loss of Lithium Inventory (SEI-driven) and Loss of Active Material (particle cracking), anchored against PyBaMM single-particle model discharge curves.
+- **LLI / LAM decomposition.** Per-cell decomposition of capacity loss into Loss of Lithium Inventory (SEI-driven) and Loss of Active Material (particle cracking), anchored against PyBaMM single-particle model discharge curves — with the SPM parameter set selected by the cell's declared **cathode chemistry**, not merely by whichever set's voltage window happens to fit.
 
 These indicators feed both the ML models and the physics projection. They're also what make the RUL number explainable rather than a black box.
 
@@ -128,7 +128,7 @@ The platform is organized into five engineering modules:
 - **Quantile-interval calibration** (`batlab.validation.calibration`): leave-cell-out empirical coverage of the Q10/Q90 RUL interval, plus conformal quantile recalibration (Romano et al. 2019) fit per fold on the other folds only — the recalibrator never sees the cell it is applied to
 - **Per-prediction local attribution** (`batlab.models.attribution`): occlusion-based, SHAP-style feature attribution answering "why did THIS cell's RUL come out at X" — per-row/per-feature mean prediction change under counterfactual substitution, no `shap` dependency
 - **Hybrid Physics-Informed Neural / Numerical Estimator (PINN)** (`src/pinn_model.py`): coupled electrochemical-thermal degradation tracking (SEI diffusion-limited LLI + mechanical particle cracking LAM) with monotonicity regularized physics loss
-- Physics-informed calibration (`batlab.features.physics_calibration`, NASA + Severson): per-cell LLI/LAM decomposition anchored by PyBaMM SPM discharge
+- Physics-informed calibration (`batlab.features.physics_calibration`, NASA + Severson): per-cell LLI/LAM decomposition anchored by PyBaMM SPM discharge, with the parameter set chosen by **cathode identity** — `Ramadass2004` (`lico2_ocp_…`) for the LiCoO₂ NASA cells, `Prada2013` (`LFP_ocp_…`) for Severson's LFP — and voltage window used only as a tie-break among chemistry-matched sets. The rule is enforced by a test that reads the positive-electrode OCP function PyBaMM actually loads, rather than trusting a label string
 - Asynchronous task worker queue (`src/task_queue.py`) with Server-Sent Events (SSE) progress streaming for non-blocking LCO evaluation
 
 **Battery Diagnostics & Real-Time Streaming**
@@ -209,7 +209,7 @@ Every result this platform produces falls into exactly one of five categories, a
 | **Derived** | SOH, capacity fade rate, resistance growth, dQ/dV peaks, knee point | Deterministic engineering formulas applied to measured data — the exact formula behind each one is documented in [`METHODOLOGY.md`](METHODOLOGY.md) |
 | **Predicted (ML)** | SOH "what happens next" forecast, RUL point estimate, RUL quantile interval | Regime-routed per cell: hierarchical partial-pooling (default forecaster — it extrapolates) or GBRT (interpolates, serves only where its folds prove it), with a per-cell `refuse` verdict when no model is proven for the cell's regime; always leave-cell-out validated |
 | **Survival claim (non-parametric)** | Fleet-level EOL-probability bound | Kaplan–Meier over right-censored cell lifetimes + the rule of three — no model, no labels, just who died on camera and who didn't |
-| **Simulated** | PVGIS-driven solar yield in the Solar + Storage Sizing calculator, PyBaMM-based physics capacity projection | Physics-based or third-party-API-driven simulation of a process, not a direct sensor reading |
+| **Simulated** | PVGIS-driven solar yield in the Solar + Storage Sizing calculator, PyBaMM-based physics capacity projection (parameter set selected by declared cathode chemistry, voltage window as tie-break) | Physics-based or third-party-API-driven simulation of a process, not a direct sensor reading |
 | **Illustrative assumption** | Second-life resale value, install-cost presets used in payback/NPV calculations | Values with no citation are labeled `"Illustrative — not sourced"` in the UI, explicitly distinct from `"Cited estimate"` values that do have one |
 
 ## Validation

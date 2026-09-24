@@ -4,8 +4,13 @@ Physics-based RUL projection via PyBaMM Single Particle Model (SPM).
 Strategy
 --------
 1. Run one SPM discharge to get a physics-grounded nominal capacity for
-   the cell's chemistry (Chen2020 for LFP, NCA_Kim2011 for NCA/LiCoO2,
-   Marquis2019 for synthetic LiCoO2).
+   the cell's declared chemistry (Prada2013 for LFP, Ramadass2004 for
+   LiCoO2/NASA, Marquis2019 for synthetic LiCoO2, NCA_Kim2011 for Zhu's
+   NCM+NCA blend). Selection is by CATHODE IDENTITY — the parameter set's
+   positive-electrode OCP function must be the same cathode the dataset
+   declares — with voltage window as the tie-break among chemistry-matched
+   sets. See batlab.features.physics_calibration.ANCHOR_PARAM_SETS and the
+   test that pins this invariant.
 2. Fit the SEI-growth fade equation Q(n) = Q0 * (1 - beta * sqrt(n)) to
    the cell's measured capacity history.
 3. Project Q(n) forward until the EOL threshold, yielding a physics-based
@@ -15,10 +20,13 @@ The SPM run anchors the model in electrochemistry; the beta fit from real
 data makes the projection specific to this cell's measured degradation rate.
 This is meaningfully different from the GBRT linear extrapolation.
 
-Parameter sets used (all from PyBaMM built-ins):
-  LFP   (Severson)  -> Chen2020
-  NCA   (NASA)      -> NCA_Kim2011
-  LiCoO2 (synthetic/uploaded) -> Marquis2019
+Parameter sets used (all from PyBaMM built-ins), with the cathode OCP that
+identifies each one:
+  LFP   (Severson)             -> Prada2013     (LFP_ocp_Afshar2017)
+  LiCoO2 (NASA)                -> Ramadass2004  (lico2_ocp_Ramadass2004)
+  LiCoO2 (synthetic/uploaded)  -> Marquis2019   (lico2_ocp_Dualfoil1998)
+  LiCoO2 (CALCE)               -> Marquis2019   (lico2_ocp_Dualfoil1998)
+  NCM+NCA blend (Zhu 2022)     -> NCA_Kim2011   (nca_ocp_Kim2011)
 """
 
 from __future__ import annotations
@@ -30,8 +38,8 @@ from typing import Optional
 # ── Parameter set selection ─────────────────────────────────────────────────
 
 _PARAM_MAP = {
-    "severson":  "Chen2020",
-    "nasa":      "NCA_Kim2011",
+    "severson":  "Prada2013",
+    "nasa":      "Ramadass2004",
     "synthetic": "Marquis2019",
     "uploaded":  "Marquis2019",
     # Zhu's NCM+NCA blend: no published PyBaMM parameter set matches it; the
@@ -39,13 +47,18 @@ _PARAM_MAP = {
     # physics-based ESTIMATE, not a claim about these specific cells.
     "zhu2022":   "NCA_Kim2011",
     # CALCE CS2: 1.1 Ah prismatic LiCoO2 — same cathode as NASA's cells; the
-    # LiCoO2 parameter set is the chemically-matched choice.
+    # LiCoO2 parameter set is the chemically-matched choice. Its 3.105-4.1 V
+    # window is a poor match for CALCE's 2.7-4.2 V protocol, but the cathode
+    # is right; window-fit sub-optimality is a separate, lesser defect (and
+    # chemistry-correctness is the one this mapping is required to get right).
     "calce":     "Marquis2019",
 }
 
 _CHEM_LABEL = {
     "Chen2020":     "LFP/Graphite (Chen 2020)",
+    "Prada2013":    "LFP/Graphite (Prada 2013)",
     "NCA_Kim2011":  "NCA/Graphite (Kim 2011)",
+    "Ramadass2004": "LiCoO₂/Graphite (Ramadass 2004)",
     "Marquis2019":  "LiCoO₂/Graphite (Marquis 2019)",
 }
 

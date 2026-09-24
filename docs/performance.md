@@ -120,6 +120,21 @@ rather than inferred from "the app still boots":
 | `physics_gbrt_divergence_report({cid: raw_df})` | per-cell report | **4 cells**, `B0005` first, `closer_model="physics"` |
 | physics features in the app's own frames | NASA populated, synthetic all-NaN | **NASA 91.7% finite, synthetic all-NaN** — unchanged |
 
+> **Postscript (2026-09-24).** The `NCA_Kim2011` values in the two eligibility rows above are
+> what was true *when that refactor was measured*, and are kept because rewriting them would
+> falsify the record. Both anchors have since been found cathode-mismatched — NASA was declared
+> LiCoO₂ everywhere but anchored on `nca_ocp_Kim2011`, and Severson (LFP, 2.0 V discharge cutoff
+> per Severson et al., *Nature Energy* 4, 383–391) was anchored on `Chen2020`
+> (`nmc_LGM50_ocp_Chen2020`, NMC811, 2.5 V cutoff). They are now `Ramadass2004` and `Prada2013`
+> respectively. See `METHODOLOGY.md` and the enforcing test
+> `test_every_anchor_is_cathode_matched`. The change moves only `param_set`, `chem_label` and
+> the display-only `physics_spm_capacity_ah` — never a `FEATURE_COLUMNS` input. Measured by
+> running `run_lco()` twice over the real four NASA cells (`use_fold_cache=False`), old anchors
+> vs new, diffing every reported field: **no field differs** (SOH R² 0.9471, RUL R² 0.4216 both
+> times, `physics_features=True` both times, so the parameter set was genuinely consulted).
+> Note that the CI metric gate fleet is synthetic and so is structurally blind to this change —
+> its passing is not evidence for it.
+
 Two things worth stating plainly. First, the synthetic fleet was never
 calibration-eligible: the pre-move rule keyed on the *profile class*
 (`LiCoO2NASAProfile` → NCA_Kim2011, `LFPSeversonProfile` → Chen2020, everything else

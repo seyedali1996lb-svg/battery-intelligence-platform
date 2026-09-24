@@ -14,6 +14,48 @@ those changes live in the docs they affect; this file records interface changes.
 
 ## [Unreleased]
 
+- **Both PyBaMM physics anchors were cathode-mismatched to the chemistry they were keyed on, and
+  nothing in the codebase checked.** `ANCHOR_PARAM_SETS[("nasa", "LiCoO2")]` was `NCA_Kim2011`,
+  whose positive-electrode OCP is `nca_ocp_Kim2011` — an NCA cathode — for cells the loader,
+  README, sidebar and Health page all declare LiCoO₂; `("severson2019", "LFP")` was `Chen2020`,
+  whose OCP is `nmc_LGM50_ocp_Chen2020` — NMC811, 2.5 V lower cutoff — for an LFP fleet whose
+  loader cites Severson et al., *Nature Energy* 4, 383–391 for its **2.0 V** cutoff. Each set had
+  a plausible voltage window (NCA_Kim2011's 2.7–4.2 V matched NASA's protocol exactly), which is
+  exactly why the error survived a prior "NASA mislabeled NCA" cleanup that left this anchor
+  behind: the SPM still solves and still returns a sensible-looking capacity, so nothing appeared
+  broken. Now `Ramadass2004` (`lico2_ocp_Ramadass2004`, 2.8–4.2 V) and `Prada2013`
+  (`LFP_ocp_Afshar2017`, 2.0–3.6 V — an exact window match) — correct on cathode identity *and*
+  voltage window. Selection rule, now stated in the code: **cathode chemistry decides, window is
+  only a tie-break among chemistry-matched sets**, because the positive-electrode OCP is the term
+  that sets an SPM's discharge-curve shape. `src/pybamm_rul._PARAM_MAP` tracks both changes, as
+  `physics_calibration` documents it must. *Blast radius, measured rather than argued:* swapping
+  each anchor in-process and diffing `calibrate_cell()` field by field moves only `param_set`,
+  `chem_label` and `spm_capacity_ah`; `beta_sei`, `beta_lam`, `k_r`, `fit_r2` and
+  `dominant_mode_key` came back bit-identical (they are `curve_fit` against the cell's own
+  measured history — PyBaMM never participates), and `physics_spm_capacity_ah` is not in
+  `FEATURE_COLUMNS`, so **no model input changes**. Measured end-to-end rather than inferred:
+  `run_lco()` run twice over the real four NASA cells with `use_fold_cache=False`, old anchors vs
+  new, diffing every reported field — **no field differs** (SOH R² 0.9470975121947384 and RUL R²
+  0.421595059300934 in both runs, `physics_features=True` in both, so the parameter set *was*
+  consulted). One honesty note, because it is easy to cite the wrong green light: the CI metric
+  gate fleet is `Cell1/3/5/6/8` — synthetic — and synthetic cells are absent from
+  `ANCHOR_PARAM_SETS`, so a gate run never consults the parameter set and its passing (5/5) is
+  structurally guaranteed. The gate is green here, but it is not the evidence; the `run_lco()` diff
+  is. Display-only SPM anchors
+  move: NASA 0.4249 → 1.0000 Ah, Severson 4.9554 → 1.9395 Ah, both closer to the real cells
+  (~2.035 Ah and ~1.1 Ah). Three new tests enforce what enforcement previously lacked:
+  `test_every_anchor_is_cathode_matched` (OCP function name must carry the declared cathode's
+  marker, for every anchor entry), `test_anchor_param_map_stays_in_sync_with_pybamm_rul`, and
+  `test_every_param_map_target_has_a_chem_label`. `zhu2022 → NCA_Kim2011` is unchanged (correct —
+  Zhu is an NCM+NCA blend and no set matches it), as are `calce`/`synthetic`/`uploaded` →
+  `Marquis2019`: those are **chemistry-correct** (`lico2_ocp_Dualfoil1998` is LiCoO₂); their
+  3.105–4.1 V window is a genuine sub-optimality but not this defect, and changing them would
+  move displayed numbers on the app's default fleet without correcting an error — recorded here
+  as a deliberate non-change rather than silently "improved". Honesty note: NASA's own
+  documentation does not definitively specify the cathode, so "LiCoO₂" remains this repository's
+  declared claim; this fix makes the anchor *consistent with* that declaration, it does not
+  independently verify it against the primary source.
+
 - **Deployment knobs are finally reachable on Streamlit Community Cloud.** Every knob this app
   reads (`BATLAB_BOOT_STUDIES`, `BATLAB_BOOT_LAYERS`, `BATLAB_FOLD_WORKERS`,
   `SETTINGS_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`) comes from `os.environ`, but Community Cloud has

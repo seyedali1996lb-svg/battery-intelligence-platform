@@ -622,7 +622,21 @@ def test_live_monitor_physics_twin_check_runs_against_streamed_telemetry(isolate
     metrics = {m.label: m.value for m in at.metric}
     assert "Physics RUL estimate" in metrics
     assert metrics["Physics RUL estimate"] != "—"
-    assert "NCA" in metrics.get("Chemistry model", "")
+
+    # This assertion previously read `assert "NCA" in metrics["Chemistry model"]`.
+    # It pinned the ONE place the earlier "NASA mislabeled NCA in 5 places"
+    # cleanup (see test_nasa_cells_never_labeled_nca_chemistry, above) missed:
+    # the PyBaMM parameter-set label. That cleanup matched the literal display
+    # phrase "NCA chemistry", which "NCA/Graphite (Kim 2011)" does not contain, so
+    # the display strings got fixed while ANCHOR_PARAM_SETS/_PARAM_MAP kept an NCA
+    # set — and this test then *demanded* the leftover. The suite therefore
+    # asserted both that NASA is never NCA and that it is NCA, and passed.
+    # The label now follows the anchor, which is enforced on cathode identity
+    # (not on a display string) by test_every_anchor_is_cathode_matched.
+    _chem_model = metrics.get("Chemistry model", "")
+    assert "LiCoO₂" in _chem_model, f"expected a LiCoO2 parameter set, got {_chem_model!r}"
+    assert "NCA" not in _chem_model, "NASA cells are declared LiCoO2, never NCA"
+
     captions = [c.value for c in at.caption]
     assert any("not a live-synced digital twin" in c for c in captions)
 

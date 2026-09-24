@@ -89,9 +89,80 @@ def test_eligibility_is_the_anchor_allow_list():
 
 
 def test_param_set_resolution_is_by_anchor_not_by_cell_id():
-    assert pc._param_set_for_cell(_nasa_df(n_cycles=200)) == "NCA_Kim2011"
-    assert pc._param_set_for_cell(_severson_df(n_cycles=200)) == "Chen2020"
+    assert pc._param_set_for_cell(_nasa_df(n_cycles=200)) == "Ramadass2004"
+    assert pc._param_set_for_cell(_severson_df(n_cycles=200)) == "Prada2013"
     assert pc._param_set_for_cell(_synthetic_df(n_cycles=200)) is None
+
+
+# ---------------------------------------------------------------------------
+# The invariant the two shipped anchors used to violate
+# ---------------------------------------------------------------------------
+
+# Substrings that identify a cathode in PyBaMM's positive-electrode OCP
+# FUNCTION NAME. Keys are the `chemistry` strings the batlab schema declares
+# (batlab/datasets/*.py); values are what PyBaMM's function names carry.
+# Note "LiCoO2" -> "lico2": PyBaMM abbreviates, so a naive chemistry.lower()
+# would not match and the test would pass vacuously. Every marker below is
+# verified disjoint from every other one against the actual function names.
+_CATHODE_OCP_MARKER = {
+    "LiCoO2": "lico2",
+    "LFP": "lfp",
+    "NCA": "nca",
+    "NMC": "nmc",
+}
+
+
+def test_every_anchor_is_cathode_matched():
+    """Anchors must match on cathode chemistry, not merely on voltage window.
+
+    Two shipped anchors violated this for as long as they existed:
+    `("nasa", "LiCoO2")` -> ``NCA_Kim2011`` (``nca_ocp_Kim2011``) and
+    `("severson2019", "LFP")` -> ``Chen2020`` (``nmc_LGM50_ocp_Chen2020``).
+    Both had plausible-looking voltage windows — NCA_Kim2011's 2.7-4.2 V matched
+    NASA's protocol *exactly* — which is precisely why the mismatch survived a
+    prior cleanup pass (docs/history.md records an earlier "NASA mislabeled NCA"
+    fix that left this anchor behind): the SPM still solves and still returns a
+    sensible capacity, so nothing looks broken.
+
+    The positive-electrode OCP is what sets the discharge-curve shape in an SPM,
+    so a wrong cathode is wrong even when the window fits. Chemistry decides;
+    window is only a tie-break among chemistry-matched sets.
+    """
+    pybamm = pytest.importorskip("pybamm")
+
+    for (source, chemistry), param_set in pc.ANCHOR_PARAM_SETS.items():
+        marker = _CATHODE_OCP_MARKER[chemistry]
+        ocp = dict(pybamm.parameter_sets[param_set])["Positive electrode OCP [V]"]
+        ocp_name = getattr(ocp, "__name__", str(ocp)).lower()
+        assert marker in ocp_name, (
+            f"ANCHOR_PARAM_SETS[({source!r}, {chemistry!r})] = {param_set!r}, but its "
+            f"positive-electrode OCP is {getattr(ocp, '__name__', ocp)!r} — that is not a "
+            f"{chemistry} cathode. Match the anchor on cathode identity first (voltage "
+            f"window only as a tie-break between chemistry-matched sets)."
+        )
+
+
+def test_anchor_param_map_stays_in_sync_with_pybamm_rul():
+    """`_param_set_for_cell` documents that its parameter-set strings match
+    `pybamm_rul._PARAM_MAP`'s for the same real chemistries. That stated
+    invariant had no enforcement, which is how the library and the demo app
+    could have ended up disagreeing about a cell's electrochemistry: they are
+    two separate dicts in two separate packages."""
+    from src import pybamm_rul as prul
+
+    assert pc.ANCHOR_PARAM_SETS[("nasa", "LiCoO2")] == prul._PARAM_MAP["nasa"]
+    assert pc.ANCHOR_PARAM_SETS[("severson2019", "LFP")] == prul._PARAM_MAP["severson"]
+
+
+def test_every_param_map_target_has_a_chem_label():
+    """`project_rul` indexes `_CHEM_LABEL[param_set]` directly — a target set
+    without a label is a KeyError raised at the moment a user opens a page."""
+    from src import pybamm_rul as prul
+
+    for param_set in prul._PARAM_MAP.values():
+        assert param_set in prul._CHEM_LABEL, param_set
+    for param_set in pc.ANCHOR_PARAM_SETS.values():
+        assert param_set in pc._CHEM_LABEL, param_set
 
 
 def test_a_registered_anchor_extends_eligibility_without_widening_it():
@@ -270,10 +341,10 @@ def test_nominal_capacity_cached_per_param_set(monkeypatch):
 
     monkeypatch.setattr(pc, "_spm_nominal_capacity_ah", _fake_spm)
 
-    assert pc._nominal_capacity_ah("NCA_Kim2011") == 2.0
-    assert pc._nominal_capacity_ah("NCA_Kim2011") == 2.0
-    assert pc._nominal_capacity_ah("Chen2020") == 2.0
-    assert calls == ["NCA_Kim2011", "Chen2020"]  # one call per distinct param_set, not per invocation
+    assert pc._nominal_capacity_ah("Ramadass2004") == 2.0
+    assert pc._nominal_capacity_ah("Ramadass2004") == 2.0
+    assert pc._nominal_capacity_ah("Prada2013") == 2.0
+    assert calls == ["Ramadass2004", "Prada2013"]  # one call per distinct param_set, not per invocation
 
 
 def test_calibrated_feature_series_reuses_cache_across_cells(monkeypatch):
@@ -289,7 +360,7 @@ def test_calibrated_feature_series_reuses_cache_across_cells(monkeypatch):
     df_b = _nasa_df(n_cycles=120)
     pc.calibrated_feature_series(df_a, "B0005")
     pc.calibrated_feature_series(df_b, "B0006")
-    assert calls == ["NCA_Kim2011"]  # second NASA cell reused the cached discharge
+    assert calls == ["Ramadass2004"]  # second NASA cell reused the cached discharge
 
 
 # ---------------------------------------------------------------------------
