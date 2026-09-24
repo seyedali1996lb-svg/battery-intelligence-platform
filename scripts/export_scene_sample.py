@@ -48,8 +48,22 @@ SOURCE_DIR = _root / "frontend" / "src" / "scene"
 
 
 def sha256(path: Path) -> str:
+    """Digest a file's content so one manifest verifies on every machine.
+
+    Line endings are normalized first because they are a property of the
+    *checkout*, not of the artifact: ``core.autocrlf=true`` hands a Windows
+    machine a CRLF working copy of files whose git blob — and what the Linux
+    CI runner hashes — is LF, and this script itself writes the sample through
+    Python's text-mode newline translation (LF → CRLF on Windows). Hashing raw
+    bytes made ``--check`` disagree between a Windows dev machine and CI for
+    artifacts nobody had touched: a manifest that only verified on the machine
+    that recorded it. Every other byte still counts, so a stale rebuild or a
+    hand-edit is caught exactly as before — an EOL-only difference is neither
+    of those. The bundle is emitted by esbuild as LF on every platform, so its
+    digest, the hosts' ``?v=`` cache key, is unchanged by this.
+    """
     digest = hashlib.sha256()
-    digest.update(path.read_bytes())
+    digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     return digest.hexdigest()
 
 

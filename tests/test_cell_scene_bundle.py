@@ -48,6 +48,27 @@ def test_every_committed_artifact_hash_matches_its_sources():
     assert export_scene_sample.check() == 0
 
 
+def test_a_digest_does_not_depend_on_line_endings(tmp_path):
+    """The manifest must verify on every machine, not just the writing one.
+
+    A CRLF checkout (``core.autocrlf`` on Windows) and this script's own
+    text-mode write hand different bytes to the hash than the Linux CI runner
+    sees, for an artifact nobody edited — the failure mode that kept
+    ``--check`` red on a fresh clone while passing on the machine that
+    recorded the manifest. EOL-only differences must hash alike...
+    """
+    lf = tmp_path / "lf.ts"
+    crlf = tmp_path / "crlf.ts"
+    lf.write_bytes(b"export const a = 1;\nexport const b = 2;\n")
+    crlf.write_bytes(b"export const a = 1;\r\nexport const b = 2;\r\n")
+    assert export_scene_sample.sha256(lf) == export_scene_sample.sha256(crlf)
+    # ...and every other byte must still count: the check exists to catch
+    # staleness and hand-edits, and normalization must not soften that.
+    edited = tmp_path / "edited.ts"
+    edited.write_bytes(b"export const a = 1;\r\nexport const b = 3;\r\n")
+    assert export_scene_sample.sha256(edited) != export_scene_sample.sha256(lf)
+
+
 def test_the_bundle_is_present_and_is_the_scene_renderer():
     assert BUNDLE.is_file(), "cell_scene.js has not been built — run `npm run build:scene`"
     text = BUNDLE.read_text(encoding="utf-8")
