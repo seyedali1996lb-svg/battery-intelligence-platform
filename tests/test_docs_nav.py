@@ -51,7 +51,20 @@ def test_nav_is_not_empty():
 
 @pytest.mark.parametrize("entry", _nav_entries())
 def test_every_nav_entry_exists(entry):
-    assert (DOCS / entry).exists(), f"mkdocs.yml nav points at missing docs/{entry}"
+    """Every nav target exists — against what a fresh checkout actually has.
+
+    ``docs/notebooks/`` is build output: ``docs/hooks.py`` copies the committed
+    top-level ``notebooks/`` there during ``mkdocs build``, and it is
+    gitignored to keep the top-level directory the single source of truth. A
+    fresh checkout — which is what CI's lint job tests, before any build has
+    run — therefore has no copy under ``docs/``, so notebook entries are
+    asserted against their committed source; the docs job's
+    ``mkdocs build --strict`` is what still proves the hook generates the copy
+    that renders.
+    """
+    root = REPO_ROOT if entry.startswith("notebooks/") else DOCS
+    target = root / entry
+    assert target.exists(), f"mkdocs.yml nav points at missing {target.relative_to(REPO_ROOT)}"
 
 
 def test_every_top_level_docs_page_is_in_the_nav():
